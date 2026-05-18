@@ -1,0 +1,64 @@
+.ce-toolbar {
+    flex-direction: row;
+    align-items: center;
+}
+
+.ce-breadcrumb {
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.ce-empty-hint {
+    flex-grow: 1;
+    -unity-text-align: middle-center;
+    color: rgb(150, 150, 150);
+    white-space: normal;
+}
+
+.state-node {
+    min-width: 140px;
+}
+
+.state-node__motion {
+    font-size: 10px;
+    color: rgb(175, 175, 175);
+    padding-left: 6px;
+    padding-right: 6px;
+    padding-top: 2px;
+    padding-bottom: 2px;
+    white-space: nowrap;
+}
+
+.ssm-node {
+    min-width: 140px;
+}
+
+.special-node {
+    min-width: 90px;
+}
+
+.transition-edge__badge {
+    position: absolute;
+    background-color: rgb(40, 40, 40);
+    border-color: rgb(120, 120, 120);
+    border-width: 1px;
+    border-radius: 8px;
+    color: rgb(255, 255, 255);
+    font-size: 10px;
+    -unity-text-align: middle-center;
+    min-width: 16px;
+    height: 16px;
+    padding-left: 3px;
+    padding-right: 3px;
+}
+
+.ce-panel {
+    flex-grow: 1;
+}
+
+.ce-panel__header {
+    -unity-font-style: bold;
+    padding: 4px 6px;
+    background-color: rgba(0, 0, 0, 0.2);
+}
