@@ -10,6 +10,7 @@ namespace Yozolab.DaerD
         public AnimatorState State { get; }
         public override object Model => State;
 
+        readonly Label _nameLabel;
         readonly Label _motionLabel;
         static readonly Color DefaultStateColor = new Color(0.78f, 0.45f, 0.13f);
         static readonly Color CurrentStateColor = new Color(0.20f, 0.55f, 0.25f);
@@ -23,12 +24,26 @@ namespace Yozolab.DaerD
         {
             State = state;
             AddToClassList("state-node");
+            AddToClassList("compact-node");
             AddInputPort();
             AddOutputPort();
 
+            // The title bar is dropped (see DaerD.uss); the name and motion show in a
+            // text column between the input port (left) and output port (right). Every
+            // state node uses the same fixed width.
+            Input.tooltip = "Incoming transitions";
+            Output.tooltip = "Drag from here to create a transition";
+
+            var text = new VisualElement { pickingMode = PickingMode.Ignore };
+            text.AddToClassList("compact-node__text");
+
+            _nameLabel = new Label { pickingMode = PickingMode.Ignore };
+            _nameLabel.AddToClassList("compact-node__name");
             _motionLabel = new Label { pickingMode = PickingMode.Ignore };
-            _motionLabel.AddToClassList("state-node__motion");
-            mainContainer.Add(_motionLabel);
+            _motionLabel.AddToClassList("compact-node__motion");
+            text.Add(_nameLabel);
+            text.Add(_motionLabel);
+            topContainer.Insert(1, text);
 
             capabilities |= Capabilities.Movable | Capabilities.Selectable | Capabilities.Deletable
                           | Capabilities.Copiable | Capabilities.Snappable;
@@ -41,15 +56,14 @@ namespace Yozolab.DaerD
         public void RefreshLabels()
         {
             title = State.name;
+            _nameLabel.text = State.name;
             _motionLabel.text = DescribeMotion(State.motion);
         }
 
         public void SetIsDefault(bool isDefault)
         {
-            if (isDefault)
-                titleContainer.style.backgroundColor = DefaultStateColor;
-            else
-                titleContainer.style.backgroundColor = StyleKeyword.Null;
+            _nameLabel.style.backgroundColor =
+                isDefault ? DefaultStateColor : (StyleColor)StyleKeyword.Null;
         }
 
         /// <summary>Highlights the node when it is the live state during play mode.</summary>

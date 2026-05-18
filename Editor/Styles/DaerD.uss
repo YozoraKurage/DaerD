@@ -16,26 +16,75 @@
     white-space: normal;
 }
 
-.state-node {
-    min-width: 140px;
+/* Compact node form shared by state and Entry/Exit/Any State nodes: no title bar,
+   small left/right ports, a fixed width, and the name centred in a text column. */
+.compact-node {
+    width: 180px;
+    min-height: 46px;
 }
 
-.state-node__motion {
-    font-size: 10px;
-    color: rgb(175, 175, 175);
-    padding-left: 6px;
-    padding-right: 6px;
+.compact-node #title {
+    display: none;
+}
+
+.compact-node #divider {
+    display: none;
+}
+
+.compact-node #input,
+.compact-node #output {
+    flex-grow: 0;
+    justify-content: center;
+}
+
+/* Small ports: drop the tall fixed port height so the connectors take little room. */
+.compact-node .port {
+    height: auto;
+    min-height: 0;
     padding-top: 2px;
     padding-bottom: 2px;
+}
+
+/* flex-shrink lets the text column give way so a long name truncates instead of
+   widening the node past its fixed width. */
+.compact-node__text {
+    flex-grow: 1;
+    flex-shrink: 1;
+    overflow: hidden;
+    justify-content: center;
+    padding: 4px 6px;
+}
+
+.compact-node__name {
+    -unity-font-style: bold;
+    -unity-text-align: middle-center;
     white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.compact-node__motion {
+    font-size: 10px;
+    color: rgb(175, 175, 175);
+    -unity-text-align: middle-center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Entry / Exit / Any State carry no motion line, so the name label is enlarged and
+   stretched to fill the node as a solid colour block. */
+.special-node .compact-node__text {
+    padding: 2px;
+}
+
+.special-node .compact-node__name {
+    flex-grow: 1;
+    font-size: 14px;
 }
 
 .ssm-node {
     min-width: 140px;
-}
-
-.special-node {
-    min-width: 90px;
 }
 
 .transition-edge__badge {
