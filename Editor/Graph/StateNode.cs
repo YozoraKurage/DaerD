@@ -13,6 +13,11 @@ namespace Yozolab.DaerD
         readonly Label _motionLabel;
         static readonly Color DefaultStateColor = new Color(0.78f, 0.45f, 0.13f);
         static readonly Color CurrentStateColor = new Color(0.20f, 0.55f, 0.25f);
+        static readonly Color HighlightBorderColor = new Color(0.96f, 0.84f, 0.22f);
+        static readonly Color DropTargetColor = new Color(0.42f, 0.82f, 0.46f);
+
+        bool _highlighted;
+        bool _dropTarget;
 
         public StateNode(AnimatorState state)
         {
@@ -56,8 +61,36 @@ namespace Yozolab.DaerD
         /// <summary>Outlines the node when a find-usages query matches it.</summary>
         public void SetHighlight(bool on)
         {
-            StyleColor color = on ? new Color(0.96f, 0.84f, 0.22f) : (StyleColor)StyleKeyword.Null;
-            StyleFloat width = on ? 2f : (StyleFloat)StyleKeyword.Null;
+            _highlighted = on;
+            ApplyBorder();
+        }
+
+        /// <summary>Outlines the node while an AnimationClip is being dragged over it.</summary>
+        public void SetDropTarget(bool on)
+        {
+            _dropTarget = on;
+            ApplyBorder();
+        }
+
+        void ApplyBorder()
+        {
+            StyleColor color;
+            StyleFloat width;
+            if (_dropTarget)
+            {
+                color = DropTargetColor;
+                width = 2.5f;
+            }
+            else if (_highlighted)
+            {
+                color = HighlightBorderColor;
+                width = 2f;
+            }
+            else
+            {
+                color = StyleKeyword.Null;
+                width = StyleKeyword.Null;
+            }
             style.borderTopColor = color;
             style.borderBottomColor = color;
             style.borderLeftColor = color;

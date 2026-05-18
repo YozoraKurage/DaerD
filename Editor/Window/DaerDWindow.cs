@@ -17,6 +17,7 @@ namespace Yozolab.DaerD
         LayersPanel _layersPanel;
         ParametersPanel _parametersPanel;
         InspectorPanel _inspectorPanel;
+        StatePreview _statePreview;
         VisualElement _breadcrumb;
         double _lastRuntimePoll;
 
@@ -51,12 +52,14 @@ namespace Yozolab.DaerD
             EditorApplication.update -= PollRuntime;
             EditorApplication.playModeStateChanged -= OnPlayModeChanged;
             _graphView?.Cleanup();
+            _statePreview?.Stop();
         }
 
         void CreateGUI()
         {
             rootVisualElement.Clear();
             _context = new DaerDContext();
+            _statePreview = new StatePreview(_context);
 
             var styleSheet = LoadStyleSheet();
             if (styleSheet != null)
@@ -89,6 +92,8 @@ namespace Yozolab.DaerD
             _context.LayerChanged += SyncSerializedState;
             _context.ControllerChanged += SyncSerializedState;
 
+            _statePreview.Start();
+
             if (_controller != null)
                 _context.SetController(_controller);
         }
@@ -110,6 +115,14 @@ namespace Yozolab.DaerD
             var spacer = new VisualElement();
             spacer.style.flexGrow = 1;
             toolbar.Add(spacer);
+
+            var previewToggle = new ToolbarToggle
+            {
+                text = "Preview",
+                tooltip = "Preview frame 0 of the selected clip state on the matching scene object",
+            };
+            previewToggle.RegisterValueChangedCallback(evt => _statePreview.SetEnabled(evt.newValue));
+            toolbar.Add(previewToggle);
 
             var layoutMenu = new ToolbarMenu { text = "Layout" };
             layoutMenu.menu.AppendAction("Grid", _ =>
