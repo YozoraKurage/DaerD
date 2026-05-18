@@ -6,6 +6,6 @@ For animator controllers
 
 ## ToS
 
-If I quit, MIT license protection systems will be removed from relevant products.
+If I quit, MIT license will be removed from relevant products.
 
 ... Though this might change depending on how I feel :)

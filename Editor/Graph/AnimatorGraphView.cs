@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using UnityEditor;
 using UnityEditor.Animations;
 using UnityEditor.Experimental.GraphView;
 using UnityEngine;
@@ -15,6 +16,7 @@ namespace Yozolab.DaerD
 
         bool _syncingSelection;
         Vector2 _lastMouseGraphPosition;
+        StateNode _dropHoverNode;
 
         public EditorWindowOwner Owner { get; set; }
 
@@ -47,6 +49,9 @@ namespace Yozolab.DaerD
             RegisterCallback<KeyDownEvent>(OnKeyDown);
             RegisterCallback<MouseMoveEvent>(e =>
                 _lastMouseGraphPosition = contentViewContainer.WorldToLocal(e.mousePosition));
+            RegisterCallback<DragUpdatedEvent>(OnDragUpdated);
+            RegisterCallback<DragPerformEvent>(OnDragPerform);
+            RegisterCallback<DragLeaveEvent>(_ => SetDropHover(null));
 
             context.ControllerChanged += _sync.RequestRebuild;
             context.LayerChanged += _sync.RequestRebuild;
@@ -202,6 +207,78 @@ namespace Yozolab.DaerD
             }
         }
 
+        // ---- AnimationClip drag & drop ---------------------------------------
+
+        void OnDragUpdated(DragUpdatedEvent evt)
+        {
+            if (_context.CurrentStateMachine == null || !DragHasClip())
+                return;
+            DragAndDrop.visualMode = DragAndDropVisualMode.Copy;
+            SetDropHover(ResolveTarget<StateNode>(evt.target as VisualElement));
+            evt.StopPropagation();
+        }
+
+        void OnDragPerform(DragPerformEvent evt)
+        {
+            SetDropHover(null);
+            if (_context.CurrentStateMachine == null)
+                return;
+
+            var clips = new List<AnimationClip>();
+            foreach (var obj in DragAndDrop.objectReferences)
+                if (obj is AnimationClip clip)
+                    clips.Add(clip);
+            if (clips.Count == 0)
+                return;
+
+            DragAndDrop.AcceptDrag();
+            evt.StopPropagation();
+
+            var targetNode = ResolveTarget<StateNode>(evt.target as VisualElement);
+            using (new UndoScope(clips.Count > 1 ? "Drop Animation Clips" : "Drop Animation Clip"))
+            {
+                if (targetNode != null)
+                {
+                    // Dropped onto an existing state: replace its motion with the first clip.
+                    _sync.AssignMotion(targetNode.State, clips[0]);
+                    _context.Select(targetNode.State);
+                }
+                else
+                {
+                    // Dropped onto empty space: create one state per clip, stacked downward.
+                    var origin = contentViewContainer.WorldToLocal(evt.mousePosition);
+                    AnimatorState firstState = null;
+                    for (int i = 0; i < clips.Count; i++)
+                    {
+                        var state = _sync.CreateStateWithClip(origin + new Vector2(0f, i * 68f), clips[i]);
+                        if (firstState == null) firstState = state;
+                    }
+                    if (firstState != null) _context.Select(firstState);
+                }
+            }
+            _sync.RequestRebuild();
+        }
+
+        /// <summary>Highlights the state node currently under a clip being dragged.</summary>
+        void SetDropHover(StateNode node)
+        {
+            if (_dropHoverNode == node) return;
+            _dropHoverNode?.SetDropTarget(false);
+            _dropHoverNode = node;
+            _dropHoverNode?.SetDropTarget(true);
+        }
+
+        /// <summary>True when the active drag carries at least one AnimationClip.</summary>
+        static bool DragHasClip()
+        {
+            var refs = DragAndDrop.objectReferences;
+            if (refs != null)
+                foreach (var obj in refs)
+                    if (obj is AnimationClip)
+                        return true;
+            return false;
+        }
+
         // ---- contextual menu -------------------------------------------------
 
         public override void BuildContextualMenu(ContextualMenuPopulateEvent evt)
@@ -257,11 +334,14 @@ namespace Yozolab.DaerD
         // ---- transition edge menu --------------------------------------------
 
         /// <summary>Walks up from the right-clicked element to the transition edge it belongs to.</summary>
-        static TransitionEdge ResolveTargetEdge(VisualElement element)
+        static TransitionEdge ResolveTargetEdge(VisualElement element) => ResolveTarget<TransitionEdge>(element);
+
+        /// <summary>Walks up from <paramref name="element"/> to the first ancestor of type T.</summary>
+        static T ResolveTarget<T>(VisualElement element) where T : VisualElement
         {
             while (element != null)
             {
-                if (element is TransitionEdge edge) return edge;
+                if (element is T match) return match;
                 element = element.parent;
             }
             return null;

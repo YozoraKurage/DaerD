@@ -578,6 +578,41 @@ namespace Yozolab.DaerD
             return state;
         }
 
+        /// <summary>
+        /// Creates a state at <paramref name="position"/> using <paramref name="clip"/> as its
+        /// motion. Used when an AnimationClip is dropped onto empty graph space.
+        /// </summary>
+        public AnimatorState CreateStateWithClip(Vector2 position, AnimationClip clip)
+        {
+            var sm = _context.CurrentStateMachine;
+            if (sm == null || clip == null) return null;
+
+            AnimatorState state;
+            using (new UndoScope("Create State"))
+            {
+                Undo.RegisterCompleteObjectUndo(sm, "Create State");
+                state = sm.AddState(MakeUniqueName(sm, clip.name), new Vector3(position.x, position.y, 0f));
+                DaerDSettings.ApplyStateDefaultsTo(state);
+                state.motion = clip;
+                EditorUtility.SetDirty(sm);
+            }
+            return state;
+        }
+
+        /// <summary>Replaces a state's motion, used when an AnimationClip is dropped onto its node.</summary>
+        public void AssignMotion(AnimatorState state, Motion motion)
+        {
+            if (state == null) return;
+            using (new UndoScope("Assign Motion"))
+            {
+                Undo.RegisterCompleteObjectUndo(state, "Assign Motion");
+                state.motion = motion;
+                EditorUtility.SetDirty(state);
+                if (_context.Controller != null)
+                    EditorUtility.SetDirty(_context.Controller);
+            }
+        }
+
         public AnimatorStateMachine CreateSubStateMachine(Vector2 position)
         {
             var sm = _context.CurrentStateMachine;
