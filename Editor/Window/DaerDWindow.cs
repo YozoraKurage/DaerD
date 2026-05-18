@@ -69,7 +69,7 @@ namespace Yozolab.DaerD
 
             _graphView = new AnimatorGraphView(_context) { Owner = new EditorWindowOwner { Window = this } };
             _layersPanel = new LayersPanel(_context);
-            _parametersPanel = new ParametersPanel(_context, parameter => _graphView.Sync.HighlightParameter(parameter));
+            _parametersPanel = new ParametersPanel(_context);
             _inspectorPanel = new InspectorPanel(_context, _graphView);
 
             var leftSplit = new TwoPaneSplitView(0, 220, TwoPaneSplitViewOrientation.Vertical);

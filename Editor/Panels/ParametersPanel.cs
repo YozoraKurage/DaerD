@@ -6,17 +6,15 @@ using UnityEngine;
 
 namespace Yozolab.DaerD
 {
-    /// <summary>Parameter CRUD, with auto type conversion, cascade rename and find-usages.</summary>
+    /// <summary>Parameter CRUD, with auto type conversion and cascade rename.</summary>
     class ParametersPanel : PanelBase
     {
-        readonly Action<string> _highlight;
+        readonly ListReorder _reorder = new ListReorder();
         string _search = string.Empty;
-        string _highlightedParameter;
 
-        public ParametersPanel(DaerDContext context, Action<string> highlightCallback)
+        public ParametersPanel(DaerDContext context)
             : base(context, "Parameters")
         {
-            _highlight = highlightCallback;
             context.ControllerChanged += Refresh;
             context.ParametersChanged += Refresh;
         }
@@ -27,7 +25,8 @@ namespace Yozolab.DaerD
             var parameters = controller.parameters;
 
             EditorGUILayout.BeginHorizontal();
-            _search = EditorGUILayout.TextField(_search, EditorStyles.toolbarSearchField);
+            // MinWidth lets the search field shrink so the Add button stays pinned to the right.
+            _search = EditorGUILayout.TextField(_search, EditorStyles.toolbarSearchField, GUILayout.MinWidth(24));
             if (GUILayout.Button("Add ▾", EditorStyles.toolbarDropDown, GUILayout.Width(54)))
                 ShowAddMenu();
             EditorGUILayout.EndHorizontal();
@@ -47,6 +46,9 @@ namespace Yozolab.DaerD
 
             EditorGUILayout.Space(2);
 
+            // Maps each drawn (search-filtered) row back to its index in the full array.
+            var visibleReal = new List<int>();
+            _reorder.Begin();
             for (int i = 0; i < parameters.Length; i++)
             {
                 var p = parameters[i];
@@ -54,7 +56,9 @@ namespace Yozolab.DaerD
                     p.name.IndexOf(_search, StringComparison.OrdinalIgnoreCase) < 0)
                     continue;
 
-                EditorGUILayout.BeginHorizontal();
+                var rowRect = EditorGUILayout.BeginHorizontal();
+                _reorder.DrawHandle();
+                visibleReal.Add(i);
 
                 var prevColor = GUI.color;
                 if (unused.Contains(p.name)) GUI.color = new Color(1f, 0.6f, 0.6f);
@@ -81,27 +85,13 @@ namespace Yozolab.DaerD
 
                 DrawDefaultValue(controller, parameters, i);
 
-                bool highlighted = _highlightedParameter == p.name;
-                var prevBg = GUI.backgroundColor;
-                if (highlighted) GUI.backgroundColor = new Color(0.96f, 0.84f, 0.22f);
-                if (GUILayout.Button("Find", EditorStyles.miniButton, GUILayout.Width(40)))
-                {
-                    _highlightedParameter = highlighted ? null : p.name;
-                    _highlight?.Invoke(_highlightedParameter);
-                }
-                GUI.backgroundColor = prevBg;
-
-                using (new EditorGUI.DisabledScope(i == 0))
-                    if (GUILayout.Button("▲", EditorStyles.miniButtonLeft, GUILayout.Width(20)))
-                    { MoveParameter(i, i - 1); GUIUtility.ExitGUI(); }
-                using (new EditorGUI.DisabledScope(i == parameters.Length - 1))
-                    if (GUILayout.Button("▼", EditorStyles.miniButtonMid, GUILayout.Width(20)))
-                    { MoveParameter(i, i + 1); GUIUtility.ExitGUI(); }
-                if (GUILayout.Button("✕", EditorStyles.miniButtonRight, GUILayout.Width(20)))
+                if (GUILayout.Button("✕", EditorStyles.miniButton, GUILayout.Width(22)))
                 { RemoveParameter(i); GUIUtility.ExitGUI(); }
 
                 EditorGUILayout.EndHorizontal();
+                _reorder.Row(rowRect);
             }
+            _reorder.End((from, to) => MoveParameter(visibleReal[from], visibleReal[to]));
 
             if (parameters.Length == 0)
                 EditorGUILayout.LabelField("No parameters.", EditorStyles.centeredGreyMiniLabel);
@@ -187,10 +177,14 @@ namespace Yozolab.DaerD
         {
             var controller = Context.Controller;
             var parameters = controller.parameters;
-            if (to < 0 || to >= parameters.Length) return;
+            if (from < 0 || from >= parameters.Length || to < 0 || to >= parameters.Length || from == to)
+                return;
             Undo.RegisterCompleteObjectUndo(controller, "Reorder Parameters");
             var moved = parameters[from];
-            parameters[from] = parameters[to];
+            if (from < to)
+                Array.Copy(parameters, from + 1, parameters, from, to - from);
+            else
+                Array.Copy(parameters, to, parameters, to + 1, from - to);
             parameters[to] = moved;
             controller.parameters = parameters;
             EditorUtility.SetDirty(controller);

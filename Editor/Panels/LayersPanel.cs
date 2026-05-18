@@ -1,3 +1,4 @@
+using System;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
@@ -7,6 +8,8 @@ namespace Yozolab.DaerD
     /// <summary>Layer list plus settings for the selected layer.</summary>
     class LayersPanel : PanelBase
     {
+        readonly ListReorder _reorder = new ListReorder();
+
         public LayersPanel(DaerDContext context) : base(context, "Layers")
         {
             context.ControllerChanged += Refresh;
@@ -19,9 +22,12 @@ namespace Yozolab.DaerD
             var controller = Context.Controller;
             var layers = controller.layers;
 
+            _reorder.Begin();
             for (int i = 0; i < layers.Length; i++)
             {
-                EditorGUILayout.BeginHorizontal();
+                var rowRect = EditorGUILayout.BeginHorizontal();
+                _reorder.DrawHandle();
+
                 bool isCurrent = i == Context.LayerIndex;
                 var prev = GUI.backgroundColor;
                 if (isCurrent) GUI.backgroundColor = new Color(0.40f, 0.60f, 0.90f);
@@ -29,18 +35,10 @@ namespace Yozolab.DaerD
                     Context.SetLayer(i);
                 GUI.backgroundColor = prev;
 
-                using (new EditorGUI.DisabledScope(i == 0))
-                {
-                    if (GUILayout.Button("▲", EditorStyles.miniButtonLeft, GUILayout.Width(22)))
-                        MoveLayer(i, i - 1);
-                }
-                using (new EditorGUI.DisabledScope(i == layers.Length - 1))
-                {
-                    if (GUILayout.Button("▼", EditorStyles.miniButtonRight, GUILayout.Width(22)))
-                        MoveLayer(i, i + 1);
-                }
                 EditorGUILayout.EndHorizontal();
+                _reorder.Row(rowRect);
             }
+            _reorder.End(MoveLayer);
 
             EditorGUILayout.Space(4);
             if (GUILayout.Button("+ Add Layer"))
@@ -118,10 +116,14 @@ namespace Yozolab.DaerD
         {
             var controller = Context.Controller;
             var layers = controller.layers;
-            if (to < 0 || to >= layers.Length) return;
+            if (from < 0 || from >= layers.Length || to < 0 || to >= layers.Length || from == to)
+                return;
             Undo.RegisterCompleteObjectUndo(controller, "Reorder Layers");
             var moved = layers[from];
-            layers[from] = layers[to];
+            if (from < to)
+                Array.Copy(layers, from + 1, layers, from, to - from);
+            else
+                Array.Copy(layers, to, layers, to + 1, from - to);
             layers[to] = moved;
             controller.layers = layers;
             EditorUtility.SetDirty(controller);

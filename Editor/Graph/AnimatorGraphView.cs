@@ -315,6 +315,17 @@ namespace Yozolab.DaerD
                 evt.menu.AppendSeparator();
                 var stateNode = FirstSelected<StateNode>();
                 evt.menu.AppendAction("Set as Default State", _ => _sync.SetDefaultState(stateNode.State));
+
+                CountConnectedTransitions(stateNode, out int incoming, out int outgoing, out int connected);
+                evt.menu.AppendAction("Select Transitions/Incoming (" + incoming + ")",
+                    _ => SelectTransitions(stateNode, incoming: true, outgoing: false),
+                    incoming > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+                evt.menu.AppendAction("Select Transitions/Outgoing (" + outgoing + ")",
+                    _ => SelectTransitions(stateNode, incoming: false, outgoing: true),
+                    outgoing > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+                evt.menu.AppendAction("Select Transitions/All Connected (" + connected + ")",
+                    _ => SelectTransitions(stateNode, incoming: true, outgoing: true),
+                    connected > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
             }
 
             evt.menu.AppendSeparator();
@@ -329,6 +340,39 @@ namespace Yozolab.DaerD
                 _sync.RequestRebuild();
             });
             evt.menu.AppendAction("Frame All", _ => FrameAll());
+        }
+
+        // ---- transition bulk selection ---------------------------------------
+
+        /// <summary>Counts the non-default transition edges entering, leaving and touching the state.</summary>
+        void CountConnectedTransitions(StateNode stateNode, out int incoming, out int outgoing, out int connected)
+        {
+            int inc = 0, outg = 0, conn = 0;
+            edges.ForEach(e =>
+            {
+                if (!(e is TransitionEdge te) || te.IsDefaultEdge) return;
+                bool isIncoming = te.input?.node == stateNode;
+                bool isOutgoing = te.output?.node == stateNode;
+                if (isIncoming) inc++;
+                if (isOutgoing) outg++;
+                if (isIncoming || isOutgoing) conn++;
+            });
+            incoming = inc;
+            outgoing = outg;
+            connected = conn;
+        }
+
+        /// <summary>Replaces the graph selection with the transition edges connected to the state.</summary>
+        void SelectTransitions(StateNode stateNode, bool incoming, bool outgoing)
+        {
+            ClearSelection();
+            edges.ForEach(e =>
+            {
+                if (!(e is TransitionEdge te) || te.IsDefaultEdge) return;
+                if ((incoming && te.input?.node == stateNode) ||
+                    (outgoing && te.output?.node == stateNode))
+                    AddToSelection(te);
+            });
         }
 
         // ---- transition edge menu --------------------------------------------
