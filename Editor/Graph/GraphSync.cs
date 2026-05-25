@@ -65,8 +65,9 @@ namespace Yozolab.DaerD
             foreach (var child in sm.states)
             {
                 if (child.state == null) continue;
-                var node = new StateNode(child.state);
-                _stateNodes[child.state] = node;
+                var capturedState = child.state;
+                var node = new StateNode(capturedState, s => _context.EnterBlendTree(s));
+                _stateNodes[capturedState] = node;
                 AddNode(node, child.position);
             }
 

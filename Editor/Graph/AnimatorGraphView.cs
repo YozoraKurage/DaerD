@@ -59,6 +59,35 @@ namespace Yozolab.DaerD
             context.LayersChanged += _sync.RequestRebuild;
             context.GraphStructureChanged += _sync.RequestRebuild;
             context.SelectionChanged += OnContextSelectionChanged;
+            context.FrameRequested += FrameOn;
+        }
+
+        /// <summary>Centers the view on the node representing <paramref name="model"/>.</summary>
+        public void FrameOn(object model)
+        {
+            if (model == null) return;
+            var node = _sync.FindNode(model);
+            if (node == null && model is AnimatorTransitionBase transition)
+            {
+                var edge = _sync.FindEdge(transition);
+                if (edge == null) return;
+                schedule.Execute(() =>
+                {
+                    ClearSelection();
+                    AddToSelection(edge);
+                    FrameSelection();
+                }).ExecuteLater(20);
+                return;
+            }
+            if (node == null) return;
+            // Defer one frame so a rebuild triggered in the same call has time to place the
+            // node before we measure its bounds.
+            schedule.Execute(() =>
+            {
+                ClearSelection();
+                AddToSelection(node);
+                FrameSelection();
+            }).ExecuteLater(20);
         }
 
         public void Cleanup()

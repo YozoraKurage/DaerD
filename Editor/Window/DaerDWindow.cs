@@ -14,9 +14,14 @@ namespace Yozolab.DaerD
 
         DaerDContext _context;
         AnimatorGraphView _graphView;
+        BlendTreeGraphView _blendTreeView;
+        VisualElement _graphHost;
         LayersPanel _layersPanel;
         ParametersPanel _parametersPanel;
         InspectorPanel _inspectorPanel;
+        BlendTreeHierarchyPanel _hierarchyPanel;
+        VisualElement _rightColumn;
+        TwoPaneSplitView _rightSplit;
         StatePreview _statePreview;
         VisualElement _breadcrumb;
         double _lastRuntimePoll;
@@ -68,17 +73,34 @@ namespace Yozolab.DaerD
             rootVisualElement.Add(BuildToolbar());
 
             _graphView = new AnimatorGraphView(_context) { Owner = new EditorWindowOwner { Window = this } };
+            _blendTreeView = new BlendTreeGraphView(_context);
             _layersPanel = new LayersPanel(_context);
             _parametersPanel = new ParametersPanel(_context);
             _inspectorPanel = new InspectorPanel(_context, _graphView);
+            _hierarchyPanel = new BlendTreeHierarchyPanel(_context);
+
+            // The two graph surfaces share the centre pane; only one is visible at a time
+            // depending on whether the user has drilled into a blend tree.
+            _graphHost = new VisualElement { style = { flexGrow = 1 } };
+            _graphView.style.flexGrow = 1;
+            _blendTreeView.style.flexGrow = 1;
+            _graphHost.Add(_graphView);
+            _graphHost.Add(_blendTreeView);
 
             var leftSplit = new TwoPaneSplitView(0, 220, TwoPaneSplitViewOrientation.Vertical);
             leftSplit.Add(_layersPanel);
             leftSplit.Add(_parametersPanel);
 
+            // The right column either shows the inspector full-height (state machine view)
+            // or splits inspector-on-top / hierarchy-on-bottom (blend tree view). The
+            // hierarchy isn't useful outside blend tree mode, so we swap layouts rather
+            // than just hide a pane, otherwise the splitter gutter would still take space.
+            _rightColumn = new VisualElement { style = { flexGrow = 1 } };
+            _rightColumn.Add(_inspectorPanel);
+
             var centerRightSplit = new TwoPaneSplitView(1, 320, TwoPaneSplitViewOrientation.Horizontal);
-            centerRightSplit.Add(_graphView);
-            centerRightSplit.Add(_inspectorPanel);
+            centerRightSplit.Add(_graphHost);
+            centerRightSplit.Add(_rightColumn);
 
             var mainSplit = new TwoPaneSplitView(0, 250, TwoPaneSplitViewOrientation.Horizontal);
             mainSplit.style.flexGrow = 1;
@@ -88,9 +110,16 @@ namespace Yozolab.DaerD
 
             _context.LayerChanged += RefreshBreadcrumb;
             _context.StateMachinePathChanged += RefreshBreadcrumb;
+            _context.BlendTreePathChanged += RefreshBreadcrumb;
             _context.ControllerChanged += RefreshBreadcrumb;
             _context.LayerChanged += SyncSerializedState;
             _context.ControllerChanged += SyncSerializedState;
+
+            _context.BlendTreePathChanged += RefreshGraphVisibility;
+            _context.StateMachinePathChanged += RefreshGraphVisibility;
+            _context.ControllerChanged += RefreshGraphVisibility;
+            _context.LayerChanged += RefreshGraphVisibility;
+            RefreshGraphVisibility();
 
             _statePreview.Start();
 
@@ -170,6 +199,70 @@ namespace Yozolab.DaerD
                     text = stateMachine != null ? stateMachine.name : "?",
                 });
             }
+            // When inside a blend tree, extend the trail: state entry name (clickable to
+            // exit) and then one entry per nesting level. The trailing arrow makes it clear
+            // the visible graph is the deepest item, matching the sub-state machine UX.
+            if (_context.IsViewingBlendTree)
+            {
+                var originState = _context.BlendTreeOriginState;
+                _breadcrumb.Add(new Label("›"));
+                _breadcrumb.Add(new ToolbarButton(() => _context.ExitBlendTree())
+                {
+                    text = (originState != null ? originState.name : "Blend Tree") + " ▾",
+                    tooltip = "Return to the state machine view",
+                });
+                for (int i = 0; i < _context.BlendTreePath.Count; i++)
+                {
+                    int depth = i;
+                    var tree = _context.BlendTreePath[i];
+                    _breadcrumb.Add(new Label("›"));
+                    _breadcrumb.Add(new ToolbarButton(() => _context.GoToBlendTreeBreadcrumb(depth))
+                    {
+                        text = tree != null ? tree.name : "?",
+                    });
+                }
+            }
+        }
+
+        /// <summary>Shows the blend tree view when the context has drilled into one, otherwise the state machine view.</summary>
+        void RefreshGraphVisibility()
+        {
+            if (_graphView == null || _blendTreeView == null) return;
+            bool inBlendTree = _context != null && _context.IsViewingBlendTree;
+            _graphView.style.display = inBlendTree ? DisplayStyle.None : DisplayStyle.Flex;
+            _blendTreeView.style.display = inBlendTree ? DisplayStyle.Flex : DisplayStyle.None;
+            if (inBlendTree)
+                _blendTreeView.RequestRebuild();
+
+            RefreshRightColumnLayout(inBlendTree);
+        }
+
+        /// <summary>
+        /// Reparents the inspector + hierarchy so the hierarchy panel only exists in the
+        /// visual tree when the user is editing a BlendTree. Outside blend tree mode the
+        /// inspector occupies the full right column with no splitter gutter.
+        /// </summary>
+        void RefreshRightColumnLayout(bool inBlendTree)
+        {
+            if (_rightColumn == null || _inspectorPanel == null || _hierarchyPanel == null) return;
+
+            if (inBlendTree)
+            {
+                if (_rightSplit != null && _rightSplit.parent == _rightColumn) return;
+                _rightColumn.Clear();
+                _rightSplit = new TwoPaneSplitView(1, 200, TwoPaneSplitViewOrientation.Vertical);
+                _rightSplit.style.flexGrow = 1;
+                _rightSplit.Add(_inspectorPanel);
+                _rightSplit.Add(_hierarchyPanel);
+                _rightColumn.Add(_rightSplit);
+            }
+            else
+            {
+                if (_rightSplit == null && _inspectorPanel.parent == _rightColumn) return;
+                _rightColumn.Clear();
+                _rightSplit = null;
+                _rightColumn.Add(_inspectorPanel);
+            }
         }
 
         void OnUndoRedo()
@@ -177,9 +270,12 @@ namespace Yozolab.DaerD
             if (_context == null) return;
             _context.ValidatePath();
             _graphView?.Sync.RequestRebuild();
+            _blendTreeView?.RequestRebuild();
+            RefreshGraphVisibility();
             _layersPanel?.Refresh();
             _parametersPanel?.Refresh();
             _inspectorPanel?.Refresh();
+            _hierarchyPanel?.Refresh();
         }
 
         void OnPlayModeChanged(PlayModeStateChange change) => _graphView?.Sync.RequestRebuild();

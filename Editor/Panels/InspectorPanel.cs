@@ -75,6 +75,14 @@ namespace Yozolab.DaerD
             {
                 DrawStateMachine(stateMachine);
             }
+            else if (selection is BlendTree blendTree)
+            {
+                DrawBlendTreeSelection(blendTree);
+            }
+            else if (selection is AnimationClip clip)
+            {
+                DrawClipSelection(clip);
+            }
             else if (selection is SpecialNodeKind kind)
             {
                 EditorGUILayout.HelpBox(kind + " node. Drag from its port to create transitions.", MessageType.Info);
@@ -83,6 +91,23 @@ namespace Yozolab.DaerD
             {
                 DrawOverview();
             }
+        }
+
+        void DrawBlendTreeSelection(BlendTree blendTree)
+        {
+            EditorGUILayout.LabelField("Blend Tree", EditorStyles.boldLabel);
+            BlendTreePanel.Draw(blendTree, Context);
+        }
+
+        void DrawClipSelection(AnimationClip clip)
+        {
+            EditorGUILayout.LabelField("Animation Clip", EditorStyles.boldLabel);
+            EditorGUILayout.ObjectField("Clip", clip, typeof(AnimationClip), false);
+            EditorGUILayout.LabelField("Length", clip.length.ToString("0.###") + "s");
+            EditorGUILayout.LabelField("Frame Rate", clip.frameRate.ToString("0.#") + " fps");
+            EditorGUILayout.LabelField("Looping", clip.isLooping ? "Yes" : "No");
+            if (GUILayout.Button("Ping in Project"))
+                EditorGUIUtility.PingObject(clip);
         }
 
         // ---- state -----------------------------------------------------------
@@ -130,6 +155,10 @@ namespace Yozolab.DaerD
                 {
                     var edge = _graphView.Sync.FindEdge(t);
                     Context.Select((object)edge ?? t);
+                    // Also center the graph view on the edge so the user can see what they
+                    // selected — clicking "Select" without a follow-up frame leaves the user
+                    // hunting for the highlighted edge on a large state machine.
+                    Context.RequestFrameOn((object)edge ?? t);
                 }
                 EditorGUILayout.EndHorizontal();
             }
@@ -141,7 +170,7 @@ namespace Yozolab.DaerD
                 if (_showBlendTree)
                 {
                     EditorGUI.indentLevel++;
-                    BlendTreePanel.Draw(blendTree, controller);
+                    BlendTreePanel.Draw(blendTree, Context);
                     EditorGUI.indentLevel--;
                 }
             }
