@@ -46,6 +46,11 @@ namespace Yozolab.DaerD
 
         public void Rebuild()
         {
+            // Snapshot the current graph selection by underlying model so we can restore it
+            // after the rebuild. Without this, Ctrl+Z and other rebuilds collapse multi-select
+            // back to whatever single object Context.Selection points at.
+            var capturedSelection = CaptureGraphSelection();
+
             _stateNodes.Clear();
             _ssmNodes.Clear();
             _edges.Clear();
@@ -101,7 +106,7 @@ namespace Yozolab.DaerD
             foreach (var edge in _edges)
                 edge.Refresh();
 
-            RestoreSelection();
+            RestoreSelection(capturedSelection);
             RefreshRuntimeHighlight();
             _context.NotifyGraphRebuilt();
         }
@@ -152,27 +157,106 @@ namespace Yozolab.DaerD
 
         // ---- selection -------------------------------------------------------
 
-        void RestoreSelection()
+        /// <summary>
+        /// Per-element identity capture of the current graph selection. We store the
+        /// underlying animator objects (and SpecialNode kinds) so the matching graph
+        /// elements can be found again after a rebuild has replaced every visual node.
+        /// </summary>
+        class CapturedSelection
         {
-            var selection = _context.Selection;
-            GraphElement element = null;
-            switch (selection)
+            public readonly List<AnimatorState> States = new List<AnimatorState>();
+            public readonly List<AnimatorStateMachine> StateMachines = new List<AnimatorStateMachine>();
+            public readonly List<SpecialNodeKind> Specials = new List<SpecialNodeKind>();
+            public readonly List<AnimatorTransitionBase> Transitions = new List<AnimatorTransitionBase>();
+        }
+
+        CapturedSelection CaptureGraphSelection()
+        {
+            var captured = new CapturedSelection();
+            foreach (var selectable in _graphView.selection)
             {
-                case AnimatorState state when _stateNodes.TryGetValue(state, out var sn):
-                    element = sn;
-                    break;
-                case AnimatorStateMachine sm when _ssmNodes.TryGetValue(sm, out var mn):
-                    element = mn;
-                    break;
-                case AnimatorTransitionBase transition:
-                    foreach (var edge in _edges)
-                        if (edge.Transitions.Contains(transition)) { element = edge; break; }
-                    break;
-                case TransitionEdge edge:
-                    if (_edges.Contains(edge)) element = edge;
-                    break;
+                switch (selectable)
+                {
+                    case StateNode sn when sn.State != null:
+                        captured.States.Add(sn.State);
+                        break;
+                    case SubStateMachineNode mn when mn.StateMachine != null:
+                        captured.StateMachines.Add(mn.StateMachine);
+                        break;
+                    case SpecialNode spn:
+                        captured.Specials.Add(spn.Kind);
+                        break;
+                    case TransitionEdge te:
+                        foreach (var t in te.Transitions)
+                            if (t != null) captured.Transitions.Add(t);
+                        break;
+                }
             }
-            _graphView.SetSelectionSilently(element);
+            return captured;
+        }
+
+        void RestoreSelection(CapturedSelection captured)
+        {
+            var elements = new List<GraphElement>();
+
+            foreach (var state in captured.States)
+                if (_stateNodes.TryGetValue(state, out var node)) elements.Add(node);
+            foreach (var sm in captured.StateMachines)
+                if (_ssmNodes.TryGetValue(sm, out var node)) elements.Add(node);
+            foreach (var kind in captured.Specials)
+            {
+                SpecialNode node;
+                switch (kind)
+                {
+                    case SpecialNodeKind.Entry: node = _entryNode; break;
+                    case SpecialNodeKind.Exit: node = _exitNode; break;
+                    default: node = _anyStateNode; break;
+                }
+                if (node != null) elements.Add(node);
+            }
+            if (captured.Transitions.Count > 0)
+            {
+                var seen = new HashSet<TransitionEdge>();
+                foreach (var transition in captured.Transitions)
+                {
+                    foreach (var edge in _edges)
+                    {
+                        if (seen.Contains(edge)) continue;
+                        if (edge.Transitions.Contains(transition))
+                        {
+                            seen.Add(edge);
+                            elements.Add(edge);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // If we have no captured selection to restore (e.g. the rebuild was triggered without
+            // the graph ever being populated, or every captured element vanished), fall back to
+            // Context.Selection — the panels rely on at least the single-selection contract.
+            if (elements.Count == 0)
+            {
+                var selection = _context.Selection;
+                switch (selection)
+                {
+                    case AnimatorState state when _stateNodes.TryGetValue(state, out var sn):
+                        elements.Add(sn);
+                        break;
+                    case AnimatorStateMachine sm when _ssmNodes.TryGetValue(sm, out var mn):
+                        elements.Add(mn);
+                        break;
+                    case AnimatorTransitionBase transition:
+                        foreach (var edge in _edges)
+                            if (edge.Transitions.Contains(transition)) { elements.Add(edge); break; }
+                        break;
+                    case TransitionEdge edge:
+                        if (_edges.Contains(edge)) elements.Add(edge);
+                        break;
+                }
+            }
+
+            _graphView.SetSelectionSilently(elements);
         }
 
         public GraphNodeBase FindNode(object model)
@@ -671,6 +755,174 @@ namespace Yozolab.DaerD
             if (!StateClipboard.HasData) return;
             StateClipboard.Paste(_context.CurrentStateMachine, position);
             RequestRebuild();
+        }
+
+        // ---- transition copy / paste -----------------------------------------
+
+        /// <summary>
+        /// Copies every (non-default) transition reachable from the given edges, recording each
+        /// transition's source kind / source node and its destination so the snapshots can later
+        /// be pasted onto a different state either as the new source or as the new destination.
+        /// </summary>
+        public void CopyTransitionsFromEdges(IEnumerable<TransitionEdge> edges)
+        {
+            var snapshots = new List<TransitionClipboard.Snapshot>();
+            foreach (var edge in edges)
+            {
+                if (edge == null || edge.IsDefaultEdge) continue;
+                var sourceNode = edge.output?.node as GraphNodeBase;
+                ResolveSourceContext(sourceNode,
+                    out var kind, out var sourceState, out var sourceSm);
+                foreach (var t in edge.Transitions)
+                {
+                    if (t == null) continue;
+                    snapshots.Add(TransitionClipboard.CaptureWithContext(t, kind, sourceState, sourceSm));
+                }
+            }
+            if (snapshots.Count > 0)
+                TransitionClipboard.CopySnapshots(snapshots);
+        }
+
+        static void ResolveSourceContext(GraphNodeBase node,
+            out TransitionClipboard.SourceKind kind,
+            out AnimatorState state,
+            out AnimatorStateMachine stateMachine)
+        {
+            kind = TransitionClipboard.SourceKind.None;
+            state = null;
+            stateMachine = null;
+            switch (node)
+            {
+                case StateNode sn:
+                    kind = TransitionClipboard.SourceKind.State;
+                    state = sn.State;
+                    break;
+                case SubStateMachineNode mn:
+                    kind = TransitionClipboard.SourceKind.SubStateMachine;
+                    stateMachine = mn.StateMachine;
+                    break;
+                case SpecialNode spn when spn.Kind == SpecialNodeKind.AnyState:
+                    kind = TransitionClipboard.SourceKind.AnyState;
+                    break;
+                case SpecialNode spn when spn.Kind == SpecialNodeKind.Entry:
+                    kind = TransitionClipboard.SourceKind.Entry;
+                    break;
+            }
+        }
+
+        /// <summary>
+        /// Pastes the clipboard transitions onto <paramref name="state"/>, using it as the source
+        /// for every new transition. Each new transition's destination is the snapshot's recorded
+        /// destination (state, sub-state machine, or Exit). Snapshots whose destination cannot be
+        /// resolved inside the current state machine are skipped.
+        /// </summary>
+        public void PasteTransitionsWithStateAsSource(AnimatorState state)
+        {
+            if (state == null) return;
+            var sm = _context.CurrentStateMachine;
+            if (sm == null) return;
+            var snapshots = TransitionClipboard.Snapshots;
+            if (snapshots.Count == 0) return;
+
+            var created = new List<AnimatorTransitionBase>();
+            using (new UndoScope("Paste Transition (As Source)"))
+            {
+                Undo.RegisterCompleteObjectUndo(state, "Paste Transition");
+                foreach (var snap in snapshots)
+                {
+                    AnimatorTransitionBase t = null;
+                    if (snap.isExit)
+                    {
+                        t = state.AddExitTransition();
+                    }
+                    else if (snap.destinationState != null && IsStateInStateMachine(snap.destinationState, sm))
+                    {
+                        if (snap.destinationState == state) continue;
+                        t = state.AddTransition(snap.destinationState);
+                    }
+                    else if (snap.destinationStateMachine != null && IsStateMachineInStateMachine(snap.destinationStateMachine, sm))
+                    {
+                        t = state.AddTransition(snap.destinationStateMachine);
+                    }
+                    if (t == null) continue;
+                    TransitionClipboard.Apply(t, snap);
+                    created.Add(t);
+                }
+                if (_context.Controller != null)
+                    EditorUtility.SetDirty(_context.Controller);
+            }
+
+            Rebuild();
+            if (created.Count > 0) _context.Select(created[0]);
+        }
+
+        /// <summary>
+        /// Pastes the clipboard transitions onto <paramref name="state"/>, using it as the
+        /// destination for every new transition. Each new transition is added at the snapshot's
+        /// original source (state, sub-state machine, AnyState, or Entry of the current state
+        /// machine). Snapshots whose source cannot be resolved are skipped.
+        /// </summary>
+        public void PasteTransitionsWithStateAsDestination(AnimatorState state)
+        {
+            if (state == null) return;
+            var sm = _context.CurrentStateMachine;
+            if (sm == null) return;
+            var snapshots = TransitionClipboard.Snapshots;
+            if (snapshots.Count == 0) return;
+
+            var created = new List<AnimatorTransitionBase>();
+            using (new UndoScope("Paste Transition (As Destination)"))
+            {
+                Undo.RegisterCompleteObjectUndo(sm, "Paste Transition");
+                foreach (var snap in snapshots)
+                {
+                    AnimatorTransitionBase t = null;
+                    switch (snap.sourceKind)
+                    {
+                        case TransitionClipboard.SourceKind.State:
+                            if (snap.sourceState == null || snap.sourceState == state) break;
+                            if (!IsStateInStateMachine(snap.sourceState, sm)) break;
+                            Undo.RegisterCompleteObjectUndo(snap.sourceState, "Paste Transition");
+                            t = snap.sourceState.AddTransition(state);
+                            break;
+                        case TransitionClipboard.SourceKind.SubStateMachine:
+                            if (snap.sourceStateMachine == null) break;
+                            if (!IsStateMachineInStateMachine(snap.sourceStateMachine, sm)) break;
+                            t = sm.AddStateMachineTransition(snap.sourceStateMachine, state);
+                            break;
+                        case TransitionClipboard.SourceKind.AnyState:
+                            t = sm.AddAnyStateTransition(state);
+                            break;
+                        case TransitionClipboard.SourceKind.Entry:
+                            t = sm.AddEntryTransition(state);
+                            break;
+                    }
+                    if (t == null) continue;
+                    TransitionClipboard.Apply(t, snap);
+                    created.Add(t);
+                }
+                if (_context.Controller != null)
+                    EditorUtility.SetDirty(_context.Controller);
+            }
+
+            Rebuild();
+            if (created.Count > 0) _context.Select(created[0]);
+        }
+
+        static bool IsStateInStateMachine(AnimatorState target, AnimatorStateMachine sm)
+        {
+            if (target == null || sm == null) return false;
+            foreach (var cs in sm.states)
+                if (cs.state == target) return true;
+            return false;
+        }
+
+        static bool IsStateMachineInStateMachine(AnimatorStateMachine target, AnimatorStateMachine sm)
+        {
+            if (target == null || sm == null) return false;
+            foreach (var cm in sm.stateMachines)
+                if (cm.stateMachine == target) return true;
+            return false;
         }
 
         // ---- highlighting ----------------------------------------------------

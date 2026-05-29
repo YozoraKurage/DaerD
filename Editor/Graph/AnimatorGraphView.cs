@@ -145,6 +145,16 @@ namespace Yozolab.DaerD
             _syncingSelection = false;
         }
 
+        public void SetSelectionSilently(IEnumerable<GraphElement> elements)
+        {
+            _syncingSelection = true;
+            base.ClearSelection();
+            if (elements != null)
+                foreach (var element in elements)
+                    if (element != null) base.AddToSelection(element);
+            _syncingSelection = false;
+        }
+
         void NotifyContextOfSelection()
         {
             if (_syncingSelection) return;
@@ -315,7 +325,14 @@ namespace Yozolab.DaerD
             var edge = ResolveTargetEdge(evt.target as VisualElement);
             if (edge != null && !edge.IsDefaultEdge)
             {
-                BuildTransitionMenu(evt, edge);
+                // If the right-clicked edge is part of a larger multi-edge selection, the
+                // menu acts on every selected edge; otherwise just on the clicked one. This
+                // matches how Unity's other contextual menus behave when right-clicking
+                // inside an existing selection.
+                var selectedEdges = GetSelectedEdges();
+                if (!selectedEdges.Contains(edge))
+                    selectedEdges = new List<TransitionEdge> { edge };
+                BuildTransitionMenu(evt, edge, selectedEdges);
                 return;
             }
 
@@ -355,6 +372,21 @@ namespace Yozolab.DaerD
                 evt.menu.AppendAction("Select Transitions/All Connected (" + connected + ")",
                     _ => SelectTransitions(stateNode, incoming: true, outgoing: true),
                     connected > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+
+                int pasted = TransitionClipboard.Count;
+                string pasteSuffix = pasted > 1 ? " (" + pasted + ")" : string.Empty;
+                evt.menu.AppendAction(
+                    "Paste Transition/This State → Original Destinations" + pasteSuffix,
+                    _ => _sync.PasteTransitionsWithStateAsSource(stateNode.State),
+                    TransitionClipboard.HasDestinationContext
+                        ? DropdownMenuAction.Status.Normal
+                        : DropdownMenuAction.Status.Disabled);
+                evt.menu.AppendAction(
+                    "Paste Transition/Original Sources → This State" + pasteSuffix,
+                    _ => _sync.PasteTransitionsWithStateAsDestination(stateNode.State),
+                    TransitionClipboard.HasSourceContext
+                        ? DropdownMenuAction.Status.Normal
+                        : DropdownMenuAction.Status.Disabled);
             }
 
             evt.menu.AppendSeparator();
@@ -420,7 +452,8 @@ namespace Yozolab.DaerD
             return null;
         }
 
-        void BuildTransitionMenu(ContextualMenuPopulateEvent evt, TransitionEdge edge)
+        void BuildTransitionMenu(ContextualMenuPopulateEvent evt, TransitionEdge edge,
+            List<TransitionEdge> selectedEdges)
         {
             int count = edge.Transitions.Count;
             string suffix = count > 1 ? " (" + count + ")" : string.Empty;
@@ -446,6 +479,14 @@ namespace Yozolab.DaerD
             }
 
             evt.menu.AppendAction("Replicate Transition" + suffix, _ => _sync.ReplicateEdge(edge));
+
+            int copyCount = 0;
+            foreach (var e in selectedEdges)
+                if (!e.IsDefaultEdge) copyCount += e.Transitions.Count;
+            string copySuffix = copyCount > 1 ? " (" + copyCount + ")" : string.Empty;
+            evt.menu.AppendAction("Copy Transition" + copySuffix,
+                _ => _sync.CopyTransitionsFromEdges(selectedEdges),
+                copyCount > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
         }
 
         /// <summary>Neutralises '/' in node names so they don't spawn unintended submenus.</summary>

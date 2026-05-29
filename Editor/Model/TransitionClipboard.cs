@@ -14,6 +14,9 @@ namespace Yozolab.DaerD
     {
         const string SessionKey = "Yozolab.DaerD.TransitionClipboard";
 
+        /// <summary>What kind of node the transition originally ran from.</summary>
+        public enum SourceKind { None, State, SubStateMachine, AnyState, Entry }
+
         [Serializable]
         public class ConditionData
         {
@@ -39,6 +42,15 @@ namespace Yozolab.DaerD
             public bool isExit;
             public string sourceLabel;
             public List<ConditionData> conditions = new List<ConditionData>();
+
+            // Context used by the graph's Copy/Paste Transition menus. JsonUtility round-trips
+            // these Object references via their instance IDs, so they remain resolvable for the
+            // lifetime of the editor session.
+            public SourceKind sourceKind;
+            public AnimatorState sourceState;
+            public AnimatorStateMachine sourceStateMachine;
+            public AnimatorState destinationState;
+            public AnimatorStateMachine destinationStateMachine;
         }
 
         [Serializable]
@@ -67,11 +79,43 @@ namespace Yozolab.DaerD
         public static int Count => Data.items.Count;
         public static IReadOnlyList<Snapshot> Snapshots => Data.items;
 
+        /// <summary>True when any snapshot remembers its source node (set via the new menu Copy).</summary>
+        public static bool HasSourceContext
+        {
+            get
+            {
+                foreach (var s in Data.items)
+                    if (s.sourceKind != SourceKind.None) return true;
+                return false;
+            }
+        }
+
+        /// <summary>True when any snapshot remembers its destination (state, sub-SM, or exit).</summary>
+        public static bool HasDestinationContext
+        {
+            get
+            {
+                foreach (var s in Data.items)
+                    if (s.destinationState != null || s.destinationStateMachine != null || s.isExit)
+                        return true;
+                return false;
+            }
+        }
+
         public static void Copy(IEnumerable<AnimatorTransitionBase> transitions)
         {
             Data.items.Clear();
             foreach (var t in transitions)
                 if (t != null) Data.items.Add(Capture(t));
+            Save();
+        }
+
+        /// <summary>Replaces the clipboard with pre-built snapshots (e.g. with source/destination context).</summary>
+        public static void CopySnapshots(IEnumerable<Snapshot> snapshots)
+        {
+            Data.items.Clear();
+            foreach (var snap in snapshots)
+                if (snap != null) Data.items.Add(snap);
             Save();
         }
 
@@ -95,6 +139,22 @@ namespace Yozolab.DaerD
                 snap.orderedInterruption = st.orderedInterruption;
                 snap.canTransitionToSelf = st.canTransitionToSelf;
             }
+            return snap;
+        }
+
+        /// <summary>
+        /// Captures a transition together with its source and destination context so it can later
+        /// be pasted as a new transition (either pivoting on the source or on the destination).
+        /// </summary>
+        public static Snapshot CaptureWithContext(AnimatorTransitionBase transition,
+            SourceKind sourceKind, AnimatorState sourceState, AnimatorStateMachine sourceStateMachine)
+        {
+            var snap = Capture(transition);
+            snap.sourceKind = sourceKind;
+            snap.sourceState = sourceState;
+            snap.sourceStateMachine = sourceStateMachine;
+            snap.destinationState = transition.destinationState;
+            snap.destinationStateMachine = transition.destinationStateMachine;
             return snap;
         }
 
