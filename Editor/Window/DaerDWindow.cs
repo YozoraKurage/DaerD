@@ -29,7 +29,7 @@ namespace Yozolab.DaerD
         public static DaerDWindow Open(AnimatorController controller)
         {
             var window = GetWindow<DaerDWindow>();
-            window.titleContent = new GUIContent("daerD");
+            window.titleContent = new GUIContent("DaerD");
             window.minSize = new Vector2(760, 440);
             window.SetController(controller);
             window.Show();
