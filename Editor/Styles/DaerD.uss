@@ -111,3 +111,18 @@
     padding: 4px 6px;
     background-color: rgba(0, 0, 0, 0.2);
 }
+
+/* Blend tree view: roomier nodes than the state machine view because every node
+   carries 2-3 lines of metadata. */
+.blendtree-root-node {
+    min-width: 200px;
+}
+
+.blendtree-child-node {
+    min-width: 200px;
+}
+
+.blendtree-node__meta {
+    -unity-font-style: bold;
+    font-size: 11px;
+}

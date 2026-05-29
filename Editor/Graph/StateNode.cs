@@ -1,3 +1,4 @@
+using System;
 using UnityEditor.Animations;
 using UnityEditor.Experimental.GraphView;
 using UnityEngine;
@@ -12,6 +13,7 @@ namespace Yozolab.DaerD
 
         readonly Label _nameLabel;
         readonly Label _motionLabel;
+        readonly Action<AnimatorState> _onOpenBlendTree;
         static readonly Color DefaultStateColor = new Color(0.78f, 0.45f, 0.13f);
         static readonly Color CurrentStateColor = new Color(0.20f, 0.55f, 0.25f);
         static readonly Color HighlightBorderColor = new Color(0.96f, 0.84f, 0.22f);
@@ -20,9 +22,10 @@ namespace Yozolab.DaerD
         bool _highlighted;
         bool _dropTarget;
 
-        public StateNode(AnimatorState state)
+        public StateNode(AnimatorState state, Action<AnimatorState> onOpenBlendTree = null)
         {
             State = state;
+            _onOpenBlendTree = onOpenBlendTree;
             AddToClassList("state-node");
             AddToClassList("compact-node");
             AddInputPort();
@@ -48,6 +51,17 @@ namespace Yozolab.DaerD
             capabilities |= Capabilities.Movable | Capabilities.Selectable | Capabilities.Deletable
                           | Capabilities.Copiable | Capabilities.Snappable;
 
+            // Double-click on a state whose motion is a BlendTree drills into the tree view,
+            // matching the affordance the sub-state machine node already offers.
+            RegisterCallback<MouseDownEvent>(evt =>
+            {
+                if (evt.clickCount == 2 && evt.button == 0 && State?.motion is BlendTree)
+                {
+                    _onOpenBlendTree?.Invoke(State);
+                    evt.StopPropagation();
+                }
+            });
+
             RefreshLabels();
             RefreshExpandedState();
             RefreshPorts();
@@ -58,6 +72,9 @@ namespace Yozolab.DaerD
             title = State.name;
             _nameLabel.text = State.name;
             _motionLabel.text = DescribeMotion(State.motion);
+            tooltip = State.motion is BlendTree
+                ? "Double-click to open the blend tree view"
+                : string.Empty;
         }
 
         public void SetIsDefault(bool isDefault)

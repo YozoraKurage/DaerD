@@ -8,9 +8,11 @@ namespace Yozolab.DaerD
     /// <summary>IMGUI drawer for blend tree editing, shown in the inspector side panel.</summary>
     static class BlendTreePanel
     {
-        public static void Draw(BlendTree tree, AnimatorController controller)
+        public static void Draw(BlendTree tree, DaerDContext context)
         {
-            if (tree == null) return;
+            if (tree == null || context == null) return;
+            var controller = context.Controller;
+            if (controller == null) return;
 
             var floatParams = FloatParameterNames(controller);
 
@@ -39,10 +41,12 @@ namespace Yozolab.DaerD
                 if (!string.IsNullOrEmpty(blendParam)) tree.blendParameter = blendParam;
                 if (is2D && !string.IsNullOrEmpty(blendParamY)) tree.blendParameterY = blendParamY;
                 EditorUtility.SetDirty(tree);
+                context.NotifyBlendTreeChanged();
             }
 
             EditorGUILayout.Space(2);
             EditorGUILayout.LabelField("Motions", EditorStyles.boldLabel);
+            DrawChildHeader(blendType);
 
             var children = tree.children;
             int removeIndex = -1;
@@ -101,7 +105,37 @@ namespace Yozolab.DaerD
                 Undo.RegisterCompleteObjectUndo(tree, "Edit Blend Tree Motions");
                 tree.children = list.ToArray();
                 EditorUtility.SetDirty(tree);
+                context.NotifyBlendTreeChanged();
             }
+        }
+
+        /// <summary>
+        /// Renders a header row that labels the per-child columns. Headers track the blend
+        /// type because Simple1D shows a Threshold, 2D variants show a Position, and Direct
+        /// shows a per-child Parameter dropdown — the same column width logic as the rows
+        /// below so the labels line up.
+        /// </summary>
+        static void DrawChildHeader(BlendTreeType blendType)
+        {
+            var headerStyle = EditorStyles.miniBoldLabel;
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.LabelField("Motion", headerStyle);
+            switch (blendType)
+            {
+                case BlendTreeType.Simple1D:
+                    EditorGUILayout.LabelField("Threshold", headerStyle, GUILayout.Width(60));
+                    break;
+                case BlendTreeType.Direct:
+                    EditorGUILayout.LabelField("Parameter", headerStyle, GUILayout.Width(90));
+                    break;
+                default:
+                    EditorGUILayout.LabelField("Position (X, Y)", headerStyle, GUILayout.Width(120));
+                    break;
+            }
+            EditorGUILayout.LabelField("Speed", headerStyle, GUILayout.Width(46));
+            // Spacer matches the per-row "X" remove button so the header line never wraps.
+            GUILayout.Space(22 + 4);
+            EditorGUILayout.EndHorizontal();
         }
 
         static string[] FloatParameterNames(AnimatorController controller)

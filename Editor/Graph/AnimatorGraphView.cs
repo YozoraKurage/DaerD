@@ -59,6 +59,35 @@ namespace Yozolab.DaerD
             context.LayersChanged += _sync.RequestRebuild;
             context.GraphStructureChanged += _sync.RequestRebuild;
             context.SelectionChanged += OnContextSelectionChanged;
+            context.FrameRequested += FrameOn;
+        }
+
+        /// <summary>Centers the view on the node representing <paramref name="model"/>.</summary>
+        public void FrameOn(object model)
+        {
+            if (model == null) return;
+            var node = _sync.FindNode(model);
+            if (node == null && model is AnimatorTransitionBase transition)
+            {
+                var edge = _sync.FindEdge(transition);
+                if (edge == null) return;
+                schedule.Execute(() =>
+                {
+                    ClearSelection();
+                    AddToSelection(edge);
+                    FrameSelection();
+                }).ExecuteLater(20);
+                return;
+            }
+            if (node == null) return;
+            // Defer one frame so a rebuild triggered in the same call has time to place the
+            // node before we measure its bounds.
+            schedule.Execute(() =>
+            {
+                ClearSelection();
+                AddToSelection(node);
+                FrameSelection();
+            }).ExecuteLater(20);
         }
 
         public void Cleanup()
@@ -113,6 +142,16 @@ namespace Yozolab.DaerD
             _syncingSelection = true;
             base.ClearSelection();
             if (element != null) base.AddToSelection(element);
+            _syncingSelection = false;
+        }
+
+        public void SetSelectionSilently(IEnumerable<GraphElement> elements)
+        {
+            _syncingSelection = true;
+            base.ClearSelection();
+            if (elements != null)
+                foreach (var element in elements)
+                    if (element != null) base.AddToSelection(element);
             _syncingSelection = false;
         }
 
@@ -286,7 +325,14 @@ namespace Yozolab.DaerD
             var edge = ResolveTargetEdge(evt.target as VisualElement);
             if (edge != null && !edge.IsDefaultEdge)
             {
-                BuildTransitionMenu(evt, edge);
+                // If the right-clicked edge is part of a larger multi-edge selection, the
+                // menu acts on every selected edge; otherwise just on the clicked one. This
+                // matches how Unity's other contextual menus behave when right-clicking
+                // inside an existing selection.
+                var selectedEdges = GetSelectedEdges();
+                if (!selectedEdges.Contains(edge))
+                    selectedEdges = new List<TransitionEdge> { edge };
+                BuildTransitionMenu(evt, edge, selectedEdges);
                 return;
             }
 
@@ -326,6 +372,21 @@ namespace Yozolab.DaerD
                 evt.menu.AppendAction("Select Transitions/All Connected (" + connected + ")",
                     _ => SelectTransitions(stateNode, incoming: true, outgoing: true),
                     connected > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+
+                int pasted = TransitionClipboard.Count;
+                string pasteSuffix = pasted > 1 ? " (" + pasted + ")" : string.Empty;
+                evt.menu.AppendAction(
+                    "Paste Transition/This State → Original Destinations" + pasteSuffix,
+                    _ => _sync.PasteTransitionsWithStateAsSource(stateNode.State),
+                    TransitionClipboard.HasDestinationContext
+                        ? DropdownMenuAction.Status.Normal
+                        : DropdownMenuAction.Status.Disabled);
+                evt.menu.AppendAction(
+                    "Paste Transition/Original Sources → This State" + pasteSuffix,
+                    _ => _sync.PasteTransitionsWithStateAsDestination(stateNode.State),
+                    TransitionClipboard.HasSourceContext
+                        ? DropdownMenuAction.Status.Normal
+                        : DropdownMenuAction.Status.Disabled);
             }
 
             evt.menu.AppendSeparator();
@@ -391,7 +452,8 @@ namespace Yozolab.DaerD
             return null;
         }
 
-        void BuildTransitionMenu(ContextualMenuPopulateEvent evt, TransitionEdge edge)
+        void BuildTransitionMenu(ContextualMenuPopulateEvent evt, TransitionEdge edge,
+            List<TransitionEdge> selectedEdges)
         {
             int count = edge.Transitions.Count;
             string suffix = count > 1 ? " (" + count + ")" : string.Empty;
@@ -417,6 +479,14 @@ namespace Yozolab.DaerD
             }
 
             evt.menu.AppendAction("Replicate Transition" + suffix, _ => _sync.ReplicateEdge(edge));
+
+            int copyCount = 0;
+            foreach (var e in selectedEdges)
+                if (!e.IsDefaultEdge) copyCount += e.Transitions.Count;
+            string copySuffix = copyCount > 1 ? " (" + copyCount + ")" : string.Empty;
+            evt.menu.AppendAction("Copy Transition" + copySuffix,
+                _ => _sync.CopyTransitionsFromEdges(selectedEdges),
+                copyCount > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
         }
 
         /// <summary>Neutralises '/' in node names so they don't spawn unintended submenus.</summary>
