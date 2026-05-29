@@ -7,7 +7,7 @@ namespace Yozolab.DaerD
     /// <summary>Routes .controller assets to the custom editor window via menus and (optionally) double-click.</summary>
     static class ControllerOpenHandler
     {
-        const string AssetMenuPath = "Assets/Open in daerD";
+        const string AssetMenuPath = "Assets/Open in DaerD";
 
         [OnOpenAsset(0)]
         static bool OnOpenController(int instanceID, int line)
@@ -22,7 +22,7 @@ namespace Yozolab.DaerD
             return false;
         }
 
-        [MenuItem("Window/Yozolab/daerD")]
+        [MenuItem("Window/Yozolab/DaerD")]
         static void OpenFromMenu()
         {
             DaerDWindow.Open(Selection.activeObject as AnimatorController);
@@ -40,7 +40,7 @@ namespace Yozolab.DaerD
             return Selection.activeObject is AnimatorController;
         }
 
-        [MenuItem("CONTEXT/AnimatorController/Open in daerD")]
+        [MenuItem("CONTEXT/AnimatorController/Open in DaerD")]
         static void OpenFromContext(MenuCommand command)
         {
             DaerDWindow.Open(command.context as AnimatorController);
