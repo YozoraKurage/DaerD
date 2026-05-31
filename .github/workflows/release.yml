@@ -1,7 +1,27 @@
-name: "Build unitypackage"
+name: "Release"
 
+# main へのプルリクがマージされたら自動実行。
+#   1. PR ラベル (major / minor / patch) から semver を判定し package.json を更新
+#   2. バージョン更新を main へコミット
+#   3. vpm-packager で .unitypackage / .zip を生成
+#   4. 生成パッケージを正式 Release として公開（タグ自動作成）
+#
+# 手動実行 (workflow_dispatch) も可能。その場合は bump 入力値で更新種別を指定する。
 on:
+  pull_request:
+    types: [closed]
+    branches: [main]
   workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version bump type"
+        required: true
+        default: "patch"
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
 
 permissions:
   contents: write
@@ -10,11 +30,52 @@ env:
   packageName: "net.yozolab.daerd"
 
 jobs:
-  build:
+  release:
+    # マージされた PR か、手動実行のときだけ走らせる（クローズのみの PR は無視）
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true }}
     runs-on: "ubuntu-latest"
     steps:
-      - name: "Checkout"
+      - name: "Checkout main"
         uses: "actions/checkout@v4"
+        with:
+          # マージ済みの main を取得し、バージョン更新コミットを push できるようにする
+          ref: ${{ github.event.pull_request.base.ref || github.ref_name }}
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: "Determine version bump"
+        id: "bump"
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_BUMP: ${{ github.event.inputs.bump }}
+          LABELS: ${{ toJson(github.event.pull_request.labels.*.name) }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            type="${INPUT_BUMP:-patch}"
+          elif echo "$LABELS" | grep -q '"major"'; then
+            type="major"
+          elif echo "$LABELS" | grep -q '"minor"'; then
+            type="minor"
+          else
+            type="patch"
+          fi
+          echo "Selected bump type: $type"
+          echo "type=$type" >> "$GITHUB_OUTPUT"
+
+      - name: "Bump package.json version"
+        id: "version"
+        run: |
+          new_version="$(npm version "${{ steps.bump.outputs.type }}" --no-git-tag-version | sed 's/^v//')"
+          echo "Bumped to $new_version"
+          echo "version=$new_version" >> "$GITHUB_OUTPUT"
+
+      - name: "Commit version bump to main"
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json
+          git commit -m "chore: release ${{ steps.version.outputs.version }} [skip ci]"
+          git push origin HEAD:${{ github.event.pull_request.base.ref || github.ref_name }}
 
       - name: "Build"
         id: "build"
@@ -26,8 +87,9 @@ jobs:
         uses: "softprops/action-gh-release@v2"
         if: ${{ steps.build.outputs.package-version != '0.0.0' }}
         with:
-          tag_name: ${{ steps.build.outputs.package-version }}
-          draft: true
+          tag_name: ${{ steps.version.outputs.version }}
+          target_commitish: ${{ github.event.pull_request.base.ref || github.ref_name }}
+          draft: false
           generate_release_notes: true
           files: |
             ${{ steps.build.outputs.zip-path }}
