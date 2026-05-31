@@ -95,3 +95,22 @@ jobs:
             ${{ steps.build.outputs.zip-path }}
             ${{ steps.build.outputs.unitypackage-path }}
             ${{ steps.build.outputs.manifest-path }}
+
+      # この Release は GITHUB_TOKEN で作成されるため `release` イベントの
+      # workflow は発火しない（GitHub の再帰防止仕様）。よって VPM リスティングの
+      # 再ビルドはここから repository_dispatch で明示的にトリガーする。
+      - name: "Trigger VPM listing rebuild"
+        if: ${{ steps.build.outputs.package-version != '0.0.0' }}
+        env:
+          DISPATCH_TOKEN: ${{ secrets.LISTING_DISPATCH_TOKEN }}
+        run: |
+          if [ -z "$DISPATCH_TOKEN" ]; then
+            echo "::warning::LISTING_DISPATCH_TOKEN secret is not set; skipping VPM listing rebuild trigger."
+            exit 0
+          fi
+          curl --fail -sS -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $DISPATCH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/repos/YozoraKurage/vpmrepo-list/dispatches \
+            -d '{"event_type":"daerd-release","client_payload":{"version":"${{ steps.version.outputs.version }}"}}'
