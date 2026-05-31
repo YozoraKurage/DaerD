@@ -164,6 +164,13 @@ namespace Yozolab.DaerD
                 GraphLayout.Hierarchical(_context.CurrentStateMachine);
                 _graphView.Sync.RequestRebuild();
             });
+            // Align acts on the current multi-selection rather than the whole machine, so its
+            // entries gray out until at least two states are selected.
+            layoutMenu.menu.AppendSeparator();
+            layoutMenu.menu.AppendAction("Align Selected/Row (share Y)",
+                _ => AlignSelectedStates(GraphLayout.AlignAxis.Row), AlignStatus);
+            layoutMenu.menu.AppendAction("Align Selected/Column (share X)",
+                _ => AlignSelectedStates(GraphLayout.AlignAxis.Column), AlignStatus);
             toolbar.Add(layoutMenu);
 
             toolbar.Add(new ToolbarButton(() => _graphView.FrameAll()) { text = "Frame All" });
@@ -173,6 +180,17 @@ namespace Yozolab.DaerD
 
             return toolbar;
         }
+
+        void AlignSelectedStates(GraphLayout.AlignAxis axis)
+        {
+            GraphLayout.Align(_context.CurrentStateMachine, _graphView.GetSelectedStates(), axis);
+            _graphView.Sync.RequestRebuild();
+        }
+
+        DropdownMenuAction.Status AlignStatus(DropdownMenuAction _) =>
+            _graphView != null && _graphView.GetSelectedStates().Count >= 2
+                ? DropdownMenuAction.Status.Normal
+                : DropdownMenuAction.Status.Disabled;
 
         void RefreshBreadcrumb()
         {

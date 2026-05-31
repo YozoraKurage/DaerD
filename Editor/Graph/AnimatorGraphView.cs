@@ -207,6 +207,15 @@ namespace Yozolab.DaerD
             return edges;
         }
 
+        public List<AnimatorState> GetSelectedStates()
+        {
+            var states = new List<AnimatorState>();
+            foreach (var s in selection)
+                if (s is StateNode sn && sn.State != null)
+                    states.Add(sn.State);
+            return states;
+        }
+
         // ---- input -----------------------------------------------------------
 
         void OnKeyDown(KeyDownEvent evt)
