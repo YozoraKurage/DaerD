@@ -7,6 +7,10 @@ name: "Release"
 #   4. 生成パッケージを正式 Release として公開（タグ自動作成）
 #
 # 手動実行 (workflow_dispatch) も可能。その場合は bump 入力値で更新種別を指定する。
+#
+# このファイルはリポジトリ固有の値を含まない汎用ワークフロー。VPM パッケージ用の
+# どのリポジトリにもそのままコピーして使える（ビルド対象パッケージ名は vpm-packager が
+# ルートの package.json から自動取得する）。
 on:
   pull_request:
     types: [closed]
@@ -25,9 +29,6 @@ on:
 
 permissions:
   contents: write
-
-env:
-  packageName: "net.yozolab.daerd"
 
 jobs:
   release:
@@ -99,18 +100,28 @@ jobs:
       # この Release は GITHUB_TOKEN で作成されるため `release` イベントの
       # workflow は発火しない（GitHub の再帰防止仕様）。よって VPM リスティングの
       # 再ビルドはここから repository_dispatch で明示的にトリガーする。
+      # event_type は全パッケージ共通の "vpm-package-release"（notify-vpm-listing.yml と揃える）。
       - name: "Trigger VPM listing rebuild"
         if: ${{ steps.build.outputs.package-version != '0.0.0' }}
         env:
           DISPATCH_TOKEN: ${{ secrets.LISTING_DISPATCH_TOKEN }}
+          LISTING_REPO: "YozoraKurage/vpmrepo-list"
+          DISPATCH_EVENT_TYPE: "vpm-package-release"
+          SOURCE_REPO: ${{ github.repository }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
         run: |
           if [ -z "$DISPATCH_TOKEN" ]; then
             echo "::warning::LISTING_DISPATCH_TOKEN secret is not set; skipping VPM listing rebuild trigger."
             exit 0
           fi
+          payload="$(jq -nc \
+            --arg event "$DISPATCH_EVENT_TYPE" \
+            --arg repo "$SOURCE_REPO" \
+            --arg version "$RELEASE_VERSION" \
+            '{event_type: $event, client_payload: {repository: $repo, version: $version}}')"
           curl --fail -sS -X POST \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer $DISPATCH_TOKEN" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
-            https://api.github.com/repos/YozoraKurage/vpmrepo-list/dispatches \
-            -d '{"event_type":"daerd-release","client_payload":{"version":"${{ steps.version.outputs.version }}"}}'
+            "https://api.github.com/repos/${LISTING_REPO}/dispatches" \
+            -d "$payload"
