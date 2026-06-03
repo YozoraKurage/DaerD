@@ -365,9 +365,6 @@ namespace Yozolab.DaerD
         void DrawTransitionList(List<AnimatorTransitionBase> pool)
         {
             EditorGUILayout.LabelField("Transitions (" + pool.Count + ")", EditorStyles.boldLabel);
-            EditorGUILayout.LabelField(
-                "Ctrl/Shift+click: multi-select   Ctrl+C: copy   Ctrl+V: paste onto   Ctrl+Shift+V: paste as new",
-                EditorStyles.miniLabel);
 
             EditorGUILayout.BeginHorizontal();
             EditorGUILayout.LabelField("Solo", EditorStyles.miniLabel, GUILayout.Width(34));
@@ -522,11 +519,6 @@ namespace Yozolab.DaerD
 
             HorizontalLine();
             DrawConditions(transition, controller);
-
-            EditorGUILayout.Space(4);
-            EditorGUILayout.LabelField(
-                "Ctrl+C copy   Ctrl+V paste onto   Ctrl+Shift+V paste as new   (on the selected transition)",
-                EditorStyles.miniLabel);
         }
 
         void DrawTransitionSettings(AnimatorTransitionBase transition)
@@ -757,12 +749,6 @@ namespace Yozolab.DaerD
                 return;
             }
             var typeByName = ParameterTypeMap(controller);
-
-            EditorGUILayout.LabelField(
-                "Each row is a condition found across the selection (count = how many of the " +
-                total + " selected transitions contain it). Editing or removing a row applies to every " +
-                "selected transition that has it.",
-                EditorStyles.miniLabel);
 
             foreach (var entry in shared)
             {

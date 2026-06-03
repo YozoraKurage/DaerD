@@ -31,7 +31,9 @@ namespace Yozolab.DaerD
             style.flexGrow = 1;
             focusable = true;
 
-            SetupZoom(ContentZoomer.DefaultMinScale, ContentZoomer.DefaultMaxScale);
+            // Much wider than the stock 0.25–1.0 range: zoom far out to read big state machines and
+            // further in for detail.
+            SetupZoom(0.05f, 3.0f);
             this.AddManipulator(new ContentDragger());
             this.AddManipulator(new SelectionDragger());
             this.AddManipulator(new RectangleSelector());
@@ -569,17 +571,48 @@ namespace Yozolab.DaerD
             }
 
             evt.menu.AppendSeparator();
-            evt.menu.AppendAction("Auto Layout/Grid", _ =>
-            {
-                GraphLayout.Grid(_context.CurrentStateMachine);
-                _sync.RequestRebuild();
-            });
-            evt.menu.AppendAction("Auto Layout/Hierarchical", _ =>
-            {
-                GraphLayout.Hierarchical(_context.CurrentStateMachine);
-                _sync.RequestRebuild();
-            });
+            // Align acts on the current multi-selection, so it grays out until ≥2 states are selected.
+            evt.menu.AppendAction("Align horizontal",
+                _ => AlignSelectedStates(GraphLayout.AlignAxis.Row), AlignStatus);
+            evt.menu.AppendAction("Align vertical",
+                _ => AlignSelectedStates(GraphLayout.AlignAxis.Column), AlignStatus);
             evt.menu.AppendAction("Frame All", _ => FrameAll());
+
+            if (stateCount == 1)
+            {
+                // Destructive (removes every transition touching the state), so it sits at the very
+                // bottom of the menu where it can't be triggered by accident.
+                var stateNode = FirstSelected<StateNode>();
+                CountConnectedTransitions(stateNode, out _, out _, out int connected);
+                evt.menu.AppendSeparator();
+                evt.menu.AppendAction("Disconnect All", _ => DisconnectStateNode(stateNode),
+                    connected > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+            }
+        }
+
+        void AlignSelectedStates(GraphLayout.AlignAxis axis)
+        {
+            GraphLayout.Align(_context.CurrentStateMachine, GetSelectedStates(), axis);
+            _sync.RequestRebuild();
+        }
+
+        DropdownMenuAction.Status AlignStatus(DropdownMenuAction _) =>
+            GetSelectedStates().Count >= 2 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled;
+
+        /// <summary>Removes every (non-default) transition entering or leaving the state.</summary>
+        void DisconnectStateNode(StateNode node)
+        {
+            var toRemove = new List<GraphElement>();
+            edges.ForEach(e =>
+            {
+                if (e is TransitionEdge te && !te.IsDefaultEdge &&
+                    (te.input?.node == node || te.output?.node == node))
+                    toRemove.Add(te);
+            });
+            if (toRemove.Count == 0) return;
+            using (new UndoScope("Disconnect All"))
+                _sync.HandleChange(new GraphViewChange { elementsToRemove = toRemove });
+            foreach (var ge in toRemove) RemoveElement(ge);
         }
 
         // ---- transition bulk selection ---------------------------------------

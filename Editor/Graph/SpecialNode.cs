@@ -62,5 +62,8 @@ namespace Yozolab.DaerD
             RefreshExpandedState();
             RefreshPorts();
         }
+
+        // Suppress the stock node menu; AnimatorGraphView builds the full context menu itself.
+        public override void BuildContextualMenu(ContextualMenuPopulateEvent evt) { }
     }
 }

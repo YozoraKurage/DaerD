@@ -257,26 +257,7 @@ namespace Yozolab.DaerD
             previewToggle.RegisterValueChangedCallback(evt => _statePreview.SetEnabled(evt.newValue));
             toolbar.Add(previewToggle);
 
-            var layoutMenu = new ToolbarMenu { text = "Layout" };
-            layoutMenu.menu.AppendAction("Grid", _ =>
-            {
-                GraphLayout.Grid(_context.CurrentStateMachine);
-                _graphView.Sync.RequestRebuild();
-            });
-            layoutMenu.menu.AppendAction("Hierarchical", _ =>
-            {
-                GraphLayout.Hierarchical(_context.CurrentStateMachine);
-                _graphView.Sync.RequestRebuild();
-            });
-            // Align acts on the current multi-selection rather than the whole machine, so its
-            // entries gray out until at least two states are selected.
-            layoutMenu.menu.AppendSeparator();
-            layoutMenu.menu.AppendAction("Align Selected/Row (share Y)",
-                _ => AlignSelectedStates(GraphLayout.AlignAxis.Row), AlignStatus);
-            layoutMenu.menu.AppendAction("Align Selected/Column (share X)",
-                _ => AlignSelectedStates(GraphLayout.AlignAxis.Column), AlignStatus);
-            toolbar.Add(layoutMenu);
-
+            // Layout (Grid / Hierarchical / Align Selected) lives in the graph's right-click menu now.
             toolbar.Add(new ToolbarButton(() => _graphView.FrameAll()) { text = "Frame All" });
             toolbar.Add(new ToolbarButton(() => _inspectorPanel.ShowAnalysis()) { text = "Analyze" });
             toolbar.Add(new ToolbarButton(
@@ -284,17 +265,6 @@ namespace Yozolab.DaerD
 
             return toolbar;
         }
-
-        void AlignSelectedStates(GraphLayout.AlignAxis axis)
-        {
-            GraphLayout.Align(_context.CurrentStateMachine, _graphView.GetSelectedStates(), axis);
-            _graphView.Sync.RequestRebuild();
-        }
-
-        DropdownMenuAction.Status AlignStatus(DropdownMenuAction _) =>
-            _graphView != null && _graphView.GetSelectedStates().Count >= 2
-                ? DropdownMenuAction.Status.Normal
-                : DropdownMenuAction.Status.Disabled;
 
         void RefreshBreadcrumb()
         {

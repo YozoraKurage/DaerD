@@ -94,6 +94,9 @@
     padding-bottom: 2px;
 }
 
+/* State node body + port columns are painted one opaque colour from StateNode.cs (so play-mode
+   "current state" green can override it); the connector dots keep their own styling. */
+
 /* flex-shrink lets the text column give way so a long name truncates instead of
    widening the node past its fixed width. */
 .compact-node__text {
@@ -130,6 +133,20 @@
 .special-node .compact-node__name {
     flex-grow: 1;
     font-size: 14px;
+}
+
+/* The name label only fills the node (as the comment above intends) if its containers stretch
+   too; otherwise a strip of node background shows below it. Stretch the content row so the
+   colour block reaches the full node height — no leftover space at the bottom. */
+.special-node #contents,
+.special-node #top {
+    flex-grow: 1;
+}
+
+/* The single-line special nodes leave node-border shorter (≈28px) than the selection outline,
+   so it doesn't match the (taller, two-line) state nodes. Pin it to the state-node height. */
+.special-node #node-border {
+    min-height: 38px;
 }
 
 .ssm-node {

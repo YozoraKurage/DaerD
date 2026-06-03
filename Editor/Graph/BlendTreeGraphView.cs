@@ -35,7 +35,8 @@ namespace Yozolab.DaerD
             style.flexGrow = 1;
             focusable = true;
 
-            SetupZoom(ContentZoomer.DefaultMinScale, ContentZoomer.DefaultMaxScale);
+            // Wider than the stock 0.25–1.0 range so large blend-tree graphs can be zoomed out / in.
+            SetupZoom(0.05f, 3.0f);
             this.AddManipulator(new ContentDragger());
             this.AddManipulator(new SelectionDragger());
             this.AddManipulator(new RectangleSelector());
