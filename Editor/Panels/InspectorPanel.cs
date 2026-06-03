@@ -366,7 +366,7 @@ namespace Yozolab.DaerD
         {
             EditorGUILayout.LabelField("Transitions (" + pool.Count + ")", EditorStyles.boldLabel);
             EditorGUILayout.LabelField(
-                "Ctrl / Shift + click: multi-select     Ctrl+C: copy one     Ctrl+V: paste onto all selected",
+                "Ctrl/Shift+click: multi-select   Ctrl+C: copy   Ctrl+V: paste onto   Ctrl+Shift+V: paste as new",
                 EditorStyles.miniLabel);
 
             EditorGUILayout.BeginHorizontal();
@@ -476,21 +476,25 @@ namespace Yozolab.DaerD
             if (created != null) Context.Select(created);
         }
 
-        /// <summary>Ctrl+C copies the single selected transition; Ctrl+V pastes onto every selected one.</summary>
+        /// <summary>
+        /// Ctrl+C copies the selected transition(s); Ctrl+V pastes the copy onto every selected one;
+        /// Ctrl+Shift+V pastes it as a new transition alongside each selected one.
+        /// </summary>
         void HandleCopyPasteShortcuts()
         {
             var e = Event.current;
             if (e == null || e.type != EventType.KeyDown || !(e.control || e.command))
                 return;
 
-            if (e.keyCode == KeyCode.C && _selectedTransitions.Count == 1)
+            if (e.keyCode == KeyCode.C && _selectedTransitions.Count >= 1)
             {
-                TransitionClipboard.Copy(new[] { _selectedTransitions[0] });
+                TransitionClipboard.Copy(_selectedTransitions);
                 e.Use();
             }
             else if (e.keyCode == KeyCode.V && TransitionClipboard.HasData && _selectedTransitions.Count >= 1)
             {
-                PasteOntoSelected();
+                if (e.shift) PasteSelectedAsNew();
+                else PasteOntoSelected();
                 e.Use();
                 GUIUtility.ExitGUI();
             }
@@ -519,21 +523,10 @@ namespace Yozolab.DaerD
             HorizontalLine();
             DrawConditions(transition, controller);
 
-            EditorGUILayout.Space(6);
-            EditorGUILayout.BeginHorizontal();
-            if (GUILayout.Button("Copy"))
-                TransitionClipboard.Copy(new[] { transition });
-            using (new EditorGUI.DisabledScope(!TransitionClipboard.HasData))
-            {
-                if (GUILayout.Button("Paste Onto"))
-                {
-                    TransitionClipboard.Apply(transition, TransitionClipboard.Snapshots[0]);
-                    RefreshEdges();
-                }
-                if (GUILayout.Button("Paste as New"))
-                    PasteAsNewTransition(transition);
-            }
-            EditorGUILayout.EndHorizontal();
+            EditorGUILayout.Space(4);
+            EditorGUILayout.LabelField(
+                "Ctrl+C copy   Ctrl+V paste onto   Ctrl+Shift+V paste as new   (on the selected transition)",
+                EditorStyles.miniLabel);
         }
 
         void DrawTransitionSettings(AnimatorTransitionBase transition)
@@ -905,16 +898,25 @@ namespace Yozolab.DaerD
             }
         }
 
-        void PasteAsNewTransition(AnimatorTransitionBase transition)
+        /// <summary>Adds a new transition (with the copied settings) alongside each selected one.</summary>
+        void PasteSelectedAsNew()
         {
-            var edge = _graphView.Sync.FindEdge(transition);
-            if (edge == null) return;
-            var created = _graphView.Sync.CreateTransition(
-                edge.output?.node as GraphNodeBase, edge.input?.node as GraphNodeBase);
-            if (created != null)
-                TransitionClipboard.Apply(created, TransitionClipboard.Snapshots[0]);
+            if (!TransitionClipboard.HasData) return;
+            var snapshot = TransitionClipboard.Snapshots[0];
+            AnimatorTransitionBase last = null;
+            using (new UndoScope("Paste Transition As New"))
+            {
+                foreach (var transition in _selectedTransitions)
+                {
+                    var edge = _graphView.Sync.FindEdge(transition);
+                    if (edge == null) continue;
+                    var created = _graphView.Sync.CreateTransition(
+                        edge.output?.node as GraphNodeBase, edge.input?.node as GraphNodeBase);
+                    if (created != null) { TransitionClipboard.Apply(created, snapshot); last = created; }
+                }
+            }
             _graphView.Sync.Rebuild();
-            if (created != null) Context.Select(created);
+            if (last != null) Context.Select(last);
         }
 
         void RefreshEdges()

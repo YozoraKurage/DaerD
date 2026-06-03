@@ -290,14 +290,58 @@ namespace Yozolab.DaerD
             if (!(evt.ctrlKey || evt.commandKey)) return;
             if (evt.keyCode == KeyCode.C)
             {
-                _sync.CopySelectedStates();
+                CopySelection();
                 evt.StopPropagation();
             }
             else if (evt.keyCode == KeyCode.V)
             {
-                _sync.PasteStates(_lastMouseGraphPosition);
+                if (evt.shiftKey) PasteTransitionsAsNew();
+                else PasteSelection();
                 evt.StopPropagation();
             }
+        }
+
+        /// <summary>Non-default transition edges (each holding ≥1 transition) in the current selection.</summary>
+        List<TransitionEdge> GetSelectedTransitionEdges()
+        {
+            var result = new List<TransitionEdge>();
+            foreach (var s in selection)
+                if (s is TransitionEdge te && !te.IsDefaultEdge && te.Transitions.Count > 0)
+                    result.Add(te);
+            return result;
+        }
+
+        // Ctrl+C / Ctrl+V act on transitions when transition edges are selected, otherwise on states.
+        // The two clipboards are separate and paste is chosen by what's selected, so state and
+        // transition copy/paste never clobber or shadow each other.
+
+        void CopySelection()
+        {
+            var edges = GetSelectedTransitionEdges();
+            if (edges.Count > 0) _sync.CopyTransitionsFromEdges(edges);
+            else _sync.CopySelectedStates();
+        }
+
+        void PasteSelection()
+        {
+            var edges = GetSelectedTransitionEdges();
+            if (edges.Count > 0)
+            {
+                // A transition is selected: Ctrl+V pastes the copied transition's settings onto it.
+                // Don't fall back to pasting states over a selected transition.
+                if (TransitionClipboard.HasData) _sync.PasteTransitionSettingsOntoEdges(edges);
+            }
+            else
+            {
+                _sync.PasteStates(_lastMouseGraphPosition);
+            }
+        }
+
+        void PasteTransitionsAsNew()
+        {
+            var edges = GetSelectedTransitionEdges();
+            if (edges.Count > 0 && TransitionClipboard.HasData)
+                _sync.PasteTransitionsAsNewOnEdges(edges);
         }
 
         /// <summary>True while a text input element (e.g. an inline rename field) holds focus.</summary>
