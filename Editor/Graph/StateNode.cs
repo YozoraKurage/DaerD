@@ -21,6 +21,7 @@ namespace Yozolab.DaerD
 
         bool _highlighted;
         bool _dropTarget;
+        TextField _renameField;
 
         public StateNode(AnimatorState state, Action<AnimatorState> onOpenBlendTree = null)
         {
@@ -75,6 +76,65 @@ namespace Yozolab.DaerD
             tooltip = State.motion is BlendTree
                 ? "Double-click to open the blend tree view"
                 : string.Empty;
+        }
+
+        /// <summary>
+        /// Swaps the name (or motion) label for a one-shot text field so it can be renamed in place.
+        /// Commits on Enter or focus-out, cancels on Escape. <paramref name="onCommit"/> receives the
+        /// trimmed text and is responsible for the actual rename + undo.
+        /// </summary>
+        public void BeginInlineEdit(string initial, Action<string> onCommit, bool motionLabel)
+        {
+            if (_renameField != null) return;   // already editing
+            var label = motionLabel ? _motionLabel : _nameLabel;
+            var parent = label.parent;
+            if (parent == null) return;
+
+            var field = new TextField { value = initial ?? string.Empty };
+            field.AddToClassList("compact-node__rename");
+            _renameField = field;
+
+            int index = parent.IndexOf(label);
+            label.style.display = DisplayStyle.None;
+            parent.Insert(index, field);
+
+            bool finished = false;
+            void Finish(bool commit)
+            {
+                if (finished) return;
+                finished = true;
+                string value = field.value;
+                _renameField = null;
+                field.RemoveFromHierarchy();
+                label.style.display = DisplayStyle.Flex;
+                if (commit) onCommit?.Invoke(value?.Trim());
+            }
+
+            field.RegisterCallback<KeyDownEvent>(evt =>
+            {
+                if (evt.keyCode == KeyCode.Return || evt.keyCode == KeyCode.KeypadEnter)
+                {
+                    Finish(true);
+                    evt.StopPropagation();
+                }
+                else if (evt.keyCode == KeyCode.Escape)
+                {
+                    Finish(false);
+                    evt.StopPropagation();
+                }
+            });
+            // Focus-out commits, EXCEPT when the field was detached by a graph rebuild (panel == null):
+            // that is a teardown, not a user confirmation, so cancel instead of writing a stray value.
+            field.RegisterCallback<FocusOutEvent>(_ => Finish(field.panel != null));
+            // Keep clicks inside the field from reaching the node (e.g. its double-click handler).
+            field.RegisterCallback<MouseDownEvent>(evt => evt.StopPropagation());
+
+            // Focus once the field is laid out in the panel.
+            field.schedule.Execute(() =>
+            {
+                field.Focus();
+                field.SelectAll();
+            }).ExecuteLater(0);
         }
 
         public void SetIsDefault(bool isDefault)

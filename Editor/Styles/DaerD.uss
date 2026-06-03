@@ -9,6 +9,55 @@
     flex-wrap: wrap;
 }
 
+/* Controller tabs: one row (wrapping if there are many) under the toolbar. */
+.dd-tabbar {
+    flex-direction: row;
+    flex-wrap: wrap;
+    background-color: rgba(0, 0, 0, 0.18);
+    border-bottom-width: 1px;
+    border-bottom-color: rgba(0, 0, 0, 0.4);
+    padding: 2px 2px 0 2px;
+}
+
+.dd-tab {
+    flex-direction: row;
+    align-items: center;
+    padding: 2px 4px 2px 8px;
+    margin-right: 2px;
+    margin-bottom: 2px;
+    border-top-left-radius: 4px;
+    border-top-right-radius: 4px;
+    background-color: rgba(255, 255, 255, 0.05);
+}
+
+.dd-tab--active {
+    background-color: rgba(90, 140, 210, 0.55);
+}
+
+.dd-tab__label {
+    -unity-font-style: bold;
+    margin-right: 4px;
+}
+
+.dd-tab__close {
+    width: 16px;
+    -unity-text-align: middle-center;
+    color: rgb(200, 200, 200);
+    border-radius: 8px;
+}
+
+.dd-tab__close:hover {
+    background-color: rgba(255, 80, 80, 0.6);
+    color: rgb(255, 255, 255);
+}
+
+/* Inline rename field shown in place of a state node's name / motion label. */
+.compact-node__rename {
+    flex-grow: 1;
+    margin: 0;
+    font-size: 11px;
+}
+
 .ce-empty-hint {
     flex-grow: 1;
     -unity-text-align: middle-center;

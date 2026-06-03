@@ -643,7 +643,7 @@ namespace Yozolab.DaerD
 
             DrawMultiSettings();
             HorizontalLine();
-            DrawCommonConditions(controller);
+            DrawSharedConditions(controller);
             EditorGUILayout.Space(4);
             DrawAddConditionToAll(controller);
         }
@@ -745,46 +745,72 @@ namespace Yozolab.DaerD
             }
         }
 
-        void DrawCommonConditions(AnimatorController controller)
+        void DrawSharedConditions(AnimatorController controller)
         {
-            EditorGUILayout.LabelField("Common Conditions (shared by all selected)", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField("Shared Conditions", EditorStyles.boldLabel);
 
-            var common = CommonConditions(_selectedTransitions);
-            if (common.Count == 0)
+            int total = _selectedTransitions.Count;
+            var shared = SharedConditions(_selectedTransitions);
+            if (shared.Count == 0)
             {
-                EditorGUILayout.LabelField("(no condition is shared by every selected transition)", EditorStyles.miniLabel);
+                EditorGUILayout.LabelField("(the selected transitions have no conditions)", EditorStyles.miniLabel);
                 return;
             }
 
             var paramNames = AllParameterNames(controller);
-            var typeByName = ParameterTypeMap(controller);
-            foreach (var original in common)
+            if (paramNames.Length == 0)
             {
+                EditorGUILayout.HelpBox("Add parameters before editing conditions.", MessageType.Info);
+                return;
+            }
+            var typeByName = ParameterTypeMap(controller);
+
+            EditorGUILayout.LabelField(
+                "Each row is a condition found across the selection (count = how many of the " +
+                total + " selected transitions contain it). Editing or removing a row applies to every " +
+                "selected transition that has it.",
+                EditorStyles.miniLabel);
+
+            foreach (var entry in shared)
+            {
+                var original = entry.data;
                 var working = new TransitionClipboard.ConditionData
                 {
                     mode = original.mode,
                     parameter = original.parameter,
                     threshold = original.threshold,
                 };
+                bool sharedByAll = entry.count == total;
+
                 EditorGUILayout.BeginHorizontal();
+
+                var prevColor = GUI.color;
+                if (!sharedByAll) GUI.color = new Color(1f, 0.85f, 0.4f);   // amber marks partial coverage
+                EditorGUILayout.LabelField(entry.count + "/" + total, EditorStyles.miniLabel, GUILayout.Width(32));
+                GUI.color = prevColor;
+
                 EditorGUI.BeginChangeCheck();
                 int paramIndex = Mathf.Max(0, Array.IndexOf(paramNames, working.parameter));
                 paramIndex = EditorGUILayout.Popup(paramIndex, paramNames);
                 working.parameter = paramNames[paramIndex];
                 var type = typeByName.TryGetValue(working.parameter, out var ty) ? ty : AnimatorControllerParameterType.Float;
-                DrawConditionValue(working, type);
+                DrawConditionValue(working, type, delayed: true);
                 bool edited = EditorGUI.EndChangeCheck();
+
                 bool remove = GUILayout.Button("X", EditorStyles.miniButton, GUILayout.Width(22));
                 EditorGUILayout.EndHorizontal();
 
                 if (remove)
                 {
                     RemoveCommonCondition(original);
-                    GUIUtility.ExitGUI();
+                    GUIUtility.ExitGUI();   // a row disappears, so restart layout
                 }
                 else if (edited)
                 {
                     ReplaceCommonCondition(original, working);
+                    // Restart layout: changing the parameter can change the value control's shape,
+                    // and a recompute may merge/reorder rows. The threshold uses a delayed field, so
+                    // this only fires on commit (Enter / focus-out) — typing stays smooth.
                     GUIUtility.ExitGUI();
                 }
             }
@@ -900,7 +926,8 @@ namespace Yozolab.DaerD
         // ---- condition / value helpers ---------------------------------------
 
         /// <summary>Draws the value control for one condition. Bool shows true/false; Trigger shows nothing.</summary>
-        static void DrawConditionValue(TransitionClipboard.ConditionData condition, AnimatorControllerParameterType type)
+        static void DrawConditionValue(TransitionClipboard.ConditionData condition, AnimatorControllerParameterType type,
+            bool delayed = false)
         {
             switch (type)
             {
@@ -925,7 +952,9 @@ namespace Yozolab.DaerD
                     int modeIndex = Mathf.Max(0, Array.IndexOf(modes, condition.mode));
                     modeIndex = EditorGUILayout.Popup(modeIndex, ModeLabels(modes), GUILayout.Width(80));
                     condition.mode = modes[modeIndex];
-                    condition.threshold = EditorGUILayout.FloatField(condition.threshold, GUILayout.Width(56));
+                    condition.threshold = delayed
+                        ? EditorGUILayout.DelayedFloatField(condition.threshold, GUILayout.Width(56))
+                        : EditorGUILayout.FloatField(condition.threshold, GUILayout.Width(56));
                     break;
                 }
             }
@@ -939,29 +968,45 @@ namespace Yozolab.DaerD
             return list;
         }
 
-        static List<TransitionClipboard.ConditionData> CommonConditions(List<AnimatorTransitionBase> transitions)
+        struct SharedConditionEntry
         {
-            var result = new List<TransitionClipboard.ConditionData>();
-            if (transitions.Count == 0) return result;
-
-            foreach (var c in transitions[0].conditions)
-            {
-                var data = new TransitionClipboard.ConditionData { mode = c.mode, parameter = c.parameter, threshold = c.threshold };
-                if (result.Exists(r => Same(r, data))) continue;
-                bool inAll = true;
-                for (int i = 1; i < transitions.Count; i++)
-                    if (!HasMatching(transitions[i], data)) { inAll = false; break; }
-                if (inAll) result.Add(data);
-            }
-            return result;
+            public TransitionClipboard.ConditionData data;
+            public int count;
+            public int order;
         }
 
-        static bool HasMatching(AnimatorTransitionBase transition, TransitionClipboard.ConditionData data)
+        /// <summary>
+        /// Every distinct condition across the selected transitions, with how many of them contain
+        /// it. Conditions present in every transition are listed first; ties keep first-seen order.
+        /// </summary>
+        static List<SharedConditionEntry> SharedConditions(List<AnimatorTransitionBase> transitions)
         {
-            foreach (var c in transition.conditions)
-                if (c.parameter == data.parameter && c.mode == data.mode && Mathf.Approximately(c.threshold, data.threshold))
-                    return true;
-            return false;
+            var result = new List<SharedConditionEntry>();
+            foreach (var t in transitions)
+            {
+                if (t == null) continue;
+                foreach (var c in t.conditions)
+                {
+                    var data = new TransitionClipboard.ConditionData { mode = c.mode, parameter = c.parameter, threshold = c.threshold };
+                    int idx = result.FindIndex(e => Same(e.data, data));
+                    if (idx >= 0)
+                    {
+                        var e = result[idx];
+                        e.count++;
+                        result[idx] = e;
+                    }
+                    else
+                    {
+                        result.Add(new SharedConditionEntry { data = data, count = 1, order = result.Count });
+                    }
+                }
+            }
+            result.Sort((a, b) =>
+            {
+                int byCount = b.count.CompareTo(a.count);
+                return byCount != 0 ? byCount : a.order.CompareTo(b.order);
+            });
+            return result;
         }
 
         static bool Same(TransitionClipboard.ConditionData a, TransitionClipboard.ConditionData b)
