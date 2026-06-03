@@ -16,6 +16,7 @@ namespace Yozolab.DaerD
 
         bool _syncingSelection;
         Vector2 _lastMouseGraphPosition;
+        Vector2 _lastMouseWorld;
         StateNode _dropHoverNode;
 
         public EditorWindowOwner Owner { get; set; }
@@ -30,7 +31,9 @@ namespace Yozolab.DaerD
             style.flexGrow = 1;
             focusable = true;
 
-            SetupZoom(ContentZoomer.DefaultMinScale, ContentZoomer.DefaultMaxScale);
+            // Much wider than the stock 0.25–1.0 range: zoom far out to read big state machines and
+            // further in for detail.
+            SetupZoom(0.05f, 3.0f);
             this.AddManipulator(new ContentDragger());
             this.AddManipulator(new SelectionDragger());
             this.AddManipulator(new RectangleSelector());
@@ -47,8 +50,9 @@ namespace Yozolab.DaerD
                 SearchWindow.Open(new SearchWindowContext(ctx.screenMousePosition), _searchProvider);
 
             RegisterCallback<KeyDownEvent>(OnKeyDown);
-            RegisterCallback<MouseMoveEvent>(e =>
-                _lastMouseGraphPosition = contentViewContainer.WorldToLocal(e.mousePosition));
+            // Trickle-down so the position is captured even while a port's edge-drag holds the mouse
+            // (used by the drop-on-node-body fallback).
+            RegisterCallback<MouseMoveEvent>(OnTrackMouse, TrickleDown.TrickleDown);
             RegisterCallback<DragUpdatedEvent>(OnDragUpdated);
             RegisterCallback<DragPerformEvent>(OnDragPerform);
             RegisterCallback<DragLeaveEvent>(_ => SetDropHover(null));
@@ -102,6 +106,60 @@ namespace Yozolab.DaerD
             var root = Owner.Window.rootVisualElement;
             var windowLocal = root.ChangeCoordinatesTo(root.parent, screenPosition - Owner.Window.position.position);
             return contentViewContainer.WorldToLocal(windowLocal);
+        }
+
+        void OnTrackMouse(MouseMoveEvent evt)
+        {
+            _lastMouseWorld = evt.mousePosition;
+            _lastMouseGraphPosition = contentViewContainer.WorldToLocal(evt.mousePosition);
+        }
+
+        /// <summary>The top-most graph node whose visible rectangle contains <paramref name="worldPosition"/>, if any.</summary>
+        public GraphNodeBase NodeAtWorldPosition(Vector2 worldPosition)
+        {
+            GraphNodeBase found = null;
+            // Later siblings render on top, so keep overwriting: the last hit is the top-most node.
+            nodes.ForEach(node =>
+            {
+                if (node is GraphNodeBase gnb && gnb.worldBound.Contains(worldPosition))
+                    found = gnb;
+            });
+            return found;
+        }
+
+        /// <summary>
+        /// Completes a left-drag transition that was released on a node's body rather than precisely
+        /// on its input port. The dragged-from port fixes one end; the node under the cursor is the
+        /// other. Invoked by <see cref="NodeBodyEdgeConnectorListener"/>.
+        /// </summary>
+        public void CompleteEdgeDropOnNode(Edge edge, Vector2 dropWorld)
+        {
+            if (edge == null) return;
+            // Prefer the exact release point Unity reports; fall back to the last tracked position.
+            var dropNode = NodeAtWorldPosition(dropWorld) ?? NodeAtWorldPosition(_lastMouseWorld);
+            if (dropNode == null) return;
+
+            GraphNodeBase source, destination;
+            if (edge.output != null)        // dragged out from a source's output port
+            {
+                source = edge.output.node as GraphNodeBase;
+                destination = dropNode;
+            }
+            else if (edge.input != null)    // dragged in toward a destination's input port
+            {
+                destination = edge.input.node as GraphNodeBase;
+                source = dropNode;
+            }
+            else return;
+
+            if (source == null || destination == null || source == destination) return;
+            if (!TransitionConnect.CanConnect(source, destination)) return;
+
+            _sync.CreateTransition(source, destination);
+            // Defer the rebuild: this runs inside Unity's EdgeDragHelper.HandleMouseUp, which keeps
+            // using the drag candidate / ports after we return. Rebuilding synchronously would tear
+            // those down mid-event. (Mirrors the port-to-port path, which also RequestRebuilds.)
+            _sync.RequestRebuild();
         }
 
         // ---- port compatibility ---------------------------------------------
@@ -220,17 +278,131 @@ namespace Yozolab.DaerD
 
         void OnKeyDown(KeyDownEvent evt)
         {
+            // While an inline rename (or any text field) has focus, leave the keyboard to it.
+            if (IsEditingText()) return;
+
+            if (evt.keyCode == KeyCode.F2)
+            {
+                // F2 renames the selected state; Ctrl/Cmd+F2 renames its clip.
+                if (BeginRenameSelectedState(clip: evt.ctrlKey || evt.commandKey))
+                    evt.StopPropagation();
+                return;
+            }
+
             if (!(evt.ctrlKey || evt.commandKey)) return;
             if (evt.keyCode == KeyCode.C)
             {
-                _sync.CopySelectedStates();
+                CopySelection();
                 evt.StopPropagation();
             }
             else if (evt.keyCode == KeyCode.V)
             {
-                _sync.PasteStates(_lastMouseGraphPosition);
+                if (evt.shiftKey) PasteTransitionsAsNew();
+                else PasteSelection();
                 evt.StopPropagation();
             }
+        }
+
+        /// <summary>Non-default transition edges (each holding ≥1 transition) in the current selection.</summary>
+        List<TransitionEdge> GetSelectedTransitionEdges()
+        {
+            var result = new List<TransitionEdge>();
+            foreach (var s in selection)
+                if (s is TransitionEdge te && !te.IsDefaultEdge && te.Transitions.Count > 0)
+                    result.Add(te);
+            return result;
+        }
+
+        // Ctrl+C / Ctrl+V act on transitions when transition edges are selected, otherwise on states.
+        // The two clipboards are separate and paste is chosen by what's selected, so state and
+        // transition copy/paste never clobber or shadow each other.
+
+        void CopySelection()
+        {
+            var edges = GetSelectedTransitionEdges();
+            if (edges.Count > 0) _sync.CopyTransitionsFromEdges(edges);
+            else _sync.CopySelectedStates();
+        }
+
+        void PasteSelection()
+        {
+            var edges = GetSelectedTransitionEdges();
+            if (edges.Count > 0)
+            {
+                // A transition is selected: Ctrl+V pastes the copied transition's settings onto it.
+                // Don't fall back to pasting states over a selected transition.
+                if (TransitionClipboard.HasData) _sync.PasteTransitionSettingsOntoEdges(edges);
+            }
+            else
+            {
+                _sync.PasteStates(_lastMouseGraphPosition);
+            }
+        }
+
+        void PasteTransitionsAsNew()
+        {
+            var edges = GetSelectedTransitionEdges();
+            if (edges.Count > 0 && TransitionClipboard.HasData)
+                _sync.PasteTransitionsAsNewOnEdges(edges);
+        }
+
+        /// <summary>True while a text input element (e.g. an inline rename field) holds focus.</summary>
+        bool IsEditingText()
+        {
+            var focused = panel?.focusController?.focusedElement as VisualElement;
+            return focused != null && (focused is TextField || focused.GetFirstAncestorOfType<TextField>() != null);
+        }
+
+        /// <summary>The single selected state node, or null if zero / more than one element is selected.</summary>
+        StateNode SingleSelectedStateNode()
+        {
+            StateNode result = null;
+            foreach (var selectable in selection)
+            {
+                if (selectable is StateNode sn)
+                {
+                    if (result != null) return null;   // more than one state selected
+                    result = sn;
+                }
+                else
+                {
+                    return null;   // a non-state element is part of the selection
+                }
+            }
+            return result;
+        }
+
+        /// <summary>Starts an inline rename of the selected state (or its clip). Returns true if F2 was consumed.</summary>
+        bool BeginRenameSelectedState(bool clip)
+        {
+            var node = SingleSelectedStateNode();
+            if (node?.State == null) return false;
+            var state = node.State;
+
+            if (clip)
+            {
+                if (!(state.motion is AnimationClip clipMotion))
+                {
+                    Owner?.Window?.ShowNotification(new GUIContent(state.motion is BlendTree
+                        ? "This state holds a Blend Tree, not a single clip."
+                        : "This state has no clip to rename."));
+                    return true;
+                }
+                node.BeginInlineEdit(clipMotion.name,
+                    value => ClipRenamer.Rename(clipMotion, value, _context), motionLabel: true);
+            }
+            else
+            {
+                node.BeginInlineEdit(state.name, value =>
+                {
+                    if (string.IsNullOrEmpty(value) || value == state.name) return;
+                    Undo.RegisterCompleteObjectUndo(state, "Rename State");
+                    state.name = value;
+                    EditorUtility.SetDirty(state);
+                    _context.NotifyGraphStructureChanged();
+                }, motionLabel: false);
+            }
+            return true;
         }
 
         void OnSearchSelect(string mode, Vector2 screenPosition)
@@ -399,17 +571,48 @@ namespace Yozolab.DaerD
             }
 
             evt.menu.AppendSeparator();
-            evt.menu.AppendAction("Auto Layout/Grid", _ =>
-            {
-                GraphLayout.Grid(_context.CurrentStateMachine);
-                _sync.RequestRebuild();
-            });
-            evt.menu.AppendAction("Auto Layout/Hierarchical", _ =>
-            {
-                GraphLayout.Hierarchical(_context.CurrentStateMachine);
-                _sync.RequestRebuild();
-            });
+            // Align acts on the current multi-selection, so it grays out until ≥2 states are selected.
+            evt.menu.AppendAction("Align horizontal",
+                _ => AlignSelectedStates(GraphLayout.AlignAxis.Row), AlignStatus);
+            evt.menu.AppendAction("Align vertical",
+                _ => AlignSelectedStates(GraphLayout.AlignAxis.Column), AlignStatus);
             evt.menu.AppendAction("Frame All", _ => FrameAll());
+
+            if (stateCount == 1)
+            {
+                // Destructive (removes every transition touching the state), so it sits at the very
+                // bottom of the menu where it can't be triggered by accident.
+                var stateNode = FirstSelected<StateNode>();
+                CountConnectedTransitions(stateNode, out _, out _, out int connected);
+                evt.menu.AppendSeparator();
+                evt.menu.AppendAction("Disconnect All", _ => DisconnectStateNode(stateNode),
+                    connected > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+            }
+        }
+
+        void AlignSelectedStates(GraphLayout.AlignAxis axis)
+        {
+            GraphLayout.Align(_context.CurrentStateMachine, GetSelectedStates(), axis);
+            _sync.RequestRebuild();
+        }
+
+        DropdownMenuAction.Status AlignStatus(DropdownMenuAction _) =>
+            GetSelectedStates().Count >= 2 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled;
+
+        /// <summary>Removes every (non-default) transition entering or leaving the state.</summary>
+        void DisconnectStateNode(StateNode node)
+        {
+            var toRemove = new List<GraphElement>();
+            edges.ForEach(e =>
+            {
+                if (e is TransitionEdge te && !te.IsDefaultEdge &&
+                    (te.input?.node == node || te.output?.node == node))
+                    toRemove.Add(te);
+            });
+            if (toRemove.Count == 0) return;
+            using (new UndoScope("Disconnect All"))
+                _sync.HandleChange(new GraphViewChange { elementsToRemove = toRemove });
+            foreach (var ge in toRemove) RemoveElement(ge);
         }
 
         // ---- transition bulk selection ---------------------------------------

@@ -783,6 +783,55 @@ namespace Yozolab.DaerD
                 TransitionClipboard.CopySnapshots(snapshots);
         }
 
+        /// <summary>
+        /// Applies the first copied transition's settings (timing, conditions, mute/solo) onto every
+        /// transition of the given edges — the "paste onto" behaviour, driven from Ctrl+V.
+        /// </summary>
+        public void PasteTransitionSettingsOntoEdges(IEnumerable<TransitionEdge> edges)
+        {
+            if (!TransitionClipboard.HasData) return;
+            var snapshot = TransitionClipboard.Snapshots[0];
+            bool any = false;
+            using (new UndoScope("Paste Transition Settings"))
+            {
+                foreach (var edge in edges)
+                {
+                    if (edge == null || edge.IsDefaultEdge) continue;
+                    foreach (var t in edge.Transitions)
+                        if (t != null) { TransitionClipboard.Apply(t, snapshot); any = true; }
+                }
+            }
+            if (any) Rebuild();
+        }
+
+        /// <summary>
+        /// Adds a new transition alongside the existing ones on each given edge for every copied
+        /// snapshot, applying its settings — the "paste as new" behaviour, driven from Ctrl+Shift+V.
+        /// </summary>
+        public void PasteTransitionsAsNewOnEdges(IEnumerable<TransitionEdge> edges)
+        {
+            if (!TransitionClipboard.HasData) return;
+            var snapshots = TransitionClipboard.Snapshots;
+            AnimatorTransitionBase last = null;
+            using (new UndoScope("Paste Transition As New"))
+            {
+                foreach (var edge in edges)
+                {
+                    if (edge == null || edge.IsDefaultEdge) continue;
+                    var source = edge.output?.node as GraphNodeBase;
+                    var destination = edge.input?.node as GraphNodeBase;
+                    if (source == null || destination == null) continue;
+                    foreach (var snap in snapshots)
+                    {
+                        var created = CreateTransition(source, destination);
+                        if (created != null) { TransitionClipboard.Apply(created, snap); last = created; }
+                    }
+                }
+            }
+            Rebuild();
+            if (last != null) _context.Select(last);
+        }
+
         static void ResolveSourceContext(GraphNodeBase node,
             out TransitionClipboard.SourceKind kind,
             out AnimatorState state,

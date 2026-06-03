@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEditor.UIElements;
@@ -12,7 +13,11 @@ namespace Yozolab.DaerD
         [SerializeField] AnimatorController _controller;
         [SerializeField] int _layerIndex;
 
+        // Remembered across domain reloads so the open tabs survive script recompiles / play mode.
+        [SerializeField] List<AnimatorController> _openControllers = new List<AnimatorController>();
+
         DaerDContext _context;
+        VisualElement _tabBar;
         AnimatorGraphView _graphView;
         BlendTreeGraphView _blendTreeView;
         VisualElement _graphHost;
@@ -31,10 +36,28 @@ namespace Yozolab.DaerD
             var window = GetWindow<DaerDWindow>();
             window.titleContent = new GUIContent("DaerD");
             window.minSize = new Vector2(760, 440);
-            window.SetController(controller);
+            window.OpenController(controller);
             window.Show();
             window.Focus();
             return window;
+        }
+
+        /// <summary>Adds <paramref name="controller"/> as a tab (if not already open) and activates it.</summary>
+        public void OpenController(AnimatorController controller)
+        {
+            // Opened from the menu with nothing selected: keep whatever is already open rather than
+            // blanking the window.
+            if (controller == null)
+            {
+                RefreshTabBar();
+                return;
+            }
+            if (!_openControllers.Contains(controller))
+                _openControllers.Add(controller);
+            // Re-opening the already-active controller must not reset layer / selection / drill-down.
+            if (controller != _controller)
+                SetController(controller);
+            RefreshTabBar();
         }
 
         public void SetController(AnimatorController controller)
@@ -42,6 +65,73 @@ namespace Yozolab.DaerD
             _controller = controller;
             _layerIndex = 0;
             _context?.SetController(controller);
+        }
+
+        // ---- controller tabs -------------------------------------------------
+
+        void ActivateController(AnimatorController controller)
+        {
+            if (controller == null || controller == _controller) return;
+            SetController(controller);
+            RefreshTabBar();
+        }
+
+        void CloseController(AnimatorController controller)
+        {
+            int index = _openControllers.IndexOf(controller);
+            if (index < 0) return;
+            _openControllers.RemoveAt(index);
+            if (controller == _controller)
+            {
+                var next = _openControllers.Count > 0
+                    ? _openControllers[Mathf.Clamp(index, 0, _openControllers.Count - 1)]
+                    : null;
+                SetController(next);
+            }
+            RefreshTabBar();
+        }
+
+        /// <summary>Rebuilds the tab strip from the open-controller list, highlighting the active one.</summary>
+        void RefreshTabBar()
+        {
+            if (_tabBar == null) return;
+
+            _openControllers.RemoveAll(c => c == null);   // drop deleted assets
+            if (_controller != null && !_openControllers.Contains(_controller))
+                _openControllers.Add(_controller);
+
+            _tabBar.Clear();
+            _tabBar.style.display = _openControllers.Count > 0 ? DisplayStyle.Flex : DisplayStyle.None;
+
+            foreach (var controller in _openControllers)
+            {
+                var captured = controller;
+                var tab = new VisualElement();
+                tab.AddToClassList("dd-tab");
+                if (controller == _controller) tab.AddToClassList("dd-tab--active");
+
+                var label = new Label(controller.name) { tooltip = AssetDatabase.GetAssetPath(controller) };
+                label.AddToClassList("dd-tab__label");
+                tab.Add(label);
+
+                var close = new Label("×") { tooltip = "Close tab" };   // U+00D7, widely available
+                close.AddToClassList("dd-tab__close");
+                tab.Add(close);
+
+                tab.RegisterCallback<MouseDownEvent>(evt =>
+                {
+                    if (evt.button == 0) { ActivateController(captured); evt.StopPropagation(); }
+                    else if (evt.button == 2) { CloseController(captured); evt.StopPropagation(); }   // middle-click
+                });
+                close.RegisterCallback<MouseDownEvent>(evt =>
+                {
+                    if (evt.button != 0) return;
+                    CloseController(captured);
+                    evt.StopPropagation();   // don't also activate the tab
+                });
+
+                _tabBar.Add(tab);
+            }
         }
 
         void OnEnable()
@@ -62,6 +152,10 @@ namespace Yozolab.DaerD
 
         void CreateGUI()
         {
+            // Captured before the wiring below, because SetController (fired during restore) resets
+            // the layer to 0 via SyncSerializedState, clobbering the serialized value.
+            int restoredLayer = _layerIndex;
+
             rootVisualElement.Clear();
             _context = new DaerDContext();
             _statePreview = new StatePreview(_context);
@@ -71,6 +165,10 @@ namespace Yozolab.DaerD
                 rootVisualElement.styleSheets.Add(styleSheet);
 
             rootVisualElement.Add(BuildToolbar());
+
+            _tabBar = new VisualElement();
+            _tabBar.AddToClassList("dd-tabbar");
+            rootVisualElement.Add(_tabBar);
 
             _graphView = new AnimatorGraphView(_context) { Owner = new EditorWindowOwner { Window = this } };
             _blendTreeView = new BlendTreeGraphView(_context);
@@ -124,7 +222,13 @@ namespace Yozolab.DaerD
             _statePreview.Start();
 
             if (_controller != null)
+            {
                 _context.SetController(_controller);
+                if (restoredLayer > 0)
+                    _context.SetLayer(restoredLayer);   // restore the active layer after a domain reload
+            }
+
+            RefreshTabBar();
         }
 
         void SyncSerializedState()
@@ -153,26 +257,7 @@ namespace Yozolab.DaerD
             previewToggle.RegisterValueChangedCallback(evt => _statePreview.SetEnabled(evt.newValue));
             toolbar.Add(previewToggle);
 
-            var layoutMenu = new ToolbarMenu { text = "Layout" };
-            layoutMenu.menu.AppendAction("Grid", _ =>
-            {
-                GraphLayout.Grid(_context.CurrentStateMachine);
-                _graphView.Sync.RequestRebuild();
-            });
-            layoutMenu.menu.AppendAction("Hierarchical", _ =>
-            {
-                GraphLayout.Hierarchical(_context.CurrentStateMachine);
-                _graphView.Sync.RequestRebuild();
-            });
-            // Align acts on the current multi-selection rather than the whole machine, so its
-            // entries gray out until at least two states are selected.
-            layoutMenu.menu.AppendSeparator();
-            layoutMenu.menu.AppendAction("Align Selected/Row (share Y)",
-                _ => AlignSelectedStates(GraphLayout.AlignAxis.Row), AlignStatus);
-            layoutMenu.menu.AppendAction("Align Selected/Column (share X)",
-                _ => AlignSelectedStates(GraphLayout.AlignAxis.Column), AlignStatus);
-            toolbar.Add(layoutMenu);
-
+            // Layout (Grid / Hierarchical / Align Selected) lives in the graph's right-click menu now.
             toolbar.Add(new ToolbarButton(() => _graphView.FrameAll()) { text = "Frame All" });
             toolbar.Add(new ToolbarButton(() => _inspectorPanel.ShowAnalysis()) { text = "Analyze" });
             toolbar.Add(new ToolbarButton(
@@ -180,17 +265,6 @@ namespace Yozolab.DaerD
 
             return toolbar;
         }
-
-        void AlignSelectedStates(GraphLayout.AlignAxis axis)
-        {
-            GraphLayout.Align(_context.CurrentStateMachine, _graphView.GetSelectedStates(), axis);
-            _graphView.Sync.RequestRebuild();
-        }
-
-        DropdownMenuAction.Status AlignStatus(DropdownMenuAction _) =>
-            _graphView != null && _graphView.GetSelectedStates().Count >= 2
-                ? DropdownMenuAction.Status.Normal
-                : DropdownMenuAction.Status.Disabled;
 
         void RefreshBreadcrumb()
         {

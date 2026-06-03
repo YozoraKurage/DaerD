@@ -18,9 +18,15 @@ namespace Yozolab.DaerD
         static readonly Color CurrentStateColor = new Color(0.20f, 0.55f, 0.25f);
         static readonly Color HighlightBorderColor = new Color(0.96f, 0.84f, 0.22f);
         static readonly Color DropTargetColor = new Color(0.42f, 0.82f, 0.46f);
+        // Opaque #393939. The stock node-border / port columns are translucent, so the node body
+        // showed the graph background through it and overlapping states bled through. Painting the
+        // rounded node-border (not the square root) plus the port columns opaque fixes both.
+        static readonly Color BodyColor = new Color(0.224f, 0.224f, 0.224f);
 
         bool _highlighted;
         bool _dropTarget;
+        TextField _renameField;
+        readonly VisualElement _nodeBorder;
 
         public StateNode(AnimatorState state, Action<AnimatorState> onOpenBlendTree = null)
         {
@@ -62,10 +68,25 @@ namespace Yozolab.DaerD
                 }
             });
 
+            _nodeBorder = this.Q("node-border");
+            ApplyBodyColor(BodyColor);
+
             RefreshLabels();
             RefreshExpandedState();
             RefreshPorts();
         }
+
+        /// <summary>Paints the rounded body and the left/right port columns one opaque colour.</summary>
+        void ApplyBodyColor(Color color)
+        {
+            if (_nodeBorder != null) _nodeBorder.style.backgroundColor = color;
+            inputContainer.style.backgroundColor = color;
+            outputContainer.style.backgroundColor = color;
+        }
+
+        // Suppress the stock node menu (its "Disconnect all" lands at the top, easy to mis-click);
+        // AnimatorGraphView builds the full context menu and re-adds Disconnect at the bottom.
+        public override void BuildContextualMenu(ContextualMenuPopulateEvent evt) { }
 
         public void RefreshLabels()
         {
@@ -77,6 +98,65 @@ namespace Yozolab.DaerD
                 : string.Empty;
         }
 
+        /// <summary>
+        /// Swaps the name (or motion) label for a one-shot text field so it can be renamed in place.
+        /// Commits on Enter or focus-out, cancels on Escape. <paramref name="onCommit"/> receives the
+        /// trimmed text and is responsible for the actual rename + undo.
+        /// </summary>
+        public void BeginInlineEdit(string initial, Action<string> onCommit, bool motionLabel)
+        {
+            if (_renameField != null) return;   // already editing
+            var label = motionLabel ? _motionLabel : _nameLabel;
+            var parent = label.parent;
+            if (parent == null) return;
+
+            var field = new TextField { value = initial ?? string.Empty };
+            field.AddToClassList("compact-node__rename");
+            _renameField = field;
+
+            int index = parent.IndexOf(label);
+            label.style.display = DisplayStyle.None;
+            parent.Insert(index, field);
+
+            bool finished = false;
+            void Finish(bool commit)
+            {
+                if (finished) return;
+                finished = true;
+                string value = field.value;
+                _renameField = null;
+                field.RemoveFromHierarchy();
+                label.style.display = DisplayStyle.Flex;
+                if (commit) onCommit?.Invoke(value?.Trim());
+            }
+
+            field.RegisterCallback<KeyDownEvent>(evt =>
+            {
+                if (evt.keyCode == KeyCode.Return || evt.keyCode == KeyCode.KeypadEnter)
+                {
+                    Finish(true);
+                    evt.StopPropagation();
+                }
+                else if (evt.keyCode == KeyCode.Escape)
+                {
+                    Finish(false);
+                    evt.StopPropagation();
+                }
+            });
+            // Focus-out commits, EXCEPT when the field was detached by a graph rebuild (panel == null):
+            // that is a teardown, not a user confirmation, so cancel instead of writing a stray value.
+            field.RegisterCallback<FocusOutEvent>(_ => Finish(field.panel != null));
+            // Keep clicks inside the field from reaching the node (e.g. its double-click handler).
+            field.RegisterCallback<MouseDownEvent>(evt => evt.StopPropagation());
+
+            // Focus once the field is laid out in the panel.
+            field.schedule.Execute(() =>
+            {
+                field.Focus();
+                field.SelectAll();
+            }).ExecuteLater(0);
+        }
+
         public void SetIsDefault(bool isDefault)
         {
             _nameLabel.style.backgroundColor =
@@ -86,7 +166,7 @@ namespace Yozolab.DaerD
         /// <summary>Highlights the node when it is the live state during play mode.</summary>
         public void SetIsCurrent(bool isCurrent)
         {
-            style.backgroundColor = isCurrent ? CurrentStateColor : (StyleColor)StyleKeyword.Null;
+            ApplyBodyColor(isCurrent ? CurrentStateColor : BodyColor);
         }
 
         /// <summary>Outlines the node when a find-usages query matches it.</summary>

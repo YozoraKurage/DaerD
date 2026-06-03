@@ -9,6 +9,55 @@
     flex-wrap: wrap;
 }
 
+/* Controller tabs: one row (wrapping if there are many) under the toolbar. */
+.dd-tabbar {
+    flex-direction: row;
+    flex-wrap: wrap;
+    background-color: rgba(0, 0, 0, 0.18);
+    border-bottom-width: 1px;
+    border-bottom-color: rgba(0, 0, 0, 0.4);
+    padding: 2px 2px 0 2px;
+}
+
+.dd-tab {
+    flex-direction: row;
+    align-items: center;
+    padding: 2px 4px 2px 8px;
+    margin-right: 2px;
+    margin-bottom: 2px;
+    border-top-left-radius: 4px;
+    border-top-right-radius: 4px;
+    background-color: rgba(255, 255, 255, 0.05);
+}
+
+.dd-tab--active {
+    background-color: rgba(90, 140, 210, 0.55);
+}
+
+.dd-tab__label {
+    -unity-font-style: bold;
+    margin-right: 4px;
+}
+
+.dd-tab__close {
+    width: 16px;
+    -unity-text-align: middle-center;
+    color: rgb(200, 200, 200);
+    border-radius: 8px;
+}
+
+.dd-tab__close:hover {
+    background-color: rgba(255, 80, 80, 0.6);
+    color: rgb(255, 255, 255);
+}
+
+/* Inline rename field shown in place of a state node's name / motion label. */
+.compact-node__rename {
+    flex-grow: 1;
+    margin: 0;
+    font-size: 11px;
+}
+
 .ce-empty-hint {
     flex-grow: 1;
     -unity-text-align: middle-center;
@@ -44,6 +93,9 @@
     padding-top: 2px;
     padding-bottom: 2px;
 }
+
+/* State node body + port columns are painted one opaque colour from StateNode.cs (so play-mode
+   "current state" green can override it); the connector dots keep their own styling. */
 
 /* flex-shrink lets the text column give way so a long name truncates instead of
    widening the node past its fixed width. */
@@ -81,6 +133,20 @@
 .special-node .compact-node__name {
     flex-grow: 1;
     font-size: 14px;
+}
+
+/* The name label only fills the node (as the comment above intends) if its containers stretch
+   too; otherwise a strip of node background shows below it. Stretch the content row so the
+   colour block reaches the full node height — no leftover space at the bottom. */
+.special-node #contents,
+.special-node #top {
+    flex-grow: 1;
+}
+
+/* The single-line special nodes leave node-border shorter (≈28px) than the selection outline,
+   so it doesn't match the (taller, two-line) state nodes. Pin it to the state-node height. */
+.special-node #node-border {
+    min-height: 38px;
 }
 
 .ssm-node {
