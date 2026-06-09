@@ -26,7 +26,7 @@ namespace Yozolab.DaerD
 
             RegisterCallback<MouseDownEvent>(evt =>
             {
-                if (evt.clickCount == 2)
+                if (evt.clickCount == 2 && evt.button == 0)
                 {
                     onOpen?.Invoke();
                     evt.StopPropagation();

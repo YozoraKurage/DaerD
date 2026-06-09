@@ -47,11 +47,16 @@ namespace Yozolab.DaerD
         public static bool HasData => _entries.Count > 0;
         public static int Count => _entries.Count;
 
-        public static void Copy(IList<AnimatorState> states, Func<AnimatorState, Vector2> positionOf)
+        public static void Copy(IList<AnimatorState> sourceStates, Func<AnimatorState, Vector2> positionOf)
         {
             _entries.Clear();
             _transitions.Clear();
-            if (states == null || states.Count == 0) return;
+            if (sourceStates == null) return;
+
+            var states = new List<AnimatorState>();
+            foreach (var s in sourceStates)
+                if (s != null) states.Add(s);
+            if (states.Count == 0) return;
 
             var index = new Dictionary<AnimatorState, int>();
             for (int i = 0; i < states.Count; i++)

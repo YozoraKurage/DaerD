@@ -115,7 +115,8 @@ namespace Yozolab.DaerD
                     CloneTransitions(child.stateMachine, stateMap, machineMap);
         }
 
-        static void CopyStateFields(AnimatorState src, AnimatorState dst)
+        /// <summary>Copies every serialized state field except transitions and behaviours. Motions are shared.</summary>
+        public static void CopyStateFields(AnimatorState src, AnimatorState dst)
         {
             dst.motion = src.motion;
             dst.speed = src.speed;

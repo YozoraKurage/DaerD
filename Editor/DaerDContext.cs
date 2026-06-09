@@ -74,8 +74,9 @@ namespace Yozolab.DaerD
         {
             if (Controller == null) return;
             var count = Controller.layers.Length;
-            if (count == 0) { LayerIndex = 0; return; }
-            LayerIndex = Mathf.Clamp(index, 0, count - 1);
+            // With zero layers there is nothing to show, but the path / selection / listeners
+            // must still be reset so the UI doesn't keep displaying a layer that no longer exists.
+            LayerIndex = count == 0 ? 0 : Mathf.Clamp(index, 0, count - 1);
             Selection = null;
             ClearBlendTreePath();
             RebuildPath();
