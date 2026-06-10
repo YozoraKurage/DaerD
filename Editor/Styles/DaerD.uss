@@ -153,6 +153,110 @@
     min-width: 140px;
 }
 
+/* One-line condition summary drawn next to a single-transition edge. */
+.transition-edge__label {
+    position: absolute;
+    width: 140px;
+    color: rgb(190, 190, 190);
+    font-size: 10px;
+    -unity-text-align: middle-center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Badges on state nodes: WD (Write Defaults) and B (behaviours). Tiny text overlaid
+   in the top-right corner so the node keeps its compact two-line layout. Always
+   visible; StateNode colours them lit when active and grey when not. */
+.state-node__badges {
+    position: absolute;
+    top: 1px;
+    right: 4px;
+    flex-direction: row;
+}
+
+.state-node__badge {
+    font-size: 8px;
+    -unity-font-style: bold;
+    -unity-text-align: middle-center;
+    margin-left: 3px;
+    padding: 0;
+}
+
+/* Graph frames (comment / group boxes drawn behind nodes). */
+.dd-frame__title {
+    flex-direction: row;
+    align-items: center;
+    padding-left: 6px;
+}
+
+.dd-frame__title-label {
+    flex-grow: 1;
+    -unity-font-style: bold;
+    color: rgb(235, 235, 235);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Inspector-style lock toggle at the right end of the title bar. */
+.dd-frame__lock {
+    width: 16px;
+    height: 16px;
+    margin-right: 4px;
+    flex-shrink: 0;
+    opacity: 0.75;
+}
+
+.dd-frame__lock:hover {
+    opacity: 1;
+}
+
+/* Square resize handles shown on the edges and corners of a selected frame / note. */
+.dd-resize-handle {
+    position: absolute;
+    width: 9px;
+    height: 9px;
+    background-color: rgb(102, 179, 255);
+    border-width: 1px;
+    border-color: rgb(25, 25, 25);
+}
+
+.dd-resize-handle--nw { left: -5px; top: -5px; cursor: resize-up-left; }
+.dd-resize-handle--n { left: 50%; margin-left: -5px; top: -5px; cursor: resize-vertical; }
+.dd-resize-handle--ne { right: -5px; top: -5px; cursor: resize-up-right; }
+.dd-resize-handle--w { left: -5px; top: 50%; margin-top: -5px; cursor: resize-horizontal; }
+.dd-resize-handle--e { right: -5px; top: 50%; margin-top: -5px; cursor: resize-horizontal; }
+.dd-resize-handle--sw { left: -5px; bottom: -5px; cursor: resize-up-right; }
+.dd-resize-handle--s { left: 50%; margin-left: -5px; bottom: -5px; cursor: resize-vertical; }
+.dd-resize-handle--se { right: -5px; bottom: -5px; cursor: resize-up-left; }
+
+/* Inline rename field shown in place of a frame's title label. */
+.dd-frame__rename {
+    flex-grow: 1;
+    margin: 2px 4px;
+}
+
+/* Memo notes (sticky notes drawn among the nodes). */
+.dd-note {
+    border-radius: 3px;
+    padding: 5px 6px;
+    min-width: 80px;
+    min-height: 40px;
+}
+
+.dd-note__text {
+    color: rgb(38, 34, 22);
+    white-space: normal;
+    flex-grow: 1;
+}
+
+/* In-place note editing field. */
+.dd-note__edit {
+    flex-grow: 1;
+    margin: 0;
+}
+
 .transition-edge__badge {
     position: absolute;
     background-color: rgb(40, 40, 40);

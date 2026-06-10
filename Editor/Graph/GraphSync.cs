@@ -25,6 +25,10 @@ namespace Yozolab.DaerD
         readonly Dictionary<AnimatorState, SubStateMachineNode> _nestedStateOwners = new Dictionary<AnimatorState, SubStateMachineNode>();
         readonly Dictionary<AnimatorStateMachine, SubStateMachineNode> _nestedMachineOwners = new Dictionary<AnimatorStateMachine, SubStateMachineNode>();
 
+        readonly List<FrameNode> _frameNodes = new List<FrameNode>();
+        readonly List<NoteNode> _noteNodes = new List<NoteNode>();
+        GraphFrameData _frameData;
+
         SpecialNode _entryNode, _exitNode, _anyStateNode;
         bool _rebuildScheduled;
         int _runtimeStateHash;
@@ -62,11 +66,39 @@ namespace Yozolab.DaerD
             _nestedStateOwners.Clear();
             _nestedMachineOwners.Clear();
             _edges.Clear();
+            _frameNodes.Clear();
+            _noteNodes.Clear();
             foreach (var element in _graphView.graphElements.ToList())
                 _graphView.RemoveElement(element);
 
             var sm = _context.CurrentStateMachine;
             if (sm == null) return;
+
+            _frameData = GraphFrameData.Find(_context.Controller);
+            if (_frameData != null)
+            {
+                foreach (var frame in _frameData.FramesIn(sm))
+                {
+                    FrameNode frameNode = null;
+                    var capturedFrame = frame;
+                    frameNode = new FrameNode(frame, () => PersistFrameGeometry(frameNode), NodesFullyInside,
+                        newTitle => RenameFrame(capturedFrame, newTitle),
+                        () => ToggleFrameLock(capturedFrame));
+                    _frameNodes.Add(frameNode);
+                    _graphView.AddElement(frameNode);
+                    frameNode.SetPosition(frame.bounds);
+                }
+                foreach (var note in _frameData.NotesIn(sm))
+                {
+                    NoteNode noteNode = null;
+                    var capturedNote = note;
+                    noteNode = new NoteNode(note, () => PersistNoteGeometry(noteNode),
+                        newText => SetNoteText(capturedNote, newText));
+                    _noteNodes.Add(noteNode);
+                    _graphView.AddElement(noteNode);
+                    noteNode.SetPosition(note.bounds);
+                }
+            }
 
             _entryNode = new SpecialNode(SpecialNodeKind.Entry);
             _exitNode = new SpecialNode(SpecialNodeKind.Exit);
@@ -195,6 +227,8 @@ namespace Yozolab.DaerD
             public readonly List<AnimatorStateMachine> StateMachines = new List<AnimatorStateMachine>();
             public readonly List<SpecialNodeKind> Specials = new List<SpecialNodeKind>();
             public readonly List<AnimatorTransitionBase> Transitions = new List<AnimatorTransitionBase>();
+            public readonly List<GraphFrameData.Frame> Frames = new List<GraphFrameData.Frame>();
+            public readonly List<GraphFrameData.Note> Notes = new List<GraphFrameData.Note>();
         }
 
         CapturedSelection CaptureGraphSelection()
@@ -217,6 +251,12 @@ namespace Yozolab.DaerD
                         foreach (var t in te.Transitions)
                             if (t != null) captured.Transitions.Add(t);
                         break;
+                    case FrameNode fn when fn.Frame != null:
+                        captured.Frames.Add(fn.Frame);
+                        break;
+                    case NoteNode nn when nn.Note != null:
+                        captured.Notes.Add(nn.Note);
+                        break;
                 }
             }
             return captured;
@@ -230,6 +270,16 @@ namespace Yozolab.DaerD
                 if (_stateNodes.TryGetValue(state, out var node)) elements.Add(node);
             foreach (var sm in captured.StateMachines)
                 if (_ssmNodes.TryGetValue(sm, out var node)) elements.Add(node);
+            foreach (var frame in captured.Frames)
+            {
+                var node = FindFrameNode(frame);
+                if (node != null) elements.Add(node);
+            }
+            foreach (var note in captured.Notes)
+            {
+                var node = FindNoteNode(note);
+                if (node != null) elements.Add(node);
+            }
             foreach (var kind in captured.Specials)
             {
                 SpecialNode node;
@@ -280,10 +330,34 @@ namespace Yozolab.DaerD
                     case TransitionEdge edge:
                         if (_edges.Contains(edge)) elements.Add(edge);
                         break;
+                    case GraphFrameData.Frame frame:
+                        var frameNode = FindFrameNode(frame);
+                        if (frameNode != null) elements.Add(frameNode);
+                        break;
+                    case GraphFrameData.Note note:
+                        var noteNode = FindNoteNode(note);
+                        if (noteNode != null) elements.Add(noteNode);
+                        break;
                 }
             }
 
             _graphView.SetSelectionSilently(elements);
+        }
+
+        public FrameNode FindFrameNode(GraphFrameData.Frame frame)
+        {
+            if (frame == null) return null;
+            foreach (var node in _frameNodes)
+                if (node.Frame == frame) return node;
+            return null;
+        }
+
+        public NoteNode FindNoteNode(GraphFrameData.Note note)
+        {
+            if (note == null) return null;
+            foreach (var node in _noteNodes)
+                if (node.Note == note) return node;
+            return null;
         }
 
         public GraphNodeBase FindNode(object model)
@@ -291,6 +365,20 @@ namespace Yozolab.DaerD
             if (model is AnimatorState state && _stateNodes.TryGetValue(state, out var sn)) return sn;
             if (model is AnimatorStateMachine sm && _ssmNodes.TryGetValue(sm, out var mn)) return mn;
             return null;
+        }
+
+        /// <summary>Re-reads one state's labels and badges without a full graph rebuild.</summary>
+        public void RefreshStateNode(AnimatorState state)
+        {
+            if (state != null && _stateNodes.TryGetValue(state, out var node))
+                node.RefreshLabels();
+        }
+
+        /// <summary>Re-reads every state node's labels and badges (e.g. after bulk Write Defaults).</summary>
+        public void RefreshAllStateNodes()
+        {
+            foreach (var pair in _stateNodes)
+                pair.Value.RefreshLabels();
         }
 
         public TransitionEdge FindEdge(AnimatorTransitionBase transition)
@@ -323,6 +411,8 @@ namespace Yozolab.DaerD
                         case StateNode sn: DeleteState(sn.State); structural = true; break;
                         case SubStateMachineNode mn: DeleteSubStateMachine(mn.StateMachine); structural = true; break;
                         case TransitionEdge te when !te.IsDefaultEdge: DeleteTransitionEdge(te); structural = true; break;
+                        case FrameNode fn: _frameData?.RemoveFrame(fn.Frame); structural = true; break;
+                        case NoteNode nn: _frameData?.RemoveNote(nn.Note); structural = true; break;
                     }
                 }
             }
@@ -348,7 +438,21 @@ namespace Yozolab.DaerD
             var machines = sm.stateMachines;
             bool statesDirty = false, machinesDirty = false;
 
+            // The dragged elements themselves, plus any nodes a frame carried along live during
+            // the drag — those moved visually too and persist the same way. A node that was both
+            // selected and carried shows up twice; the second write is identical, so it's harmless.
+            var toPersist = new List<GraphElement>(moved);
             foreach (var element in moved)
+            {
+                if (!(element is FrameNode fn) || fn.Frame == null || _frameData == null) continue;
+                Undo.RecordObject(_frameData, "Move Frame");
+                fn.Frame.bounds = fn.GetPosition();
+                EditorUtility.SetDirty(_frameData);
+                var carried = fn.TakeDraggedContents();
+                if (carried != null) toPersist.AddRange(carried);
+            }
+
+            foreach (var element in toPersist)
             {
                 if (element is StateNode sn)
                 {
@@ -383,6 +487,13 @@ namespace Yozolab.DaerD
                     if (spn.Kind == SpecialNodeKind.Entry) sm.entryPosition = v;
                     else if (spn.Kind == SpecialNodeKind.Exit) sm.exitPosition = v;
                     else sm.anyStatePosition = v;
+                }
+                else if (element is NoteNode nn && nn.Note != null && _frameData != null)
+                {
+                    // Covers notes dragged directly and notes carried along by a frame.
+                    Undo.RecordObject(_frameData, "Move Note");
+                    nn.Note.bounds = nn.GetPosition();
+                    EditorUtility.SetDirty(_frameData);
                 }
             }
 
@@ -752,6 +863,286 @@ namespace Yozolab.DaerD
 
         static string MakeUniqueName(AnimatorStateMachine sm, string baseName) =>
             StateDuplicator.MakeUniqueName(sm, baseName);
+
+        // ---- frames ------------------------------------------------------------
+
+        /// <summary>
+        /// The graph nodes (and memo notes) whose whole visual rect lies inside
+        /// <paramref name="bounds"/>. Elements merely touching or crossing the outline are
+        /// excluded, so the result matches what visually reads as "inside the frame".
+        /// </summary>
+        public List<GraphElement> NodesFullyInside(Rect bounds)
+        {
+            var result = new List<GraphElement>();
+            void AddIfInside(GraphElement element)
+            {
+                if (element == null) return;
+                var rect = element.GetPosition();
+                if (rect.width <= 0f || rect.height <= 0f) return;   // not laid out yet
+                if (bounds.Contains(rect.min) && bounds.Contains(rect.max))
+                    result.Add(element);
+            }
+
+            foreach (var pair in _stateNodes) AddIfInside(pair.Value);
+            foreach (var pair in _ssmNodes) AddIfInside(pair.Value);
+            AddIfInside(_entryNode);
+            AddIfInside(_exitNode);
+            AddIfInside(_anyStateNode);
+            foreach (var note in _noteNodes) AddIfInside(note);
+            return result;
+        }
+
+        /// <summary>Creates an empty frame at <paramref name="position"/> (graph coordinates) and selects it.</summary>
+        public void CreateFrameAt(Vector2 position)
+        {
+            var sm = _context.CurrentStateMachine;
+            if (sm == null || _context.Controller == null) return;
+            _frameData = GraphFrameData.GetOrCreate(_context.Controller);
+            var frame = _frameData.AddFrame(sm, new Rect(position.x, position.y, 320f, 220f));
+            RequestRebuild();
+            _context.Select(frame);
+        }
+
+        /// <summary>Creates a frame around the given graph nodes and selects it.</summary>
+        public void CreateFrameAroundNodes(IList<GraphNodeBase> nodes)
+        {
+            var sm = _context.CurrentStateMachine;
+            if (sm == null || _context.Controller == null || nodes == null || nodes.Count == 0) return;
+
+            var bounds = nodes[0].GetPosition();
+            for (int i = 1; i < nodes.Count; i++)
+            {
+                var r = nodes[i].GetPosition();
+                bounds = Rect.MinMaxRect(
+                    Mathf.Min(bounds.xMin, r.xMin), Mathf.Min(bounds.yMin, r.yMin),
+                    Mathf.Max(bounds.xMax, r.xMax), Mathf.Max(bounds.yMax, r.yMax));
+            }
+            bounds = Rect.MinMaxRect(bounds.xMin - 24f, bounds.yMin - 44f, bounds.xMax + 24f, bounds.yMax + 24f);
+
+            _frameData = GraphFrameData.GetOrCreate(_context.Controller);
+            var frame = _frameData.AddFrame(sm, bounds);
+            RequestRebuild();
+            _context.Select(frame);
+        }
+
+        /// <summary>
+        /// Writes a frame's size back to the asset after the resize handle changed it. Pure
+        /// position changes are ignored on purpose: geometry events fire continuously while a
+        /// frame is dragged, and the move is persisted once, on drop, by <see cref="ApplyMoves"/>.
+        /// </summary>
+        void PersistFrameGeometry(FrameNode node)
+        {
+            if (node?.Frame == null || _frameData == null) return;
+            var rect = node.GetPosition();
+            var bounds = node.Frame.bounds;
+            if (Mathf.Approximately(rect.width, bounds.width) && Mathf.Approximately(rect.height, bounds.height))
+                return;
+            Undo.RecordObject(_frameData, "Resize Frame");
+            node.Frame.bounds = rect;
+            EditorUtility.SetDirty(_frameData);
+        }
+
+        /// <summary>Refreshes a frame's visuals after its title/color changed in the inspector.</summary>
+        public void RefreshFrameVisuals(GraphFrameData.Frame frame) => FindFrameNode(frame)?.RefreshVisuals();
+
+        public void DeleteFrame(GraphFrameData.Frame frame)
+        {
+            if (frame == null || _frameData == null || frame.locked) return;
+            _frameData.RemoveFrame(frame);
+            RequestRebuild();
+        }
+
+        public void ToggleFrameMoveNodes(GraphFrameData.Frame frame)
+        {
+            if (frame == null || _frameData == null) return;
+            Undo.RecordObject(_frameData, "Edit Frame");
+            frame.moveNodesWithFrame = !frame.moveNodesWithFrame;
+            EditorUtility.SetDirty(_frameData);
+        }
+
+        public void RenameFrame(GraphFrameData.Frame frame, string title)
+        {
+            if (frame == null || _frameData == null || string.IsNullOrEmpty(title)) return;
+            Undo.RecordObject(_frameData, "Rename Frame");
+            frame.title = title;
+            EditorUtility.SetDirty(_frameData);
+            RefreshFrameVisuals(frame);
+        }
+
+        public void ToggleFrameLock(GraphFrameData.Frame frame)
+        {
+            if (frame == null || _frameData == null) return;
+            Undo.RecordObject(_frameData, frame.locked ? "Unlock Frame" : "Lock Frame");
+            frame.locked = !frame.locked;
+            EditorUtility.SetDirty(_frameData);
+            RefreshFrameVisuals(frame);
+        }
+
+        public void SetFrameColor(GraphFrameData.Frame frame, Color color)
+        {
+            if (frame == null || _frameData == null) return;
+            Undo.RecordObject(_frameData, "Frame Color");
+            frame.color = color;
+            EditorUtility.SetDirty(_frameData);
+            RefreshFrameVisuals(frame);
+        }
+
+        /// <summary>Replaces the graph selection with the nodes lying fully inside the frame.</summary>
+        public void SelectFrameContents(GraphFrameData.Frame frame)
+        {
+            if (frame == null) return;
+            var nodes = NodesFullyInside(frame.bounds);
+            if (nodes.Count == 0) return;
+            _graphView.ClearSelection();
+            foreach (var node in nodes)
+                _graphView.AddToSelection(node);
+        }
+
+        /// <summary>Shrinks (or grows) the frame to snugly wrap the nodes currently inside it.</summary>
+        public void FitFrameToContents(GraphFrameData.Frame frame)
+        {
+            if (frame == null || _frameData == null || frame.locked) return;
+            var nodes = NodesFullyInside(frame.bounds);
+            if (nodes.Count == 0) return;
+
+            var bounds = nodes[0].GetPosition();
+            for (int i = 1; i < nodes.Count; i++)
+            {
+                var r = nodes[i].GetPosition();
+                bounds = Rect.MinMaxRect(
+                    Mathf.Min(bounds.xMin, r.xMin), Mathf.Min(bounds.yMin, r.yMin),
+                    Mathf.Max(bounds.xMax, r.xMax), Mathf.Max(bounds.yMax, r.yMax));
+            }
+            bounds = Rect.MinMaxRect(bounds.xMin - 24f, bounds.yMin - 44f, bounds.xMax + 24f, bounds.yMax + 24f);
+
+            Undo.RecordObject(_frameData, "Fit Frame To Contents");
+            frame.bounds = bounds;
+            EditorUtility.SetDirty(_frameData);
+            FindFrameNode(frame)?.SetPosition(bounds);
+        }
+
+        // ---- notes -------------------------------------------------------------
+
+        /// <summary>Creates an empty memo note at <paramref name="position"/> and selects it.</summary>
+        public void CreateNoteAt(Vector2 position)
+        {
+            var sm = _context.CurrentStateMachine;
+            if (sm == null || _context.Controller == null) return;
+            _frameData = GraphFrameData.GetOrCreate(_context.Controller);
+            var note = _frameData.AddNote(sm, new Rect(position.x, position.y, 200f, 100f));
+            RequestRebuild();
+            _context.Select(note);
+        }
+
+        public void DeleteNote(GraphFrameData.Note note)
+        {
+            if (note == null || _frameData == null) return;
+            _frameData.RemoveNote(note);
+            RequestRebuild();
+        }
+
+        public void SetNoteText(GraphFrameData.Note note, string text)
+        {
+            if (note == null || _frameData == null) return;
+            Undo.RecordObject(_frameData, "Edit Note");
+            note.text = text ?? string.Empty;
+            EditorUtility.SetDirty(_frameData);
+            RefreshNoteVisuals(note);
+        }
+
+        public void SetNoteColor(GraphFrameData.Note note, Color color)
+        {
+            if (note == null || _frameData == null) return;
+            Undo.RecordObject(_frameData, "Note Color");
+            note.color = color;
+            EditorUtility.SetDirty(_frameData);
+            RefreshNoteVisuals(note);
+        }
+
+        public void SetNoteFontSize(GraphFrameData.Note note, int fontSize)
+        {
+            if (note == null || _frameData == null) return;
+            Undo.RecordObject(_frameData, "Note Font Size");
+            note.fontSize = fontSize;
+            EditorUtility.SetDirty(_frameData);
+            RefreshNoteVisuals(note);
+        }
+
+        /// <summary>Refreshes a note's visuals after its fields changed in the inspector.</summary>
+        public void RefreshNoteVisuals(GraphFrameData.Note note) => FindNoteNode(note)?.RefreshVisuals();
+
+        /// <summary>
+        /// Writes a note's size back to the asset after the resize handle changed it; moves are
+        /// persisted on drop via <see cref="ApplyMoves"/>, mirroring the frame behaviour.
+        /// </summary>
+        void PersistNoteGeometry(NoteNode node)
+        {
+            if (node?.Note == null || _frameData == null) return;
+            var rect = node.GetPosition();
+            var bounds = node.Note.bounds;
+            if (Mathf.Approximately(rect.width, bounds.width) && Mathf.Approximately(rect.height, bounds.height))
+                return;
+            Undo.RecordObject(_frameData, "Resize Note");
+            node.Note.bounds = rect;
+            EditorUtility.SetDirty(_frameData);
+        }
+
+        // ---- pack / unpack -----------------------------------------------------
+
+        public void PackSelectedStates(List<AnimatorState> states)
+        {
+            var sm = _context.CurrentStateMachine;
+            if (sm == null || states == null || states.Count == 0) return;
+            var child = StatePacker.Pack(sm, states);
+            if (child == null) return;
+            RequestRebuild();
+            _context.Select(child);
+        }
+
+        public void UnpackSubStateMachine(AnimatorStateMachine child)
+        {
+            var sm = _context.CurrentStateMachine;
+            if (sm == null || child == null) return;
+            var warnings = StatePacker.Unpack(sm, child, _context.Controller);
+            foreach (var warning in warnings)
+                Debug.LogWarning("DaerD: " + warning);
+            RequestRebuild();
+            _context.Select(null);
+        }
+
+        // ---- chain / fan transitions --------------------------------------------
+
+        public void ChainStates(IList<AnimatorState> states)
+        {
+            var created = TransitionBatch.Chain(states);
+            if (created.Count == 0) return;
+            Rebuild();
+            _context.Select(created[0]);
+        }
+
+        public void FanOut(AnimatorState source, IEnumerable<AnimatorState> targets)
+        {
+            var created = TransitionBatch.FanOut(source, targets);
+            if (created.Count == 0) return;
+            Rebuild();
+            _context.Select(created[0]);
+        }
+
+        public void FanIn(IEnumerable<AnimatorState> sources, AnimatorState target)
+        {
+            var created = TransitionBatch.FanIn(sources, target);
+            if (created.Count == 0) return;
+            Rebuild();
+            _context.Select(created[0]);
+        }
+
+        public void CrossProduct(IList<AnimatorState> sources, IList<AnimatorState> targets)
+        {
+            var created = TransitionBatch.CrossProduct(sources, targets);
+            if (created.Count == 0) return;
+            Rebuild();
+            _context.Select(created[0]);
+        }
 
         // ---- copy / paste ----------------------------------------------------
 

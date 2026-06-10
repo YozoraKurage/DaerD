@@ -59,6 +59,10 @@ namespace Yozolab.DaerD
 
             context.ControllerChanged += _sync.RequestRebuild;
             context.LayerChanged += _sync.RequestRebuild;
+            // Cross-product source marks only make sense within one layer: a transition cannot
+            // point at a state of another layer or controller.
+            context.ControllerChanged += ClearMarkedSources;
+            context.LayerChanged += ClearMarkedSources;
             context.StateMachinePathChanged += _sync.RequestRebuild;
             context.LayersChanged += _sync.RequestRebuild;
             context.GraphStructureChanged += _sync.RequestRebuild;
@@ -230,6 +234,8 @@ namespace Yozolab.DaerD
                 case SubStateMachineNode mn: return mn.StateMachine;
                 case TransitionEdge te: return te;
                 case SpecialNode spn: return spn.Kind;
+                case FrameNode fn: return fn.Frame;
+                case NoteNode nn: return nn.Note;
             }
             return null;
         }
@@ -252,6 +258,16 @@ namespace Yozolab.DaerD
             {
                 foreach (var e in _sync.Edges)
                     if (e.Transitions.Contains(transition)) { base.AddToSelection(e); break; }
+            }
+            else if (_context.Selection is GraphFrameData.Note note)
+            {
+                var noteNode = _sync.FindNoteNode(note);
+                if (noteNode != null) base.AddToSelection(noteNode);
+            }
+            else if (_context.Selection is GraphFrameData.Frame frame)
+            {
+                var frameNode = _sync.FindFrameNode(frame);
+                if (frameNode != null) base.AddToSelection(frameNode);
             }
             _syncingSelection = false;
         }
@@ -283,7 +299,20 @@ namespace Yozolab.DaerD
 
             if (evt.keyCode == KeyCode.F2)
             {
-                // F2 renames the selected state; Ctrl/Cmd+F2 renames its clip.
+                // F2 renames the selected state (Ctrl/Cmd+F2: its clip), retitles the selected
+                // frame, or edits the selected note — whichever single element is selected.
+                if (selection.Count == 1 && selection[0] is FrameNode frameNode)
+                {
+                    frameNode.BeginRename();
+                    evt.StopPropagation();
+                    return;
+                }
+                if (selection.Count == 1 && selection[0] is NoteNode noteNode)
+                {
+                    noteNode.BeginEdit();
+                    evt.StopPropagation();
+                    return;
+                }
                 if (BeginRenameSelectedState(clip: evt.ctrlKey || evt.commandKey))
                     evt.StopPropagation();
                 return;
@@ -519,6 +548,20 @@ namespace Yozolab.DaerD
 
         public override void BuildContextualMenu(ContextualMenuPopulateEvent evt)
         {
+            var frameNode = ResolveTarget<FrameNode>(evt.target as VisualElement);
+            if (frameNode != null)
+            {
+                BuildFrameMenu(evt, frameNode);
+                return;
+            }
+
+            var noteNode = ResolveTarget<NoteNode>(evt.target as VisualElement);
+            if (noteNode != null)
+            {
+                BuildNoteMenu(evt, noteNode);
+                return;
+            }
+
             var edge = ResolveTargetEdge(evt.target as VisualElement);
             if (edge != null && !edge.IsDefaultEdge)
             {
@@ -554,6 +597,24 @@ namespace Yozolab.DaerD
                 stateCount > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
             evt.menu.AppendAction("Delete", _ => DeleteCurrentSelection(),
                 HasDeletableSelection() ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+
+            evt.menu.AppendSeparator();
+            BuildConnectMenu(evt);
+
+            int selectedNodeCount = CountSelected<StateNode>() + CountSelected<SubStateMachineNode>();
+            evt.menu.AppendAction("Create Frame", _ => _sync.CreateFrameAt(graphPosition));
+            evt.menu.AppendAction("Create Frame Around Selection", _ => CreateFrameAroundSelection(),
+                selectedNodeCount > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+            evt.menu.AppendAction("Create Note", _ => _sync.CreateNoteAt(graphPosition));
+            evt.menu.AppendAction("Pack Into Sub-State Machine" + (stateCount > 1 ? " (" + stateCount + ")" : string.Empty),
+                _ => _sync.PackSelectedStates(GetSelectedStates()),
+                stateCount > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+            if (CountSelected<SubStateMachineNode>() == 1 && stateCount == 0)
+            {
+                var ssmNode = FirstSelected<SubStateMachineNode>();
+                evt.menu.AppendAction("Unpack Sub-State Machine",
+                    _ => _sync.UnpackSubStateMachine(ssmNode.StateMachine));
+            }
 
             if (stateCount == 1)
             {
@@ -606,6 +667,167 @@ namespace Yozolab.DaerD
                 evt.menu.AppendAction("Disconnect All", _ => DisconnectStateNode(stateNode),
                     connected > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
             }
+        }
+
+        // Source set marked for the two-step cross-product flow. Static so it survives the menu
+        // closing and the user changing the selection before the second step.
+        static List<AnimatorState> s_markedSources;
+
+        static void ClearMarkedSources() => s_markedSources = null;
+
+        /// <summary>Chain / fan / cross-product transition creation between the selected states.</summary>
+        void BuildConnectMenu(ContextualMenuPopulateEvent evt)
+        {
+            var selectedStates = GetSelectedStates();
+            evt.menu.AppendAction(
+                "Connect States/Chain In Click Order (" + selectedStates.Count + ")",
+                _ => _sync.ChainStates(GetSelectedStates()),
+                selectedStates.Count >= 2 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+
+            BuildFanEntries(evt, selectedStates);
+            BuildCrossProductEntries(evt, selectedStates);
+        }
+
+        void BuildFanEntries(ContextualMenuPopulateEvent evt, List<AnimatorState> selectedStates)
+        {
+            var target = ResolveTarget<StateNode>(evt.target as VisualElement);
+            if (target?.State == null || selectedStates.Count < 2 || !selectedStates.Contains(target.State))
+                return;
+
+            var others = new List<AnimatorState>();
+            foreach (var s in selectedStates)
+                if (s != target.State) others.Add(s);
+
+            evt.menu.AppendAction("Connect States/This → Other Selected (" + others.Count + ")",
+                _ => _sync.FanOut(target.State, others));
+            evt.menu.AppendAction("Connect States/Other Selected (" + others.Count + ") → This",
+                _ => _sync.FanIn(others, target.State));
+        }
+
+        /// <summary>
+        /// Two-step cross product: mark the current selection as the source set, change the
+        /// selection, then connect every marked source to every now-selected state.
+        /// </summary>
+        void BuildCrossProductEntries(ContextualMenuPopulateEvent evt, List<AnimatorState> selectedStates)
+        {
+            // Marked states deleted (or destroyed by an undo) since step one drop out silently.
+            s_markedSources?.RemoveAll(s => s == null);
+            int marked = s_markedSources?.Count ?? 0;
+
+            evt.menu.AppendSeparator("Connect States/");
+            evt.menu.AppendAction(
+                "Connect States/Mark Selected As Sources (" + selectedStates.Count + ")",
+                _ => s_markedSources = new List<AnimatorState>(GetSelectedStates()),
+                selectedStates.Count > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+            evt.menu.AppendAction(
+                "Connect States/Marked Sources (" + marked + ") → Selected (" + selectedStates.Count + ")",
+                _ =>
+                {
+                    _sync.CrossProduct(s_markedSources, GetSelectedStates());
+                    s_markedSources = null;
+                },
+                marked > 0 && selectedStates.Count > 0
+                    ? DropdownMenuAction.Status.Normal
+                    : DropdownMenuAction.Status.Disabled);
+            if (marked > 0)
+                evt.menu.AppendAction("Connect States/Clear Marked Sources",
+                    _ => s_markedSources = null);
+        }
+
+        void CreateFrameAroundSelection()
+        {
+            var nodes = new List<GraphNodeBase>();
+            foreach (var s in selection)
+                if (s is StateNode || s is SubStateMachineNode)
+                    nodes.Add((GraphNodeBase)s);
+            _sync.CreateFrameAroundNodes(nodes);
+        }
+
+        static readonly (string name, Color color)[] FramePalette =
+        {
+            ("Blue", new Color(0.32f, 0.45f, 0.60f)),
+            ("Green", new Color(0.34f, 0.55f, 0.36f)),
+            ("Orange", new Color(0.74f, 0.51f, 0.20f)),
+            ("Purple", new Color(0.52f, 0.40f, 0.65f)),
+            ("Red", new Color(0.65f, 0.32f, 0.32f)),
+            ("Gray", new Color(0.45f, 0.45f, 0.45f)),
+        };
+
+        static readonly (string name, Color color)[] NotePalette =
+        {
+            ("Yellow", new Color(0.93f, 0.86f, 0.51f)),
+            ("Green", new Color(0.72f, 0.86f, 0.55f)),
+            ("Blue", new Color(0.62f, 0.78f, 0.92f)),
+            ("Pink", new Color(0.93f, 0.68f, 0.77f)),
+            ("Gray", new Color(0.78f, 0.78f, 0.78f)),
+        };
+
+        static readonly (string name, int size)[] NoteFontSizes =
+        {
+            ("Small", 10),
+            ("Medium", 12),
+            ("Large", 16),
+        };
+
+        void BuildFrameMenu(ContextualMenuPopulateEvent evt, FrameNode frameNode)
+        {
+            var frame = frameNode.Frame;
+            var unlessLocked = frame.locked ? DropdownMenuAction.Status.Disabled : DropdownMenuAction.Status.Normal;
+
+            evt.menu.AppendAction("Rename Frame", _ => frameNode.BeginRename(), unlessLocked);
+            evt.menu.AppendAction("Lock Frame", _ => _sync.ToggleFrameLock(frame),
+                frame.locked ? DropdownMenuAction.Status.Checked : DropdownMenuAction.Status.Normal);
+            evt.menu.AppendAction("Move Nodes With Frame",
+                _ => _sync.ToggleFrameMoveNodes(frame),
+                frame.moveNodesWithFrame ? DropdownMenuAction.Status.Checked : DropdownMenuAction.Status.Normal);
+
+            evt.menu.AppendSeparator();
+            int contents = _sync.NodesFullyInside(frame.bounds).Count;
+            evt.menu.AppendAction("Select Contents (" + contents + ")",
+                _ => _sync.SelectFrameContents(frame),
+                contents > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+            evt.menu.AppendAction("Fit To Contents", _ => _sync.FitFrameToContents(frame),
+                !frame.locked && contents > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+
+            foreach (var preset in FramePalette)
+            {
+                var captured = preset.color;
+                evt.menu.AppendAction("Frame Color/" + preset.name, _ => _sync.SetFrameColor(frame, captured));
+            }
+
+            evt.menu.AppendSeparator();
+            evt.menu.AppendAction("Delete Frame", _ => _sync.DeleteFrame(frame), unlessLocked);
+        }
+
+        void BuildNoteMenu(ContextualMenuPopulateEvent evt, NoteNode noteNode)
+        {
+            var note = noteNode.Note;
+            evt.menu.AppendAction("Edit Note", _ => noteNode.BeginEdit());
+
+            foreach (var preset in NotePalette)
+            {
+                var captured = preset.color;
+                evt.menu.AppendAction("Note Color/" + preset.name, _ =>
+                    _sync.SetNoteColor(note, new Color(captured.r, captured.g, captured.b, note.color.a)));
+            }
+            foreach (var percent in new[] { 100, 80, 60, 40 })
+            {
+                float alpha = percent / 100f;
+                evt.menu.AppendAction("Opacity/" + percent + "%", _ =>
+                    _sync.SetNoteColor(note, new Color(note.color.r, note.color.g, note.color.b, alpha)),
+                    Mathf.Abs(note.color.a - alpha) < 0.01f
+                        ? DropdownMenuAction.Status.Checked
+                        : DropdownMenuAction.Status.Normal);
+            }
+            foreach (var option in NoteFontSizes)
+            {
+                var captured = option.size;
+                evt.menu.AppendAction("Font Size/" + option.name, _ => _sync.SetNoteFontSize(note, captured),
+                    note.fontSize == captured ? DropdownMenuAction.Status.Checked : DropdownMenuAction.Status.Normal);
+            }
+
+            evt.menu.AppendSeparator();
+            evt.menu.AppendAction("Delete Note", _ => _sync.DeleteNote(note));
         }
 
         void AlignSelectedStates(GraphLayout.AlignAxis axis)
