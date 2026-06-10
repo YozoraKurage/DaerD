@@ -197,6 +197,32 @@
     text-overflow: ellipsis;
 }
 
+/* Inline rename field shown in place of a frame's title label. */
+.dd-frame__rename {
+    flex-grow: 1;
+    margin: 2px 4px;
+}
+
+/* Memo notes (sticky notes drawn among the nodes). */
+.dd-note {
+    border-radius: 3px;
+    padding: 5px 6px;
+    min-width: 80px;
+    min-height: 40px;
+}
+
+.dd-note__text {
+    color: rgb(38, 34, 22);
+    white-space: normal;
+    flex-grow: 1;
+}
+
+/* In-place note editing field. */
+.dd-note__edit {
+    flex-grow: 1;
+    margin: 0;
+}
+
 .transition-edge__badge {
     position: absolute;
     background-color: rgb(40, 40, 40);

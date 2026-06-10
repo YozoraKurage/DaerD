@@ -10,8 +10,9 @@ namespace Yozolab.DaerD
     /// A comment/group box drawn behind the graph nodes. Only the title bar and a thin border
     /// margin are clickable, so rubber-band selection and node interaction keep working inside
     /// the frame; resizing uses the standard GraphView resizer in the bottom-right corner.
-    /// Dragging the frame carries the nodes lying fully inside it along in real time
-    /// (Alt-drag moves the frame alone).
+    /// Dragging the title bar carries the nodes lying fully inside the frame along in real
+    /// time; dragging the border moves the frame alone. A locked frame cannot be moved,
+    /// resized, renamed or deleted.
     /// </summary>
     class FrameNode : GraphElement
     {
@@ -23,7 +24,10 @@ namespace Yozolab.DaerD
         readonly Label _titleLabel;
         readonly VisualElement _titleBar;
         readonly VisualElement _body;
+        readonly Resizer _resizer;
         readonly Func<Rect, List<GraphElement>> _contentsResolver;
+        readonly Action<string> _onRenameCommitted;
+        TextField _renameField;
 
         // Captured on mouse-down: the nodes inside the frame and where they started, so they
         // can be moved in lockstep with the frame during the drag.
@@ -31,21 +35,21 @@ namespace Yozolab.DaerD
         Rect _dragStartBounds;
 
         public FrameNode(GraphFrameData.Frame frame, Action onGeometryChanged,
-            Func<Rect, List<GraphElement>> contentsResolver)
+            Func<Rect, List<GraphElement>> contentsResolver, Action<string> onRenameCommitted)
         {
             Frame = frame;
             _contentsResolver = contentsResolver;
+            _onRenameCommitted = onRenameCommitted;
             AddToClassList("dd-frame");
             style.position = Position.Absolute;
             // Negative layer renders frames behind nodes and edges.
             layer = -10;
 
-            capabilities = Capabilities.Selectable | Capabilities.Movable | Capabilities.Deletable
-                         | Capabilities.Resizable;
+            tooltip = "Drag the border to move the frame alone";
 
             _titleBar = new VisualElement
             {
-                tooltip = "Drag to move the frame and the nodes inside it (Alt-drag: frame only)",
+                tooltip = "Drag to move the frame and the nodes inside it. Double-click or F2 to rename.",
             };
             _titleBar.AddToClassList("dd-frame__title");
             _titleBar.style.height = TitleHeight;
@@ -59,7 +63,8 @@ namespace Yozolab.DaerD
             _body.style.flexGrow = 1;
             Add(_body);
 
-            Add(new Resizer());
+            _resizer = new Resizer();
+            Add(_resizer);
             // The resizer manipulates layout directly (it bypasses graphViewChanged), so size
             // changes are persisted from geometry events; position-only changes are persisted
             // by GraphSync's moved-elements path when the drag is dropped.
@@ -69,21 +74,29 @@ namespace Yozolab.DaerD
                 onGeometryChanged?.Invoke();
             });
             RegisterCallback<MouseDownEvent>(OnMouseDownCaptureContents, TrickleDown.TrickleDown);
+            _titleBar.RegisterCallback<MouseDownEvent>(evt =>
+            {
+                if (evt.clickCount == 2 && evt.button == 0)
+                {
+                    BeginRename();
+                    evt.StopPropagation();
+                }
+            });
 
             RefreshVisuals();
         }
 
         /// <summary>
-        /// Snapshot the contained nodes when a drag might start. Only nodes lying entirely
-        /// inside the frame count — a node merely touching the outline visibly pokes out, so
-        /// carrying it along would contradict what the user sees.
+        /// Snapshot the contained nodes when a title-bar drag might start. Only nodes lying
+        /// entirely inside the frame count — a node merely touching the outline visibly pokes
+        /// out, so carrying it along would contradict what the user sees. Border drags (and
+        /// resizes) move the frame alone, so they capture nothing.
         /// </summary>
         void OnMouseDownCaptureContents(MouseDownEvent evt)
         {
             _draggedContents = null;
-            if (evt.button != 0) return;
-            if (IsInResizer(evt.target as VisualElement)) return;   // resizing never drags contents
-            if (evt.altKey || !Frame.moveNodesWithFrame) return;
+            if (evt.button != 0 || Frame.locked || !Frame.moveNodesWithFrame) return;
+            if (!IsInTitleBar(evt.target as VisualElement)) return;
 
             var contents = _contentsResolver?.Invoke(GetPosition());
             if (contents == null || contents.Count == 0) return;
@@ -120,19 +133,81 @@ namespace Yozolab.DaerD
             return nodes;
         }
 
-        static bool IsInResizer(VisualElement element)
+        bool IsInTitleBar(VisualElement element)
         {
             for (var e = element; e != null; e = e.parent)
-                if (e is Resizer) return true;
+                if (e == _titleBar) return true;
             return false;
+        }
+
+        /// <summary>Swaps the title for a one-shot text field; Enter / focus-out commits, Escape cancels.</summary>
+        public void BeginRename()
+        {
+            if (_renameField != null || Frame.locked) return;
+
+            var field = new TextField { value = Frame.title };
+            field.AddToClassList("dd-frame__rename");
+            _renameField = field;
+            _titleLabel.style.display = DisplayStyle.None;
+            _titleBar.Add(field);
+
+            bool finished = false;
+            void Finish(bool commit)
+            {
+                if (finished) return;
+                finished = true;
+                string value = field.value;
+                _renameField = null;
+                field.RemoveFromHierarchy();
+                _titleLabel.style.display = DisplayStyle.Flex;
+                if (!commit) return;
+                value = value?.Trim();
+                if (string.IsNullOrEmpty(value) || value == Frame.title) return;
+                _onRenameCommitted?.Invoke(value);
+                RefreshVisuals();
+            }
+
+            field.RegisterCallback<KeyDownEvent>(evt =>
+            {
+                if (evt.keyCode == KeyCode.Return || evt.keyCode == KeyCode.KeypadEnter)
+                {
+                    Finish(true);
+                    evt.StopPropagation();
+                }
+                else if (evt.keyCode == KeyCode.Escape)
+                {
+                    Finish(false);
+                    evt.StopPropagation();
+                }
+            });
+            // Focus-out commits, except when the field was detached by a graph rebuild
+            // (panel == null): that's a teardown, not a confirmation.
+            field.RegisterCallback<FocusOutEvent>(_ => Finish(field.panel != null));
+            field.RegisterCallback<MouseDownEvent>(evt => evt.StopPropagation());
+
+            field.schedule.Execute(() =>
+            {
+                field.Focus();
+                field.SelectAll();
+            }).ExecuteLater(0);
         }
 
         public void RefreshVisuals()
         {
-            _titleLabel.text = string.IsNullOrEmpty(Frame.title) ? "Frame" : Frame.title;
+            string title = string.IsNullOrEmpty(Frame.title) ? "Frame" : Frame.title;
+            _titleLabel.text = Frame.locked ? title + "  (locked)" : title;
             var c = Frame.color;
-            _titleBar.style.backgroundColor = new Color(c.r, c.g, c.b, 0.85f);
+            _titleBar.style.backgroundColor = new Color(c.r, c.g, c.b, Frame.locked ? 0.55f : 0.85f);
             _body.style.backgroundColor = new Color(c.r, c.g, c.b, 0.12f);
+
+            // A locked frame stays selectable (to inspect / unlock) but loses every
+            // geometry-changing capability; the resize handle disappears with it.
+            capabilities = Frame.locked
+                ? Capabilities.Selectable
+                : Capabilities.Selectable | Capabilities.Movable | Capabilities.Deletable
+                  | Capabilities.Resizable;
+            _resizer.style.display = Frame.locked ? DisplayStyle.None : DisplayStyle.Flex;
+
             ApplyBorder();
         }
 

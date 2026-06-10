@@ -235,6 +235,7 @@ namespace Yozolab.DaerD
                 case TransitionEdge te: return te;
                 case SpecialNode spn: return spn.Kind;
                 case FrameNode fn: return fn.Frame;
+                case NoteNode nn: return nn.Note;
             }
             return null;
         }
@@ -257,6 +258,11 @@ namespace Yozolab.DaerD
             {
                 foreach (var e in _sync.Edges)
                     if (e.Transitions.Contains(transition)) { base.AddToSelection(e); break; }
+            }
+            else if (_context.Selection is GraphFrameData.Note note)
+            {
+                var noteNode = _sync.FindNoteNode(note);
+                if (noteNode != null) base.AddToSelection(noteNode);
             }
             else if (_context.Selection is GraphFrameData.Frame frame)
             {
@@ -293,7 +299,20 @@ namespace Yozolab.DaerD
 
             if (evt.keyCode == KeyCode.F2)
             {
-                // F2 renames the selected state; Ctrl/Cmd+F2 renames its clip.
+                // F2 renames the selected state (Ctrl/Cmd+F2: its clip), retitles the selected
+                // frame, or edits the selected note — whichever single element is selected.
+                if (selection.Count == 1 && selection[0] is FrameNode frameNode)
+                {
+                    frameNode.BeginRename();
+                    evt.StopPropagation();
+                    return;
+                }
+                if (selection.Count == 1 && selection[0] is NoteNode noteNode)
+                {
+                    noteNode.BeginEdit();
+                    evt.StopPropagation();
+                    return;
+                }
                 if (BeginRenameSelectedState(clip: evt.ctrlKey || evt.commandKey))
                     evt.StopPropagation();
                 return;
@@ -536,6 +555,13 @@ namespace Yozolab.DaerD
                 return;
             }
 
+            var noteNode = ResolveTarget<NoteNode>(evt.target as VisualElement);
+            if (noteNode != null)
+            {
+                BuildNoteMenu(evt, noteNode);
+                return;
+            }
+
             var edge = ResolveTargetEdge(evt.target as VisualElement);
             if (edge != null && !edge.IsDefaultEdge)
             {
@@ -579,6 +605,7 @@ namespace Yozolab.DaerD
             evt.menu.AppendAction("Create Frame", _ => _sync.CreateFrameAt(graphPosition));
             evt.menu.AppendAction("Create Frame Around Selection", _ => CreateFrameAroundSelection(),
                 selectedNodeCount > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+            evt.menu.AppendAction("Create Note", _ => _sync.CreateNoteAt(graphPosition));
             evt.menu.AppendAction("Pack Into Sub-State Machine" + (stateCount > 1 ? " (" + stateCount + ")" : string.Empty),
                 _ => _sync.PackSelectedStates(GetSelectedStates()),
                 stateCount > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
@@ -716,14 +743,81 @@ namespace Yozolab.DaerD
             _sync.CreateFrameAroundNodes(nodes);
         }
 
+        static readonly (string name, Color color)[] FramePalette =
+        {
+            ("Blue", new Color(0.32f, 0.45f, 0.60f)),
+            ("Green", new Color(0.34f, 0.55f, 0.36f)),
+            ("Orange", new Color(0.74f, 0.51f, 0.20f)),
+            ("Purple", new Color(0.52f, 0.40f, 0.65f)),
+            ("Red", new Color(0.65f, 0.32f, 0.32f)),
+            ("Gray", new Color(0.45f, 0.45f, 0.45f)),
+        };
+
+        static readonly (string name, Color color)[] NotePalette =
+        {
+            ("Yellow", new Color(0.93f, 0.86f, 0.51f)),
+            ("Green", new Color(0.72f, 0.86f, 0.55f)),
+            ("Blue", new Color(0.62f, 0.78f, 0.92f)),
+            ("Pink", new Color(0.93f, 0.68f, 0.77f)),
+            ("Gray", new Color(0.78f, 0.78f, 0.78f)),
+        };
+
+        static readonly (string name, int size)[] NoteFontSizes =
+        {
+            ("Small", 10),
+            ("Medium", 12),
+            ("Large", 16),
+        };
+
         void BuildFrameMenu(ContextualMenuPopulateEvent evt, FrameNode frameNode)
         {
             var frame = frameNode.Frame;
+            var unlessLocked = frame.locked ? DropdownMenuAction.Status.Disabled : DropdownMenuAction.Status.Normal;
+
+            evt.menu.AppendAction("Rename Frame", _ => frameNode.BeginRename(), unlessLocked);
+            evt.menu.AppendAction("Lock Frame", _ => _sync.ToggleFrameLock(frame),
+                frame.locked ? DropdownMenuAction.Status.Checked : DropdownMenuAction.Status.Normal);
             evt.menu.AppendAction("Move Nodes With Frame",
                 _ => _sync.ToggleFrameMoveNodes(frame),
                 frame.moveNodesWithFrame ? DropdownMenuAction.Status.Checked : DropdownMenuAction.Status.Normal);
+
             evt.menu.AppendSeparator();
-            evt.menu.AppendAction("Delete Frame", _ => _sync.DeleteFrame(frame));
+            int contents = _sync.NodesFullyInside(frame.bounds).Count;
+            evt.menu.AppendAction("Select Contents (" + contents + ")",
+                _ => _sync.SelectFrameContents(frame),
+                contents > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+            evt.menu.AppendAction("Fit To Contents", _ => _sync.FitFrameToContents(frame),
+                !frame.locked && contents > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+
+            foreach (var preset in FramePalette)
+            {
+                var captured = preset.color;
+                evt.menu.AppendAction("Frame Color/" + preset.name, _ => _sync.SetFrameColor(frame, captured));
+            }
+
+            evt.menu.AppendSeparator();
+            evt.menu.AppendAction("Delete Frame", _ => _sync.DeleteFrame(frame), unlessLocked);
+        }
+
+        void BuildNoteMenu(ContextualMenuPopulateEvent evt, NoteNode noteNode)
+        {
+            var note = noteNode.Note;
+            evt.menu.AppendAction("Edit Note", _ => noteNode.BeginEdit());
+
+            foreach (var preset in NotePalette)
+            {
+                var captured = preset.color;
+                evt.menu.AppendAction("Note Color/" + preset.name, _ => _sync.SetNoteColor(note, captured));
+            }
+            foreach (var option in NoteFontSizes)
+            {
+                var captured = option.size;
+                evt.menu.AppendAction("Font Size/" + option.name, _ => _sync.SetNoteFontSize(note, captured),
+                    note.fontSize == captured ? DropdownMenuAction.Status.Checked : DropdownMenuAction.Status.Normal);
+            }
+
+            evt.menu.AppendSeparator();
+            evt.menu.AppendAction("Delete Note", _ => _sync.DeleteNote(note));
         }
 
         void AlignSelectedStates(GraphLayout.AlignAxis axis)
