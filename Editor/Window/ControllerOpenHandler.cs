@@ -22,7 +22,7 @@ namespace Yozolab.DaerD
             return false;
         }
 
-        [MenuItem("Window/Yozolab/DaerD")]
+        [MenuItem("YozoLab/DaerD")]
         static void OpenFromMenu()
         {
             DaerDWindow.Open(Selection.activeObject as AnimatorController);
