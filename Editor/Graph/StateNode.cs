@@ -29,6 +29,7 @@ namespace Yozolab.DaerD
         readonly VisualElement _nodeBorder;
         readonly Label _wdBadge;
         readonly Label _behaviourBadge;
+        readonly VisualElement _badgeRow;
 
         public StateNode(AnimatorState state, Action<AnimatorState> onOpenBlendTree = null)
         {
@@ -54,6 +55,22 @@ namespace Yozolab.DaerD
             _motionLabel.AddToClassList("compact-node__motion");
             text.Add(_nameLabel);
             text.Add(_motionLabel);
+
+            // Badges: WD (Write Defaults on) and B (has StateMachineBehaviours). A third,
+            // right-aligned row inside the text column, so they stay within the node body;
+            // the row collapses entirely when neither badge applies.
+            _badgeRow = new VisualElement { pickingMode = PickingMode.Ignore };
+            _badgeRow.AddToClassList("state-node__badges");
+            _wdBadge = new Label("WD") { pickingMode = PickingMode.Ignore, tooltip = "Write Defaults is ON" };
+            _wdBadge.AddToClassList("state-node__badge");
+            _wdBadge.AddToClassList("state-node__badge--wd");
+            _behaviourBadge = new Label("B") { pickingMode = PickingMode.Ignore };
+            _behaviourBadge.AddToClassList("state-node__badge");
+            _behaviourBadge.AddToClassList("state-node__badge--b");
+            _badgeRow.Add(_wdBadge);
+            _badgeRow.Add(_behaviourBadge);
+            text.Add(_badgeRow);
+
             topContainer.Insert(1, text);
 
             capabilities |= Capabilities.Movable | Capabilities.Selectable | Capabilities.Deletable
@@ -72,19 +89,6 @@ namespace Yozolab.DaerD
 
             _nodeBorder = this.Q("node-border");
             ApplyBodyColor(BodyColor);
-
-            // Corner badges: WD (Write Defaults on) and B (has StateMachineBehaviours).
-            var badges = new VisualElement { pickingMode = PickingMode.Ignore };
-            badges.AddToClassList("state-node__badges");
-            _wdBadge = new Label("WD") { pickingMode = PickingMode.Ignore, tooltip = "Write Defaults is ON" };
-            _wdBadge.AddToClassList("state-node__badge");
-            _wdBadge.AddToClassList("state-node__badge--wd");
-            _behaviourBadge = new Label("B") { pickingMode = PickingMode.Ignore, tooltip = "Has StateMachineBehaviours" };
-            _behaviourBadge.AddToClassList("state-node__badge");
-            _behaviourBadge.AddToClassList("state-node__badge--b");
-            badges.Add(_wdBadge);
-            badges.Add(_behaviourBadge);
-            Add(badges);
 
             RefreshLabels();
             RefreshExpandedState();
@@ -114,10 +118,13 @@ namespace Yozolab.DaerD
 
             bool showBadges = DaerDSettings.ShowStateBadges;
             var behaviours = State.behaviours;
-            _wdBadge.style.display = showBadges && State.writeDefaultValues
-                ? DisplayStyle.Flex : DisplayStyle.None;
-            _behaviourBadge.style.display = showBadges && behaviours != null && behaviours.Length > 0
-                ? DisplayStyle.Flex : DisplayStyle.None;
+            int behaviourCount = behaviours != null ? behaviours.Length : 0;
+            bool showWd = showBadges && State.writeDefaultValues;
+            bool showB = showBadges && behaviourCount > 0;
+            _wdBadge.style.display = showWd ? DisplayStyle.Flex : DisplayStyle.None;
+            _behaviourBadge.style.display = showB ? DisplayStyle.Flex : DisplayStyle.None;
+            _behaviourBadge.tooltip = behaviourCount + " StateMachineBehaviour(s)";
+            _badgeRow.style.display = showWd || showB ? DisplayStyle.Flex : DisplayStyle.None;
         }
 
         /// <summary>

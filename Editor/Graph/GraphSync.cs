@@ -329,6 +329,20 @@ namespace Yozolab.DaerD
             return null;
         }
 
+        /// <summary>Re-reads one state's labels and badges without a full graph rebuild.</summary>
+        public void RefreshStateNode(AnimatorState state)
+        {
+            if (state != null && _stateNodes.TryGetValue(state, out var node))
+                node.RefreshLabels();
+        }
+
+        /// <summary>Re-reads every state node's labels and badges (e.g. after bulk Write Defaults).</summary>
+        public void RefreshAllStateNodes()
+        {
+            foreach (var pair in _stateNodes)
+                pair.Value.RefreshLabels();
+        }
+
         public TransitionEdge FindEdge(AnimatorTransitionBase transition)
         {
             if (transition == null) return null;

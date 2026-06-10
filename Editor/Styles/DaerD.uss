@@ -165,22 +165,23 @@
     text-overflow: ellipsis;
 }
 
-/* Corner badges on state nodes: WD (Write Defaults) and B (behaviours). */
+/* Badges on state nodes: WD (Write Defaults) and B (behaviours). A right-aligned
+   mini row under the motion line, inside the node body; StateNode hides the row
+   entirely when neither badge applies, so unaffected nodes keep their height. */
 .state-node__badges {
-    position: absolute;
-    top: -7px;
-    right: 2px;
     flex-direction: row;
+    justify-content: flex-end;
+    margin-top: 2px;
 }
 
 .state-node__badge {
-    font-size: 9px;
+    font-size: 8px;
     -unity-font-style: bold;
     -unity-text-align: middle-center;
-    border-radius: 6px;
+    border-radius: 4px;
     padding: 0 3px;
-    margin-left: 2px;
-    height: 13px;
+    margin-left: 3px;
+    height: 11px;
     color: rgb(20, 20, 20);
 }
 

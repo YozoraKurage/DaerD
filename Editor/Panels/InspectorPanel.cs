@@ -178,6 +178,7 @@ namespace Yozolab.DaerD
             {
                 Undo.RegisterCompleteObjectUndo(state, "Edit State");
                 bool visualChange = state.name != name || state.motion != motion;
+                bool badgeChange = state.writeDefaultValues != writeDefaults;
                 if (!string.IsNullOrEmpty(name)) state.name = name;
                 state.motion = motion;
                 state.speed = speed;
@@ -188,6 +189,9 @@ namespace Yozolab.DaerD
                 state.tag = tag;
                 EditorUtility.SetDirty(state);
                 if (visualChange) Context.NotifyGraphStructureChanged();
+                // The WD badge lives on the graph node; repaint it right away rather than
+                // waiting for the next full rebuild.
+                else if (badgeChange) _graphView.Sync.RefreshStateNode(state);
             }
 
             DrawStateParameters(state, controller);
@@ -290,6 +294,7 @@ namespace Yozolab.DaerD
                 if (GUILayout.Button("Remove", EditorStyles.miniButton, GUILayout.Width(60)))
                 {
                     RemoveBehaviour(state, behaviour);
+                    _graphView.Sync.RefreshStateNode(state);   // B badge updates immediately
                     GUIUtility.ExitGUI();
                 }
                 EditorGUILayout.EndHorizontal();
@@ -313,6 +318,7 @@ namespace Yozolab.DaerD
                     Undo.RegisterCompleteObjectUndo(state, "Add Behaviour");
                     state.AddStateMachineBehaviour(captured);
                     EditorUtility.SetDirty(state);
+                    _graphView.Sync.RefreshStateNode(state);   // B badge updates immediately
                     Refresh();
                 });
             }
@@ -1128,6 +1134,7 @@ namespace Yozolab.DaerD
                 return;
             ControllerAnalyzer.SetAllWriteDefaults(controller, value);
             _issues = ControllerAnalyzer.Analyze(controller);
+            _graphView.Sync.RefreshAllStateNodes();   // WD badges update immediately
         }
 
         // ---- helpers ---------------------------------------------------------
