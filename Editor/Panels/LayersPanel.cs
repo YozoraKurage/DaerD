@@ -9,6 +9,11 @@ namespace Yozolab.DaerD
     class LayersPanel : PanelBase
     {
         readonly ListReorder _reorder = new ListReorder();
+        GUIContent _settingsIcon;
+
+        /// <summary>The gear glyph used by the per-row settings button (lazy so the editor skin is ready).</summary>
+        GUIContent SettingsIcon =>
+            _settingsIcon ??= new GUIContent(EditorGUIUtility.IconContent("_Popup")) { tooltip = "Layer settings" };
 
         public LayersPanel(DaerDContext context) : base(context, "Layers")
         {
@@ -35,28 +40,22 @@ namespace Yozolab.DaerD
                     Context.SetLayer(i);
                 GUI.backgroundColor = prev;
 
+                // Gear button on the right edge opens this layer's settings popup, so the
+                // settings always belong unambiguously to the clicked layer.
+                if (GUILayout.Button(SettingsIcon, EditorStyles.miniButton, GUILayout.Width(26)))
+                    PopupWindow.Show(GUILayoutUtility.GetLastRect(), new LayerSettingsPopup(this, i));
+
                 EditorGUILayout.EndHorizontal();
                 _reorder.Row(rowRect);
-
-                // Layer settings live in a per-row popup (right-click) instead of a block at
-                // the bottom of the panel, so the list stays compact and the settings always
-                // belong unambiguously to the clicked layer.
-                var e = Event.current;
-                if (e.type == EventType.ContextClick && rowRect.Contains(e.mousePosition))
-                {
-                    e.Use();
-                    PopupWindow.Show(rowRect, new LayerSettingsPopup(this, i));
-                }
             }
             _reorder.End(MoveLayer);
 
             EditorGUILayout.Space(4);
             if (GUILayout.Button("+ Add Layer"))
                 AddLayer();
-            EditorGUILayout.LabelField("Right-click a layer for its settings.", EditorStyles.centeredGreyMiniLabel);
         }
 
-        /// <summary>Editable settings for one layer, anchored to its row by a right-click.</summary>
+        /// <summary>Editable settings for one layer, anchored to its row's gear button.</summary>
         class LayerSettingsPopup : PopupWindowContent
         {
             readonly LayersPanel _panel;

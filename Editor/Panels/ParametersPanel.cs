@@ -129,6 +129,10 @@ namespace Yozolab.DaerD
 
         void ShowAddMenu()
         {
+            var controller = Context.Controller;
+            var existing = new HashSet<string>();
+            foreach (var p in controller.parameters) existing.Add(p.name);
+
             var menu = new GenericMenu();
             foreach (AnimatorControllerParameterType type in new[]
             {
@@ -139,9 +143,75 @@ namespace Yozolab.DaerD
             })
             {
                 var captured = type;
-                menu.AddItem(new GUIContent("Add " + type), false, () => AddParameter(captured));
+                menu.AddItem(new GUIContent(type.ToString()), false, () => AddParameter(captured));
             }
+
+            // VRChat built-in parameters. Already-present ones show as a checked, disabled entry so
+            // the menu doubles as a quick "which standard parameters does this controller have?".
+            menu.AddSeparator(string.Empty);
+            int missing = 0;
+            foreach (var def in VrcParameters.All)
+                if (!existing.Contains(def.name)) missing++;
+
+            if (missing > 0)
+                menu.AddItem(new GUIContent("VRChat/Add All Missing (" + missing + ")"), false, AddAllVrcParameters);
+            else
+                menu.AddDisabledItem(new GUIContent("VRChat/Add All Missing"));
+            menu.AddSeparator("VRChat/");
+
+            foreach (var def in VrcParameters.All)
+            {
+                var captured = def;
+                var label = new GUIContent("VRChat/" + def.category + "/" + def.name + "  (" + def.type + ")");
+                if (existing.Contains(def.name))
+                    menu.AddItem(label, true, null);   // already added — shown checked, non-clickable
+                else
+                    menu.AddItem(label, false, () => AddVrcParameter(captured));
+            }
+
             menu.ShowAsContext();
+        }
+
+        static AnimatorControllerParameterType ToUnityType(VrcParameters.ParamType type)
+        {
+            switch (type)
+            {
+                case VrcParameters.ParamType.Int: return AnimatorControllerParameterType.Int;
+                case VrcParameters.ParamType.Bool: return AnimatorControllerParameterType.Bool;
+                default: return AnimatorControllerParameterType.Float;
+            }
+        }
+
+        void AddVrcParameter(VrcParameters.Definition def)
+        {
+            var controller = Context.Controller;
+            foreach (var p in controller.parameters)
+                if (p.name == def.name) return;   // never duplicate a built-in name
+            Undo.RegisterCompleteObjectUndo(controller, "Add VRChat Parameter");
+            controller.AddParameter(def.name, ToUnityType(def.type));
+            EditorUtility.SetDirty(controller);
+            Context.NotifyParametersChanged();
+        }
+
+        void AddAllVrcParameters()
+        {
+            var controller = Context.Controller;
+            var existing = new HashSet<string>();
+            foreach (var p in controller.parameters) existing.Add(p.name);
+
+            Undo.RegisterCompleteObjectUndo(controller, "Add VRChat Parameters");
+            int added = 0;
+            foreach (var def in VrcParameters.All)
+                if (existing.Add(def.name))
+                {
+                    controller.AddParameter(def.name, ToUnityType(def.type));
+                    added++;
+                }
+            if (added > 0)
+            {
+                EditorUtility.SetDirty(controller);
+                Context.NotifyParametersChanged();
+            }
         }
 
         void AddParameter(AnimatorControllerParameterType type)
