@@ -13,6 +13,12 @@
     "defineConstraints": [
         "UNITY_EDITOR"
     ],
-    "versionDefines": [],
+    "versionDefines": [
+        {
+            "name": "com.vrchat.avatars",
+            "expression": "",
+            "define": "DAERD_VRCSDK_AVATARS"
+        }
+    ],
     "noEngineReferences": false
 }

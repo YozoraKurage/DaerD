@@ -944,6 +944,14 @@ namespace Yozolab.DaerD
             _context.Select(created[0]);
         }
 
+        public void CrossProduct(IList<AnimatorState> sources, IList<AnimatorState> targets)
+        {
+            var created = TransitionBatch.CrossProduct(sources, targets);
+            if (created.Count == 0) return;
+            Rebuild();
+            _context.Select(created[0]);
+        }
+
         // ---- copy / paste ----------------------------------------------------
 
         public void CopySelectedStates()

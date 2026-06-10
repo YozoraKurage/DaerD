@@ -6,8 +6,9 @@ namespace Yozolab.DaerD
 {
     /// <summary>
     /// Bulk transition creation between existing states: chain (A→B→C…), fan-out (one source to
-    /// many destinations) and fan-in (many sources to one destination). New transitions receive
-    /// the user's configured transition defaults. Self-transitions are skipped.
+    /// many destinations), fan-in (many sources to one destination) and full cross product
+    /// (every source to every destination). New transitions receive the user's configured
+    /// transition defaults. Self-transitions are skipped.
     /// </summary>
     static class TransitionBatch
     {
@@ -46,6 +47,26 @@ namespace Yozolab.DaerD
             {
                 foreach (var source in sources)
                     Connect(source, target, created);
+            }
+            return created;
+        }
+
+        /// <summary>
+        /// Creates a transition from every source to every destination. Pairs where source and
+        /// destination are the same state are skipped, so overlapping sets never produce
+        /// self-transitions.
+        /// </summary>
+        public static List<AnimatorStateTransition> CrossProduct(IList<AnimatorState> sources,
+            IList<AnimatorState> targets)
+        {
+            var created = new List<AnimatorStateTransition>();
+            if (sources == null || targets == null || sources.Count == 0 || targets.Count == 0)
+                return created;
+            using (new UndoScope("Multi Transition"))
+            {
+                foreach (var source in sources)
+                    foreach (var target in targets)
+                        Connect(source, target, created);
             }
             return created;
         }

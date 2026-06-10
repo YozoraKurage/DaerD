@@ -59,6 +59,10 @@ namespace Yozolab.DaerD
 
             context.ControllerChanged += _sync.RequestRebuild;
             context.LayerChanged += _sync.RequestRebuild;
+            // Cross-product source marks only make sense within one layer: a transition cannot
+            // point at a state of another layer or controller.
+            context.ControllerChanged += ClearMarkedSources;
+            context.LayerChanged += ClearMarkedSources;
             context.StateMachinePathChanged += _sync.RequestRebuild;
             context.LayersChanged += _sync.RequestRebuild;
             context.GraphStructureChanged += _sync.RequestRebuild;
@@ -637,7 +641,13 @@ namespace Yozolab.DaerD
             }
         }
 
-        /// <summary>Chain / fan transition creation between the selected states.</summary>
+        // Source set marked for the two-step cross-product flow. Static so it survives the menu
+        // closing and the user changing the selection before the second step.
+        static List<AnimatorState> s_markedSources;
+
+        static void ClearMarkedSources() => s_markedSources = null;
+
+        /// <summary>Chain / fan / cross-product transition creation between the selected states.</summary>
         void BuildConnectMenu(ContextualMenuPopulateEvent evt)
         {
             var selectedStates = GetSelectedStates();
@@ -646,6 +656,12 @@ namespace Yozolab.DaerD
                 _ => _sync.ChainStates(GetSelectedStates()),
                 selectedStates.Count >= 2 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
 
+            BuildFanEntries(evt, selectedStates);
+            BuildCrossProductEntries(evt, selectedStates);
+        }
+
+        void BuildFanEntries(ContextualMenuPopulateEvent evt, List<AnimatorState> selectedStates)
+        {
             var target = ResolveTarget<StateNode>(evt.target as VisualElement);
             if (target?.State == null || selectedStates.Count < 2 || !selectedStates.Contains(target.State))
                 return;
@@ -658,6 +674,36 @@ namespace Yozolab.DaerD
                 _ => _sync.FanOut(target.State, others));
             evt.menu.AppendAction("Connect States/Other Selected (" + others.Count + ") → This",
                 _ => _sync.FanIn(others, target.State));
+        }
+
+        /// <summary>
+        /// Two-step cross product: mark the current selection as the source set, change the
+        /// selection, then connect every marked source to every now-selected state.
+        /// </summary>
+        void BuildCrossProductEntries(ContextualMenuPopulateEvent evt, List<AnimatorState> selectedStates)
+        {
+            // Marked states deleted (or destroyed by an undo) since step one drop out silently.
+            s_markedSources?.RemoveAll(s => s == null);
+            int marked = s_markedSources?.Count ?? 0;
+
+            evt.menu.AppendSeparator("Connect States/");
+            evt.menu.AppendAction(
+                "Connect States/Mark Selected As Sources (" + selectedStates.Count + ")",
+                _ => s_markedSources = new List<AnimatorState>(GetSelectedStates()),
+                selectedStates.Count > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+            evt.menu.AppendAction(
+                "Connect States/Marked Sources (" + marked + ") → Selected (" + selectedStates.Count + ")",
+                _ =>
+                {
+                    _sync.CrossProduct(s_markedSources, GetSelectedStates());
+                    s_markedSources = null;
+                },
+                marked > 0 && selectedStates.Count > 0
+                    ? DropdownMenuAction.Status.Normal
+                    : DropdownMenuAction.Status.Disabled);
+            if (marked > 0)
+                evt.menu.AppendAction("Connect States/Clear Marked Sources",
+                    _ => s_markedSources = null);
         }
 
         void CreateFrameAroundSelection()
