@@ -153,6 +153,59 @@
     min-width: 140px;
 }
 
+/* One-line condition summary drawn next to a single-transition edge. */
+.transition-edge__label {
+    position: absolute;
+    width: 140px;
+    color: rgb(190, 190, 190);
+    font-size: 10px;
+    -unity-text-align: middle-center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Corner badges on state nodes: WD (Write Defaults) and B (behaviours). */
+.state-node__badges {
+    position: absolute;
+    top: -7px;
+    right: 2px;
+    flex-direction: row;
+}
+
+.state-node__badge {
+    font-size: 9px;
+    -unity-font-style: bold;
+    -unity-text-align: middle-center;
+    border-radius: 6px;
+    padding: 0 3px;
+    margin-left: 2px;
+    height: 13px;
+    color: rgb(20, 20, 20);
+}
+
+.state-node__badge--wd {
+    background-color: rgb(120, 200, 130);
+}
+
+.state-node__badge--b {
+    background-color: rgb(140, 170, 240);
+}
+
+/* Graph frames (comment / group boxes drawn behind nodes). */
+.dd-frame__title {
+    justify-content: center;
+    padding-left: 6px;
+}
+
+.dd-frame__title-label {
+    -unity-font-style: bold;
+    color: rgb(235, 235, 235);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
 .transition-edge__badge {
     position: absolute;
     background-color: rgb(40, 40, 40);

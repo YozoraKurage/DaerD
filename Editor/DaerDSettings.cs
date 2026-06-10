@@ -87,6 +87,22 @@ namespace Yozolab.DaerD
             set => EditorPrefs.SetFloat(Prefix + "StateSpeed", value);
         }
 
+        // --- graph display ---
+
+        /// <summary>Draw a one-line condition summary on single-transition edges.</summary>
+        public static bool ShowTransitionConditions
+        {
+            get => EditorPrefs.GetBool(Prefix + "ShowTransitionConditions", true);
+            set => EditorPrefs.SetBool(Prefix + "ShowTransitionConditions", value);
+        }
+
+        /// <summary>Draw WD / B badges on state nodes (Write Defaults on, has behaviours).</summary>
+        public static bool ShowStateBadges
+        {
+            get => EditorPrefs.GetBool(Prefix + "ShowStateBadges", true);
+            set => EditorPrefs.SetBool(Prefix + "ShowStateBadges", value);
+        }
+
         // --- behavior ---
 
         public static bool InterceptDoubleClick
@@ -123,6 +139,7 @@ namespace Yozolab.DaerD
                 "TransitionHasFixedDuration", "TransitionDuration", "TransitionOffset",
                 "TransitionInterruption", "TransitionOrderedInterruption", "TransitionCanTransitionToSelf",
                 "ApplyStateDefaults", "StateWriteDefaults", "StateSpeed", "InterceptDoubleClick",
+                "ShowTransitionConditions", "ShowStateBadges",
             };
             foreach (var key in keys)
                 EditorPrefs.DeleteKey(Prefix + key);
@@ -190,6 +207,19 @@ namespace Yozolab.DaerD
                 DaerDSettings.StateSpeed =
                     EditorGUILayout.FloatField("Speed", DaerDSettings.StateSpeed);
             }
+            EditorGUI.indentLevel--;
+
+            EditorGUILayout.Space(8);
+            EditorGUILayout.LabelField("Graph Display", EditorStyles.boldLabel);
+            EditorGUI.indentLevel++;
+            DaerDSettings.ShowTransitionConditions = EditorGUILayout.Toggle(
+                new GUIContent("Condition Labels On Edges",
+                    "Show a one-line condition summary on transition edges. Takes effect on the next graph rebuild."),
+                DaerDSettings.ShowTransitionConditions);
+            DaerDSettings.ShowStateBadges = EditorGUILayout.Toggle(
+                new GUIContent("State Badges (WD / B)",
+                    "Mark states with Write Defaults ON and states carrying StateMachineBehaviours."),
+                DaerDSettings.ShowStateBadges);
             EditorGUI.indentLevel--;
 
             EditorGUILayout.Space(8);

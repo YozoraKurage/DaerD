@@ -230,6 +230,7 @@ namespace Yozolab.DaerD
                 case SubStateMachineNode mn: return mn.StateMachine;
                 case TransitionEdge te: return te;
                 case SpecialNode spn: return spn.Kind;
+                case FrameNode fn: return fn.Frame;
             }
             return null;
         }
@@ -252,6 +253,11 @@ namespace Yozolab.DaerD
             {
                 foreach (var e in _sync.Edges)
                     if (e.Transitions.Contains(transition)) { base.AddToSelection(e); break; }
+            }
+            else if (_context.Selection is GraphFrameData.Frame frame)
+            {
+                var frameNode = _sync.FindFrameNode(frame);
+                if (frameNode != null) base.AddToSelection(frameNode);
             }
             _syncingSelection = false;
         }
@@ -519,6 +525,13 @@ namespace Yozolab.DaerD
 
         public override void BuildContextualMenu(ContextualMenuPopulateEvent evt)
         {
+            var frameNode = ResolveTarget<FrameNode>(evt.target as VisualElement);
+            if (frameNode != null)
+            {
+                BuildFrameMenu(evt, frameNode);
+                return;
+            }
+
             var edge = ResolveTargetEdge(evt.target as VisualElement);
             if (edge != null && !edge.IsDefaultEdge)
             {
@@ -554,6 +567,22 @@ namespace Yozolab.DaerD
                 stateCount > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
             evt.menu.AppendAction("Delete", _ => DeleteCurrentSelection(),
                 HasDeletableSelection() ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+
+            evt.menu.AppendSeparator();
+            BuildConnectMenu(evt);
+
+            int selectedNodeCount = CountSelected<StateNode>() + CountSelected<SubStateMachineNode>();
+            evt.menu.AppendAction("Create Frame Around Selection", _ => CreateFrameAroundSelection(),
+                selectedNodeCount > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+            evt.menu.AppendAction("Pack Into Sub-State Machine" + (stateCount > 1 ? " (" + stateCount + ")" : string.Empty),
+                _ => _sync.PackSelectedStates(GetSelectedStates()),
+                stateCount > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+            if (CountSelected<SubStateMachineNode>() == 1 && stateCount == 0)
+            {
+                var ssmNode = FirstSelected<SubStateMachineNode>();
+                evt.menu.AppendAction("Unpack Sub-State Machine",
+                    _ => _sync.UnpackSubStateMachine(ssmNode.StateMachine));
+            }
 
             if (stateCount == 1)
             {
@@ -606,6 +635,48 @@ namespace Yozolab.DaerD
                 evt.menu.AppendAction("Disconnect All", _ => DisconnectStateNode(stateNode),
                     connected > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
             }
+        }
+
+        /// <summary>Chain / fan transition creation between the selected states.</summary>
+        void BuildConnectMenu(ContextualMenuPopulateEvent evt)
+        {
+            var selectedStates = GetSelectedStates();
+            evt.menu.AppendAction(
+                "Connect States/Chain In Click Order (" + selectedStates.Count + ")",
+                _ => _sync.ChainStates(GetSelectedStates()),
+                selectedStates.Count >= 2 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+
+            var target = ResolveTarget<StateNode>(evt.target as VisualElement);
+            if (target?.State == null || selectedStates.Count < 2 || !selectedStates.Contains(target.State))
+                return;
+
+            var others = new List<AnimatorState>();
+            foreach (var s in selectedStates)
+                if (s != target.State) others.Add(s);
+
+            evt.menu.AppendAction("Connect States/This → Other Selected (" + others.Count + ")",
+                _ => _sync.FanOut(target.State, others));
+            evt.menu.AppendAction("Connect States/Other Selected (" + others.Count + ") → This",
+                _ => _sync.FanIn(others, target.State));
+        }
+
+        void CreateFrameAroundSelection()
+        {
+            var nodes = new List<GraphNodeBase>();
+            foreach (var s in selection)
+                if (s is StateNode || s is SubStateMachineNode)
+                    nodes.Add((GraphNodeBase)s);
+            _sync.CreateFrameAroundNodes(nodes);
+        }
+
+        void BuildFrameMenu(ContextualMenuPopulateEvent evt, FrameNode frameNode)
+        {
+            var frame = frameNode.Frame;
+            evt.menu.AppendAction("Move Nodes With Frame",
+                _ => _sync.ToggleFrameMoveNodes(frame),
+                frame.moveNodesWithFrame ? DropdownMenuAction.Status.Checked : DropdownMenuAction.Status.Normal);
+            evt.menu.AppendSeparator();
+            evt.menu.AppendAction("Delete Frame", _ => _sync.DeleteFrame(frame));
         }
 
         void AlignSelectedStates(GraphLayout.AlignAxis axis)

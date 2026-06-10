@@ -25,6 +25,9 @@ namespace Yozolab.DaerD
         readonly Dictionary<AnimatorState, SubStateMachineNode> _nestedStateOwners = new Dictionary<AnimatorState, SubStateMachineNode>();
         readonly Dictionary<AnimatorStateMachine, SubStateMachineNode> _nestedMachineOwners = new Dictionary<AnimatorStateMachine, SubStateMachineNode>();
 
+        readonly List<FrameNode> _frameNodes = new List<FrameNode>();
+        GraphFrameData _frameData;
+
         SpecialNode _entryNode, _exitNode, _anyStateNode;
         bool _rebuildScheduled;
         int _runtimeStateHash;
@@ -62,11 +65,23 @@ namespace Yozolab.DaerD
             _nestedStateOwners.Clear();
             _nestedMachineOwners.Clear();
             _edges.Clear();
+            _frameNodes.Clear();
             foreach (var element in _graphView.graphElements.ToList())
                 _graphView.RemoveElement(element);
 
             var sm = _context.CurrentStateMachine;
             if (sm == null) return;
+
+            _frameData = GraphFrameData.Find(_context.Controller);
+            if (_frameData != null)
+                foreach (var frame in _frameData.FramesIn(sm))
+                {
+                    FrameNode frameNode = null;
+                    frameNode = new FrameNode(frame, () => PersistFrameGeometry(frameNode));
+                    _frameNodes.Add(frameNode);
+                    _graphView.AddElement(frameNode);
+                    frameNode.SetPosition(frame.bounds);
+                }
 
             _entryNode = new SpecialNode(SpecialNodeKind.Entry);
             _exitNode = new SpecialNode(SpecialNodeKind.Exit);
@@ -195,6 +210,7 @@ namespace Yozolab.DaerD
             public readonly List<AnimatorStateMachine> StateMachines = new List<AnimatorStateMachine>();
             public readonly List<SpecialNodeKind> Specials = new List<SpecialNodeKind>();
             public readonly List<AnimatorTransitionBase> Transitions = new List<AnimatorTransitionBase>();
+            public readonly List<GraphFrameData.Frame> Frames = new List<GraphFrameData.Frame>();
         }
 
         CapturedSelection CaptureGraphSelection()
@@ -217,6 +233,9 @@ namespace Yozolab.DaerD
                         foreach (var t in te.Transitions)
                             if (t != null) captured.Transitions.Add(t);
                         break;
+                    case FrameNode fn when fn.Frame != null:
+                        captured.Frames.Add(fn.Frame);
+                        break;
                 }
             }
             return captured;
@@ -230,6 +249,11 @@ namespace Yozolab.DaerD
                 if (_stateNodes.TryGetValue(state, out var node)) elements.Add(node);
             foreach (var sm in captured.StateMachines)
                 if (_ssmNodes.TryGetValue(sm, out var node)) elements.Add(node);
+            foreach (var frame in captured.Frames)
+            {
+                var node = FindFrameNode(frame);
+                if (node != null) elements.Add(node);
+            }
             foreach (var kind in captured.Specials)
             {
                 SpecialNode node;
@@ -280,10 +304,22 @@ namespace Yozolab.DaerD
                     case TransitionEdge edge:
                         if (_edges.Contains(edge)) elements.Add(edge);
                         break;
+                    case GraphFrameData.Frame frame:
+                        var frameNode = FindFrameNode(frame);
+                        if (frameNode != null) elements.Add(frameNode);
+                        break;
                 }
             }
 
             _graphView.SetSelectionSilently(elements);
+        }
+
+        public FrameNode FindFrameNode(GraphFrameData.Frame frame)
+        {
+            if (frame == null) return null;
+            foreach (var node in _frameNodes)
+                if (node.Frame == frame) return node;
+            return null;
         }
 
         public GraphNodeBase FindNode(object model)
@@ -323,6 +359,7 @@ namespace Yozolab.DaerD
                         case StateNode sn: DeleteState(sn.State); structural = true; break;
                         case SubStateMachineNode mn: DeleteSubStateMachine(mn.StateMachine); structural = true; break;
                         case TransitionEdge te when !te.IsDefaultEdge: DeleteTransitionEdge(te); structural = true; break;
+                        case FrameNode fn: _frameData?.RemoveFrame(fn.Frame); structural = true; break;
                     }
                 }
             }
@@ -347,9 +384,53 @@ namespace Yozolab.DaerD
             var states = sm.states;
             var machines = sm.stateMachines;
             bool statesDirty = false, machinesDirty = false;
+            bool frameShiftedNodes = false;
+
+            // Models that moved on their own — a frame dragging its contents must not shift
+            // these a second time.
+            var movedModels = new HashSet<object>();
+            foreach (var element in moved)
+            {
+                if (element is StateNode s && s.State != null) movedModels.Add(s.State);
+                else if (element is SubStateMachineNode m && m.StateMachine != null) movedModels.Add(m.StateMachine);
+            }
 
             foreach (var element in moved)
             {
+                if (element is FrameNode fn && fn.Frame != null && _frameData != null)
+                {
+                    var oldBounds = fn.Frame.bounds;
+                    var newPosition = fn.GetPosition().position;
+                    var delta = newPosition - oldBounds.position;
+                    Undo.RecordObject(_frameData, "Move Frame");
+                    fn.Frame.bounds.position = newPosition;
+                    EditorUtility.SetDirty(_frameData);
+
+                    if (fn.Frame.moveNodesWithFrame && delta.sqrMagnitude > 0.01f)
+                    {
+                        for (int i = 0; i < states.Length; i++)
+                        {
+                            if (states[i].state == null || movedModels.Contains(states[i].state)) continue;
+                            if (!oldBounds.Contains(new Vector2(states[i].position.x, states[i].position.y))) continue;
+                            var cs = states[i];
+                            cs.position += new Vector3(delta.x, delta.y, 0f);
+                            states[i] = cs;
+                            statesDirty = true;
+                            frameShiftedNodes = true;
+                        }
+                        for (int i = 0; i < machines.Length; i++)
+                        {
+                            if (machines[i].stateMachine == null || movedModels.Contains(machines[i].stateMachine)) continue;
+                            if (!oldBounds.Contains(new Vector2(machines[i].position.x, machines[i].position.y))) continue;
+                            var cm = machines[i];
+                            cm.position += new Vector3(delta.x, delta.y, 0f);
+                            machines[i] = cm;
+                            machinesDirty = true;
+                            frameShiftedNodes = true;
+                        }
+                    }
+                    continue;
+                }
                 if (element is StateNode sn)
                 {
                     var p = sn.GetPosition().position;
@@ -389,6 +470,8 @@ namespace Yozolab.DaerD
             if (statesDirty) sm.states = states;
             if (machinesDirty) sm.stateMachines = machines;
             EditorUtility.SetDirty(sm);
+            // Nodes carried along by a frame changed only in the asset; refresh their visuals.
+            if (frameShiftedNodes) RequestRebuild();
         }
 
         void DeleteState(AnimatorState state)
@@ -752,6 +835,114 @@ namespace Yozolab.DaerD
 
         static string MakeUniqueName(AnimatorStateMachine sm, string baseName) =>
             StateDuplicator.MakeUniqueName(sm, baseName);
+
+        // ---- frames ------------------------------------------------------------
+
+        /// <summary>Creates a frame around the given graph nodes and selects it.</summary>
+        public void CreateFrameAroundNodes(IList<GraphNodeBase> nodes)
+        {
+            var sm = _context.CurrentStateMachine;
+            if (sm == null || _context.Controller == null || nodes == null || nodes.Count == 0) return;
+
+            var bounds = nodes[0].GetPosition();
+            for (int i = 1; i < nodes.Count; i++)
+            {
+                var r = nodes[i].GetPosition();
+                bounds = Rect.MinMaxRect(
+                    Mathf.Min(bounds.xMin, r.xMin), Mathf.Min(bounds.yMin, r.yMin),
+                    Mathf.Max(bounds.xMax, r.xMax), Mathf.Max(bounds.yMax, r.yMax));
+            }
+            bounds = Rect.MinMaxRect(bounds.xMin - 24f, bounds.yMin - 44f, bounds.xMax + 24f, bounds.yMax + 24f);
+
+            _frameData = GraphFrameData.GetOrCreate(_context.Controller);
+            var frame = _frameData.AddFrame(sm, bounds);
+            RequestRebuild();
+            _context.Select(frame);
+        }
+
+        /// <summary>
+        /// Writes a frame's size back to the asset after the resize handle changed it. Pure
+        /// position changes are ignored on purpose: moves go through <see cref="ApplyMoves"/>,
+        /// which needs the asset to still hold the pre-drag position to compute its delta.
+        /// </summary>
+        void PersistFrameGeometry(FrameNode node)
+        {
+            if (node?.Frame == null || _frameData == null) return;
+            var rect = node.GetPosition();
+            var bounds = node.Frame.bounds;
+            if (Mathf.Approximately(rect.width, bounds.width) && Mathf.Approximately(rect.height, bounds.height))
+                return;
+            Undo.RecordObject(_frameData, "Resize Frame");
+            node.Frame.bounds = rect;
+            EditorUtility.SetDirty(_frameData);
+        }
+
+        /// <summary>Refreshes a frame's visuals after its title/color changed in the inspector.</summary>
+        public void RefreshFrameVisuals(GraphFrameData.Frame frame) => FindFrameNode(frame)?.RefreshVisuals();
+
+        public void DeleteFrame(GraphFrameData.Frame frame)
+        {
+            if (frame == null || _frameData == null) return;
+            _frameData.RemoveFrame(frame);
+            RequestRebuild();
+        }
+
+        public void ToggleFrameMoveNodes(GraphFrameData.Frame frame)
+        {
+            if (frame == null || _frameData == null) return;
+            Undo.RecordObject(_frameData, "Edit Frame");
+            frame.moveNodesWithFrame = !frame.moveNodesWithFrame;
+            EditorUtility.SetDirty(_frameData);
+        }
+
+        // ---- pack / unpack -----------------------------------------------------
+
+        public void PackSelectedStates(List<AnimatorState> states)
+        {
+            var sm = _context.CurrentStateMachine;
+            if (sm == null || states == null || states.Count == 0) return;
+            var child = StatePacker.Pack(sm, states);
+            if (child == null) return;
+            RequestRebuild();
+            _context.Select(child);
+        }
+
+        public void UnpackSubStateMachine(AnimatorStateMachine child)
+        {
+            var sm = _context.CurrentStateMachine;
+            if (sm == null || child == null) return;
+            var warnings = StatePacker.Unpack(sm, child, _context.Controller);
+            foreach (var warning in warnings)
+                Debug.LogWarning("DaerD: " + warning);
+            RequestRebuild();
+            _context.Select(null);
+        }
+
+        // ---- chain / fan transitions --------------------------------------------
+
+        public void ChainStates(IList<AnimatorState> states)
+        {
+            var created = TransitionBatch.Chain(states);
+            if (created.Count == 0) return;
+            Rebuild();
+            _context.Select(created[0]);
+        }
+
+        public void FanOut(AnimatorState source, IEnumerable<AnimatorState> targets)
+        {
+            var created = TransitionBatch.FanOut(source, targets);
+            if (created.Count == 0) return;
+            Rebuild();
+            _context.Select(created[0]);
+        }
+
+        public void FanIn(IEnumerable<AnimatorState> sources, AnimatorState target)
+        {
+            var created = TransitionBatch.FanIn(sources, target);
+            if (created.Count == 0) return;
+            Rebuild();
+            _context.Select(created[0]);
+        }
 
         // ---- copy / paste ----------------------------------------------------
 

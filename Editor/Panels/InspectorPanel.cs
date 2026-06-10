@@ -89,6 +89,10 @@ namespace Yozolab.DaerD
             {
                 DrawClipSelection(clip);
             }
+            else if (selection is GraphFrameData.Frame frame)
+            {
+                DrawFrame(frame);
+            }
             else if (selection is SpecialNodeKind kind)
             {
                 EditorGUILayout.HelpBox(kind + " node. Drag from its port to create transitions.", MessageType.Info);
@@ -114,6 +118,44 @@ namespace Yozolab.DaerD
             EditorGUILayout.LabelField("Looping", clip.isLooping ? "Yes" : "No");
             if (GUILayout.Button("Ping in Project"))
                 EditorGUIUtility.PingObject(clip);
+        }
+
+        // ---- frame -----------------------------------------------------------
+
+        void DrawFrame(GraphFrameData.Frame frame)
+        {
+            var frameData = GraphFrameData.Find(Context.Controller);
+            if (frameData == null || !frameData.frames.Contains(frame))
+            {
+                EditorGUILayout.LabelField("This frame no longer exists.");
+                return;
+            }
+
+            EditorGUILayout.LabelField("Frame", EditorStyles.boldLabel);
+
+            EditorGUI.BeginChangeCheck();
+            string frameTitle = EditorGUILayout.DelayedTextField("Title", frame.title);
+            var color = EditorGUILayout.ColorField("Color", frame.color);
+            bool moveNodes = EditorGUILayout.Toggle(
+                new GUIContent("Move Nodes With Frame", "Dragging the frame also moves the nodes inside it."),
+                frame.moveNodesWithFrame);
+            if (EditorGUI.EndChangeCheck())
+            {
+                Undo.RecordObject(frameData, "Edit Frame");
+                frame.title = string.IsNullOrEmpty(frameTitle) ? frame.title : frameTitle;
+                frame.color = color;
+                frame.moveNodesWithFrame = moveNodes;
+                EditorUtility.SetDirty(frameData);
+                _graphView.Sync.RefreshFrameVisuals(frame);
+            }
+
+            EditorGUILayout.Space(6);
+            if (GUILayout.Button("Delete Frame"))
+            {
+                _graphView.Sync.DeleteFrame(frame);
+                Context.Select(null);
+                GUIUtility.ExitGUI();
+            }
         }
 
         // ---- state -----------------------------------------------------------

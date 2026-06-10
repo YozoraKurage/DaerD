@@ -27,6 +27,8 @@ namespace Yozolab.DaerD
         bool _dropTarget;
         TextField _renameField;
         readonly VisualElement _nodeBorder;
+        readonly Label _wdBadge;
+        readonly Label _behaviourBadge;
 
         public StateNode(AnimatorState state, Action<AnimatorState> onOpenBlendTree = null)
         {
@@ -71,6 +73,19 @@ namespace Yozolab.DaerD
             _nodeBorder = this.Q("node-border");
             ApplyBodyColor(BodyColor);
 
+            // Corner badges: WD (Write Defaults on) and B (has StateMachineBehaviours).
+            var badges = new VisualElement { pickingMode = PickingMode.Ignore };
+            badges.AddToClassList("state-node__badges");
+            _wdBadge = new Label("WD") { pickingMode = PickingMode.Ignore, tooltip = "Write Defaults is ON" };
+            _wdBadge.AddToClassList("state-node__badge");
+            _wdBadge.AddToClassList("state-node__badge--wd");
+            _behaviourBadge = new Label("B") { pickingMode = PickingMode.Ignore, tooltip = "Has StateMachineBehaviours" };
+            _behaviourBadge.AddToClassList("state-node__badge");
+            _behaviourBadge.AddToClassList("state-node__badge--b");
+            badges.Add(_wdBadge);
+            badges.Add(_behaviourBadge);
+            Add(badges);
+
             RefreshLabels();
             RefreshExpandedState();
             RefreshPorts();
@@ -96,6 +111,13 @@ namespace Yozolab.DaerD
             tooltip = State.motion is BlendTree
                 ? "Double-click to open the blend tree view"
                 : string.Empty;
+
+            bool showBadges = DaerDSettings.ShowStateBadges;
+            var behaviours = State.behaviours;
+            _wdBadge.style.display = showBadges && State.writeDefaultValues
+                ? DisplayStyle.Flex : DisplayStyle.None;
+            _behaviourBadge.style.display = showBadges && behaviours != null && behaviours.Length > 0
+                ? DisplayStyle.Flex : DisplayStyle.None;
         }
 
         /// <summary>

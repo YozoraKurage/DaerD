@@ -34,6 +34,7 @@ namespace Yozolab.DaerD
         const float ParallelOffset = 7f;
 
         readonly Label _badge;
+        readonly Label _conditionLabel;
         bool _highlighted;
         bool _allMuted;
 
@@ -44,6 +45,13 @@ namespace Yozolab.DaerD
             _badge.style.position = Position.Absolute;
             _badge.style.display = DisplayStyle.None;
             Add(_badge);
+
+            _conditionLabel = new Label { pickingMode = PickingMode.Ignore };
+            _conditionLabel.AddToClassList("transition-edge__label");
+            _conditionLabel.style.position = Position.Absolute;
+            _conditionLabel.style.display = DisplayStyle.None;
+            Add(_conditionLabel);
+
             RegisterCallback<GeometryChangedEvent>(_ => PlaceBadge());
         }
 
@@ -78,8 +86,25 @@ namespace Yozolab.DaerD
                 capabilities &= ~Capabilities.Deletable;
                 tooltip = "Default state";
                 _badge.style.display = DisplayStyle.None;
+                _conditionLabel.style.display = DisplayStyle.None;
                 ApplyColor();
                 return;
+            }
+
+            // One-line condition summary on single-transition edges; multi-transition edges
+            // already carry the count badge, so the label would just be ambiguous there.
+            bool showConditions = DaerDSettings.ShowTransitionConditions
+                && Transitions.Count == 1 && Transitions[0] != null;
+            if (showConditions)
+            {
+                _conditionLabel.text = Summarize(Transitions[0]);
+                _conditionLabel.style.display = string.IsNullOrEmpty(_conditionLabel.text)
+                    ? DisplayStyle.None
+                    : DisplayStyle.Flex;
+            }
+            else
+            {
+                _conditionLabel.style.display = DisplayStyle.None;
             }
 
             _allMuted = Transitions.Count > 0;
@@ -215,21 +240,64 @@ namespace Yozolab.DaerD
 
         void PlaceBadge()
         {
-            if (_badge.style.display == DisplayStyle.None) return;
             Vector2 a = edgeControl.from;
             Vector2 b = edgeControl.to;
             Vector2 mid = (a + b) * 0.5f;
             if (float.IsNaN(mid.x) || float.IsNaN(mid.y)) return;
 
             Vector2 axis = b - a;
+            Vector2 perp = Vector2.zero;
             if (axis.sqrMagnitude > 1f)
             {
-                // Nudge the badge clear of the line so it does not sit on top of the arrow.
-                Vector2 dir = axis.normalized;
-                mid += new Vector2(-dir.y, dir.x) * 11f;
+                var dir = axis.normalized;
+                perp = new Vector2(-dir.y, dir.x);
             }
-            _badge.style.left = mid.x - 9;
-            _badge.style.top = mid.y - 8;
+
+            if (_badge.style.display != DisplayStyle.None)
+            {
+                // Nudge the badge clear of the line so it does not sit on top of the arrow.
+                var badgeMid = mid + perp * 11f;
+                _badge.style.left = badgeMid.x - 9;
+                _badge.style.top = badgeMid.y - 8;
+            }
+
+            if (_conditionLabel.style.display != DisplayStyle.None)
+            {
+                // Condition summary sits on the opposite side of the line from the badge.
+                var labelMid = mid - perp * 13f;
+                _conditionLabel.style.left = labelMid.x - 70;
+                _conditionLabel.style.top = labelMid.y - 8;
+            }
+        }
+
+        /// <summary>One-line human-readable summary of a transition's firing rule.</summary>
+        static string Summarize(AnimatorTransitionBase transition)
+        {
+            var conditions = transition.conditions;
+            if (conditions.Length == 0)
+            {
+                if (transition is AnimatorStateTransition st && st.hasExitTime)
+                    return "exit @ " + st.exitTime.ToString("0.##");
+                return "(no conditions)";
+            }
+            string text = Describe(conditions[0]);
+            if (conditions.Length == 2) text += "  ·  " + Describe(conditions[1]);
+            else if (conditions.Length > 2) text += "  +" + (conditions.Length - 1);
+            return text;
+        }
+
+        static string Describe(AnimatorCondition condition)
+        {
+            switch (condition.mode)
+            {
+                case AnimatorConditionMode.If: return condition.parameter;
+                case AnimatorConditionMode.IfNot: return "!" + condition.parameter;
+                case AnimatorConditionMode.Greater: return condition.parameter + " > " + condition.threshold.ToString("0.##");
+                case AnimatorConditionMode.Less: return condition.parameter + " < " + condition.threshold.ToString("0.##");
+                case AnimatorConditionMode.Equals: return condition.parameter + " = " + condition.threshold.ToString("0.##");
+                case AnimatorConditionMode.NotEqual: return condition.parameter + " ≠ " + condition.threshold.ToString("0.##");
+                default: return condition.parameter;
+            }
         }
     }
 
