@@ -172,8 +172,9 @@ namespace Yozolab.DaerD
             out VRCAvatarDescriptor matched)
         {
             matched = null;
-            var descriptors = Object.FindObjectsByType<VRCAvatarDescriptor>(
-                FindObjectsInactive.Include, FindObjectsSortingMode.None);
+            // FindObjectsOfType instead of FindObjectsByType: the latter only exists in
+            // Unity 2022.2+, and VRChat projects still run on older editors.
+            var descriptors = Object.FindObjectsOfType<VRCAvatarDescriptor>(true);
             foreach (var descriptor in descriptors)
             {
                 if (descriptor == null || !References(descriptor, controller)) continue;
