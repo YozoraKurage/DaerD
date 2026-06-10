@@ -22,6 +22,9 @@ namespace Yozolab.DaerD
         // showed the graph background through it and overlapping states bled through. Painting the
         // rounded node-border (not the square root) plus the port columns opaque fixes both.
         static readonly Color BodyColor = new Color(0.224f, 0.224f, 0.224f);
+        static readonly Color BadgeWdOnColor = new Color(0.47f, 0.78f, 0.51f);
+        static readonly Color BadgeBOnColor = new Color(0.55f, 0.67f, 0.94f);
+        static readonly Color BadgeOffColor = new Color(0.42f, 0.42f, 0.42f);
 
         bool _highlighted;
         bool _dropTarget;
@@ -56,22 +59,20 @@ namespace Yozolab.DaerD
             text.Add(_nameLabel);
             text.Add(_motionLabel);
 
-            // Badges: WD (Write Defaults on) and B (has StateMachineBehaviours). A third,
-            // right-aligned row inside the text column, so they stay within the node body;
-            // the row collapses entirely when neither badge applies.
+            topContainer.Insert(1, text);
+
+            // Badges: WD (Write Defaults) and B (behaviours), always shown as tiny text in the
+            // node's top-right corner. Overlaid absolutely so the node keeps its compact two-line
+            // layout; state is conveyed by colour (lit when active, grey when not).
             _badgeRow = new VisualElement { pickingMode = PickingMode.Ignore };
             _badgeRow.AddToClassList("state-node__badges");
-            _wdBadge = new Label("WD") { pickingMode = PickingMode.Ignore, tooltip = "Write Defaults is ON" };
+            _wdBadge = new Label("WD") { pickingMode = PickingMode.Ignore };
             _wdBadge.AddToClassList("state-node__badge");
-            _wdBadge.AddToClassList("state-node__badge--wd");
             _behaviourBadge = new Label("B") { pickingMode = PickingMode.Ignore };
             _behaviourBadge.AddToClassList("state-node__badge");
-            _behaviourBadge.AddToClassList("state-node__badge--b");
             _badgeRow.Add(_wdBadge);
             _badgeRow.Add(_behaviourBadge);
-            text.Add(_badgeRow);
-
-            topContainer.Insert(1, text);
+            Add(_badgeRow);
 
             capabilities |= Capabilities.Movable | Capabilities.Selectable | Capabilities.Deletable
                           | Capabilities.Copiable | Capabilities.Snappable;
@@ -116,15 +117,15 @@ namespace Yozolab.DaerD
                 ? "Double-click to open the blend tree view"
                 : string.Empty;
 
-            bool showBadges = DaerDSettings.ShowStateBadges;
             var behaviours = State.behaviours;
             int behaviourCount = behaviours != null ? behaviours.Length : 0;
-            bool showWd = showBadges && State.writeDefaultValues;
-            bool showB = showBadges && behaviourCount > 0;
-            _wdBadge.style.display = showWd ? DisplayStyle.Flex : DisplayStyle.None;
-            _behaviourBadge.style.display = showB ? DisplayStyle.Flex : DisplayStyle.None;
-            _behaviourBadge.tooltip = behaviourCount + " StateMachineBehaviour(s)";
-            _badgeRow.style.display = showWd || showB ? DisplayStyle.Flex : DisplayStyle.None;
+            _badgeRow.style.display = DaerDSettings.ShowStateBadges ? DisplayStyle.Flex : DisplayStyle.None;
+            _wdBadge.style.color = State.writeDefaultValues ? BadgeWdOnColor : BadgeOffColor;
+            _wdBadge.tooltip = "Write Defaults: " + (State.writeDefaultValues ? "ON" : "OFF");
+            _behaviourBadge.style.color = behaviourCount > 0 ? BadgeBOnColor : BadgeOffColor;
+            _behaviourBadge.tooltip = behaviourCount > 0
+                ? behaviourCount + " StateMachineBehaviour(s)"
+                : "No StateMachineBehaviours";
         }
 
         /// <summary>
