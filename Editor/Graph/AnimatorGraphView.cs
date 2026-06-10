@@ -576,6 +576,7 @@ namespace Yozolab.DaerD
             BuildConnectMenu(evt);
 
             int selectedNodeCount = CountSelected<StateNode>() + CountSelected<SubStateMachineNode>();
+            evt.menu.AppendAction("Create Frame", _ => _sync.CreateFrameAt(graphPosition));
             evt.menu.AppendAction("Create Frame Around Selection", _ => CreateFrameAroundSelection(),
                 selectedNodeCount > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
             evt.menu.AppendAction("Pack Into Sub-State Machine" + (stateCount > 1 ? " (" + stateCount + ")" : string.Empty),

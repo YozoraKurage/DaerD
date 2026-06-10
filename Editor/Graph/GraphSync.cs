@@ -77,7 +77,7 @@ namespace Yozolab.DaerD
                 foreach (var frame in _frameData.FramesIn(sm))
                 {
                     FrameNode frameNode = null;
-                    frameNode = new FrameNode(frame, () => PersistFrameGeometry(frameNode));
+                    frameNode = new FrameNode(frame, () => PersistFrameGeometry(frameNode), NodesFullyInside);
                     _frameNodes.Add(frameNode);
                     _graphView.AddElement(frameNode);
                     frameNode.SetPosition(frame.bounds);
@@ -398,53 +398,23 @@ namespace Yozolab.DaerD
             var states = sm.states;
             var machines = sm.stateMachines;
             bool statesDirty = false, machinesDirty = false;
-            bool frameShiftedNodes = false;
 
-            // Models that moved on their own — a frame dragging its contents must not shift
-            // these a second time.
-            var movedModels = new HashSet<object>();
+            // The dragged elements themselves, plus any nodes a frame carried along live during
+            // the drag — those moved visually too and persist the same way. A node that was both
+            // selected and carried shows up twice; the second write is identical, so it's harmless.
+            var toPersist = new List<GraphElement>(moved);
             foreach (var element in moved)
             {
-                if (element is StateNode s && s.State != null) movedModels.Add(s.State);
-                else if (element is SubStateMachineNode m && m.StateMachine != null) movedModels.Add(m.StateMachine);
+                if (!(element is FrameNode fn) || fn.Frame == null || _frameData == null) continue;
+                Undo.RecordObject(_frameData, "Move Frame");
+                fn.Frame.bounds = fn.GetPosition();
+                EditorUtility.SetDirty(_frameData);
+                var carried = fn.TakeDraggedContents();
+                if (carried != null) toPersist.AddRange(carried);
             }
 
-            foreach (var element in moved)
+            foreach (var element in toPersist)
             {
-                if (element is FrameNode fn && fn.Frame != null && _frameData != null)
-                {
-                    var oldBounds = fn.Frame.bounds;
-                    var newPosition = fn.GetPosition().position;
-                    var delta = newPosition - oldBounds.position;
-                    Undo.RecordObject(_frameData, "Move Frame");
-                    fn.Frame.bounds.position = newPosition;
-                    EditorUtility.SetDirty(_frameData);
-
-                    if (fn.Frame.moveNodesWithFrame && delta.sqrMagnitude > 0.01f)
-                    {
-                        for (int i = 0; i < states.Length; i++)
-                        {
-                            if (states[i].state == null || movedModels.Contains(states[i].state)) continue;
-                            if (!oldBounds.Contains(new Vector2(states[i].position.x, states[i].position.y))) continue;
-                            var cs = states[i];
-                            cs.position += new Vector3(delta.x, delta.y, 0f);
-                            states[i] = cs;
-                            statesDirty = true;
-                            frameShiftedNodes = true;
-                        }
-                        for (int i = 0; i < machines.Length; i++)
-                        {
-                            if (machines[i].stateMachine == null || movedModels.Contains(machines[i].stateMachine)) continue;
-                            if (!oldBounds.Contains(new Vector2(machines[i].position.x, machines[i].position.y))) continue;
-                            var cm = machines[i];
-                            cm.position += new Vector3(delta.x, delta.y, 0f);
-                            machines[i] = cm;
-                            machinesDirty = true;
-                            frameShiftedNodes = true;
-                        }
-                    }
-                    continue;
-                }
                 if (element is StateNode sn)
                 {
                     var p = sn.GetPosition().position;
@@ -484,8 +454,6 @@ namespace Yozolab.DaerD
             if (statesDirty) sm.states = states;
             if (machinesDirty) sm.stateMachines = machines;
             EditorUtility.SetDirty(sm);
-            // Nodes carried along by a frame changed only in the asset; refresh their visuals.
-            if (frameShiftedNodes) RequestRebuild();
         }
 
         void DeleteState(AnimatorState state)
@@ -852,6 +820,42 @@ namespace Yozolab.DaerD
 
         // ---- frames ------------------------------------------------------------
 
+        /// <summary>
+        /// The graph nodes whose whole visual rect lies inside <paramref name="bounds"/>.
+        /// Nodes merely touching or crossing the outline are excluded, so the result matches
+        /// what visually reads as "inside the frame".
+        /// </summary>
+        public List<GraphElement> NodesFullyInside(Rect bounds)
+        {
+            var result = new List<GraphElement>();
+            void AddIfInside(GraphNodeBase node)
+            {
+                if (node == null) return;
+                var rect = node.GetPosition();
+                if (rect.width <= 0f || rect.height <= 0f) return;   // not laid out yet
+                if (bounds.Contains(rect.min) && bounds.Contains(rect.max))
+                    result.Add(node);
+            }
+
+            foreach (var pair in _stateNodes) AddIfInside(pair.Value);
+            foreach (var pair in _ssmNodes) AddIfInside(pair.Value);
+            AddIfInside(_entryNode);
+            AddIfInside(_exitNode);
+            AddIfInside(_anyStateNode);
+            return result;
+        }
+
+        /// <summary>Creates an empty frame at <paramref name="position"/> (graph coordinates) and selects it.</summary>
+        public void CreateFrameAt(Vector2 position)
+        {
+            var sm = _context.CurrentStateMachine;
+            if (sm == null || _context.Controller == null) return;
+            _frameData = GraphFrameData.GetOrCreate(_context.Controller);
+            var frame = _frameData.AddFrame(sm, new Rect(position.x, position.y, 320f, 220f));
+            RequestRebuild();
+            _context.Select(frame);
+        }
+
         /// <summary>Creates a frame around the given graph nodes and selects it.</summary>
         public void CreateFrameAroundNodes(IList<GraphNodeBase> nodes)
         {
@@ -876,8 +880,8 @@ namespace Yozolab.DaerD
 
         /// <summary>
         /// Writes a frame's size back to the asset after the resize handle changed it. Pure
-        /// position changes are ignored on purpose: moves go through <see cref="ApplyMoves"/>,
-        /// which needs the asset to still hold the pre-drag position to compute its delta.
+        /// position changes are ignored on purpose: geometry events fire continuously while a
+        /// frame is dragged, and the move is persisted once, on drop, by <see cref="ApplyMoves"/>.
         /// </summary>
         void PersistFrameGeometry(FrameNode node)
         {

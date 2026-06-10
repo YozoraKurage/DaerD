@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using UnityEditor.Experimental.GraphView;
 using UnityEngine;
 using UnityEngine.UIElements;
@@ -9,6 +10,8 @@ namespace Yozolab.DaerD
     /// A comment/group box drawn behind the graph nodes. Only the title bar and a thin border
     /// margin are clickable, so rubber-band selection and node interaction keep working inside
     /// the frame; resizing uses the standard GraphView resizer in the bottom-right corner.
+    /// Dragging the frame carries the nodes lying fully inside it along in real time
+    /// (Alt-drag moves the frame alone).
     /// </summary>
     class FrameNode : GraphElement
     {
@@ -20,10 +23,18 @@ namespace Yozolab.DaerD
         readonly Label _titleLabel;
         readonly VisualElement _titleBar;
         readonly VisualElement _body;
+        readonly Func<Rect, List<GraphElement>> _contentsResolver;
 
-        public FrameNode(GraphFrameData.Frame frame, Action onGeometryChanged)
+        // Captured on mouse-down: the nodes inside the frame and where they started, so they
+        // can be moved in lockstep with the frame during the drag.
+        List<(GraphElement node, Vector2 startPosition)> _draggedContents;
+        Rect _dragStartBounds;
+
+        public FrameNode(GraphFrameData.Frame frame, Action onGeometryChanged,
+            Func<Rect, List<GraphElement>> contentsResolver)
         {
             Frame = frame;
+            _contentsResolver = contentsResolver;
             AddToClassList("dd-frame");
             style.position = Position.Absolute;
             // Negative layer renders frames behind nodes and edges.
@@ -32,7 +43,10 @@ namespace Yozolab.DaerD
             capabilities = Capabilities.Selectable | Capabilities.Movable | Capabilities.Deletable
                          | Capabilities.Resizable;
 
-            _titleBar = new VisualElement();
+            _titleBar = new VisualElement
+            {
+                tooltip = "Drag to move the frame and the nodes inside it (Alt-drag: frame only)",
+            };
             _titleBar.AddToClassList("dd-frame__title");
             _titleBar.style.height = TitleHeight;
             _titleLabel = new Label { pickingMode = PickingMode.Ignore };
@@ -47,11 +61,70 @@ namespace Yozolab.DaerD
 
             Add(new Resizer());
             // The resizer manipulates layout directly (it bypasses graphViewChanged), so size
-            // changes are persisted from geometry events; GraphSync ignores pure position
-            // changes here because moves are persisted via the regular moved-elements path.
-            RegisterCallback<GeometryChangedEvent>(_ => onGeometryChanged?.Invoke());
+            // changes are persisted from geometry events; position-only changes are persisted
+            // by GraphSync's moved-elements path when the drag is dropped.
+            RegisterCallback<GeometryChangedEvent>(_ =>
+            {
+                FollowDraggedContents();
+                onGeometryChanged?.Invoke();
+            });
+            RegisterCallback<MouseDownEvent>(OnMouseDownCaptureContents, TrickleDown.TrickleDown);
 
             RefreshVisuals();
+        }
+
+        /// <summary>
+        /// Snapshot the contained nodes when a drag might start. Only nodes lying entirely
+        /// inside the frame count — a node merely touching the outline visibly pokes out, so
+        /// carrying it along would contradict what the user sees.
+        /// </summary>
+        void OnMouseDownCaptureContents(MouseDownEvent evt)
+        {
+            _draggedContents = null;
+            if (evt.button != 0) return;
+            if (IsInResizer(evt.target as VisualElement)) return;   // resizing never drags contents
+            if (evt.altKey || !Frame.moveNodesWithFrame) return;
+
+            var contents = _contentsResolver?.Invoke(GetPosition());
+            if (contents == null || contents.Count == 0) return;
+            _dragStartBounds = GetPosition();
+            _draggedContents = new List<(GraphElement, Vector2)>(contents.Count);
+            foreach (var node in contents)
+                _draggedContents.Add((node, node.GetPosition().position));
+        }
+
+        /// <summary>Moves the captured nodes in lockstep with the frame while it is dragged.</summary>
+        void FollowDraggedContents()
+        {
+            if (_draggedContents == null) return;
+            var delta = GetPosition().position - _dragStartBounds.position;
+            foreach (var (node, startPosition) in _draggedContents)
+            {
+                var rect = node.GetPosition();
+                node.SetPosition(new Rect(startPosition + delta, rect.size));
+            }
+        }
+
+        /// <summary>
+        /// The nodes the current drag carried along (null when none), clearing the capture.
+        /// GraphSync calls this on drop to persist their new positions.
+        /// </summary>
+        public List<GraphElement> TakeDraggedContents()
+        {
+            var captured = _draggedContents;
+            _draggedContents = null;
+            if (captured == null) return null;
+            var nodes = new List<GraphElement>(captured.Count);
+            foreach (var (node, _) in captured)
+                nodes.Add(node);
+            return nodes;
+        }
+
+        static bool IsInResizer(VisualElement element)
+        {
+            for (var e = element; e != null; e = e.parent)
+                if (e is Resizer) return true;
+            return false;
         }
 
         public void RefreshVisuals()
