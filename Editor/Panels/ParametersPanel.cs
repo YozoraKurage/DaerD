@@ -31,10 +31,6 @@ namespace Yozolab.DaerD
                 ShowAddMenu();
             EditorGUILayout.EndHorizontal();
 
-            // Null when the VRChat SDK isn't installed or no loaded avatar uses this controller.
-            var vrcInfo = VrcExpressions.GetInfo(controller);
-            DrawVrcSummary(vrcInfo);
-
             var unused = new HashSet<string>(ControllerAnalyzer.FindUnusedParameters(controller));
             if (unused.Count > 0)
             {
@@ -88,7 +84,6 @@ namespace Yozolab.DaerD
                 }
 
                 DrawDefaultValue(controller, parameters, i);
-                DrawVrcStatus(controller, p, vrcInfo);
 
                 if (GUILayout.Button("✕", EditorStyles.miniButton, GUILayout.Width(22)))
                 { RemoveParameter(i); GUIUtility.ExitGUI(); }
@@ -100,69 +95,6 @@ namespace Yozolab.DaerD
 
             if (parameters.Length == 0)
                 EditorGUILayout.LabelField("No parameters.", EditorStyles.centeredGreyMiniLabel);
-        }
-
-        // ---- VRC Expression Parameters (no-ops without the VRChat SDK) --------
-
-        /// <summary>One line with the avatar's used/total sync bits and a ping to the asset.</summary>
-        void DrawVrcSummary(VrcExpressionsInfo info)
-        {
-            if (info == null) return;
-            EditorGUILayout.BeginHorizontal();
-            var prevColor = GUI.color;
-            if (info.UsedBits > info.MaxBits) GUI.color = new Color(1f, 0.55f, 0.55f);
-            EditorGUILayout.LabelField(
-                "VRC sync: " + info.UsedBits + "/" + info.MaxBits + " bits — " + info.AvatarName,
-                EditorStyles.miniLabel);
-            GUI.color = prevColor;
-            if (info.ParametersAsset != null &&
-                GUILayout.Button("Ping", EditorStyles.miniButton, GUILayout.Width(40)))
-                EditorGUIUtility.PingObject(info.ParametersAsset);
-            EditorGUILayout.EndHorizontal();
-        }
-
-        /// <summary>
-        /// Per-row chip: S (synced, with bit cost), L (local only), ! (type mismatch), or a +
-        /// button that adds the parameter to the avatar's Expression Parameters as synced.
-        /// </summary>
-        void DrawVrcStatus(AnimatorController controller, AnimatorControllerParameter p, VrcExpressionsInfo info)
-        {
-            if (info == null) return;
-            if (!info.Status.TryGetValue(p.name, out var status))
-                status = VrcParamStatus.NotInExpressions;
-
-            var prevColor = GUI.color;
-            switch (status)
-            {
-                case VrcParamStatus.Synced:
-                    info.BitCost.TryGetValue(p.name, out int bits);
-                    GUI.color = new Color(0.55f, 0.85f, 0.60f);
-                    GUILayout.Label(new GUIContent("S",
-                        "Synced expression parameter (" + bits + " bit" + (bits == 1 ? "" : "s") + ")"),
-                        EditorStyles.miniLabel, GUILayout.Width(12));
-                    break;
-                case VrcParamStatus.Local:
-                    GUI.color = new Color(0.65f, 0.75f, 0.95f);
-                    GUILayout.Label(new GUIContent("L", "Expression parameter, not network-synced"),
-                        EditorStyles.miniLabel, GUILayout.Width(12));
-                    break;
-                case VrcParamStatus.TypeMismatch:
-                    GUI.color = new Color(1f, 0.55f, 0.55f);
-                    GUILayout.Label(new GUIContent("!",
-                        "An expression parameter with this name exists, but its value type doesn't match"),
-                        EditorStyles.miniLabel, GUILayout.Width(12));
-                    break;
-                default:
-                    if (GUILayout.Button(new GUIContent("+",
-                            "Add to the avatar's VRC Expression Parameters (synced)"),
-                        EditorStyles.miniButton, GUILayout.Width(18)))
-                    {
-                        if (VrcExpressions.AddToExpressions(controller, p))
-                            Refresh();
-                    }
-                    break;
-            }
-            GUI.color = prevColor;
         }
 
         void DrawDefaultValue(AnimatorController controller, AnimatorControllerParameter[] parameters, int index)
