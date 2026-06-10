@@ -63,6 +63,12 @@ namespace Yozolab.DaerD
         protected override void DrawContent()
         {
             var selection = Context.Selection;
+            // A deleted state / transition / blend tree lingers as a destroyed ("fake null")
+            // Unity object until the graph rebuild catches up; touching its fields would throw
+            // MissingReferenceException mid-IMGUI, so fall back to the overview instead.
+            if (selection is UnityEngine.Object unityObject && unityObject == null)
+                selection = null;
+
             if (selection is AnimatorState state)
             {
                 DrawState(state);

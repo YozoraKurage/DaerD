@@ -122,6 +122,11 @@ namespace Yozolab.DaerD
                 edge.Refresh();
 
             RestoreSelection(capturedSelection);
+            // Deleting a node can leave the shared selection pointing at a destroyed object
+            // (the silent selection restore above never writes back to the context). Clear it
+            // so the inspector falls back to the overview instead of touching a dead reference.
+            if (_context.Selection is Object destroyed && destroyed == null)
+                _context.Select(null);
             RefreshRuntimeHighlight();
             _context.NotifyGraphRebuilt();
         }
