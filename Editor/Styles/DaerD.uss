@@ -185,17 +185,51 @@
 
 /* Graph frames (comment / group boxes drawn behind nodes). */
 .dd-frame__title {
-    justify-content: center;
+    flex-direction: row;
+    align-items: center;
     padding-left: 6px;
 }
 
 .dd-frame__title-label {
+    flex-grow: 1;
     -unity-font-style: bold;
     color: rgb(235, 235, 235);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
 }
+
+/* Inspector-style lock toggle at the right end of the title bar. */
+.dd-frame__lock {
+    width: 16px;
+    height: 16px;
+    margin-right: 4px;
+    flex-shrink: 0;
+    opacity: 0.75;
+}
+
+.dd-frame__lock:hover {
+    opacity: 1;
+}
+
+/* Square resize handles shown on the edges and corners of a selected frame / note. */
+.dd-resize-handle {
+    position: absolute;
+    width: 9px;
+    height: 9px;
+    background-color: rgb(102, 179, 255);
+    border-width: 1px;
+    border-color: rgb(25, 25, 25);
+}
+
+.dd-resize-handle--nw { left: -5px; top: -5px; cursor: resize-up-left; }
+.dd-resize-handle--n { left: 50%; margin-left: -5px; top: -5px; cursor: resize-vertical; }
+.dd-resize-handle--ne { right: -5px; top: -5px; cursor: resize-up-right; }
+.dd-resize-handle--w { left: -5px; top: 50%; margin-top: -5px; cursor: resize-horizontal; }
+.dd-resize-handle--e { right: -5px; top: 50%; margin-top: -5px; cursor: resize-horizontal; }
+.dd-resize-handle--sw { left: -5px; bottom: -5px; cursor: resize-up-right; }
+.dd-resize-handle--s { left: 50%; margin-left: -5px; bottom: -5px; cursor: resize-vertical; }
+.dd-resize-handle--se { right: -5px; bottom: -5px; cursor: resize-up-left; }
 
 /* Inline rename field shown in place of a frame's title label. */
 .dd-frame__rename {

@@ -82,7 +82,8 @@ namespace Yozolab.DaerD
                     FrameNode frameNode = null;
                     var capturedFrame = frame;
                     frameNode = new FrameNode(frame, () => PersistFrameGeometry(frameNode), NodesFullyInside,
-                        newTitle => RenameFrame(capturedFrame, newTitle));
+                        newTitle => RenameFrame(capturedFrame, newTitle),
+                        () => ToggleFrameLock(capturedFrame));
                     _frameNodes.Add(frameNode);
                     _graphView.AddElement(frameNode);
                     frameNode.SetPosition(frame.bounds);
@@ -443,20 +444,12 @@ namespace Yozolab.DaerD
             var toPersist = new List<GraphElement>(moved);
             foreach (var element in moved)
             {
-                if (element is FrameNode fn && fn.Frame != null && _frameData != null)
-                {
-                    Undo.RecordObject(_frameData, "Move Frame");
-                    fn.Frame.bounds = fn.GetPosition();
-                    EditorUtility.SetDirty(_frameData);
-                    var carried = fn.TakeDraggedContents();
-                    if (carried != null) toPersist.AddRange(carried);
-                }
-                else if (element is NoteNode nn && nn.Note != null && _frameData != null)
-                {
-                    Undo.RecordObject(_frameData, "Move Note");
-                    nn.Note.bounds = nn.GetPosition();
-                    EditorUtility.SetDirty(_frameData);
-                }
+                if (!(element is FrameNode fn) || fn.Frame == null || _frameData == null) continue;
+                Undo.RecordObject(_frameData, "Move Frame");
+                fn.Frame.bounds = fn.GetPosition();
+                EditorUtility.SetDirty(_frameData);
+                var carried = fn.TakeDraggedContents();
+                if (carried != null) toPersist.AddRange(carried);
             }
 
             foreach (var element in toPersist)
@@ -494,6 +487,13 @@ namespace Yozolab.DaerD
                     if (spn.Kind == SpecialNodeKind.Entry) sm.entryPosition = v;
                     else if (spn.Kind == SpecialNodeKind.Exit) sm.exitPosition = v;
                     else sm.anyStatePosition = v;
+                }
+                else if (element is NoteNode nn && nn.Note != null && _frameData != null)
+                {
+                    // Covers notes dragged directly and notes carried along by a frame.
+                    Undo.RecordObject(_frameData, "Move Note");
+                    nn.Note.bounds = nn.GetPosition();
+                    EditorUtility.SetDirty(_frameData);
                 }
             }
 
@@ -867,20 +867,20 @@ namespace Yozolab.DaerD
         // ---- frames ------------------------------------------------------------
 
         /// <summary>
-        /// The graph nodes whose whole visual rect lies inside <paramref name="bounds"/>.
-        /// Nodes merely touching or crossing the outline are excluded, so the result matches
-        /// what visually reads as "inside the frame".
+        /// The graph nodes (and memo notes) whose whole visual rect lies inside
+        /// <paramref name="bounds"/>. Elements merely touching or crossing the outline are
+        /// excluded, so the result matches what visually reads as "inside the frame".
         /// </summary>
         public List<GraphElement> NodesFullyInside(Rect bounds)
         {
             var result = new List<GraphElement>();
-            void AddIfInside(GraphNodeBase node)
+            void AddIfInside(GraphElement element)
             {
-                if (node == null) return;
-                var rect = node.GetPosition();
+                if (element == null) return;
+                var rect = element.GetPosition();
                 if (rect.width <= 0f || rect.height <= 0f) return;   // not laid out yet
                 if (bounds.Contains(rect.min) && bounds.Contains(rect.max))
-                    result.Add(node);
+                    result.Add(element);
             }
 
             foreach (var pair in _stateNodes) AddIfInside(pair.Value);
@@ -888,6 +888,7 @@ namespace Yozolab.DaerD
             AddIfInside(_entryNode);
             AddIfInside(_exitNode);
             AddIfInside(_anyStateNode);
+            foreach (var note in _noteNodes) AddIfInside(note);
             return result;
         }
 

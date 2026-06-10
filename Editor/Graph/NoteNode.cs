@@ -15,6 +15,7 @@ namespace Yozolab.DaerD
         public GraphFrameData.Note Note { get; }
 
         readonly Label _textLabel;
+        readonly ResizeHandles _resizeHandles;
         readonly Action<string> _onTextCommitted;
         TextField _editField;
 
@@ -28,16 +29,19 @@ namespace Yozolab.DaerD
             layer = -5;
             tooltip = "Double-click or F2 to edit";
 
-            capabilities = Capabilities.Selectable | Capabilities.Movable | Capabilities.Deletable
-                         | Capabilities.Resizable;
+            capabilities = Capabilities.Selectable | Capabilities.Movable | Capabilities.Deletable;
 
             _textLabel = new Label { pickingMode = PickingMode.Ignore };
             _textLabel.AddToClassList("dd-note__text");
             Add(_textLabel);
 
-            Add(new Resizer());
-            // Resizes bypass graphViewChanged; sizes are persisted from geometry events while
-            // moves are persisted by GraphSync's moved-elements path on drop.
+            // Square handles on every edge and corner, shown while the note is selected.
+            // They call SetPosition directly (bypassing graphViewChanged); sizes are persisted
+            // from geometry events while moves persist via GraphSync's moved-elements path.
+            _resizeHandles = new ResizeHandles(this, new Vector2(80f, 40f));
+            _resizeHandles.SetVisible(false);
+            Add(_resizeHandles);
+
             RegisterCallback<GeometryChangedEvent>(_ => onGeometryChanged?.Invoke());
             RegisterCallback<MouseDownEvent>(evt =>
             {
@@ -55,8 +59,9 @@ namespace Yozolab.DaerD
         {
             _textLabel.text = Note.text ?? string.Empty;
             _textLabel.style.fontSize = Note.fontSize;
-            var c = Note.color;
-            style.backgroundColor = new Color(c.r, c.g, c.b, 0.95f);
+            // The colour's alpha is honoured as-is, so notes can be made semi-transparent
+            // (context menu Opacity presets or the inspector colour field).
+            style.backgroundColor = Note.color;
             ApplyBorder();
         }
 
@@ -65,7 +70,7 @@ namespace Yozolab.DaerD
             var c = Note.color;
             var borderColor = selected
                 ? new Color(0.40f, 0.70f, 1.00f)
-                : new Color(c.r * 0.55f, c.g * 0.55f, c.b * 0.55f);
+                : new Color(c.r * 0.55f, c.g * 0.55f, c.b * 0.55f, Mathf.Clamp01(c.a + 0.25f));
             float width = selected ? 2f : 1f;
             style.borderTopColor = borderColor;
             style.borderBottomColor = borderColor;
@@ -80,12 +85,14 @@ namespace Yozolab.DaerD
         public override void OnSelected()
         {
             base.OnSelected();
+            _resizeHandles.SetVisible(true);
             ApplyBorder();
         }
 
         public override void OnUnselected()
         {
             base.OnUnselected();
+            _resizeHandles.SetVisible(false);
             ApplyBorder();
         }
 

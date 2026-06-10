@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using UnityEditor;
 using UnityEditor.Experimental.GraphView;
 using UnityEngine;
 using UnityEngine.UIElements;
@@ -24,9 +25,11 @@ namespace Yozolab.DaerD
         readonly Label _titleLabel;
         readonly VisualElement _titleBar;
         readonly VisualElement _body;
-        readonly Resizer _resizer;
+        readonly Image _lockButton;
+        readonly ResizeHandles _resizeHandles;
         readonly Func<Rect, List<GraphElement>> _contentsResolver;
         readonly Action<string> _onRenameCommitted;
+        readonly Action _onLockToggled;
         TextField _renameField;
 
         // Captured on mouse-down: the nodes inside the frame and where they started, so they
@@ -35,11 +38,13 @@ namespace Yozolab.DaerD
         Rect _dragStartBounds;
 
         public FrameNode(GraphFrameData.Frame frame, Action onGeometryChanged,
-            Func<Rect, List<GraphElement>> contentsResolver, Action<string> onRenameCommitted)
+            Func<Rect, List<GraphElement>> contentsResolver, Action<string> onRenameCommitted,
+            Action onLockToggled)
         {
             Frame = frame;
             _contentsResolver = contentsResolver;
             _onRenameCommitted = onRenameCommitted;
+            _onLockToggled = onLockToggled;
             AddToClassList("dd-frame");
             style.position = Position.Absolute;
             // Negative layer renders frames behind nodes and edges.
@@ -56,6 +61,17 @@ namespace Yozolab.DaerD
             _titleLabel = new Label { pickingMode = PickingMode.Ignore };
             _titleLabel.AddToClassList("dd-frame__title-label");
             _titleBar.Add(_titleLabel);
+
+            // Inspector-style lock toggle in the frame's top-right corner.
+            _lockButton = new Image { tooltip = "Lock / unlock this frame" };
+            _lockButton.AddToClassList("dd-frame__lock");
+            _lockButton.RegisterCallback<MouseDownEvent>(evt =>
+            {
+                if (evt.button != 0) return;
+                _onLockToggled?.Invoke();
+                evt.StopPropagation();
+            });
+            _titleBar.Add(_lockButton);
             Add(_titleBar);
 
             _body = new VisualElement { pickingMode = PickingMode.Ignore };
@@ -63,11 +79,14 @@ namespace Yozolab.DaerD
             _body.style.flexGrow = 1;
             Add(_body);
 
-            _resizer = new Resizer();
-            Add(_resizer);
-            // The resizer manipulates layout directly (it bypasses graphViewChanged), so size
-            // changes are persisted from geometry events; position-only changes are persisted
-            // by GraphSync's moved-elements path when the drag is dropped.
+            // Square handles on every edge and corner, shown while the frame is selected.
+            // They call SetPosition directly (bypassing graphViewChanged), so geometry events
+            // below persist the size; position-only changes are persisted by GraphSync's
+            // moved-elements path when a drag is dropped.
+            _resizeHandles = new ResizeHandles(this, new Vector2(120f, 60f));
+            _resizeHandles.SetVisible(false);
+            Add(_resizeHandles);
+
             RegisterCallback<GeometryChangedEvent>(_ =>
             {
                 FollowDraggedContents();
@@ -194,19 +213,20 @@ namespace Yozolab.DaerD
 
         public void RefreshVisuals()
         {
-            string title = string.IsNullOrEmpty(Frame.title) ? "Frame" : Frame.title;
-            _titleLabel.text = Frame.locked ? title + "  (locked)" : title;
+            _titleLabel.text = string.IsNullOrEmpty(Frame.title) ? "Frame" : Frame.title;
             var c = Frame.color;
             _titleBar.style.backgroundColor = new Color(c.r, c.g, c.b, Frame.locked ? 0.55f : 0.85f);
             _body.style.backgroundColor = new Color(c.r, c.g, c.b, 0.12f);
 
+            var lockIcon = EditorGUIUtility.IconContent(Frame.locked ? "LockIcon-On" : "LockIcon");
+            _lockButton.image = lockIcon?.image;
+
             // A locked frame stays selectable (to inspect / unlock) but loses every
-            // geometry-changing capability; the resize handle disappears with it.
+            // geometry-changing capability; the resize handles disappear with it.
             capabilities = Frame.locked
                 ? Capabilities.Selectable
-                : Capabilities.Selectable | Capabilities.Movable | Capabilities.Deletable
-                  | Capabilities.Resizable;
-            _resizer.style.display = Frame.locked ? DisplayStyle.None : DisplayStyle.Flex;
+                : Capabilities.Selectable | Capabilities.Movable | Capabilities.Deletable;
+            _resizeHandles.SetVisible(selected && !Frame.locked);
 
             ApplyBorder();
         }
@@ -229,12 +249,14 @@ namespace Yozolab.DaerD
         public override void OnSelected()
         {
             base.OnSelected();
+            _resizeHandles.SetVisible(!Frame.locked);
             ApplyBorder();
         }
 
         public override void OnUnselected()
         {
             base.OnUnselected();
+            _resizeHandles.SetVisible(false);
             ApplyBorder();
         }
 

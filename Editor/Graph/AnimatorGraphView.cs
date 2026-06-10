@@ -807,7 +807,17 @@ namespace Yozolab.DaerD
             foreach (var preset in NotePalette)
             {
                 var captured = preset.color;
-                evt.menu.AppendAction("Note Color/" + preset.name, _ => _sync.SetNoteColor(note, captured));
+                evt.menu.AppendAction("Note Color/" + preset.name, _ =>
+                    _sync.SetNoteColor(note, new Color(captured.r, captured.g, captured.b, note.color.a)));
+            }
+            foreach (var percent in new[] { 100, 80, 60, 40 })
+            {
+                float alpha = percent / 100f;
+                evt.menu.AppendAction("Opacity/" + percent + "%", _ =>
+                    _sync.SetNoteColor(note, new Color(note.color.r, note.color.g, note.color.b, alpha)),
+                    Mathf.Abs(note.color.a - alpha) < 0.01f
+                        ? DropdownMenuAction.Status.Checked
+                        : DropdownMenuAction.Status.Normal);
             }
             foreach (var option in NoteFontSizes)
             {
