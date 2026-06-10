@@ -102,10 +102,33 @@ namespace Yozolab.DaerD
 
             if (changed)
             {
+                RejectCyclicMotions(tree, children, list);
                 Undo.RegisterCompleteObjectUndo(tree, "Edit Blend Tree Motions");
                 tree.children = list.ToArray();
                 EditorUtility.SetDirty(tree);
                 context.NotifyBlendTreeChanged();
+            }
+        }
+
+        /// <summary>
+        /// Drops any motion assignment that would make <paramref name="tree"/> contain itself —
+        /// a cycle would hang every traversal (graph view, hierarchy, analyzer). The slot is
+        /// reverted to its previous motion where possible, otherwise cleared.
+        /// </summary>
+        static void RejectCyclicMotions(BlendTree tree, ChildMotion[] previous, List<ChildMotion> list)
+        {
+            for (int i = 0; i < list.Count; i++)
+            {
+                if (!(list[i].motion is BlendTree nested) || !nested.ContainsTree(tree)) continue;
+                Debug.LogWarning("DaerD: cannot use blend tree '" + nested.name + "' as a motion of '" +
+                                 tree.name + "' — the tree would contain itself.");
+                // Indices only line up with the previous array when no row was added/removed
+                // in the same pass; otherwise fall back to clearing the slot.
+                bool canRevert = list.Count == previous.Length
+                    && !(previous[i].motion is BlendTree prevTree && prevTree.ContainsTree(tree));
+                var child = list[i];
+                child.motion = canRevert ? previous[i].motion : null;
+                list[i] = child;
             }
         }
 

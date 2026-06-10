@@ -54,20 +54,45 @@ namespace Yozolab.DaerD
 
         public static IEnumerable<BlendTree> AllBlendTrees(this AnimatorController controller)
         {
+            // The visited set guards against self-nested (cyclic) blend trees, which would
+            // otherwise recurse forever; it also yields a tree shared by several states only once.
+            var visited = new HashSet<BlendTree>();
             foreach (var state in controller.AllStates())
-                foreach (var bt in BlendTreesIn(state.motion))
+                foreach (var bt in BlendTreesIn(state.motion, visited))
                     yield return bt;
         }
 
-        static IEnumerable<BlendTree> BlendTreesIn(UnityEngine.Motion motion)
+        static IEnumerable<BlendTree> BlendTreesIn(UnityEngine.Motion motion, HashSet<BlendTree> visited)
         {
-            if (motion is BlendTree tree)
+            if (motion is BlendTree tree && visited.Add(tree))
             {
                 yield return tree;
                 foreach (var child in tree.children)
-                    foreach (var nested in BlendTreesIn(child.motion))
+                    foreach (var nested in BlendTreesIn(child.motion, visited))
                         yield return nested;
             }
+        }
+
+        /// <summary>
+        /// True when <paramref name="root"/> is, or nests (at any depth), <paramref name="target"/>.
+        /// Safe to call on trees that already contain reference cycles.
+        /// </summary>
+        public static bool ContainsTree(this BlendTree root, BlendTree target)
+        {
+            if (root == null || target == null) return false;
+            var visited = new HashSet<BlendTree>();
+            var stack = new Stack<BlendTree>();
+            stack.Push(root);
+            while (stack.Count > 0)
+            {
+                var tree = stack.Pop();
+                if (tree == target) return true;
+                if (!visited.Add(tree)) continue;
+                foreach (var child in tree.children)
+                    if (child.motion is BlendTree nested)
+                        stack.Push(nested);
+            }
+            return false;
         }
     }
 }

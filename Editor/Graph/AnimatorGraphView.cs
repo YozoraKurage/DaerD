@@ -301,6 +301,22 @@ namespace Yozolab.DaerD
                 else PasteSelection();
                 evt.StopPropagation();
             }
+            else if (evt.keyCode == KeyCode.D)
+            {
+                DuplicateSelectedStates();
+                evt.StopPropagation();
+            }
+        }
+
+        /// <summary>Duplicates the selected states in place (Ctrl+D), keeping their internal transitions.</summary>
+        void DuplicateSelectedStates()
+        {
+            var states = GetSelectedStates();
+            if (states.Count == 0) return;
+            var created = StateDuplicator.Duplicate(_context.CurrentStateMachine, states, new Vector2(40f, 40f));
+            if (created.Count == 0) return;
+            _sync.RequestRebuild();
+            _context.Select(created[0]);
         }
 
         /// <summary>Non-default transition edges (each holding ≥1 transition) in the current selection.</summary>
@@ -534,6 +550,8 @@ namespace Yozolab.DaerD
                 stateCount > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
             evt.menu.AppendAction("Paste State(s)", _ => _sync.PasteStates(graphPosition),
                 StateClipboard.HasData ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+            evt.menu.AppendAction("Duplicate State(s)", _ => DuplicateSelectedStates(),
+                stateCount > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
             evt.menu.AppendAction("Delete", _ => DeleteCurrentSelection(),
                 HasDeletableSelection() ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
 

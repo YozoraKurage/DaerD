@@ -19,6 +19,12 @@ namespace Yozolab.DaerD
         readonly Dictionary<AnimatorStateMachine, SubStateMachineNode> _ssmNodes = new Dictionary<AnimatorStateMachine, SubStateMachineNode>();
         readonly List<TransitionEdge> _edges = new List<TransitionEdge>();
 
+        // States / machines nested anywhere inside a top-level child sub-state machine, mapped to
+        // that child's node. Lets transitions targeting a deep state (common for Any State
+        // transitions) render as an edge to the sub-state machine, like Unity's own editor.
+        readonly Dictionary<AnimatorState, SubStateMachineNode> _nestedStateOwners = new Dictionary<AnimatorState, SubStateMachineNode>();
+        readonly Dictionary<AnimatorStateMachine, SubStateMachineNode> _nestedMachineOwners = new Dictionary<AnimatorStateMachine, SubStateMachineNode>();
+
         SpecialNode _entryNode, _exitNode, _anyStateNode;
         bool _rebuildScheduled;
         int _runtimeStateHash;
@@ -53,6 +59,8 @@ namespace Yozolab.DaerD
 
             _stateNodes.Clear();
             _ssmNodes.Clear();
+            _nestedStateOwners.Clear();
+            _nestedMachineOwners.Clear();
             _edges.Clear();
             foreach (var element in _graphView.graphElements.ToList())
                 _graphView.RemoveElement(element);
@@ -83,6 +91,13 @@ namespace Yozolab.DaerD
                 var node = new SubStateMachineNode(childSm, () => _context.EnterStateMachine(childSm));
                 _ssmNodes[childSm] = node;
                 AddNode(node, child.position);
+
+                foreach (var descendant in childSm.SelfAndDescendants())
+                {
+                    if (descendant != childSm) _nestedMachineOwners[descendant] = node;
+                    foreach (var cs in descendant.states)
+                        if (cs.state != null) _nestedStateOwners[cs.state] = node;
+                }
             }
 
             if (sm.defaultState != null && _stateNodes.TryGetValue(sm.defaultState, out var defaultNode))
@@ -107,6 +122,11 @@ namespace Yozolab.DaerD
                 edge.Refresh();
 
             RestoreSelection(capturedSelection);
+            // Deleting a node can leave the shared selection pointing at a destroyed object
+            // (the silent selection restore above never writes back to the context). Clear it
+            // so the inspector falls back to the overview instead of touching a dead reference.
+            if (_context.Selection is Object destroyed && destroyed == null)
+                _context.Select(null);
             RefreshRuntimeHighlight();
             _context.NotifyGraphRebuilt();
         }
@@ -121,10 +141,17 @@ namespace Yozolab.DaerD
         {
             if (transition == null) return null;
             if (transition.isExit) return _exitNode;
-            if (transition.destinationState != null && _stateNodes.TryGetValue(transition.destinationState, out var sn))
-                return sn;
-            if (transition.destinationStateMachine != null && _ssmNodes.TryGetValue(transition.destinationStateMachine, out var mn))
-                return mn;
+            if (transition.destinationState != null)
+            {
+                if (_stateNodes.TryGetValue(transition.destinationState, out var sn)) return sn;
+                // Destination lives inside a child sub-state machine: draw the edge to that node.
+                if (_nestedStateOwners.TryGetValue(transition.destinationState, out var owner)) return owner;
+            }
+            if (transition.destinationStateMachine != null)
+            {
+                if (_ssmNodes.TryGetValue(transition.destinationStateMachine, out var mn)) return mn;
+                if (_nestedMachineOwners.TryGetValue(transition.destinationStateMachine, out var owner)) return owner;
+            }
             return null;
         }
 
@@ -723,18 +750,8 @@ namespace Yozolab.DaerD
             RequestRebuild();
         }
 
-        static string MakeUniqueName(AnimatorStateMachine sm, string baseName)
-        {
-            var taken = new HashSet<string>();
-            foreach (var cs in sm.states)
-                if (cs.state != null) taken.Add(cs.state.name);
-            foreach (var cm in sm.stateMachines)
-                if (cm.stateMachine != null) taken.Add(cm.stateMachine.name);
-            if (!taken.Contains(baseName)) return baseName;
-            int i = 1;
-            while (taken.Contains(baseName + " " + i)) i++;
-            return baseName + " " + i;
-        }
+        static string MakeUniqueName(AnimatorStateMachine sm, string baseName) =>
+            StateDuplicator.MakeUniqueName(sm, baseName);
 
         // ---- copy / paste ----------------------------------------------------
 
@@ -742,7 +759,7 @@ namespace Yozolab.DaerD
         {
             var states = new List<AnimatorState>();
             foreach (var selectable in _graphView.selection)
-                if (selectable is StateNode sn)
+                if (selectable is StateNode sn && sn.State != null)
                     states.Add(sn.State);
             if (states.Count == 0) return;
             StateClipboard.Copy(states, s => _stateNodes.TryGetValue(s, out var node)
@@ -985,6 +1002,7 @@ namespace Yozolab.DaerD
                 if (active)
                     foreach (var t in edge.Transitions)
                     {
+                        if (t == null) continue;
                         foreach (var c in t.conditions)
                             if (c.parameter == parameterName) { used = true; break; }
                         if (used) break;

@@ -72,9 +72,11 @@ namespace Yozolab.DaerD
             var root = _context.CurrentBlendTree;
             if (root == null) return;
 
-            // Two-pass: measure subtree heights, then place nodes column-by-column.
-            float totalHeight = MeasureSubtree(root);
-            BuildSubtree(root, 0, 0f, totalHeight, isFocusedRoot: true);
+            // Two-pass: measure subtree heights, then place nodes column-by-column. Both passes
+            // share path-based recursion guards so a (defensively handled) self-nested tree is
+            // rendered once as a leaf instead of recursing forever.
+            float totalHeight = MeasureSubtree(root, new HashSet<BlendTree>());
+            BuildSubtree(root, 0, 0f, totalHeight, isFocusedRoot: true, new HashSet<BlendTree>());
 
             // Re-apply the current DaerD selection so the visible blue outline survives
             // edit-driven rebuilds. Without this, every BlendTreePanel edit would silently
@@ -90,41 +92,43 @@ namespace Yozolab.DaerD
         }
 
         /// <summary>Returns the vertical space needed to lay out <paramref name="tree"/> and its descendants.</summary>
-        float MeasureSubtree(BlendTree tree)
+        float MeasureSubtree(BlendTree tree, HashSet<BlendTree> path)
         {
-            if (tree == null || tree.children == null || tree.children.Length == 0)
+            if (tree == null || tree.children == null || tree.children.Length == 0 || !path.Add(tree))
                 return NodeHeight + SiblingPadding;
             float total = 0f;
             foreach (var child in tree.children)
             {
                 total += child.motion is BlendTree nested
-                    ? MeasureSubtree(nested)
+                    ? MeasureSubtree(nested, path)
                     : NodeHeight + SiblingPadding;
             }
+            path.Remove(tree);
             // The parent slot itself must be at least one row tall so a node with a single
             // child still claims room for its own visual.
             return Mathf.Max(total, NodeHeight + SiblingPadding);
         }
 
-        void BuildSubtree(BlendTree tree, int column, float top, float allocated, bool isFocusedRoot)
+        void BuildSubtree(BlendTree tree, int column, float top, float allocated, bool isFocusedRoot,
+            HashSet<BlendTree> path)
         {
             float centerY = top + allocated * 0.5f;
             var rootNode = BuildRootNode(tree, isFocusedRoot);
             rootNode.SetPosition(new Rect(column * ColumnWidth, centerY - NodeHeight * 0.5f, 0f, 0f));
 
-            if (tree.children == null || tree.children.Length == 0) return;
+            if (tree.children == null || tree.children.Length == 0 || !path.Add(tree)) return;
 
             float cursor = top;
             for (int i = 0; i < tree.children.Length; i++)
             {
                 var child = tree.children[i];
                 float childSlot = child.motion is BlendTree nested
-                    ? MeasureSubtree(nested)
+                    ? MeasureSubtree(nested, path)
                     : NodeHeight + SiblingPadding;
 
                 if (child.motion is BlendTree nestedTree)
                 {
-                    BuildSubtree(nestedTree, column + 1, cursor, childSlot, isFocusedRoot: false);
+                    BuildSubtree(nestedTree, column + 1, cursor, childSlot, isFocusedRoot: false, path);
                     LinkParentToChild(rootNode, _treeNodes[nestedTree]);
                 }
                 else
@@ -136,6 +140,7 @@ namespace Yozolab.DaerD
                 }
                 cursor += childSlot;
             }
+            path.Remove(tree);
         }
 
         BlendTreeRootNode BuildRootNode(BlendTree tree, bool isFocusedRoot)

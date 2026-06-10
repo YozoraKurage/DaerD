@@ -60,24 +60,28 @@ namespace Yozolab.DaerD
             // DaerDWindow.RefreshRightColumnLayout), but DrawContent can still run during
             // the transition frame, so guard defensively.
             if (!Context.IsViewingBlendTree) return;
-            DrawTree(Context.CurrentBlendTree, 0);
+            DrawTree(Context.CurrentBlendTree, 0, new HashSet<BlendTree>());
         }
 
-        void DrawTree(BlendTree tree, int depth)
+        void DrawTree(BlendTree tree, int depth, HashSet<BlendTree> path)
         {
             if (tree == null) return;
 
-            DrawRow(tree, depth, label: tree.name, suffix: "  [" + tree.blendType + "]",
-                isTree: true, hasChildren: HasAnyChildren(tree));
+            // A tree that is its own ancestor is drawn once and never expanded, so a
+            // (defensively handled) cyclic reference can't recurse forever.
+            bool cyclic = path.Contains(tree);
+            DrawRow(tree, depth, label: tree.name, suffix: cyclic ? "  [recursive]" : "  [" + tree.blendType + "]",
+                isTree: true, hasChildren: !cyclic && HasAnyChildren(tree));
 
-            if (!_expanded.Contains(tree)) return;
+            if (cyclic || !_expanded.Contains(tree)) return;
             if (tree.children == null) return;
+            path.Add(tree);
             foreach (var child in tree.children)
             {
                 var motion = child.motion;
                 if (motion is BlendTree nested)
                 {
-                    DrawTree(nested, depth + 1);
+                    DrawTree(nested, depth + 1, path);
                 }
                 else
                 {
@@ -89,6 +93,7 @@ namespace Yozolab.DaerD
                         hasChildren: false);
                 }
             }
+            path.Remove(tree);
         }
 
         void DrawRow(Object target, int depth, string label, string suffix, bool isTree, bool hasChildren)
@@ -179,7 +184,7 @@ namespace Yozolab.DaerD
             if (selection == null) return;
 
             var ancestors = new List<BlendTree>();
-            if (FindAncestors(Context.CurrentBlendTree, selection, ancestors))
+            if (FindAncestors(Context.CurrentBlendTree, selection, ancestors, new HashSet<BlendTree>()))
                 foreach (var tree in ancestors)
                     _expanded.Add(tree);
         }
@@ -189,9 +194,10 @@ namespace Yozolab.DaerD
         /// When found, fills <paramref name="ancestors"/> with the chain of BlendTrees from
         /// the focused root down to (but not including) the target.
         /// </summary>
-        static bool FindAncestors(BlendTree current, object target, List<BlendTree> ancestors)
+        static bool FindAncestors(BlendTree current, object target, List<BlendTree> ancestors,
+            HashSet<BlendTree> visited)
         {
-            if (current == null) return false;
+            if (current == null || !visited.Add(current)) return false;
             // The focused root itself is the selection — no ancestors to expand.
             if (ReferenceEquals(current, target)) return true;
             if (current.children == null) return false;
@@ -203,7 +209,7 @@ namespace Yozolab.DaerD
                     ancestors.Add(current);
                     return true;
                 }
-                if (child.motion is BlendTree nested && FindAncestors(nested, target, ancestors))
+                if (child.motion is BlendTree nested && FindAncestors(nested, target, ancestors, visited))
                 {
                     ancestors.Add(current);
                     return true;
