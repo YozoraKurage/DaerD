@@ -47,8 +47,12 @@ namespace Yozolab.DaerD
             _onLockToggled = onLockToggled;
             AddToClassList("dd-frame");
             style.position = Position.Absolute;
-            // Negative layer renders frames behind nodes and edges.
-            layer = -10;
+            // Positive layer renders frames above the default-layer transition edges and nodes,
+            // so the frame's title / border / faint body tint sit on top of the transitions
+            // crossing them. The body is alpha-0.12 and the title bar leaves the node area
+            // free, so states inside stay clearly visible — and ContainsPoint below ignores
+            // the body interior, so clicks still fall through to the states they hit.
+            layer = 5;
 
             tooltip = "Drag the border to move the frame alone";
 

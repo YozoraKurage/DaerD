@@ -3,6 +3,16 @@
     align-items: center;
 }
 
+/* Graph grid background: noticeably brighter than Unity's stock so the user can read
+   distances and stay oriented while dragging. Minor lines are subtle; major lines (every
+   10th line) are stronger so they read as anchors when the view is zoomed out. */
+GridBackground {
+    --grid-background-color: rgb(36, 36, 36);
+    --line-color: rgba(170, 170, 170, 0.12);
+    --thick-line-color: rgba(170, 170, 170, 0.32);
+    --spacing: 20;
+}
+
 .ce-breadcrumb {
     flex-direction: row;
     align-items: center;

@@ -42,6 +42,10 @@ namespace Yozolab.DaerD
             Insert(0, grid);
             grid.StretchToParentSize();
 
+            // Drag-time alignment + guide lines, shared by States and Frames. Lives for the
+            // lifetime of the graph view; registers its own mouse callbacks internally.
+            new DragAlignment(this);
+
             _searchProvider = ScriptableObject.CreateInstance<NodeSearchProvider>();
             _searchProvider.Init(OnSearchSelect);
 
