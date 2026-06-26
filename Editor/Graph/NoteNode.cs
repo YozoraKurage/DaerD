@@ -29,7 +29,10 @@ namespace Yozolab.DaerD
             layer = -5;
             tooltip = "Double-click or F2 to edit";
 
-            capabilities = Capabilities.Selectable | Capabilities.Movable | Capabilities.Deletable;
+            // Snappable lets the stock GraphView snap-to-borders pick the note up during
+            // drag, the same as States / Sub-State Machines.
+            capabilities = Capabilities.Selectable | Capabilities.Movable | Capabilities.Deletable
+                         | Capabilities.Snappable;
 
             _textLabel = new Label { pickingMode = PickingMode.Ignore };
             _textLabel.AddToClassList("dd-note__text");

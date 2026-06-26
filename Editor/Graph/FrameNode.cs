@@ -227,9 +227,11 @@ namespace Yozolab.DaerD
 
             // A locked frame stays selectable (to inspect / unlock) but loses every
             // geometry-changing capability; the resize handles disappear with it.
+            // Snappable lets the stock GraphView snap-to-borders pick the frame up
+            // during drag, the same as States / Sub-State Machines.
             capabilities = Frame.locked
                 ? Capabilities.Selectable
-                : Capabilities.Selectable | Capabilities.Movable | Capabilities.Deletable;
+                : Capabilities.Selectable | Capabilities.Movable | Capabilities.Deletable | Capabilities.Snappable;
             _resizeHandles.SetVisible(selected && !Frame.locked);
 
             ApplyBorder();
