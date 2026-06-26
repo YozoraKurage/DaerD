@@ -198,7 +198,12 @@ namespace Yozolab.DaerD
                 layers[newIdx].avatarMask = src.avatarMask;
                 layers[newIdx].iKPass = src.iKPass;
                 controller.layers = layers;
-                StateMachineCloner.Clone(src.stateMachine, controller.layers[newIdx].stateMachine);
+                StateMachineCloner.Clone(src.stateMachine, controller.layers[newIdx].stateMachine,
+                    out _, out var machineMap);
+                // Frames / notes live in GraphFrameData keyed by state machine, separate from the
+                // controller asset, so StateMachineCloner can't reach them. Mirror them now using
+                // the source→copy state-machine map so every nested SM keeps its annotations.
+                FrameInheritance.CarryOver(Context.Controller, machineMap);
                 EditorUtility.SetDirty(controller);
             }
             Context.NotifyLayersChanged();

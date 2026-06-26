@@ -47,6 +47,9 @@ namespace Yozolab.DaerD
                 if (Context.Selection is AnimatorTransitionBase transition)
                     _selectedTransitions.Add(transition);
                 _lastSelection = Context.Selection;
+                // Any in-flight condition edit was for the old selection — drop the focus so the
+                // next IMGUI repaint redraws the controls fresh against the new transition(s).
+                EndConditionInput();
             }
             Refresh();
         }
@@ -68,6 +71,15 @@ namespace Yozolab.DaerD
             // MissingReferenceException mid-IMGUI, so fall back to the overview instead.
             if (selection is UnityEngine.Object unityObject && unityObject == null)
                 selection = null;
+
+            // Multi-state editing takes precedence when the graph has more than one state
+            // selected — mirrors the multi-transition editor behaviour.
+            var selectedStates = _graphView.GetSelectedStates();
+            if (selectedStates.Count >= 2 && AnyStateAlive(selectedStates))
+            {
+                DrawMultiStateEditor(selectedStates);
+                return;
+            }
 
             if (selection is AnimatorState state)
             {
@@ -163,6 +175,14 @@ namespace Yozolab.DaerD
             }
 
             EditorGUILayout.Space(6);
+            EditorGUILayout.BeginHorizontal();
+            // Duplicates this frame, the states inside, and the transitions among them — works
+            // even when the frame is locked since the copy is independent.
+            if (GUILayout.Button("Duplicate Frame"))
+            {
+                _graphView.Sync.DuplicateFrame(frame);
+                GUIUtility.ExitGUI();
+            }
             using (new EditorGUI.DisabledScope(frame.locked))
             {
                 if (GUILayout.Button("Delete Frame"))
@@ -172,6 +192,7 @@ namespace Yozolab.DaerD
                     GUIUtility.ExitGUI();
                 }
             }
+            EditorGUILayout.EndHorizontal();
         }
 
         // ---- note ------------------------------------------------------------
@@ -213,6 +234,162 @@ namespace Yozolab.DaerD
                 Context.Select(null);
                 GUIUtility.ExitGUI();
             }
+        }
+
+        // ---- multi-state -----------------------------------------------------
+
+        static bool AnyStateAlive(List<AnimatorState> states)
+        {
+            foreach (var s in states)
+                if (s != null) return true;
+            return false;
+        }
+
+        /// <summary>
+        /// Bulk editor for the selected states' common fields. Mirrors the multi-transition
+        /// editor: every row shows the shared value (or a "mixed" placeholder) and writes back to
+        /// every selected state with a single undo entry.
+        /// </summary>
+        void DrawMultiStateEditor(List<AnimatorState> states)
+        {
+            // Drop destroyed entries up front so the mixed-value detection and writes don't
+            // walk a null reference mid-IMGUI.
+            var alive = new List<AnimatorState>(states.Count);
+            foreach (var s in states)
+                if (s != null) alive.Add(s);
+            if (alive.Count < 2)
+            {
+                if (alive.Count == 1) DrawState(alive[0]);
+                else DrawOverview();
+                return;
+            }
+
+            var controller = Context.Controller;
+            EditorGUILayout.LabelField(alive.Count + " states selected", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField("Common Settings (applied to all selected)", EditorStyles.boldLabel);
+
+            MultiObjectField<AnimatorState, Motion>("Motion", alive,
+                x => x.motion, (x, v) => x.motion = v,
+                undoName: "Edit States", postApply: s => _graphView.Sync.RefreshStateNode(s));
+            MultiFloat("Speed", alive, x => x.speed, (x, v) => x.speed = v, undoName: "Edit States");
+            MultiFloat("Cycle Offset", alive, x => x.cycleOffset, (x, v) => x.cycleOffset = v, undoName: "Edit States");
+            MultiBool("Mirror", alive, x => x.mirror, (x, v) => x.mirror = v, undoName: "Edit States");
+            MultiBool("Foot IK", alive, x => x.iKOnFeet, (x, v) => x.iKOnFeet = v, undoName: "Edit States");
+            MultiBool("Write Defaults", alive, x => x.writeDefaultValues, (x, v) => x.writeDefaultValues = v,
+                undoName: "Edit States", postApply: s => _graphView.Sync.RefreshStateNode(s));
+            MultiString("Tag", alive, x => x.tag, (x, v) => x.tag = v, undoName: "Edit States");
+
+            EditorGUILayout.Space(4);
+            DrawMultiStateParameterOverrides(alive, controller);
+
+            EditorGUILayout.Space(6);
+            HorizontalLine();
+            EditorGUILayout.LabelField("Bulk Actions", EditorStyles.boldLabel);
+            EditorGUILayout.BeginHorizontal();
+            if (GUILayout.Button("Set Default State to First"))
+                _graphView.Sync.SetDefaultState(alive[0]);
+            if (GUILayout.Button("Delete All " + alive.Count))
+            {
+                if (EditorUtility.DisplayDialog("Delete States",
+                    "Delete the " + alive.Count + " selected states? Their transitions will be removed too.",
+                    "Delete", "Cancel"))
+                {
+                    DeleteStates(alive);
+                    GUIUtility.ExitGUI();
+                }
+            }
+            EditorGUILayout.EndHorizontal();
+        }
+
+        void DrawMultiStateParameterOverrides(List<AnimatorState> states, AnimatorController controller)
+        {
+            var floatParams = ParameterNamesOfType(controller, AnimatorControllerParameterType.Float);
+            var boolParams = ParameterNamesOfType(controller, AnimatorControllerParameterType.Bool);
+
+            EditorGUILayout.LabelField("Parameter Overrides (applied to all)", EditorStyles.boldLabel);
+
+            DrawMultiParameterOverride(states, "Speed Multiplier", floatParams,
+                x => x.speedParameterActive, x => x.speedParameter,
+                (s, a, p) => { s.speedParameterActive = a; s.speedParameter = p; });
+            DrawMultiParameterOverride(states, "Motion Time", floatParams,
+                x => x.timeParameterActive, x => x.timeParameter,
+                (s, a, p) => { s.timeParameterActive = a; s.timeParameter = p; });
+            DrawMultiParameterOverride(states, "Mirror", boolParams,
+                x => x.mirrorParameterActive, x => x.mirrorParameter,
+                (s, a, p) => { s.mirrorParameterActive = a; s.mirrorParameter = p; });
+            DrawMultiParameterOverride(states, "Cycle Offset", floatParams,
+                x => x.cycleOffsetParameterActive, x => x.cycleOffsetParameter,
+                (s, a, p) => { s.cycleOffsetParameterActive = a; s.cycleOffsetParameter = p; });
+        }
+
+        void DrawMultiParameterOverride(List<AnimatorState> states, string label, string[] parameters,
+            Func<AnimatorState, bool> activeGetter, Func<AnimatorState, string> paramGetter,
+            Action<AnimatorState, bool, string> apply)
+        {
+            EditorGUILayout.BeginHorizontal();
+
+            bool firstActive = activeGetter(states[0]);
+            bool activeMixed = false;
+            foreach (var s in states)
+                if (activeGetter(s) != firstActive) { activeMixed = true; break; }
+
+            string firstParam = paramGetter(states[0]) ?? string.Empty;
+            bool paramMixed = false;
+            foreach (var s in states)
+                if ((paramGetter(s) ?? string.Empty) != firstParam) { paramMixed = true; break; }
+
+            EditorGUI.showMixedValue = activeMixed;
+            EditorGUI.BeginChangeCheck();
+            bool active = EditorGUILayout.ToggleLeft(label, firstActive, GUILayout.Width(150));
+            EditorGUI.showMixedValue = false;
+            bool activeChanged = EditorGUI.EndChangeCheck();
+
+            string param = firstParam;
+            bool paramChanged = false;
+            using (new EditorGUI.DisabledScope(!active && !activeMixed))
+            {
+                int idx = Mathf.Max(0, Array.IndexOf(parameters, param));
+                EditorGUI.showMixedValue = paramMixed;
+                EditorGUI.BeginChangeCheck();
+                idx = EditorGUILayout.Popup(idx, parameters);
+                EditorGUI.showMixedValue = false;
+                paramChanged = EditorGUI.EndChangeCheck();
+                if (idx >= 0 && idx < parameters.Length) param = parameters[idx];
+            }
+
+            if (activeChanged || paramChanged)
+            {
+                using (new UndoScope("Edit States"))
+                    foreach (var s in states)
+                    {
+                        Undo.RegisterCompleteObjectUndo(s, "Edit States");
+                        // Carry over whatever the user didn't touch so a single click on the
+                        // toggle doesn't also rewrite the parameter name and vice versa.
+                        bool newActive = activeChanged ? active : activeGetter(s);
+                        string newParam = paramChanged ? param : paramGetter(s);
+                        apply(s, newActive, newParam);
+                        EditorUtility.SetDirty(s);
+                    }
+            }
+            EditorGUILayout.EndHorizontal();
+        }
+
+        void DeleteStates(List<AnimatorState> states)
+        {
+            var sm = Context.CurrentStateMachine;
+            if (sm == null) return;
+            using (new UndoScope("Delete States"))
+            {
+                Undo.RegisterCompleteObjectUndo(sm, "Delete States");
+                foreach (var s in states)
+                {
+                    if (s == null) continue;
+                    sm.RemoveState(s);
+                }
+                EditorUtility.SetDirty(sm);
+            }
+            Context.Select(null);
+            _graphView.Sync.RequestRebuild();
         }
 
         // ---- state -----------------------------------------------------------
@@ -537,6 +714,8 @@ namespace Yozolab.DaerD
             bool additive = e != null && (e.control || e.command);
             bool range = e != null && e.shift;
 
+            var previous = new List<AnimatorTransitionBase>(_selectedTransitions);
+
             if (range && _rangeAnchor >= 0 && _rangeAnchor < pool.Count)
             {
                 _selectedTransitions.Clear();
@@ -557,6 +736,32 @@ namespace Yozolab.DaerD
                 _selectedTransitions.Add(t);
                 _rangeAnchor = index;
             }
+
+            // If the selection actually changed, force the in-flight condition input (FloatField,
+            // delayed text field, popup) to end before its value gets attributed to the newly
+            // selected transition. Without this, a value typed for transition X leaks into Y.
+            if (!SameSet(previous, _selectedTransitions))
+                EndConditionInput();
+        }
+
+        static bool SameSet(List<AnimatorTransitionBase> a, List<AnimatorTransitionBase> b)
+        {
+            if (a.Count != b.Count) return false;
+            for (int i = 0; i < a.Count; i++)
+                if (!ReferenceEquals(a[i], b[i])) return false;
+            return true;
+        }
+
+        /// <summary>
+        /// Drops keyboard focus and resets the editor's internal hot/keyboard control so any
+        /// FloatField / DelayedFloatField currently being typed in stops being the active
+        /// control — the next layout pass redraws it fresh for the new selected transition.
+        /// </summary>
+        static void EndConditionInput()
+        {
+            GUI.FocusControl(null);
+            GUIUtility.keyboardControl = 0;
+            EditorGUIUtility.editingTextField = false;
         }
 
         void DeleteTransitionRow(AnimatorTransitionBase transition, List<AnimatorTransitionBase> pool)
@@ -767,7 +972,8 @@ namespace Yozolab.DaerD
         }
 
         void MultiBool<T>(string label, List<T> items, Func<T, bool> getter, Action<T, bool> setter,
-            bool refreshEdges = false) where T : UnityEngine.Object
+            bool refreshEdges = false, string undoName = "Edit Transitions",
+            Action<T> postApply = null) where T : UnityEngine.Object
         {
             if (items.Count == 0) return;
             bool first = getter(items[0]);
@@ -781,19 +987,20 @@ namespace Yozolab.DaerD
             EditorGUI.showMixedValue = false;
             if (EditorGUI.EndChangeCheck())
             {
-                using (new UndoScope("Edit Transitions"))
+                using (new UndoScope(undoName))
                     foreach (var item in items)
                     {
-                        Undo.RegisterCompleteObjectUndo(item, "Edit Transition");
+                        Undo.RegisterCompleteObjectUndo(item, undoName);
                         setter(item, value);
                         EditorUtility.SetDirty(item);
+                        postApply?.Invoke(item);
                     }
                 if (refreshEdges) RefreshEdges();
             }
         }
 
-        void MultiFloat<T>(string label, List<T> items, Func<T, float> getter, Action<T, float> setter)
-            where T : UnityEngine.Object
+        void MultiFloat<T>(string label, List<T> items, Func<T, float> getter, Action<T, float> setter,
+            string undoName = "Edit Transitions") where T : UnityEngine.Object
         {
             if (items.Count == 0) return;
             float first = getter(items[0]);
@@ -807,12 +1014,66 @@ namespace Yozolab.DaerD
             EditorGUI.showMixedValue = false;
             if (EditorGUI.EndChangeCheck())
             {
-                using (new UndoScope("Edit Transitions"))
+                using (new UndoScope(undoName))
                     foreach (var item in items)
                     {
-                        Undo.RegisterCompleteObjectUndo(item, "Edit Transition");
+                        Undo.RegisterCompleteObjectUndo(item, undoName);
                         setter(item, value);
                         EditorUtility.SetDirty(item);
+                    }
+            }
+        }
+
+        void MultiString<T>(string label, List<T> items, Func<T, string> getter, Action<T, string> setter,
+            string undoName = "Edit States") where T : UnityEngine.Object
+        {
+            if (items.Count == 0) return;
+            string first = getter(items[0]) ?? string.Empty;
+            bool mixed = false;
+            foreach (var item in items)
+                if ((getter(item) ?? string.Empty) != first) { mixed = true; break; }
+
+            EditorGUI.showMixedValue = mixed;
+            EditorGUI.BeginChangeCheck();
+            string value = EditorGUILayout.DelayedTextField(label, first);
+            EditorGUI.showMixedValue = false;
+            if (EditorGUI.EndChangeCheck())
+            {
+                using (new UndoScope(undoName))
+                    foreach (var item in items)
+                    {
+                        Undo.RegisterCompleteObjectUndo(item, undoName);
+                        setter(item, value);
+                        EditorUtility.SetDirty(item);
+                    }
+            }
+        }
+
+        void MultiObjectField<TOwner, TObject>(string label, List<TOwner> items,
+            Func<TOwner, TObject> getter, Action<TOwner, TObject> setter,
+            string undoName = "Edit States", Action<TOwner> postApply = null)
+            where TOwner : UnityEngine.Object
+            where TObject : UnityEngine.Object
+        {
+            if (items.Count == 0) return;
+            TObject first = getter(items[0]);
+            bool mixed = false;
+            foreach (var item in items)
+                if (!ReferenceEquals(getter(item), first)) { mixed = true; break; }
+
+            EditorGUI.showMixedValue = mixed;
+            EditorGUI.BeginChangeCheck();
+            var value = (TObject)EditorGUILayout.ObjectField(label, first, typeof(TObject), false);
+            EditorGUI.showMixedValue = false;
+            if (EditorGUI.EndChangeCheck())
+            {
+                using (new UndoScope(undoName))
+                    foreach (var item in items)
+                    {
+                        Undo.RegisterCompleteObjectUndo(item, undoName);
+                        setter(item, value);
+                        EditorUtility.SetDirty(item);
+                        postApply?.Invoke(item);
                     }
             }
         }

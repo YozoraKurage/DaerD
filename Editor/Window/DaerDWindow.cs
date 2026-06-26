@@ -15,6 +15,9 @@ namespace Yozolab.DaerD
 
         // Remembered across domain reloads so the open tabs survive script recompiles / play mode.
         [SerializeField] List<AnimatorController> _openControllers = new List<AnimatorController>();
+        // One remembered layer index per tab, parallel to _openControllers. Switching tabs
+        // restores the layer the user last had open in that tab instead of resetting to 0.
+        [SerializeField] List<int> _openControllerLayers = new List<int>();
 
         DaerDContext _context;
         VisualElement _tabBar;
@@ -53,10 +56,13 @@ namespace Yozolab.DaerD
                 return;
             }
             if (!_openControllers.Contains(controller))
+            {
                 _openControllers.Add(controller);
+                _openControllerLayers.Add(0);
+            }
             // Re-opening the already-active controller must not reset layer / selection / drill-down.
             if (controller != _controller)
-                SetController(controller);
+                ActivateController(controller);
             RefreshTabBar();
         }
 
@@ -72,7 +78,14 @@ namespace Yozolab.DaerD
         void ActivateController(AnimatorController controller)
         {
             if (controller == null || controller == _controller) return;
+
+            // Save the outgoing tab's current layer so we can return to it next time.
+            RememberCurrentLayer();
+
+            int restoredLayer = LookupRememberedLayer(controller);
             SetController(controller);
+            if (restoredLayer > 0)
+                _context?.SetLayer(restoredLayer);
             RefreshTabBar();
         }
 
@@ -81,14 +94,43 @@ namespace Yozolab.DaerD
             int index = _openControllers.IndexOf(controller);
             if (index < 0) return;
             _openControllers.RemoveAt(index);
+            if (index < _openControllerLayers.Count) _openControllerLayers.RemoveAt(index);
             if (controller == _controller)
             {
                 var next = _openControllers.Count > 0
                     ? _openControllers[Mathf.Clamp(index, 0, _openControllers.Count - 1)]
                     : null;
-                SetController(next);
+                if (next != null)
+                {
+                    int restoredLayer = LookupRememberedLayer(next);
+                    SetController(next);
+                    if (restoredLayer > 0)
+                        _context?.SetLayer(restoredLayer);
+                }
+                else
+                {
+                    SetController(null);
+                }
             }
             RefreshTabBar();
+        }
+
+        /// <summary>Writes the active layer index back to the per-tab memory.</summary>
+        void RememberCurrentLayer()
+        {
+            if (_controller == null) return;
+            int index = _openControllers.IndexOf(_controller);
+            if (index < 0) return;
+            while (_openControllerLayers.Count <= index)
+                _openControllerLayers.Add(0);
+            _openControllerLayers[index] = _layerIndex;
+        }
+
+        int LookupRememberedLayer(AnimatorController controller)
+        {
+            int index = _openControllers.IndexOf(controller);
+            if (index < 0 || index >= _openControllerLayers.Count) return 0;
+            return _openControllerLayers[index];
         }
 
         /// <summary>Rebuilds the tab strip from the open-controller list, highlighting the active one.</summary>
@@ -96,9 +138,21 @@ namespace Yozolab.DaerD
         {
             if (_tabBar == null) return;
 
-            _openControllers.RemoveAll(c => c == null);   // drop deleted assets
+            // Drop the parallel layer entry for any controller that's been removed (deleted asset
+            // or null reference) so the two lists stay aligned by index.
+            for (int i = _openControllers.Count - 1; i >= 0; i--)
+            {
+                if (_openControllers[i] != null) continue;
+                _openControllers.RemoveAt(i);
+                if (i < _openControllerLayers.Count) _openControllerLayers.RemoveAt(i);
+            }
             if (_controller != null && !_openControllers.Contains(_controller))
+            {
                 _openControllers.Add(_controller);
+                _openControllerLayers.Add(_layerIndex);
+            }
+            while (_openControllerLayers.Count < _openControllers.Count)
+                _openControllerLayers.Add(0);
 
             _tabBar.Clear();
             _tabBar.style.display = _openControllers.Count > 0 ? DisplayStyle.Flex : DisplayStyle.None;
@@ -235,6 +289,7 @@ namespace Yozolab.DaerD
         {
             _controller = _context.Controller;
             _layerIndex = _context.LayerIndex;
+            RememberCurrentLayer();
         }
 
         VisualElement BuildToolbar()
