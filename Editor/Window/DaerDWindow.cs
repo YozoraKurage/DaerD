@@ -31,6 +31,7 @@ namespace Yozolab.DaerD
         VisualElement _rightColumn;
         TwoPaneSplitView _rightSplit;
         StatePreview _statePreview;
+        AnimationWindowSync _animationSync;
         VisualElement _breadcrumb;
         double _lastRuntimePoll;
 
@@ -202,6 +203,7 @@ namespace Yozolab.DaerD
             EditorApplication.playModeStateChanged -= OnPlayModeChanged;
             _graphView?.Cleanup();
             _statePreview?.Stop();
+            _animationSync?.Stop();
         }
 
         void CreateGUI()
@@ -213,6 +215,7 @@ namespace Yozolab.DaerD
             rootVisualElement.Clear();
             _context = new DaerDContext();
             _statePreview = new StatePreview(_context);
+            _animationSync = new AnimationWindowSync(_context);
 
             var styleSheet = LoadStyleSheet();
             if (styleSheet != null)
@@ -273,6 +276,10 @@ namespace Yozolab.DaerD
             _context.LayerChanged += RefreshGraphVisibility;
             RefreshGraphVisibility();
 
+            // AnimSync must subscribe before StatePreview so that on a State selection change
+            // the clip is pushed into the AnimationWindow *first*; otherwise StatePreview's
+            // re-toggle would re-acquire against the previous clip.
+            _animationSync.Start();
             _statePreview.Start();
 
             if (_controller != null)
@@ -304,12 +311,34 @@ namespace Yozolab.DaerD
             spacer.style.flexGrow = 1;
             toolbar.Add(spacer);
 
+            // Pushes the selected State's AnimationClip into the Animation window. Off by
+            // default because it side-effects whatever the user had selected in that window;
+            // turning it on auto-opens the Animation window so the first State click lands.
+            var animSyncToggle = new ToolbarToggle
+            {
+                text = "Anim Sync",
+                tooltip = "Sync the Animation window's clip to the selected State's AnimationClip",
+            };
+            animSyncToggle.RegisterValueChangedCallback(evt => _animationSync.SetEnabled(evt.newValue));
+            toolbar.Add(animSyncToggle);
+
+            // Preview presupposes Anim Sync — without the clip push, there's no new clip for
+            // Preview to re-toggle against. Flipping Preview on therefore auto-flips Anim Sync
+            // on too; flipping Preview off leaves Anim Sync where the user had it.
             var previewToggle = new ToolbarToggle
             {
                 text = "Preview",
-                tooltip = "Preview frame 0 of the selected clip state on the matching scene object",
+                tooltip = "Auto-toggle the Animation window's Preview on clip change. " +
+                          "Implies Anim Sync. Requires a scene GameObject with an Animator " +
+                          "running this controller to be selected — Unity's preview can't run " +
+                          "without a target.",
             };
-            previewToggle.RegisterValueChangedCallback(evt => _statePreview.SetEnabled(evt.newValue));
+            previewToggle.RegisterValueChangedCallback(evt =>
+            {
+                if (evt.newValue && !animSyncToggle.value)
+                    animSyncToggle.value = true;   // also fires its own ValueChanged → AnimSync ON
+                _statePreview.SetEnabled(evt.newValue);
+            });
             toolbar.Add(previewToggle);
 
             // Layout (Grid / Hierarchical / Align Selected) lives in the graph's right-click menu now.

@@ -261,10 +261,17 @@ GridBackground {
     flex-grow: 1;
 }
 
-/* In-place note editing field. */
+/* In-place note editing field. The TextField wraps its content via the inner input
+   element — without explicit white-space the line just clips when it overflows. */
 .dd-note__edit {
     flex-grow: 1;
     margin: 0;
+}
+
+.dd-note__edit > .unity-text-input,
+.dd-note__edit .unity-base-text-field__input {
+    white-space: normal;
+    flex-grow: 1;
 }
 
 .transition-edge__badge {

@@ -211,8 +211,24 @@ namespace Yozolab.DaerD
 
             EditorGUILayout.LabelField("Note", EditorStyles.boldLabel);
 
+            // Text is edited in place on the note itself — the inspector column is too narrow
+            // for sticky-note content (long lines were getting cut off in the old TextArea).
+            // Show a read-only preview here and an "Edit Text" button that opens the in-graph
+            // editor, the same one double-click / F2 triggers.
+            EditorGUILayout.LabelField("Text", EditorStyles.miniBoldLabel);
+            using (new EditorGUI.DisabledScope(true))
+                EditorGUILayout.TextArea(string.IsNullOrEmpty(note.text) ? "(empty)" : note.text,
+                    EditorStyles.textArea, GUILayout.MinHeight(40));
+            if (GUILayout.Button("Edit Text in Graph"))
+            {
+                _graphView.Sync.FindNoteNode(note)?.BeginEdit();
+                GUIUtility.ExitGUI();
+            }
+            EditorGUILayout.LabelField("Tip: double-click the note (or press F2) to edit text in place.",
+                EditorStyles.miniLabel);
+
+            EditorGUILayout.Space(4);
             EditorGUI.BeginChangeCheck();
-            string text = EditorGUILayout.TextArea(note.text, GUILayout.MinHeight(60));
             var color = EditorGUILayout.ColorField("Color", note.color);
             int sizeIndex = Array.IndexOf(NoteFontSizes, note.fontSize);
             if (sizeIndex < 0) sizeIndex = 1;
@@ -220,7 +236,6 @@ namespace Yozolab.DaerD
             if (EditorGUI.EndChangeCheck())
             {
                 Undo.RecordObject(frameData, "Edit Note");
-                note.text = text;
                 note.color = color;
                 note.fontSize = NoteFontSizes[sizeIndex];
                 EditorUtility.SetDirty(frameData);

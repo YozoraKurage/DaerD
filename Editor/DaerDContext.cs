@@ -161,6 +161,64 @@ namespace Yozolab.DaerD
             SelectionChanged?.Invoke();
         }
 
+        /// <summary>
+        /// Jumps to a specific layer + state-machine drill path and selects (and frames)
+        /// <paramref name="target"/>. Used by the parameter "find usages" pings and any other
+        /// feature that locates something deep in the controller.
+        ///
+        /// When the layer or sub-state-machine path actually changes, the graph rebuild is
+        /// scheduled asynchronously and the new transition edges don't exist yet — selecting
+        /// the target immediately would just no-op (edges are stale) and the line wouldn't
+        /// highlight blue. Instead, defer Select + Frame until the next
+        /// <see cref="GraphRebuilt"/> notification so the new edge is in place by then.
+        /// </summary>
+        public void NavigateTo(int layerIndex, IList<AnimatorStateMachine> stateMachinePath, object target)
+        {
+            if (Controller == null) return;
+
+            bool willRebuild = false;
+            if (layerIndex >= 0 && layerIndex < Controller.layers.Length && layerIndex != LayerIndex)
+            {
+                SetLayer(layerIndex);
+                willRebuild = true;
+            }
+            if (stateMachinePath != null)
+            {
+                // Drill down to the owning state machine. Skip index 0 — that's the layer's
+                // root SM which SetLayer / RebuildPath already lands us on.
+                for (int i = 1; i < stateMachinePath.Count; i++)
+                {
+                    var sm = stateMachinePath[i];
+                    if (sm != null && !StateMachinePath.Contains(sm))
+                    {
+                        EnterStateMachine(sm);
+                        willRebuild = true;
+                    }
+                }
+            }
+
+            if (target == null) return;
+
+            if (!willRebuild)
+            {
+                Select(target);
+                RequestFrameOn(target);
+                return;
+            }
+
+            // Defer until the rebuild fires so the new graph contains the edge/node we want
+            // to highlight; otherwise Select runs against stale edges and the new transition
+            // would stay un-blue until the user clicks somewhere else.
+            Action handler = null;
+            handler = () =>
+            {
+                GraphRebuilt -= handler;
+                Select(target);
+                RequestFrameOn(target);
+            };
+            GraphRebuilt += handler;
+        }
+
         public void NotifyGraphStructureChanged() => GraphStructureChanged?.Invoke();
         public void NotifyGraphRebuilt() => GraphRebuilt?.Invoke();
         public void NotifyParametersChanged() => ParametersChanged?.Invoke();

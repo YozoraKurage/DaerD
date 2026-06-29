@@ -5,121 +5,110 @@ using UnityEngine;
 namespace Yozolab.DaerD
 {
     /// <summary>
-    /// Drives a frame-0 scene preview of the selected clip state. It uses the public
-    /// <see cref="AnimationMode"/> API — the same one the Animation window's Preview is built on —
-    /// so no reflection or patching is needed: <see cref="AnimationMode.SampleAnimationClip"/>
-    /// poses the GameObject and <see cref="AnimationMode.StopAnimationMode"/> restores it.
+    /// Drives Unity's Animation-window Preview from the DaerD State selection: every time the
+    /// user picks a different clip-state in DaerD, the Animation window's Preview is briefly
+    /// toggled off and on so it re-acquires against the new clip and starts driving the scene
+    /// pose. Wired to the toolbar "Preview" toggle — opt-in because the AnimationWindow's
+    /// previewing mode side-effects whatever the user had it doing.
     ///
-    /// Previewing is active only while the toolbar Preview toggle is on AND the scene selection is
-    /// a GameObject whose Animator runs the controller open in this window AND the window's
-    /// selection is a state whose motion is an AnimationClip.
+    /// Premise: Anim Sync is enabled. Pushing the new clip into the AnimationWindow is
+    /// Anim Sync's job — Preview just re-toggles previewing once the clip is in place. The
+    /// toolbar's Preview switch auto-enables Anim Sync to keep this invariant true.
     /// </summary>
     class StatePreview
     {
         readonly DaerDContext _context;
         bool _enabled;
 
-        /// <summary>True while this previewer (rather than another tool) holds animation mode.</summary>
+        /// <summary>True while we started the Animation window's preview; used so toggling
+        /// our switch OFF only stops a preview we ourselves turned on.</summary>
         bool _owns;
 
         public StatePreview(DaerDContext context) => _context = context;
 
         public void Start()
         {
-            Selection.selectionChanged += Evaluate;
             _context.SelectionChanged += Evaluate;
             _context.GraphRebuilt += Evaluate;
+            _context.ControllerChanged += Evaluate;
             EditorApplication.playModeStateChanged += OnPlayModeChanged;
         }
 
         public void Stop()
         {
-            Selection.selectionChanged -= Evaluate;
             _context.SelectionChanged -= Evaluate;
             _context.GraphRebuilt -= Evaluate;
+            _context.ControllerChanged -= Evaluate;
             EditorApplication.playModeStateChanged -= OnPlayModeChanged;
-            StopPreview();
+            StopOurPreview();
         }
 
-        /// <summary>Turns previewing on or off; wired to the toolbar Preview toggle.</summary>
+        /// <summary>Turns the auto-Preview-toggle on or off; wired to the toolbar Preview toggle.</summary>
         public void SetEnabled(bool on)
         {
             _enabled = on;
+            if (!on)
+            {
+                StopOurPreview();
+                return;
+            }
+            // Auto-open the Animation window so the very first State click lands somewhere
+            // visible — mirrors the Anim Sync toggle.
+            AnimationWindowAccess.EnsureOpen();
             Evaluate();
         }
 
         void OnPlayModeChanged(PlayModeStateChange change) => Evaluate();
 
-        /// <summary>Re-checks the preview conditions and starts, refreshes or stops accordingly.</summary>
         void Evaluate()
         {
-            if (!_enabled
-                || EditorApplication.isPlayingOrWillChangePlaymode
-                || !TryGetTarget(out var go, out var clip))
+            if (!_enabled || EditorApplication.isPlayingOrWillChangePlaymode)
             {
-                StopPreview();
+                StopOurPreview();
                 return;
             }
-            Sample(go, clip);
-        }
-
-        /// <summary>
-        /// True when the scene selection is a GameObject whose Animator runs this window's
-        /// controller and the window's selection is a state with an AnimationClip motion.
-        /// </summary>
-        bool TryGetTarget(out GameObject go, out AnimationClip clip)
-        {
-            go = null;
-            clip = null;
-
-            var controller = _context.Controller;
-            if (controller == null) return false;
-
-            var selected = Selection.activeGameObject;
-            // Exclude project-asset prefabs; allow scene instances and the prefab stage.
-            if (selected == null || !selected.scene.IsValid()) return false;
-
-            var animator = selected.GetComponent<Animator>();
-            if (animator == null || !ControllerMatches(animator.runtimeAnimatorController, controller))
-                return false;
-
-            if (!(_context.Selection is AnimatorState state)) return false;
-            if (!(state.motion is AnimationClip motionClip)) return false;
-
-            go = selected;
-            clip = motionClip;
-            return true;
-        }
-
-        void Sample(GameObject go, AnimationClip clip)
-        {
-            // Another tool (typically the Animation window) already owns animation mode: leave it be.
-            if (AnimationMode.InAnimationMode() && !_owns)
-                return;
-
-            if (!AnimationMode.InAnimationMode())
+            if (!(_context.Selection is AnimatorState state)
+                || !(state.motion is AnimationClip clip))
             {
-                AnimationMode.StartAnimationMode();
-                _owns = true;
+                StopOurPreview();
+                return;
             }
 
-            AnimationMode.BeginSampling();
-            AnimationMode.SampleAnimationClip(go, clip, 0f);
-            AnimationMode.EndSampling();
-            SceneView.RepaintAll();
+            // Anim Sync (registered before us on the same SelectionChanged event) has already
+            // pushed `clip` into the AnimationWindow. The previewing toggle only sees the new
+            // clip once the window has run an OnGUI pass and rebuilt its controlInterface
+            // against the new selection — which is one Repaint plus one more editor tick
+            // after the clip push. Chain two delayCall hops so we land after that.
+            EditorApplication.delayCall += () =>
+            {
+                EditorApplication.delayCall += () => TogglePreviewFor(clip);
+            };
         }
 
-        void StopPreview()
+        void TogglePreviewFor(AnimationClip clip)
         {
-            if (_owns && AnimationMode.InAnimationMode())
-                AnimationMode.StopAnimationMode();
+            if (!_enabled) return;
+            // Bail if the user has already moved on — the next selection's own delayCall
+            // will handle the right clip.
+            if (!(_context.Selection is AnimatorState state) || state.motion != clip) return;
+
+            var window = AnimationWindowAccess.FindOpen();
+            if (window == null) return;
+
+            // OFF then ON so an already-previewing window re-acquires against the new clip;
+            // the setter is idempotent (false-when-already-false is a no-op) so the first
+            // call only does work when something was previewing before.
+            AnimationWindowAccess.TrySetPreviewing(window, false);
+            AnimationWindowAccess.TrySetPreviewing(window, true);
+            _owns = true;
+        }
+
+        void StopOurPreview()
+        {
+            if (!_owns) return;
+            var window = AnimationWindowAccess.FindOpen();
+            if (window != null) AnimationWindowAccess.TrySetPreviewing(window, false);
             _owns = false;
-        }
-
-        static bool ControllerMatches(RuntimeAnimatorController runtime, AnimatorController controller)
-        {
-            if (runtime == controller) return true;
-            return runtime is AnimatorOverrideController over && over.runtimeAnimatorController == controller;
         }
     }
 }
