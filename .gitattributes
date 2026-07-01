@@ -1,0 +1,5 @@
+# 改行コードの正規化(CDF: Windows host × devcontainer の CRLF churn 対策)
+# - リポジトリ内は常に LF。git が読み書き時に自動正規化する。
+# - text=auto: テキストを自動判定し、バイナリは触らない。
+# - eol=lf: checkout 時の working tree 実体も LF に揃える(Windows でも LF)。
+* text=auto eol=lf

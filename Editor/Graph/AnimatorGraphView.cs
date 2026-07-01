@@ -290,6 +290,23 @@ namespace Yozolab.DaerD
             return states;
         }
 
+        /// <summary>
+        /// Every selected node that can take part in transitions: plain states, sub-state machines,
+        /// and the Entry / Exit / Any State pseudo-nodes. Order matches the click order so chain /
+        /// fan connects respect what the user picked first.
+        /// </summary>
+        public List<GraphNodeBase> GetSelectedConnectables()
+        {
+            var result = new List<GraphNodeBase>();
+            foreach (var s in selection)
+            {
+                if (s is StateNode sn && sn.State != null) result.Add(sn);
+                else if (s is SubStateMachineNode mn && mn.StateMachine != null) result.Add(mn);
+                else if (s is SpecialNode spn) result.Add(spn);
+            }
+            return result;
+        }
+
         // ---- input -----------------------------------------------------------
 
         void OnKeyDown(KeyDownEvent evt)
@@ -670,68 +687,102 @@ namespace Yozolab.DaerD
         }
 
         // Source set marked for the two-step cross-product flow. Static so it survives the menu
-        // closing and the user changing the selection before the second step.
-        static List<AnimatorState> s_markedSources;
+        // closing and the user changing the selection before the second step. We store the
+        // underlying models (AnimatorState / AnimatorStateMachine / SpecialNodeKind) rather than
+        // the live GraphNodeBase visuals so the marks survive a rebuild.
+        static List<object> s_markedSources;
 
         static void ClearMarkedSources() => s_markedSources = null;
 
-        /// <summary>Chain / fan / cross-product transition creation between the selected states.</summary>
+        /// <summary>Chain / fan / cross-product transition creation between the selected nodes.</summary>
         void BuildConnectMenu(ContextualMenuPopulateEvent evt)
         {
-            var selectedStates = GetSelectedStates();
+            var selected = GetSelectedConnectables();
             evt.menu.AppendAction(
-                "Connect States/Chain In Click Order (" + selectedStates.Count + ")",
-                _ => _sync.ChainStates(GetSelectedStates()),
-                selectedStates.Count >= 2 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+                "Connect States/Chain In Click Order (" + selected.Count + ")",
+                _ => _sync.ChainNodes(GetSelectedConnectables()),
+                selected.Count >= 2 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
 
-            BuildFanEntries(evt, selectedStates);
-            BuildCrossProductEntries(evt, selectedStates);
+            BuildFanEntries(evt, selected);
+            BuildCrossProductEntries(evt, selected);
         }
 
-        void BuildFanEntries(ContextualMenuPopulateEvent evt, List<AnimatorState> selectedStates)
+        void BuildFanEntries(ContextualMenuPopulateEvent evt, List<GraphNodeBase> selected)
         {
-            var target = ResolveTarget<StateNode>(evt.target as VisualElement);
-            if (target?.State == null || selectedStates.Count < 2 || !selectedStates.Contains(target.State))
+            var target = ResolveTarget<GraphNodeBase>(evt.target as VisualElement);
+            if (target == null || selected.Count < 2 || !selected.Contains(target))
                 return;
+            // Entry/Exit/AnyState aren't context targets — they have no contextual menu of their
+            // own. So the "this" target will always be a state or sub-state machine. We still
+            // pass it through TransitionConnect.CanConnect at use time so any nonsense pair
+            // (e.g. AnyState → AnyState in `others`) silently drops.
 
-            var others = new List<AnimatorState>();
-            foreach (var s in selectedStates)
-                if (s != target.State) others.Add(s);
+            var others = new List<GraphNodeBase>();
+            foreach (var s in selected)
+                if (s != target) others.Add(s);
 
             evt.menu.AppendAction("Connect States/This → Other Selected (" + others.Count + ")",
-                _ => _sync.FanOut(target.State, others));
+                _ => _sync.FanOutNodes(target, others));
             evt.menu.AppendAction("Connect States/Other Selected (" + others.Count + ") → This",
-                _ => _sync.FanIn(others, target.State));
+                _ => _sync.FanInNodes(others, target));
         }
 
         /// <summary>
         /// Two-step cross product: mark the current selection as the source set, change the
-        /// selection, then connect every marked source to every now-selected state.
+        /// selection, then connect every marked source to every now-selected node.
         /// </summary>
-        void BuildCrossProductEntries(ContextualMenuPopulateEvent evt, List<AnimatorState> selectedStates)
+        void BuildCrossProductEntries(ContextualMenuPopulateEvent evt, List<GraphNodeBase> selected)
         {
-            // Marked states deleted (or destroyed by an undo) since step one drop out silently.
-            s_markedSources?.RemoveAll(s => s == null);
+            // Marked items whose model was destroyed (or never resolved on this rebuild) drop out.
+            s_markedSources?.RemoveAll(IsMarkedSourceStale);
             int marked = s_markedSources?.Count ?? 0;
 
             evt.menu.AppendSeparator("Connect States/");
             evt.menu.AppendAction(
-                "Connect States/Mark Selected As Sources (" + selectedStates.Count + ")",
-                _ => s_markedSources = new List<AnimatorState>(GetSelectedStates()),
-                selectedStates.Count > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+                "Connect States/Mark Selected As Sources (" + selected.Count + ")",
+                _ => s_markedSources = ToModels(GetSelectedConnectables()),
+                selected.Count > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
             evt.menu.AppendAction(
-                "Connect States/Marked Sources (" + marked + ") → Selected (" + selectedStates.Count + ")",
+                "Connect States/Marked Sources (" + marked + ") → Selected (" + selected.Count + ")",
                 _ =>
                 {
-                    _sync.CrossProduct(s_markedSources, GetSelectedStates());
+                    _sync.CrossProductNodes(ResolveMarkedSources(), GetSelectedConnectables());
                     s_markedSources = null;
                 },
-                marked > 0 && selectedStates.Count > 0
+                marked > 0 && selected.Count > 0
                     ? DropdownMenuAction.Status.Normal
                     : DropdownMenuAction.Status.Disabled);
             if (marked > 0)
                 evt.menu.AppendAction("Connect States/Clear Marked Sources",
                     _ => s_markedSources = null);
+        }
+
+        static List<object> ToModels(IList<GraphNodeBase> nodes)
+        {
+            var result = new List<object>(nodes.Count);
+            foreach (var node in nodes)
+                if (node?.Model != null) result.Add(node.Model);
+            return result;
+        }
+
+        List<GraphNodeBase> ResolveMarkedSources()
+        {
+            var result = new List<GraphNodeBase>();
+            if (s_markedSources == null) return result;
+            foreach (var model in s_markedSources)
+            {
+                var node = _sync.FindNode(model);
+                if (node != null) result.Add(node);
+            }
+            return result;
+        }
+
+        bool IsMarkedSourceStale(object model)
+        {
+            if (model == null) return true;
+            // Destroyed UnityEngine.Object references become "fake null" — check that explicitly.
+            if (model is UnityEngine.Object obj && obj == null) return true;
+            return false;
         }
 
         void CreateFrameAroundSelection()
@@ -775,6 +826,9 @@ namespace Yozolab.DaerD
             var unlessLocked = frame.locked ? DropdownMenuAction.Status.Disabled : DropdownMenuAction.Status.Normal;
 
             evt.menu.AppendAction("Rename Frame", _ => frameNode.BeginRename(), unlessLocked);
+            // Duplicates the frame, the states inside, and the transitions among those states —
+            // available even on a locked frame, since the copy is independent of the original.
+            evt.menu.AppendAction("Duplicate Frame", _ => _sync.DuplicateFrame(frame));
             evt.menu.AppendAction("Lock Frame", _ => _sync.ToggleFrameLock(frame),
                 frame.locked ? DropdownMenuAction.Status.Checked : DropdownMenuAction.Status.Normal);
             evt.menu.AppendAction("Move Nodes With Frame",
@@ -783,9 +837,15 @@ namespace Yozolab.DaerD
 
             evt.menu.AppendSeparator();
             int contents = _sync.NodesFullyInside(frame.bounds).Count;
+            int stateCount = CountFrameStates(frame);
             evt.menu.AppendAction("Select Contents (" + contents + ")",
                 _ => _sync.SelectFrameContents(frame),
                 contents > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+            // States-only variant: drops the frame from the selection so the next action
+            // (Ctrl+D, the multi-state inspector, alignment) operates purely on the states.
+            evt.menu.AppendAction("Select States Inside (" + stateCount + ")",
+                _ => _sync.SelectFrameInternalStates(frame),
+                stateCount > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
             evt.menu.AppendAction("Fit To Contents", _ => _sync.FitFrameToContents(frame),
                 !frame.locked && contents > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
 
@@ -944,6 +1004,14 @@ namespace Yozolab.DaerD
         /// <summary>Neutralises '/' in node names so they don't spawn unintended submenus.</summary>
         static string MenuEscape(string name) =>
             string.IsNullOrEmpty(name) ? "?" : name.Replace('/', '\u2215');
+
+        int CountFrameStates(GraphFrameData.Frame frame)
+        {
+            int count = 0;
+            foreach (var element in _sync.NodesFullyInside(frame.bounds))
+                if (element is StateNode sn && sn.State != null) count++;
+            return count;
+        }
 
         void CreateStateAt(Vector2 graphPosition, string mode)
         {

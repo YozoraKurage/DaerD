@@ -12,11 +12,23 @@ namespace Yozolab.DaerD
     {
         public static void Clone(AnimatorStateMachine source, AnimatorStateMachine destination)
         {
+            Clone(source, destination, out _, out _);
+        }
+
+        /// <summary>
+        /// Same as <see cref="Clone"/> but exposes the source-to-copy maps so callers (e.g. layer
+        /// duplication) can mirror data hanging off the original objects, such as frames/notes
+        /// stored in <see cref="GraphFrameData"/>, onto the new copies.
+        /// </summary>
+        public static void Clone(AnimatorStateMachine source, AnimatorStateMachine destination,
+            out Dictionary<AnimatorState, AnimatorState> stateMap,
+            out Dictionary<AnimatorStateMachine, AnimatorStateMachine> machineMap)
+        {
+            stateMap = new Dictionary<AnimatorState, AnimatorState>();
+            machineMap = new Dictionary<AnimatorStateMachine, AnimatorStateMachine>();
             if (source == null || destination == null) return;
 
-            var stateMap = new Dictionary<AnimatorState, AnimatorState>();
-            var machineMap = new Dictionary<AnimatorStateMachine, AnimatorStateMachine> { [source] = destination };
-
+            machineMap[source] = destination;
             CloneNodes(source, destination, stateMap, machineMap);
             CloneTransitions(source, stateMap, machineMap);
         }

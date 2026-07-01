@@ -3,6 +3,16 @@
     align-items: center;
 }
 
+/* Graph grid background: noticeably brighter than Unity's stock so the user can read
+   distances and stay oriented while dragging. Minor lines are subtle; major lines (every
+   10th line) are stronger so they read as anchors when the view is zoomed out. */
+GridBackground {
+    --grid-background-color: rgb(36, 36, 36);
+    --line-color: rgba(170, 170, 170, 0.12);
+    --thick-line-color: rgba(170, 170, 170, 0.32);
+    --spacing: 20;
+}
+
 .ce-breadcrumb {
     flex-direction: row;
     align-items: center;
@@ -251,10 +261,17 @@
     flex-grow: 1;
 }
 
-/* In-place note editing field. */
+/* In-place note editing field. The TextField wraps its content via the inner input
+   element — without explicit white-space the line just clips when it overflows. */
 .dd-note__edit {
     flex-grow: 1;
     margin: 0;
+}
+
+.dd-note__edit > .unity-text-input,
+.dd-note__edit .unity-base-text-field__input {
+    white-space: normal;
+    flex-grow: 1;
 }
 
 .transition-edge__badge {

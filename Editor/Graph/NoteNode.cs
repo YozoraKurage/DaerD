@@ -29,7 +29,10 @@ namespace Yozolab.DaerD
             layer = -5;
             tooltip = "Double-click or F2 to edit";
 
-            capabilities = Capabilities.Selectable | Capabilities.Movable | Capabilities.Deletable;
+            // Snappable lets the stock GraphView snap-to-borders pick the note up during
+            // drag, the same as States / Sub-State Machines.
+            capabilities = Capabilities.Selectable | Capabilities.Movable | Capabilities.Deletable
+                         | Capabilities.Snappable;
 
             _textLabel = new Label { pickingMode = PickingMode.Ignore };
             _textLabel.AddToClassList("dd-note__text");
@@ -98,7 +101,8 @@ namespace Yozolab.DaerD
 
         /// <summary>
         /// Swaps the text for a multiline field. Enter inserts a newline; focus-out commits,
-        /// Escape cancels.
+        /// Escape also commits — losing typed text on a stray Escape is a worse UX than the
+        /// (undoable via Ctrl+Z) commit it replaces.
         /// </summary>
         public void BeginEdit()
         {
@@ -107,6 +111,15 @@ namespace Yozolab.DaerD
             var field = new TextField { value = Note.text ?? string.Empty, multiline = true };
             field.AddToClassList("dd-note__edit");
             field.style.fontSize = Note.fontSize;
+            // Make the inner text-input element wrap long lines instead of clipping them, and
+            // grow to fill the field. TextField doesn't propagate white-space to the inner
+            // element by default in 2022.3, so we set it here.
+            var input = field.Q<VisualElement>("unity-text-input");
+            if (input != null)
+            {
+                input.style.whiteSpace = WhiteSpace.Normal;
+                input.style.flexGrow = 1;
+            }
             _editField = field;
             _textLabel.style.display = DisplayStyle.None;
             Insert(IndexOf(_textLabel) + 1, field);
@@ -129,7 +142,10 @@ namespace Yozolab.DaerD
             {
                 if (evt.keyCode == KeyCode.Escape)
                 {
-                    Finish(false);
+                    // Escape exits the edit mode but keeps what was typed — same outcome as
+                    // clicking outside the note. The previous "discard on Escape" behaviour
+                    // ate user input on a stray keypress and is gone.
+                    Finish(true);
                     evt.StopPropagation();
                 }
             });

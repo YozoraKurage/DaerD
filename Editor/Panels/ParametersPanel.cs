@@ -11,6 +11,15 @@ namespace Yozolab.DaerD
     {
         readonly ListReorder _reorder = new ListReorder();
         string _search = string.Empty;
+        GUIContent _settingsIcon;
+
+        static readonly GUIContent FindContent = new GUIContent("?",
+            "Find where this parameter is used (click to list every usage)");
+
+        /// <summary>Wrench glyph (lazy: editor skin not ready at field-init time).</summary>
+        GUIContent SettingsIcon =>
+            _settingsIcon ??= new GUIContent(EditorGUIUtility.IconContent("_Popup").image,
+                "Maintenance actions (Remove Unused, …)");
 
         public ParametersPanel(DaerDContext context)
             : base(context, "Parameters")
@@ -24,25 +33,20 @@ namespace Yozolab.DaerD
             var controller = Context.Controller;
             var parameters = controller.parameters;
 
-            EditorGUILayout.BeginHorizontal();
-            // MinWidth lets the search field shrink so the Add button stays pinned to the right.
-            _search = EditorGUILayout.TextField(_search, EditorStyles.toolbarSearchField, GUILayout.MinWidth(24));
-            if (GUILayout.Button("Add ▾", EditorStyles.toolbarDropDown, GUILayout.Width(54)))
-                ShowAddMenu();
-            EditorGUILayout.EndHorizontal();
-
             var unused = new HashSet<string>(ControllerAnalyzer.FindUnusedParameters(controller));
-            if (unused.Count > 0)
-            {
-                EditorGUILayout.BeginHorizontal();
-                EditorGUILayout.LabelField(unused.Count + " unused parameter(s)", EditorStyles.miniLabel);
-                if (GUILayout.Button("Remove Unused", EditorStyles.miniButton, GUILayout.Width(110)))
-                {
-                    RemoveUnused(unused);
-                    GUIUtility.ExitGUI();
-                }
-                EditorGUILayout.EndHorizontal();
-            }
+
+            // Add is pinned to the LEFT so a narrow panel clips the search field, not the
+            // button. The wrench menu on the right holds rarely-used maintenance actions
+            // (Remove Unused, …) so they stay out of the way without disappearing on
+            // narrow widths.
+            EditorGUILayout.BeginHorizontal();
+            if (GUILayout.Button("Add", EditorStyles.toolbarButton, GUILayout.Width(40)))
+                ShowAddMenu();
+            _search = EditorGUILayout.TextField(_search, EditorStyles.toolbarSearchField,
+                GUILayout.MinWidth(0), GUILayout.ExpandWidth(true));
+            if (GUILayout.Button(SettingsIcon, EditorStyles.toolbarButton, GUILayout.Width(24)))
+                ShowMaintenanceMenu(unused);
+            EditorGUILayout.EndHorizontal();
 
             EditorGUILayout.Space(2);
 
@@ -85,6 +89,14 @@ namespace Yozolab.DaerD
 
                 DrawDefaultValue(controller, parameters, i);
 
+                // Find-uses: lists every transition condition / blend-tree blend slot / state
+                // parameter override that mentions this parameter, with click-to-navigate.
+                if (GUILayout.Button(FindContent, EditorStyles.miniButton, GUILayout.Width(22)))
+                {
+                    ShowUsagesMenu(p.name);
+                    GUIUtility.ExitGUI();
+                }
+
                 if (GUILayout.Button("✕", EditorStyles.miniButton, GUILayout.Width(22)))
                 { RemoveParameter(i); GUIUtility.ExitGUI(); }
 
@@ -125,6 +137,42 @@ namespace Yozolab.DaerD
                 controller.parameters = parameters;
                 EditorUtility.SetDirty(controller);
             }
+        }
+
+        void ShowMaintenanceMenu(HashSet<string> unused)
+        {
+            var menu = new GenericMenu();
+            var removeLabel = new GUIContent("Remove Unused Parameters (" + unused.Count + ")");
+            if (unused.Count > 0)
+                menu.AddItem(removeLabel, false, () => RemoveUnused(unused));
+            else
+                menu.AddDisabledItem(removeLabel);
+            menu.ShowAsContext();
+        }
+
+        void ShowUsagesMenu(string parameterName)
+        {
+            var usages = ParameterUsageFinder.Find(Context.Controller, parameterName);
+            var menu = new GenericMenu();
+            if (usages.Count == 0)
+            {
+                menu.AddDisabledItem(new GUIContent("'" + parameterName + "' is not used anywhere"));
+            }
+            else
+            {
+                menu.AddDisabledItem(new GUIContent(usages.Count + " usage(s) of '" + parameterName + "'"));
+                menu.AddSeparator(string.Empty);
+                foreach (var u in usages)
+                {
+                    var captured = u;
+                    // GenericMenu uses '/' as a sub-menu separator — escape to keep the full path
+                    // readable on one menu line.
+                    var label = new GUIContent(captured.label.Replace('/', '∕'));
+                    menu.AddItem(label, false, () =>
+                        Context.NavigateTo(captured.layerIndex, captured.stateMachinePath, captured.selection));
+                }
+            }
+            menu.ShowAsContext();
         }
 
         void ShowAddMenu()

@@ -15,6 +15,9 @@ namespace Yozolab.DaerD
 
         // Remembered across domain reloads so the open tabs survive script recompiles / play mode.
         [SerializeField] List<AnimatorController> _openControllers = new List<AnimatorController>();
+        // One remembered layer index per tab, parallel to _openControllers. Switching tabs
+        // restores the layer the user last had open in that tab instead of resetting to 0.
+        [SerializeField] List<int> _openControllerLayers = new List<int>();
 
         DaerDContext _context;
         VisualElement _tabBar;
@@ -28,6 +31,7 @@ namespace Yozolab.DaerD
         VisualElement _rightColumn;
         TwoPaneSplitView _rightSplit;
         StatePreview _statePreview;
+        AnimationWindowSync _animationSync;
         VisualElement _breadcrumb;
         double _lastRuntimePoll;
 
@@ -53,10 +57,13 @@ namespace Yozolab.DaerD
                 return;
             }
             if (!_openControllers.Contains(controller))
+            {
                 _openControllers.Add(controller);
+                _openControllerLayers.Add(0);
+            }
             // Re-opening the already-active controller must not reset layer / selection / drill-down.
             if (controller != _controller)
-                SetController(controller);
+                ActivateController(controller);
             RefreshTabBar();
         }
 
@@ -72,7 +79,14 @@ namespace Yozolab.DaerD
         void ActivateController(AnimatorController controller)
         {
             if (controller == null || controller == _controller) return;
+
+            // Save the outgoing tab's current layer so we can return to it next time.
+            RememberCurrentLayer();
+
+            int restoredLayer = LookupRememberedLayer(controller);
             SetController(controller);
+            if (restoredLayer > 0)
+                _context?.SetLayer(restoredLayer);
             RefreshTabBar();
         }
 
@@ -81,14 +95,43 @@ namespace Yozolab.DaerD
             int index = _openControllers.IndexOf(controller);
             if (index < 0) return;
             _openControllers.RemoveAt(index);
+            if (index < _openControllerLayers.Count) _openControllerLayers.RemoveAt(index);
             if (controller == _controller)
             {
                 var next = _openControllers.Count > 0
                     ? _openControllers[Mathf.Clamp(index, 0, _openControllers.Count - 1)]
                     : null;
-                SetController(next);
+                if (next != null)
+                {
+                    int restoredLayer = LookupRememberedLayer(next);
+                    SetController(next);
+                    if (restoredLayer > 0)
+                        _context?.SetLayer(restoredLayer);
+                }
+                else
+                {
+                    SetController(null);
+                }
             }
             RefreshTabBar();
+        }
+
+        /// <summary>Writes the active layer index back to the per-tab memory.</summary>
+        void RememberCurrentLayer()
+        {
+            if (_controller == null) return;
+            int index = _openControllers.IndexOf(_controller);
+            if (index < 0) return;
+            while (_openControllerLayers.Count <= index)
+                _openControllerLayers.Add(0);
+            _openControllerLayers[index] = _layerIndex;
+        }
+
+        int LookupRememberedLayer(AnimatorController controller)
+        {
+            int index = _openControllers.IndexOf(controller);
+            if (index < 0 || index >= _openControllerLayers.Count) return 0;
+            return _openControllerLayers[index];
         }
 
         /// <summary>Rebuilds the tab strip from the open-controller list, highlighting the active one.</summary>
@@ -96,9 +139,21 @@ namespace Yozolab.DaerD
         {
             if (_tabBar == null) return;
 
-            _openControllers.RemoveAll(c => c == null);   // drop deleted assets
+            // Drop the parallel layer entry for any controller that's been removed (deleted asset
+            // or null reference) so the two lists stay aligned by index.
+            for (int i = _openControllers.Count - 1; i >= 0; i--)
+            {
+                if (_openControllers[i] != null) continue;
+                _openControllers.RemoveAt(i);
+                if (i < _openControllerLayers.Count) _openControllerLayers.RemoveAt(i);
+            }
             if (_controller != null && !_openControllers.Contains(_controller))
+            {
                 _openControllers.Add(_controller);
+                _openControllerLayers.Add(_layerIndex);
+            }
+            while (_openControllerLayers.Count < _openControllers.Count)
+                _openControllerLayers.Add(0);
 
             _tabBar.Clear();
             _tabBar.style.display = _openControllers.Count > 0 ? DisplayStyle.Flex : DisplayStyle.None;
@@ -148,6 +203,7 @@ namespace Yozolab.DaerD
             EditorApplication.playModeStateChanged -= OnPlayModeChanged;
             _graphView?.Cleanup();
             _statePreview?.Stop();
+            _animationSync?.Stop();
         }
 
         void CreateGUI()
@@ -159,6 +215,7 @@ namespace Yozolab.DaerD
             rootVisualElement.Clear();
             _context = new DaerDContext();
             _statePreview = new StatePreview(_context);
+            _animationSync = new AnimationWindowSync(_context);
 
             var styleSheet = LoadStyleSheet();
             if (styleSheet != null)
@@ -219,6 +276,10 @@ namespace Yozolab.DaerD
             _context.LayerChanged += RefreshGraphVisibility;
             RefreshGraphVisibility();
 
+            // AnimSync must subscribe before StatePreview so that on a State selection change
+            // the clip is pushed into the AnimationWindow *first*; otherwise StatePreview's
+            // re-toggle would re-acquire against the previous clip.
+            _animationSync.Start();
             _statePreview.Start();
 
             if (_controller != null)
@@ -235,6 +296,7 @@ namespace Yozolab.DaerD
         {
             _controller = _context.Controller;
             _layerIndex = _context.LayerIndex;
+            RememberCurrentLayer();
         }
 
         VisualElement BuildToolbar()
@@ -249,12 +311,34 @@ namespace Yozolab.DaerD
             spacer.style.flexGrow = 1;
             toolbar.Add(spacer);
 
+            // Pushes the selected State's AnimationClip into the Animation window. Off by
+            // default because it side-effects whatever the user had selected in that window;
+            // turning it on auto-opens the Animation window so the first State click lands.
+            var animSyncToggle = new ToolbarToggle
+            {
+                text = "Anim Sync",
+                tooltip = "Sync the Animation window's clip to the selected State's AnimationClip",
+            };
+            animSyncToggle.RegisterValueChangedCallback(evt => _animationSync.SetEnabled(evt.newValue));
+            toolbar.Add(animSyncToggle);
+
+            // Preview presupposes Anim Sync — without the clip push, there's no new clip for
+            // Preview to re-toggle against. Flipping Preview on therefore auto-flips Anim Sync
+            // on too; flipping Preview off leaves Anim Sync where the user had it.
             var previewToggle = new ToolbarToggle
             {
                 text = "Preview",
-                tooltip = "Preview frame 0 of the selected clip state on the matching scene object",
+                tooltip = "Auto-toggle the Animation window's Preview on clip change. " +
+                          "Implies Anim Sync. Requires a scene GameObject with an Animator " +
+                          "running this controller to be selected — Unity's preview can't run " +
+                          "without a target.",
             };
-            previewToggle.RegisterValueChangedCallback(evt => _statePreview.SetEnabled(evt.newValue));
+            previewToggle.RegisterValueChangedCallback(evt =>
+            {
+                if (evt.newValue && !animSyncToggle.value)
+                    animSyncToggle.value = true;   // also fires its own ValueChanged → AnimSync ON
+                _statePreview.SetEnabled(evt.newValue);
+            });
             toolbar.Add(previewToggle);
 
             // Layout (Grid / Hierarchical / Align Selected) lives in the graph's right-click menu now.
