@@ -1,0 +1,55 @@
+name: "Sync docs branch"
+
+# main の内容を、ドキュメントサイト用の `docs` ブランチへ追従させる。
+#
+# 仕組み:
+#   1. Release ワークフロー（PR マージ → version バンプ → Release 公開）が
+#      完了したら発火する。
+#   2. その時点の main を `docs` ブランチへマージして push する。
+#   3. `docs` ブランチが更新されると Cloudflare Workers Builds が push を
+#      検知し、ドキュメントサイトを再デプロイする。
+#
+# これにより、リリースのたびにルート package.json のバージョンなどが
+# ドキュメントサイトへ自動反映される。docs ブランチは「main + docs/ フォルダ」
+# なので、main は docs/ を触らず、このマージが競合することはない。
+#
+# 手動同期したいときは workflow_dispatch から実行できる。
+on:
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# 同時に複数走らないように直列化する。
+concurrency:
+  group: sync-docs
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    # 手動実行、または Release が成功した場合のみ走らせる。
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: "Checkout docs branch"
+        uses: "actions/checkout@v4"
+        with:
+          ref: docs
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: "Merge main into docs"
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          # main を docs へ取り込む。既に最新なら no-op（push もされない）。
+          if git merge --no-edit -m "chore: sync docs with main" origin/main; then
+            git push origin HEAD:docs
+          else
+            echo "::error::Merge conflict while syncing main into docs. Resolve manually."
+            exit 1
+          fi
