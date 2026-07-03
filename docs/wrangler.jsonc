@@ -1,0 +1,18 @@
+{
+  // Cloudflare Workers（静的アセット）で VitePress のビルド成果物を配信する設定。
+  // Workers Builds でこのリポジトリの docs ブランチを連携し、
+  //   - Root directory : docs
+  //   - Build command  : npm ci && npm run build
+  //   - Deploy command : npx wrangler deploy
+  // を指定すると、push を検知して自動でビルド＆デプロイされる。
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "daerd-docs",
+  "compatibility_date": "2025-06-01",
+  // main（Workerスクリプト）を持たないアセット専用 Worker。VitePress の
+  // 生成物をそのまま配信する。
+  "assets": {
+    "directory": "./.vitepress/dist",
+    // 未知パスは VitePress が生成する 404.html を返す。
+    "not_found_handling": "404-page"
+  }
+}
