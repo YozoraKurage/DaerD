@@ -1,4 +1,13 @@
 import { defineConfig } from 'vitepress'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+
+// ルート（main 由来）の package.json からバージョンを取得する。
+// リリース Action が version をバンプし、それが docs ブランチへマージされると
+// ここに自動で反映される（ナビのバージョン表記が main に追従する）。
+const pkg = JSON.parse(
+  readFileSync(fileURLToPath(new URL('../../package.json', import.meta.url)), 'utf-8')
+)
 
 // DaerD ドキュメントサイト設定（日本語）
 export default defineConfig({
@@ -21,7 +30,7 @@ export default defineConfig({
     nav: [
       { text: 'ガイド', link: '/guide/', activeMatch: '/guide/' },
       { text: '機能', link: '/features/', activeMatch: '/features/' },
-      { text: 'v0.7.2', link: 'https://github.com/YozoraKurage/DaerD/releases' }
+      { text: `v${pkg.version}`, link: 'https://github.com/YozoraKurage/DaerD/releases' }
     ],
 
     sidebar: {
