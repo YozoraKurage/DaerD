@@ -6,12 +6,29 @@ DaerD は Unity 2022.3 以降に対応した VPM / UPM パッケージ（`net.yo
 
 VRChat 向けプロジェクトなど、VPM を利用している場合はリスティングリポジトリ経由での導入が最も簡単です。アップデートも管理できます。
 
+DaerD は VPM リスティング **[vpm.yozolab.net](https://vpm.yozolab.net)** で配信されています。
+
+### ワンクリックで追加（VCC）
+
+次のボタンから VCC にリスティングを追加できます。
+
+<a class="vp-button" href="vcc://vpm/addRepo?url=https://vpm.yozolab.net/index.json">VCC にリスティングを追加</a>
+
+うまく開かない場合は、下の「手動で追加」の手順で URL を貼り付けてください。
+
+### 手動で追加
+
 1. VCC（VRChat Creator Companion）または ALCOM を開きます。
-2. **Settings → Packages → Add Repository** から DaerD の VPM リスティングを追加します。
+2. **Settings → Packages → Add Repository** を開き、次の URL を入力して追加します。
+
+   ```
+   https://vpm.yozolab.net/index.json
+   ```
+
 3. プロジェクトの **Manage Project** 画面で `DaerD` を選び、**Add** します。
 
-::: tip リスティング URL について
-DaerD は VPM リスティング [`YozoraKurage/vpmrepo-list`](https://github.com/YozoraKurage/vpmrepo-list) で配信されています。追加する具体的な URL（`https://.../index.json`）は、そのリポジトリの README に記載のものを利用してください。
+::: tip リスティングサイト
+リスティングの一覧やパッケージのバージョンは [vpm.yozolab.net](https://vpm.yozolab.net) で確認できます。
 :::
 
 ## 方法 2: UPM（Git URL）

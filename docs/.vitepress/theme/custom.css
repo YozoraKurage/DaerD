@@ -1,0 +1,18 @@
+/* 本文中で使うボタン風リンク（例: VCC へのリスティング追加） */
+.vp-button {
+  display: inline-block;
+  border: 1px solid transparent;
+  border-radius: 20px;
+  padding: 0 20px;
+  line-height: 38px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--vp-button-brand-text);
+  background-color: var(--vp-button-brand-bg);
+  text-decoration: none !important;
+  transition: background-color 0.25s;
+}
+
+.vp-button:hover {
+  background-color: var(--vp-button-brand-hover-bg);
+}
