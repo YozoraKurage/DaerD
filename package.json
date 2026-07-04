@@ -1,6 +1,6 @@
 {
   "name": "net.yozolab.daerd",
-  "version": "0.7.3",
+  "version": "0.7.4",
   "displayName": "DaerD",
   "description": "GraphView-based replacement for Unity's AnimatorController editor. Adds parameter auto type conversion, transition copy/paste, cascade rename and analysis tools.",
   "unity": "2022.3",
