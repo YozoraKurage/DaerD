@@ -276,7 +276,7 @@ namespace Yozolab.DaerD
             _context.LayerChanged += RefreshGraphVisibility;
             RefreshGraphVisibility();
 
-            // AnimSync must subscribe before StatePreview so that on a State selection change
+            // SelectSync must subscribe before StatePreview so that on a State selection change
             // the clip is pushed into the AnimationWindow *first*; otherwise StatePreview's
             // re-toggle would re-acquire against the previous clip.
             _animationSync.Start();
@@ -311,41 +311,50 @@ namespace Yozolab.DaerD
             spacer.style.flexGrow = 1;
             toolbar.Add(spacer);
 
-            // Pushes the selected State's AnimationClip into the Animation window. Off by
-            // default because it side-effects whatever the user had selected in that window;
-            // turning it on auto-opens the Animation window so the first State click lands.
-            var animSyncToggle = new ToolbarToggle
+            // Pushes the selected State's AnimationClip into the Animation window. On by
+            // default so first-time users see the sync land immediately; opening the DD window
+            // will auto-open the Animation window as part of enabling the sync.
+            var selectSyncToggle = new ToolbarToggle
             {
-                text = "Anim Sync",
+                text = "Select Sync",
                 tooltip = "Sync the Animation window's clip to the selected State's AnimationClip",
             };
-            animSyncToggle.RegisterValueChangedCallback(evt => _animationSync.SetEnabled(evt.newValue));
-            toolbar.Add(animSyncToggle);
+            selectSyncToggle.AddToClassList("dd-toolbar-item");
+            selectSyncToggle.RegisterValueChangedCallback(evt => _animationSync.SetEnabled(evt.newValue));
+            selectSyncToggle.value = true;   // default ON; fires the callback above
+            toolbar.Add(selectSyncToggle);
 
-            // Preview presupposes Anim Sync — without the clip push, there's no new clip for
-            // Preview to re-toggle against. Flipping Preview on therefore auto-flips Anim Sync
-            // on too; flipping Preview off leaves Anim Sync where the user had it.
+            // Preview presupposes Select Sync — without the clip push, there's no new clip for
+            // Preview to re-toggle against. Flipping Preview on therefore auto-flips Select Sync
+            // on too; flipping Preview off leaves Select Sync where the user had it.
             var previewToggle = new ToolbarToggle
             {
                 text = "Preview",
                 tooltip = "Auto-toggle the Animation window's Preview on clip change. " +
-                          "Implies Anim Sync. Requires a scene GameObject with an Animator " +
+                          "Implies Select Sync. Requires a scene GameObject with an Animator " +
                           "running this controller to be selected — Unity's preview can't run " +
                           "without a target.",
             };
+            previewToggle.AddToClassList("dd-toolbar-item");
             previewToggle.RegisterValueChangedCallback(evt =>
             {
-                if (evt.newValue && !animSyncToggle.value)
-                    animSyncToggle.value = true;   // also fires its own ValueChanged → AnimSync ON
+                if (evt.newValue && !selectSyncToggle.value)
+                    selectSyncToggle.value = true;   // also fires its own ValueChanged → SelectSync ON
                 _statePreview.SetEnabled(evt.newValue);
             });
             toolbar.Add(previewToggle);
 
             // Layout (Grid / Hierarchical / Align Selected) lives in the graph's right-click menu now.
-            toolbar.Add(new ToolbarButton(() => _graphView.FrameAll()) { text = "Frame All" });
-            toolbar.Add(new ToolbarButton(() => _inspectorPanel.ShowAnalysis()) { text = "Analyze" });
-            toolbar.Add(new ToolbarButton(
-                () => SettingsService.OpenUserPreferences(DaerDSettingsProvider.Path)) { text = "Settings" });
+            var frameAllButton = new ToolbarButton(() => _graphView.FrameAll()) { text = "Frame All" };
+            frameAllButton.AddToClassList("dd-toolbar-item");
+            toolbar.Add(frameAllButton);
+            var analyzeButton = new ToolbarButton(() => _inspectorPanel.ShowAnalysis()) { text = "Analyze" };
+            analyzeButton.AddToClassList("dd-toolbar-item");
+            toolbar.Add(analyzeButton);
+            var settingsButton = new ToolbarButton(
+                () => SettingsService.OpenUserPreferences(DaerDSettingsProvider.Path)) { text = "Settings" };
+            settingsButton.AddToClassList("dd-toolbar-item");
+            toolbar.Add(settingsButton);
 
             return toolbar;
         }

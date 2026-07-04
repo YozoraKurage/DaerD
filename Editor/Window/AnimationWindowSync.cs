@@ -6,7 +6,7 @@ namespace Yozolab.DaerD
 {
     /// <summary>
     /// Pushes the AnimationClip of the currently selected State into Unity's Animation window
-    /// so the timeline immediately shows that clip. Driven from the toolbar "Anim Sync" toggle —
+    /// so the timeline immediately shows that clip. Driven from the toolbar "Select Sync" toggle —
     /// the user opts in because changing the Animation window's clip side-effects whatever they
     /// were doing in it. Reflection internals live in <see cref="AnimationWindowAccess"/>.
     /// </summary>

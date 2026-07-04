@@ -3,6 +3,26 @@
     align-items: center;
 }
 
+/* Right-side toolbar controls. Unity's default ToolbarToggle wraps its text in an inner
+   Label element while ToolbarButton renders text directly, so the two land the text on
+   slightly different baselines and the row reads as ragged. Normalise: centre every item
+   vertically, and pin any nested label to the same middle-centre alignment with no extra
+   padding/margin so the caret sits at the same y as the button-only items. */
+.dd-toolbar-item {
+    align-items: center;
+    justify-content: center;
+    -unity-text-align: middle-center;
+}
+
+.dd-toolbar-item .unity-label,
+.dd-toolbar-item .unity-text-element {
+    -unity-text-align: middle-center;
+    margin-top: 0;
+    margin-bottom: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+}
+
 /* Graph grid background: noticeably brighter than Unity's stock so the user can read
    distances and stay oriented while dragging. Minor lines are subtle; major lines (every
    10th line) are stronger so they read as anchors when the view is zoomed out. */
