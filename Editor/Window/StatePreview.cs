@@ -11,9 +11,9 @@ namespace Yozolab.DaerD
     /// pose. Wired to the toolbar "Preview" toggle — opt-in because the AnimationWindow's
     /// previewing mode side-effects whatever the user had it doing.
     ///
-    /// Premise: Anim Sync is enabled. Pushing the new clip into the AnimationWindow is
-    /// Anim Sync's job — Preview just re-toggles previewing once the clip is in place. The
-    /// toolbar's Preview switch auto-enables Anim Sync to keep this invariant true.
+    /// Premise: Select Sync is enabled. Pushing the new clip into the AnimationWindow is
+    /// Select Sync's job — Preview just re-toggles previewing once the clip is in place. The
+    /// toolbar's Preview switch auto-enables Select Sync to keep this invariant true.
     /// </summary>
     class StatePreview
     {
@@ -53,7 +53,7 @@ namespace Yozolab.DaerD
                 return;
             }
             // Auto-open the Animation window so the very first State click lands somewhere
-            // visible — mirrors the Anim Sync toggle.
+            // visible — mirrors the Select Sync toggle.
             AnimationWindowAccess.EnsureOpen();
             Evaluate();
         }
@@ -74,7 +74,7 @@ namespace Yozolab.DaerD
                 return;
             }
 
-            // Anim Sync (registered before us on the same SelectionChanged event) has already
+            // Select Sync (registered before us on the same SelectionChanged event) has already
             // pushed `clip` into the AnimationWindow. The previewing toggle only sees the new
             // clip once the window has run an OnGUI pass and rebuilt its controlInterface
             // against the new selection — which is one Repaint plus one more editor tick
