@@ -162,6 +162,7 @@ namespace Yozolab.DaerD
                 {
                     "animator", "controller", "transition", "exit time", "duration",
                     "fixed duration", "write defaults", "interruption",
+                    "language", "japanese", "日本語",
                 }),
             };
         }
@@ -169,10 +170,22 @@ namespace Yozolab.DaerD
         static void DrawGui()
         {
             EditorGUILayout.Space(4);
-            EditorGUILayout.LabelField("New Transition Defaults", EditorStyles.boldLabel);
+            L.Language = (DaerDLanguage)EditorGUILayout.Popup(
+                new GUIContent(L.Tr("Language"),
+                    L.Tr("Display language for daerD windows and analysis results.")),
+                (int)L.Language,
+                new[]
+                {
+                    new GUIContent(L.Tr("Auto (System Language)")),
+                    new GUIContent("English"),
+                    new GUIContent("日本語"),
+                });
+
+            EditorGUILayout.Space(8);
+            EditorGUILayout.LabelField(L.Tr("New Transition Defaults"), EditorStyles.boldLabel);
             EditorGUI.indentLevel++;
             DaerDSettings.ApplyTransitionDefaults =
-                EditorGUILayout.Toggle("Apply To New Transitions", DaerDSettings.ApplyTransitionDefaults);
+                EditorGUILayout.Toggle(L.Tr("Apply To New Transitions"), DaerDSettings.ApplyTransitionDefaults);
             using (new EditorGUI.DisabledScope(!DaerDSettings.ApplyTransitionDefaults))
             {
                 DaerDSettings.TransitionHasExitTime =
@@ -196,10 +209,10 @@ namespace Yozolab.DaerD
             EditorGUI.indentLevel--;
 
             EditorGUILayout.Space(8);
-            EditorGUILayout.LabelField("New State Defaults", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField(L.Tr("New State Defaults"), EditorStyles.boldLabel);
             EditorGUI.indentLevel++;
             DaerDSettings.ApplyStateDefaults =
-                EditorGUILayout.Toggle("Apply To New States", DaerDSettings.ApplyStateDefaults);
+                EditorGUILayout.Toggle(L.Tr("Apply To New States"), DaerDSettings.ApplyStateDefaults);
             using (new EditorGUI.DisabledScope(!DaerDSettings.ApplyStateDefaults))
             {
                 DaerDSettings.StateWriteDefaults =
@@ -210,29 +223,29 @@ namespace Yozolab.DaerD
             EditorGUI.indentLevel--;
 
             EditorGUILayout.Space(8);
-            EditorGUILayout.LabelField("Graph Display", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField(L.Tr("Graph Display"), EditorStyles.boldLabel);
             EditorGUI.indentLevel++;
             DaerDSettings.ShowTransitionConditions = EditorGUILayout.Toggle(
-                new GUIContent("Condition Labels On Edges",
-                    "Show a one-line condition summary on transition edges. Takes effect on the next graph rebuild."),
+                new GUIContent(L.Tr("Condition Labels On Edges"),
+                    L.Tr("Show a one-line condition summary on transition edges. Takes effect on the next graph rebuild.")),
                 DaerDSettings.ShowTransitionConditions);
             DaerDSettings.ShowStateBadges = EditorGUILayout.Toggle(
-                new GUIContent("State Badges (WD / B)",
-                    "Mark states with Write Defaults ON and states carrying StateMachineBehaviours."),
+                new GUIContent(L.Tr("State Badges (WD / B)"),
+                    L.Tr("Mark states with Write Defaults ON and states carrying StateMachineBehaviours.")),
                 DaerDSettings.ShowStateBadges);
             EditorGUI.indentLevel--;
 
             EditorGUILayout.Space(8);
-            EditorGUILayout.LabelField("Behavior", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField(L.Tr("Behavior"), EditorStyles.boldLabel);
             EditorGUI.indentLevel++;
             DaerDSettings.InterceptDoubleClick = EditorGUILayout.Toggle(
-                new GUIContent("Intercept .controller Double-Click",
-                    "When on, double-clicking an Animator Controller opens this editor instead of Unity's window."),
+                new GUIContent(L.Tr("Intercept .controller Double-Click"),
+                    L.Tr("When on, double-clicking an Animator Controller opens this editor instead of Unity's window.")),
                 DaerDSettings.InterceptDoubleClick);
             EditorGUI.indentLevel--;
 
             EditorGUILayout.Space(10);
-            if (GUILayout.Button("Reset To Defaults", GUILayout.Width(160)))
+            if (GUILayout.Button(L.Tr("Reset To Defaults"), GUILayout.Width(160)))
                 DaerDSettings.ResetAll();
         }
     }

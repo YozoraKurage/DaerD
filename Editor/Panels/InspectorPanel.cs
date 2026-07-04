@@ -1758,27 +1758,33 @@ namespace Yozolab.DaerD
 
         // ---- overview / analysis --------------------------------------------
 
+        // Severity filter for the analysis list. Session-static: shared by every window,
+        // reset on domain reload — a per-user display preference isn't worth an EditorPref.
+        static bool s_showErrors = true, s_showWarnings = true, s_showInfo = true;
+
         void DrawOverview()
         {
             var controller = Context.Controller;
-            EditorGUILayout.LabelField("Controller", EditorStyles.boldLabel);
-            EditorGUILayout.LabelField("Name", controller.name);
-            EditorGUILayout.LabelField("Layers", controller.layers.Length.ToString());
-            EditorGUILayout.LabelField("Parameters", controller.parameters.Length.ToString());
+            EditorGUILayout.LabelField(L.Tr("Controller"), EditorStyles.boldLabel);
+            EditorGUILayout.LabelField(L.Tr("Name"), controller.name);
+            EditorGUILayout.LabelField(L.Tr("Layers"), controller.layers.Length.ToString());
+            EditorGUILayout.LabelField(L.Tr("Parameters"), controller.parameters.Length.ToString());
 
             EditorGUILayout.Space(6);
-            EditorGUILayout.LabelField("Write Defaults", EditorStyles.boldLabel);
-            EditorGUILayout.LabelField("Bulk-set every state. Layers containing only Direct blend trees stay ON.",
+            EditorGUILayout.LabelField(L.Tr("Write Defaults"), EditorStyles.boldLabel);
+            EditorGUILayout.LabelField(
+                L.Tr("Bulk-set every state. Layers containing only Direct blend trees stay ON."),
                 EditorStyles.miniLabel);
             EditorGUILayout.BeginHorizontal();
-            if (GUILayout.Button("Set All ON"))
+            if (GUILayout.Button(L.Tr("Set All ON")))
                 BulkSetWriteDefaults(controller, true);
-            if (GUILayout.Button("Set All OFF"))
+            if (GUILayout.Button(L.Tr("Set All OFF")))
                 BulkSetWriteDefaults(controller, false);
             EditorGUILayout.EndHorizontal();
 
             EditorGUILayout.Space(6);
-            if (GUILayout.Button("Analyze Controller"))
+            if (GUILayout.Button(new GUIContent(L.Tr("Analyze Controller"),
+                    L.Tr("Audit this controller for unused parameters, broken conditions, unreachable states and more."))))
                 _issues = ControllerAnalyzer.Analyze(controller);
 
             if (_issues == null) return;
@@ -1786,29 +1792,117 @@ namespace Yozolab.DaerD
             EditorGUILayout.Space(2);
             if (_issues.Count == 0)
             {
-                EditorGUILayout.HelpBox("No issues found.", MessageType.Info);
+                EditorGUILayout.HelpBox(L.Tr("No issues found."), MessageType.Info);
                 return;
             }
-            EditorGUILayout.LabelField(_issues.Count + " issue(s)", EditorStyles.boldLabel);
+
+            DrawIssueFilter(out int shownMask);
+
+            bool anyShown = false;
+            // Errors first — the filter toggles double as a legend, so keep the same order here.
+            foreach (var severity in IssueSeverityOrder)
+            {
+                if ((shownMask & (1 << (int)severity)) == 0) continue;
+                foreach (var issue in _issues)
+                {
+                    if (issue.severity != severity) continue;
+                    anyShown = true;
+                    DrawIssueRow(issue);
+                }
+            }
+            if (!anyShown)
+                EditorGUILayout.HelpBox(L.Tr("All {0} issue(s) are hidden by the filter above.", _issues.Count),
+                    MessageType.None);
+        }
+
+        static readonly ControllerAnalyzer.Severity[] IssueSeverityOrder =
+        {
+            ControllerAnalyzer.Severity.Error,
+            ControllerAnalyzer.Severity.Warning,
+            ControllerAnalyzer.Severity.Info,
+        };
+
+        /// <summary>Toggle row with per-severity counts; returns a bitmask of severities to show.</summary>
+        void DrawIssueFilter(out int shownMask)
+        {
+            int errors = 0, warnings = 0, infos = 0;
             foreach (var issue in _issues)
             {
-                var messageType = issue.severity == ControllerAnalyzer.Severity.Error ? MessageType.Error
-                    : issue.severity == ControllerAnalyzer.Severity.Warning ? MessageType.Warning
-                    : MessageType.None;
-                EditorGUILayout.BeginHorizontal();
-                EditorGUILayout.HelpBox("[" + issue.category + "] " + issue.message, messageType);
-                if (issue.context != null && GUILayout.Button("Ping", GUILayout.Width(46), GUILayout.Height(38)))
-                    EditorGUIUtility.PingObject(issue.context);
-                EditorGUILayout.EndHorizontal();
+                if (issue.severity == ControllerAnalyzer.Severity.Error) errors++;
+                else if (issue.severity == ControllerAnalyzer.Severity.Warning) warnings++;
+                else infos++;
             }
+
+            EditorGUILayout.BeginHorizontal();
+            s_showErrors = GUILayout.Toggle(s_showErrors, L.Tr("{0} error(s)", errors), EditorStyles.miniButtonLeft);
+            s_showWarnings = GUILayout.Toggle(s_showWarnings, L.Tr("{0} warning(s)", warnings), EditorStyles.miniButtonMid);
+            s_showInfo = GUILayout.Toggle(s_showInfo, L.Tr("{0} info", infos), EditorStyles.miniButtonRight);
+            if (GUILayout.Button(new GUIContent(L.Tr("Copy"), L.Tr("Copy the full report to the clipboard")),
+                    EditorStyles.miniButton, GUILayout.Width(60)))
+                CopyIssueReport();
+            EditorGUILayout.EndHorizontal();
+
+            shownMask = (s_showErrors ? 1 << (int)ControllerAnalyzer.Severity.Error : 0)
+                | (s_showWarnings ? 1 << (int)ControllerAnalyzer.Severity.Warning : 0)
+                | (s_showInfo ? 1 << (int)ControllerAnalyzer.Severity.Info : 0);
+        }
+
+        void DrawIssueRow(ControllerAnalyzer.Issue issue)
+        {
+            var messageType = issue.severity == ControllerAnalyzer.Severity.Error ? MessageType.Error
+                : issue.severity == ControllerAnalyzer.Severity.Warning ? MessageType.Warning
+                : MessageType.None;
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.HelpBox("[" + issue.category + "] " + issue.message, messageType);
+            var buttons = new GUILayoutOption[] { GUILayout.Width(46), GUILayout.Height(issue.fix != null ? 19 : 38) };
+            if (issue.fix != null || issue.context != null)
+            {
+                EditorGUILayout.BeginVertical(GUILayout.Width(46));
+                if (issue.context != null && GUILayout.Button(
+                        new GUIContent(L.Tr("Ping"), L.Tr("Highlight this object in the Project / graph")), buttons))
+                    EditorGUIUtility.PingObject(issue.context);
+                if (issue.fix != null && GUILayout.Button(
+                        new GUIContent(issue.fixLabel, issue.fixTooltip), buttons))
+                {
+                    ApplyIssueFix(issue);
+                    EditorGUILayout.EndVertical();
+                    EditorGUILayout.EndHorizontal();
+                    GUIUtility.ExitGUI();   // the issue list was rebuilt under this layout pass
+                }
+                EditorGUILayout.EndVertical();
+            }
+            EditorGUILayout.EndHorizontal();
+        }
+
+        /// <summary>Puts a plain-text version of every issue (ignoring the filter) on the clipboard.</summary>
+        void CopyIssueReport()
+        {
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine(Context.Controller.name + " (" + _issues.Count + ")");
+            foreach (var severity in IssueSeverityOrder)
+                foreach (var issue in _issues)
+                    if (issue.severity == severity)
+                        sb.AppendLine($"[{issue.severity}] [{issue.category}] {issue.message}");
+            EditorGUIUtility.systemCopyBuffer = sb.ToString();
+        }
+
+        void ApplyIssueFix(ControllerAnalyzer.Issue issue)
+        {
+            issue.fix();
+            _issues = ControllerAnalyzer.Analyze(Context.Controller);
+            // A fix may have deleted a parameter or a transition — let every panel and the
+            // graph pick that up.
+            Context.NotifyParametersChanged();
+            Context.NotifyGraphStructureChanged();
         }
 
         void BulkSetWriteDefaults(AnimatorController controller, bool value)
         {
             string message = value
-                ? "Set Write Defaults ON for every state in this controller?"
-                : "Set Write Defaults OFF for every state?\n\nLayers that contain only Direct blend trees are kept ON.";
-            if (!EditorUtility.DisplayDialog("Write Defaults", message, value ? "Set ON" : "Set OFF", "Cancel"))
+                ? L.Tr("Set Write Defaults ON for every state in this controller?")
+                : L.Tr("Set Write Defaults OFF for every state?\n\nLayers that contain only Direct blend trees are kept ON.");
+            if (!EditorUtility.DisplayDialog(L.Tr("Write Defaults"), message,
+                    value ? L.Tr("Set ON") : L.Tr("Set OFF"), L.Tr("Cancel")))
                 return;
             ControllerAnalyzer.SetAllWriteDefaults(controller, value);
             _issues = ControllerAnalyzer.Analyze(controller);

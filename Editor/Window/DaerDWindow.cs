@@ -20,7 +20,11 @@ namespace Yozolab.DaerD
         [SerializeField] List<int> _openControllerLayers = new List<int>();
 
         DaerDContext _context;
+        VisualElement _toolbar;
         VisualElement _tabBar;
+        // Toolbar toggle states survive the toolbar rebuild that a language change triggers.
+        bool _selectSyncOn = true;
+        bool _previewOn;
         AnimatorGraphView _graphView;
         BlendTreeGraphView _blendTreeView;
         VisualElement _graphHost;
@@ -169,7 +173,7 @@ namespace Yozolab.DaerD
                 label.AddToClassList("dd-tab__label");
                 tab.Add(label);
 
-                var close = new Label("×") { tooltip = "Close tab" };   // U+00D7, widely available
+                var close = new Label("×") { tooltip = L.Tr("Close tab") };   // U+00D7, widely available
                 close.AddToClassList("dd-tab__close");
                 tab.Add(close);
 
@@ -201,6 +205,7 @@ namespace Yozolab.DaerD
             Undo.undoRedoPerformed -= OnUndoRedo;
             EditorApplication.update -= PollRuntime;
             EditorApplication.playModeStateChanged -= OnPlayModeChanged;
+            L.LanguageChanged -= OnLanguageChanged;
             _graphView?.Cleanup();
             _statePreview?.Stop();
             _animationSync?.Stop();
@@ -221,7 +226,10 @@ namespace Yozolab.DaerD
             if (styleSheet != null)
                 rootVisualElement.styleSheets.Add(styleSheet);
 
-            rootVisualElement.Add(BuildToolbar());
+            _toolbar = BuildToolbar();
+            rootVisualElement.Add(_toolbar);
+            L.LanguageChanged -= OnLanguageChanged;   // CreateGUI can run again after a reload
+            L.LanguageChanged += OnLanguageChanged;
 
             _tabBar = new VisualElement();
             _tabBar.AddToClassList("dd-tabbar");
@@ -311,17 +319,23 @@ namespace Yozolab.DaerD
             spacer.style.flexGrow = 1;
             toolbar.Add(spacer);
 
+            toolbar.Add(new StateSearchField(_context, rootVisualElement));
+
             // Pushes the selected State's AnimationClip into the Animation window. On by
             // default so first-time users see the sync land immediately; opening the DD window
             // will auto-open the Animation window as part of enabling the sync.
             var selectSyncToggle = new ToolbarToggle
             {
-                text = "Select Sync",
-                tooltip = "Sync the Animation window's clip to the selected State's AnimationClip",
+                text = L.Tr("Select Sync"),
+                tooltip = L.Tr("Sync the Animation window's clip to the selected State's AnimationClip"),
             };
             selectSyncToggle.AddToClassList("dd-toolbar-item");
-            selectSyncToggle.RegisterValueChangedCallback(evt => _animationSync.SetEnabled(evt.newValue));
-            selectSyncToggle.value = true;   // default ON; fires the callback above
+            selectSyncToggle.RegisterValueChangedCallback(evt =>
+            {
+                _selectSyncOn = evt.newValue;
+                _animationSync.SetEnabled(evt.newValue);
+            });
+            selectSyncToggle.value = _selectSyncOn;   // default ON; fires the callback above
             toolbar.Add(selectSyncToggle);
 
             // Preview presupposes Select Sync — without the clip push, there's no new clip for
@@ -329,34 +343,49 @@ namespace Yozolab.DaerD
             // on too; flipping Preview off leaves Select Sync where the user had it.
             var previewToggle = new ToolbarToggle
             {
-                text = "Preview",
-                tooltip = "Auto-toggle the Animation window's Preview on clip change. " +
+                text = L.Tr("Preview"),
+                tooltip = L.Tr("Auto-toggle the Animation window's Preview on clip change. " +
                           "Implies Select Sync. Requires a scene GameObject with an Animator " +
                           "running this controller to be selected — Unity's preview can't run " +
-                          "without a target.",
+                          "without a target."),
             };
             previewToggle.AddToClassList("dd-toolbar-item");
             previewToggle.RegisterValueChangedCallback(evt =>
             {
+                _previewOn = evt.newValue;
                 if (evt.newValue && !selectSyncToggle.value)
                     selectSyncToggle.value = true;   // also fires its own ValueChanged → SelectSync ON
                 _statePreview.SetEnabled(evt.newValue);
             });
+            previewToggle.value = _previewOn;
             toolbar.Add(previewToggle);
 
             // Layout (Grid / Hierarchical / Align Selected) lives in the graph's right-click menu now.
-            var frameAllButton = new ToolbarButton(() => _graphView.FrameAll()) { text = "Frame All" };
+            var frameAllButton = new ToolbarButton(() => _graphView.FrameAll()) { text = L.Tr("Frame All") };
             frameAllButton.AddToClassList("dd-toolbar-item");
             toolbar.Add(frameAllButton);
-            var analyzeButton = new ToolbarButton(() => _inspectorPanel.ShowAnalysis()) { text = "Analyze" };
+            var analyzeButton = new ToolbarButton(() => _inspectorPanel.ShowAnalysis()) { text = L.Tr("Analyze") };
             analyzeButton.AddToClassList("dd-toolbar-item");
             toolbar.Add(analyzeButton);
             var settingsButton = new ToolbarButton(
-                () => SettingsService.OpenUserPreferences(DaerDSettingsProvider.Path)) { text = "Settings" };
+                () => SettingsService.OpenUserPreferences(DaerDSettingsProvider.Path)) { text = L.Tr("Settings") };
             settingsButton.AddToClassList("dd-toolbar-item");
             toolbar.Add(settingsButton);
 
             return toolbar;
+        }
+
+        /// <summary>Rebuilds the toolbar (and the labels living in it) in place after a language change.</summary>
+        void OnLanguageChanged()
+        {
+            if (_toolbar == null || _toolbar.parent == null) return;
+            int index = _toolbar.parent.IndexOf(_toolbar);
+            var parent = _toolbar.parent;
+            _toolbar.RemoveFromHierarchy();
+            _toolbar = BuildToolbar();
+            parent.Insert(index, _toolbar);
+            RefreshBreadcrumb();
+            RefreshTabBar();
         }
 
         void RefreshBreadcrumb()
