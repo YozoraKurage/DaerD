@@ -193,9 +193,15 @@ namespace Yozolab.DaerD
         }
 
         /// <summary>The node's visible rectangle expressed in this edge's local coordinate space.</summary>
+        /// <remarks>
+        /// Clips against <c>#node-border</c> (the rounded body) rather than the outer Node element.
+        /// Unity's default node styling leaves a few pixels of inset between the two, so using the
+        /// outer element made transitions terminate in empty space outside the visible border.
+        /// </remarks>
         Rect NodeRectInEdgeSpace(VisualElement node)
         {
-            Rect world = node.worldBound;
+            VisualElement bordered = node.Q("node-border") ?? node;
+            Rect world = bordered.worldBound;
             Vector2 min = this.WorldToLocal(new Vector2(world.xMin, world.yMin));
             Vector2 max = this.WorldToLocal(new Vector2(world.xMax, world.yMax));
             return new Rect(min, max - min);
