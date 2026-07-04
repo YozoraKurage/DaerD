@@ -76,10 +76,12 @@ GridBackground {
 }
 
 /* Compact node form shared by state and Entry/Exit/Any State nodes: no title bar,
-   small left/right ports, a fixed width, and the name centred in a text column. */
+   small left/right ports, a fixed width, and the name centred in a text column. No
+   min-height on the outer element — that let the border sit noticeably taller than
+   the two-line text and exposed a strip of node background below the motion label.
+   Node height is now driven by content (special nodes pin #node-border below). */
 .compact-node {
     width: 180px;
-    min-height: 46px;
 }
 
 .compact-node #title {
@@ -87,6 +89,13 @@ GridBackground {
 }
 
 .compact-node #divider {
+    display: none;
+}
+
+/* The stock extension (#bottom / extensionContainer) has no children on either node
+   type. RefreshExpandedState() usually hides it, but on some Unity versions the empty
+   container still contributes a few pixels below the port row — drop it outright. */
+.compact-node #extension {
     display: none;
 }
 
@@ -145,11 +154,12 @@ GridBackground {
     font-size: 14px;
 }
 
-/* The name label only fills the node (as the comment above intends) if its containers stretch
-   too; otherwise a strip of node background shows below it. Stretch the content row so the
-   colour block reaches the full node height — no leftover space at the bottom. */
-.special-node #contents,
-.special-node #top {
+/* Stretch the content row to the full node height so text centres vertically — otherwise
+   #top only takes its natural size and the two-line text (name + motion) hugs the top,
+   leaving a strip of node background exposed below. For special nodes, this also lets the
+   name label's colour block reach the full height. */
+.compact-node #contents,
+.compact-node #top {
     flex-grow: 1;
 }
 
