@@ -20,6 +20,10 @@ namespace Yozolab.DaerD
     {
         const string PrefKey = "Yozolab.DaerD.Language";
 
+        // Tr runs many times per IMGUI repaint; resolve the language once instead of hitting
+        // EditorPrefs on every call. Invalidated by the setter, reset naturally on domain reload.
+        static bool? s_isJapanese;
+
         /// <summary>Fired when the user changes the language preference; UI rebuilds itself.</summary>
         public static event Action LanguageChanged;
 
@@ -30,13 +34,24 @@ namespace Yozolab.DaerD
             {
                 if (value == Language) return;
                 EditorPrefs.SetInt(PrefKey, (int)value);
+                s_isJapanese = null;
                 LanguageChanged?.Invoke();
             }
         }
 
-        public static bool IsJapanese =>
-            Language == DaerDLanguage.Japanese ||
-            (Language == DaerDLanguage.Auto && Application.systemLanguage == SystemLanguage.Japanese);
+        public static bool IsJapanese
+        {
+            get
+            {
+                if (!s_isJapanese.HasValue)
+                {
+                    var language = Language;
+                    s_isJapanese = language == DaerDLanguage.Japanese ||
+                        (language == DaerDLanguage.Auto && Application.systemLanguage == SystemLanguage.Japanese);
+                }
+                return s_isJapanese.Value;
+            }
+        }
 
         public static string Tr(string english) =>
             IsJapanese && Ja.TryGetValue(english, out var ja) ? ja : english;

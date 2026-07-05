@@ -182,19 +182,21 @@ namespace Yozolab.DaerD
                 SetLayer(layerIndex);
                 willRebuild = true;
             }
-            if (stateMachinePath != null)
+            if (stateMachinePath != null && !PathEquals(stateMachinePath))
             {
-                // Drill down to the owning state machine. Skip index 0 — that's the layer's
-                // root SM which SetLayer / RebuildPath already lands us on.
+                // Make the drill path exactly the requested one. Pop back to the layer root
+                // first — the current view may be deeper than, or a sibling of, the target
+                // (in which case just Entering the missing machines would corrupt the path).
+                if (StateMachinePath.Count > 1)
+                    GoToBreadcrumb(0);
+                // Skip index 0 — that's the layer's root SM which SetLayer / RebuildPath
+                // already lands us on.
                 for (int i = 1; i < stateMachinePath.Count; i++)
                 {
-                    var sm = stateMachinePath[i];
-                    if (sm != null && !StateMachinePath.Contains(sm))
-                    {
-                        EnterStateMachine(sm);
-                        willRebuild = true;
-                    }
+                    if (stateMachinePath[i] != null)
+                        EnterStateMachine(stateMachinePath[i]);
                 }
+                willRebuild = true;
             }
 
             if (target == null) return;
@@ -217,6 +219,15 @@ namespace Yozolab.DaerD
                 RequestFrameOn(target);
             };
             GraphRebuilt += handler;
+        }
+
+        /// <summary>True when the current drill path already matches <paramref name="path"/> exactly.</summary>
+        bool PathEquals(IList<AnimatorStateMachine> path)
+        {
+            if (path.Count != StateMachinePath.Count) return false;
+            for (int i = 0; i < path.Count; i++)
+                if (path[i] != StateMachinePath[i]) return false;
+            return true;
         }
 
         public void NotifyGraphStructureChanged() => GraphStructureChanged?.Invoke();

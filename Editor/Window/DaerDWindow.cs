@@ -20,11 +20,16 @@ namespace Yozolab.DaerD
         [SerializeField] List<int> _openControllerLayers = new List<int>();
 
         DaerDContext _context;
-        VisualElement _toolbar;
         VisualElement _tabBar;
-        // Toolbar toggle states survive the toolbar rebuild that a language change triggers.
-        bool _selectSyncOn = true;
-        bool _previewOn;
+        // Kept so a language change can restamp their labels in place. Rebuilding the toolbar
+        // instead would re-fire the toggle callbacks (opening the Animation window as a side
+        // effect) and reset toggle state.
+        ToolbarToggle _selectSyncToggle;
+        ToolbarToggle _previewToggle;
+        ToolbarButton _frameAllButton;
+        ToolbarButton _analyzeButton;
+        ToolbarButton _settingsButton;
+        StateSearchField _searchField;
         AnimatorGraphView _graphView;
         BlendTreeGraphView _blendTreeView;
         VisualElement _graphHost;
@@ -226,8 +231,7 @@ namespace Yozolab.DaerD
             if (styleSheet != null)
                 rootVisualElement.styleSheets.Add(styleSheet);
 
-            _toolbar = BuildToolbar();
-            rootVisualElement.Add(_toolbar);
+            rootVisualElement.Add(BuildToolbar());
             L.LanguageChanged -= OnLanguageChanged;   // CreateGUI can run again after a reload
             L.LanguageChanged += OnLanguageChanged;
 
@@ -319,73 +323,73 @@ namespace Yozolab.DaerD
             spacer.style.flexGrow = 1;
             toolbar.Add(spacer);
 
-            toolbar.Add(new StateSearchField(_context, rootVisualElement));
+            _searchField = new StateSearchField(_context, rootVisualElement);
+            toolbar.Add(_searchField);
 
             // Pushes the selected State's AnimationClip into the Animation window. On by
             // default so first-time users see the sync land immediately; opening the DD window
             // will auto-open the Animation window as part of enabling the sync.
-            var selectSyncToggle = new ToolbarToggle
-            {
-                text = L.Tr("Select Sync"),
-                tooltip = L.Tr("Sync the Animation window's clip to the selected State's AnimationClip"),
-            };
-            selectSyncToggle.AddToClassList("dd-toolbar-item");
-            selectSyncToggle.RegisterValueChangedCallback(evt =>
-            {
-                _selectSyncOn = evt.newValue;
-                _animationSync.SetEnabled(evt.newValue);
-            });
-            selectSyncToggle.value = _selectSyncOn;   // default ON; fires the callback above
-            toolbar.Add(selectSyncToggle);
+            _selectSyncToggle = new ToolbarToggle();
+            _selectSyncToggle.AddToClassList("dd-toolbar-item");
+            _selectSyncToggle.RegisterValueChangedCallback(evt => _animationSync.SetEnabled(evt.newValue));
+            toolbar.Add(_selectSyncToggle);
 
             // Preview presupposes Select Sync — without the clip push, there's no new clip for
             // Preview to re-toggle against. Flipping Preview on therefore auto-flips Select Sync
             // on too; flipping Preview off leaves Select Sync where the user had it.
-            var previewToggle = new ToolbarToggle
+            _previewToggle = new ToolbarToggle();
+            _previewToggle.AddToClassList("dd-toolbar-item");
+            _previewToggle.RegisterValueChangedCallback(evt =>
             {
-                text = L.Tr("Preview"),
-                tooltip = L.Tr("Auto-toggle the Animation window's Preview on clip change. " +
-                          "Implies Select Sync. Requires a scene GameObject with an Animator " +
-                          "running this controller to be selected — Unity's preview can't run " +
-                          "without a target."),
-            };
-            previewToggle.AddToClassList("dd-toolbar-item");
-            previewToggle.RegisterValueChangedCallback(evt =>
-            {
-                _previewOn = evt.newValue;
-                if (evt.newValue && !selectSyncToggle.value)
-                    selectSyncToggle.value = true;   // also fires its own ValueChanged → SelectSync ON
+                if (evt.newValue && !_selectSyncToggle.value)
+                    _selectSyncToggle.value = true;   // also fires its own ValueChanged → SelectSync ON
                 _statePreview.SetEnabled(evt.newValue);
             });
-            previewToggle.value = _previewOn;
-            toolbar.Add(previewToggle);
+            toolbar.Add(_previewToggle);
 
             // Layout (Grid / Hierarchical / Align Selected) lives in the graph's right-click menu now.
-            var frameAllButton = new ToolbarButton(() => _graphView.FrameAll()) { text = L.Tr("Frame All") };
-            frameAllButton.AddToClassList("dd-toolbar-item");
-            toolbar.Add(frameAllButton);
-            var analyzeButton = new ToolbarButton(() => _inspectorPanel.ShowAnalysis()) { text = L.Tr("Analyze") };
-            analyzeButton.AddToClassList("dd-toolbar-item");
-            toolbar.Add(analyzeButton);
-            var settingsButton = new ToolbarButton(
-                () => SettingsService.OpenUserPreferences(DaerDSettingsProvider.Path)) { text = L.Tr("Settings") };
-            settingsButton.AddToClassList("dd-toolbar-item");
-            toolbar.Add(settingsButton);
+            _frameAllButton = new ToolbarButton(() => _graphView.FrameAll());
+            _frameAllButton.AddToClassList("dd-toolbar-item");
+            toolbar.Add(_frameAllButton);
+            _analyzeButton = new ToolbarButton(() => _inspectorPanel.ShowAnalysis());
+            _analyzeButton.AddToClassList("dd-toolbar-item");
+            toolbar.Add(_analyzeButton);
+            _settingsButton = new ToolbarButton(
+                () => SettingsService.OpenUserPreferences(DaerDSettingsProvider.Path));
+            _settingsButton.AddToClassList("dd-toolbar-item");
+            toolbar.Add(_settingsButton);
+
+            ApplyToolbarTexts();
+            _selectSyncToggle.value = true;   // default ON; fires the callback above
 
             return toolbar;
         }
 
-        /// <summary>Rebuilds the toolbar (and the labels living in it) in place after a language change.</summary>
+        /// <summary>(Re)stamps the localized toolbar labels; used at build time and on language change.</summary>
+        void ApplyToolbarTexts()
+        {
+            _selectSyncToggle.text = L.Tr("Select Sync");
+            _selectSyncToggle.tooltip =
+                L.Tr("Sync the Animation window's clip to the selected State's AnimationClip");
+            _previewToggle.text = L.Tr("Preview");
+            _previewToggle.tooltip =
+                L.Tr("Auto-toggle the Animation window's Preview on clip change. " +
+                     "Implies Select Sync. Requires a scene GameObject with an Animator " +
+                     "running this controller to be selected — Unity's preview can't run " +
+                     "without a target.");
+            _frameAllButton.text = L.Tr("Frame All");
+            _analyzeButton.text = L.Tr("Analyze");
+            _settingsButton.text = L.Tr("Settings");
+            _searchField.RefreshTooltip();
+        }
+
+        /// <summary>Restamps localized labels in place — no rebuild, so toggle state and the
+        /// subsystems they drive are untouched.</summary>
         void OnLanguageChanged()
         {
-            if (_toolbar == null || _toolbar.parent == null) return;
-            int index = _toolbar.parent.IndexOf(_toolbar);
-            var parent = _toolbar.parent;
-            _toolbar.RemoveFromHierarchy();
-            _toolbar = BuildToolbar();
-            parent.Insert(index, _toolbar);
-            RefreshBreadcrumb();
-            RefreshTabBar();
+            if (_selectSyncToggle == null) return;
+            ApplyToolbarTexts();
+            RefreshTabBar();   // "Close tab" tooltips
         }
 
         void RefreshBreadcrumb()

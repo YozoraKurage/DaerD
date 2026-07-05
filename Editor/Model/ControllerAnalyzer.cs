@@ -10,7 +10,7 @@ namespace Yozolab.DaerD
     {
         public enum Severity { Info, Warning, Error }
 
-        /// <summary>Stable machine-readable issue type; <see cref="Issue.category"/> is its localized label.</summary>
+        /// <summary>Stable machine-readable issue type; <see cref="CategoryLabel"/> gives its localized label.</summary>
         public enum Kind
         {
             UnusedParameter,
@@ -31,7 +31,6 @@ namespace Yozolab.DaerD
         {
             public Kind kind;
             public Severity severity;
-            public string category;
             public string message;
             public Object context;
             /// <summary>Optional one-click repair. Runs its own Undo registration; the caller
@@ -39,6 +38,27 @@ namespace Yozolab.DaerD
             public System.Action fix;
             public string fixLabel;
             public string fixTooltip;
+        }
+
+        /// <summary>Localized display label for an issue kind, resolved at display time.</summary>
+        public static string CategoryLabel(Kind kind)
+        {
+            switch (kind)
+            {
+                case Kind.UnusedParameter: return L.Tr("Unused Parameter");
+                case Kind.InvalidCondition: return L.Tr("Invalid Condition");
+                case Kind.DeadTransition: return L.Tr("Dead Transition");
+                case Kind.UnreachableState: return L.Tr("Unreachable State");
+                case Kind.DuplicateName: return L.Tr("Duplicate Name");
+                case Kind.TerminalStates: return L.Tr("Terminal States");
+                case Kind.WriteDefaults: return L.Tr("WriteDefaults");
+                case Kind.MissingMotion: return L.Tr("Missing Motion");
+                case Kind.EmptyLayer: return L.Tr("Empty Layer");
+                case Kind.LayerWeight: return L.Tr("Layer Weight");
+                case Kind.MissingBehaviour: return L.Tr("Missing Behaviour");
+                case Kind.DuplicateCondition: return L.Tr("Duplicate Condition");
+            }
+            return kind.ToString();
         }
 
         public static HashSet<string> CollectReferencedParameters(AnimatorController controller)
@@ -105,17 +125,15 @@ namespace Yozolab.DaerD
         {
             foreach (var name in FindUnusedParameters(controller))
             {
-                string captured = name;
                 issues.Add(new Issue
                 {
                     severity = Severity.Info,
                     kind = Kind.UnusedParameter,
-                    category = L.Tr("Unused Parameter"),
                     message = L.Tr("Parameter '{0}' is never referenced.", name),
                     context = controller,
                     fixLabel = L.Tr("Delete"),
                     fixTooltip = L.Tr("Delete this unused parameter"),
-                    fix = () => RemoveParameterByName(controller, captured),
+                    fix = () => RemoveParameterByName(controller, name),
                 });
             }
         }
@@ -150,7 +168,6 @@ namespace Yozolab.DaerD
                         {
                             severity = Severity.Error,
                             kind = Kind.InvalidCondition,
-                            category = L.Tr("Invalid Condition"),
                             message = L.Tr("Condition references missing parameter '{0}'.", c.parameter),
                             context = t,
                         });
@@ -161,28 +178,23 @@ namespace Yozolab.DaerD
                         {
                             severity = Severity.Error,
                             kind = Kind.InvalidCondition,
-                            category = L.Tr("Invalid Condition"),
                             message = L.Tr("Mode '{0}' is invalid for {1} parameter '{2}'.", c.mode, type, c.parameter),
                             context = t,
                         });
                 }
 
                 if (HasDuplicateConditions(t))
-                {
-                    var captured = t;
                     issues.Add(new Issue
                     {
                         severity = Severity.Info,
                         kind = Kind.DuplicateCondition,
-                        category = L.Tr("Duplicate Condition"),
                         message = L.Tr("Transition {0} has duplicate conditions.",
                             ParameterConverter.DescribeTransition(t)),
                         context = t,
                         fixLabel = L.Tr("Fix"),
                         fixTooltip = L.Tr("Remove the duplicate conditions"),
-                        fix = () => RemoveDuplicateConditions(captured),
+                        fix = () => RemoveDuplicateConditions(t),
                     });
-                }
             }
         }
 
@@ -222,21 +234,13 @@ namespace Yozolab.DaerD
             // Walked with owners (unlike AllTransitions) so the fix can actually detach the
             // transition from the state / state machine that holds it.
             foreach (var sm in controller.AllStateMachines())
-            {
-                var capturedSm = sm;
                 foreach (var t in sm.anyStateTransitions)
                     if (IsDeadTransition(t))
-                        issues.Add(MakeDeadTransitionIssue(t,
-                            () => RemoveOwnedTransition(capturedSm, null, t)));
-            }
+                        issues.Add(MakeDeadTransitionIssue(t, () => RemoveOwnedTransition(sm, t)));
             foreach (var state in controller.AllStates())
-            {
-                var capturedState = state;
                 foreach (var t in state.transitions)
                     if (IsDeadTransition(t))
-                        issues.Add(MakeDeadTransitionIssue(t,
-                            () => RemoveOwnedTransition(null, capturedState, t)));
-            }
+                        issues.Add(MakeDeadTransitionIssue(t, () => RemoveOwnedTransition(state, t)));
         }
 
         static bool IsDeadTransition(AnimatorStateTransition t) =>
@@ -246,7 +250,6 @@ namespace Yozolab.DaerD
         {
             severity = Severity.Warning,
             kind = Kind.DeadTransition,
-            category = L.Tr("Dead Transition"),
             message = L.Tr("Transition {0} has no conditions and no exit time; it can never fire.",
                 ParameterConverter.DescribeTransition(t)),
             context = t,
@@ -255,22 +258,20 @@ namespace Yozolab.DaerD
             fix = fix,
         };
 
-        static void RemoveOwnedTransition(AnimatorStateMachine anyStateOwner, AnimatorState stateOwner,
-            AnimatorStateTransition transition)
+        static void RemoveOwnedTransition(AnimatorStateMachine anyStateOwner, AnimatorStateTransition transition)
         {
-            if (transition == null) return;
-            if (anyStateOwner != null)
-            {
-                Undo.RegisterCompleteObjectUndo(anyStateOwner, "Delete Transition");
-                anyStateOwner.RemoveAnyStateTransition(transition);
-                EditorUtility.SetDirty(anyStateOwner);
-            }
-            else if (stateOwner != null)
-            {
-                Undo.RegisterCompleteObjectUndo(stateOwner, "Delete Transition");
-                stateOwner.RemoveTransition(transition);
-                EditorUtility.SetDirty(stateOwner);
-            }
+            if (anyStateOwner == null || transition == null) return;
+            Undo.RegisterCompleteObjectUndo(anyStateOwner, "Delete Transition");
+            anyStateOwner.RemoveAnyStateTransition(transition);
+            EditorUtility.SetDirty(anyStateOwner);
+        }
+
+        static void RemoveOwnedTransition(AnimatorState owner, AnimatorStateTransition transition)
+        {
+            if (owner == null || transition == null) return;
+            Undo.RegisterCompleteObjectUndo(owner, "Delete Transition");
+            owner.RemoveTransition(transition);
+            EditorUtility.SetDirty(owner);
         }
 
         static void AddUnreachableStateIssues(AnimatorController controller, List<Issue> issues)
@@ -286,7 +287,6 @@ namespace Yozolab.DaerD
                     {
                         severity = Severity.Warning,
                         kind = Kind.UnreachableState,
-                        category = L.Tr("Unreachable State"),
                         message = L.Tr("State '{0}' has no incoming transition and is not a default state.", s.name),
                         context = s,
                     });
@@ -305,7 +305,6 @@ namespace Yozolab.DaerD
                         {
                             severity = Severity.Warning,
                             kind = Kind.DuplicateName,
-                            category = L.Tr("Duplicate Name"),
                             message = L.Tr("State name '{0}' is used more than once in '{1}'.", cs.state.name, sm.name),
                             context = cs.state,
                         });
@@ -330,7 +329,6 @@ namespace Yozolab.DaerD
                     {
                         severity = Severity.Warning,
                         kind = Kind.WriteDefaults,
-                        category = L.Tr("WriteDefaults"),
                         message = L.Tr("Layer '{0}' mixes Write Defaults ON and OFF across its states.", layer.name),
                         context = controller,
                     });
@@ -349,7 +347,6 @@ namespace Yozolab.DaerD
                     {
                         severity = Severity.Warning,
                         kind = Kind.MissingMotion,
-                        category = L.Tr("Missing Motion"),
                         message = L.Tr("State '{0}' has no motion assigned.", s.name),
                         context = s,
                     });
@@ -374,7 +371,6 @@ namespace Yozolab.DaerD
                 {
                     severity = Severity.Warning,
                     kind = Kind.MissingMotion,
-                    category = L.Tr("Missing Motion"),
                     message = L.Tr("Blend tree '{0}' in state '{1}' has a child slot with no motion.",
                         tree.name, owner.name),
                     context = tree,
@@ -388,16 +384,19 @@ namespace Yozolab.DaerD
             {
                 var layer = layers[i];
 
+                // A synced layer mirrors its source layer's states and has no state machine
+                // of its own — "contains no states" would be a false positive there.
+                bool synced = layer.syncedLayerIndex >= 0;
+
                 bool hasState = false;
                 if (layer.stateMachine != null)
                     foreach (var sm in layer.stateMachine.SelfAndDescendants())
                         if (sm.states.Length > 0) { hasState = true; break; }
-                if (!hasState)
+                if (!hasState && !synced)
                     issues.Add(new Issue
                     {
                         severity = Severity.Info,
                         kind = Kind.EmptyLayer,
-                        category = L.Tr("Empty Layer"),
                         message = L.Tr("Layer '{0}' contains no states.", layer.name),
                         context = controller,
                     });
@@ -409,7 +408,6 @@ namespace Yozolab.DaerD
                     {
                         severity = Severity.Info,
                         kind = Kind.LayerWeight,
-                        category = L.Tr("Layer Weight"),
                         message = L.Tr(
                             "Layer '{0}' has default weight 0; it has no effect until its weight is raised at runtime.",
                             layer.name),
@@ -420,38 +418,25 @@ namespace Yozolab.DaerD
 
         static void AddMissingBehaviourIssues(AnimatorController controller, List<Issue> issues)
         {
+            Issue Make(string message, Object context, System.Action fix) => new Issue
+            {
+                severity = Severity.Error,
+                kind = Kind.MissingBehaviour,
+                message = message,
+                context = context,
+                fixLabel = L.Tr("Fix"),
+                fixTooltip = L.Tr("Remove the missing behaviour entries"),
+                fix = fix,
+            };
+
             foreach (var s in controller.AllStates())
-            {
-                if (!HasNullEntry(s.behaviours)) continue;
-                var captured = s;
-                issues.Add(new Issue
-                {
-                    severity = Severity.Error,
-                    kind = Kind.MissingBehaviour,
-                    category = L.Tr("Missing Behaviour"),
-                    message = L.Tr("State '{0}' has a missing (null) behaviour script.", s.name),
-                    context = s,
-                    fixLabel = L.Tr("Fix"),
-                    fixTooltip = L.Tr("Remove the missing behaviour entries"),
-                    fix = () => StripNullBehaviours(captured, null),
-                });
-            }
+                if (HasNullEntry(s.behaviours))
+                    issues.Add(Make(L.Tr("State '{0}' has a missing (null) behaviour script.", s.name),
+                        s, () => StripNullBehaviours(s)));
             foreach (var sm in controller.AllStateMachines())
-            {
-                if (!HasNullEntry(sm.behaviours)) continue;
-                var captured = sm;
-                issues.Add(new Issue
-                {
-                    severity = Severity.Error,
-                    kind = Kind.MissingBehaviour,
-                    category = L.Tr("Missing Behaviour"),
-                    message = L.Tr("State machine '{0}' has a missing (null) behaviour script.", sm.name),
-                    context = sm,
-                    fixLabel = L.Tr("Fix"),
-                    fixTooltip = L.Tr("Remove the missing behaviour entries"),
-                    fix = () => StripNullBehaviours(null, captured),
-                });
-            }
+                if (HasNullEntry(sm.behaviours))
+                    issues.Add(Make(L.Tr("State machine '{0}' has a missing (null) behaviour script.", sm.name),
+                        sm, () => StripNullBehaviours(sm)));
         }
 
         static bool HasNullEntry(StateMachineBehaviour[] behaviours)
@@ -462,20 +447,20 @@ namespace Yozolab.DaerD
             return false;
         }
 
-        static void StripNullBehaviours(AnimatorState state, AnimatorStateMachine sm)
+        static void StripNullBehaviours(AnimatorState state)
         {
-            if (state != null)
-            {
-                Undo.RegisterCompleteObjectUndo(state, "Remove Missing Behaviours");
-                state.behaviours = WithoutNulls(state.behaviours);
-                EditorUtility.SetDirty(state);
-            }
-            else if (sm != null)
-            {
-                Undo.RegisterCompleteObjectUndo(sm, "Remove Missing Behaviours");
-                sm.behaviours = WithoutNulls(sm.behaviours);
-                EditorUtility.SetDirty(sm);
-            }
+            if (state == null) return;
+            Undo.RegisterCompleteObjectUndo(state, "Remove Missing Behaviours");
+            state.behaviours = WithoutNulls(state.behaviours);
+            EditorUtility.SetDirty(state);
+        }
+
+        static void StripNullBehaviours(AnimatorStateMachine sm)
+        {
+            if (sm == null) return;
+            Undo.RegisterCompleteObjectUndo(sm, "Remove Missing Behaviours");
+            sm.behaviours = WithoutNulls(sm.behaviours);
+            EditorUtility.SetDirty(sm);
         }
 
         static StateMachineBehaviour[] WithoutNulls(StateMachineBehaviour[] behaviours)
@@ -558,7 +543,6 @@ namespace Yozolab.DaerD
                 {
                     severity = Severity.Info,
                     kind = Kind.TerminalStates,
-                    category = L.Tr("Terminal States"),
                     message = L.Tr("Layer '{0}': once entered, '{1}' can never be left (no outgoing transition or exit).",
                         layer.name, list),
                     context = context[c],

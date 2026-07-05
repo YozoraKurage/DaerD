@@ -25,25 +25,39 @@ namespace Yozolab.DaerD
             _context = context;
             _popupHost = popupHost;
 
-            _field = new ToolbarSearchField { tooltip = L.Tr("Search states (name or motion)") };
+            _field = new ToolbarSearchField();
             _field.style.width = 170;
             _field.AddToClassList("dd-toolbar-item");
             Add(_field);
+            RefreshTooltip();
 
             _field.RegisterValueChangedCallback(evt => RefreshResults(evt.newValue));
             _field.RegisterCallback<KeyDownEvent>(OnKeyDown, TrickleDown.TrickleDown);
 
-            _context.ControllerChanged += ClosePopup;
-            _context.LayerChanged += ClosePopup;
+            // Results and query text refer to the outgoing controller / layer — drop both,
+            // or a later Enter would navigate with a stale path into the new controller.
+            _context.ControllerChanged += ResetSearch;
+            _context.LayerChanged += ResetSearch;
 
-            // The popup must not outlive the toolbar (window closed, toolbar rebuilt on
-            // language change) — it lives on the window root, not under this element.
+            // The popup must not outlive the toolbar (window closed) — it lives on the
+            // window root, not under this element.
             RegisterCallback<DetachFromPanelEvent>(_ =>
             {
                 ClosePopup();
-                _context.ControllerChanged -= ClosePopup;
-                _context.LayerChanged -= ClosePopup;
+                _context.ControllerChanged -= ResetSearch;
+                _context.LayerChanged -= ResetSearch;
             });
+        }
+
+        /// <summary>Re-reads the localized tooltip; called by the window on language change.</summary>
+        public void RefreshTooltip() => _field.tooltip = L.Tr("Search states (name or motion)");
+
+        /// <summary>Clears the query, the cached results and the popup.</summary>
+        void ResetSearch()
+        {
+            ClosePopup();
+            _results.Clear();
+            _field.SetValueWithoutNotify(string.Empty);
         }
 
         void OnKeyDown(KeyDownEvent evt)

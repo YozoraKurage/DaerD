@@ -36,7 +36,10 @@ namespace Yozolab.DaerD
         {
             _graphView = graphView;
             context.SelectionChanged += OnSelectionChanged;
-            context.ControllerChanged += Refresh;
+            // Analysis results (and the destructive fix delegates captured in them) belong to
+            // the outgoing controller — drop them, or a Fix click after a tab switch would
+            // silently mutate the previous asset.
+            context.ControllerChanged += ClearAnalysis;
             context.GraphStructureChanged += Refresh;
             context.GraphRebuilt += Refresh;
             context.ParametersChanged += Refresh;
@@ -55,6 +58,12 @@ namespace Yozolab.DaerD
                 // next IMGUI repaint redraws the controls fresh against the new transition(s).
                 EndConditionInput();
             }
+            Refresh();
+        }
+
+        void ClearAnalysis()
+        {
+            _issues = null;
             Refresh();
         }
 
@@ -1796,13 +1805,13 @@ namespace Yozolab.DaerD
                 return;
             }
 
-            DrawIssueFilter(out int shownMask);
+            DrawIssueFilter();
 
             bool anyShown = false;
             // Errors first — the filter toggles double as a legend, so keep the same order here.
             foreach (var severity in IssueSeverityOrder)
             {
-                if ((shownMask & (1 << (int)severity)) == 0) continue;
+                if (!IsSeverityShown(severity)) continue;
                 foreach (var issue in _issues)
                 {
                     if (issue.severity != severity) continue;
@@ -1822,8 +1831,13 @@ namespace Yozolab.DaerD
             ControllerAnalyzer.Severity.Info,
         };
 
-        /// <summary>Toggle row with per-severity counts; returns a bitmask of severities to show.</summary>
-        void DrawIssueFilter(out int shownMask)
+        static bool IsSeverityShown(ControllerAnalyzer.Severity severity) =>
+            severity == ControllerAnalyzer.Severity.Error ? s_showErrors
+            : severity == ControllerAnalyzer.Severity.Warning ? s_showWarnings
+            : s_showInfo;
+
+        /// <summary>Toggle row with per-severity counts, plus the copy-report button.</summary>
+        void DrawIssueFilter()
         {
             int errors = 0, warnings = 0, infos = 0;
             foreach (var issue in _issues)
@@ -1841,10 +1855,6 @@ namespace Yozolab.DaerD
                     EditorStyles.miniButton, GUILayout.Width(60)))
                 CopyIssueReport();
             EditorGUILayout.EndHorizontal();
-
-            shownMask = (s_showErrors ? 1 << (int)ControllerAnalyzer.Severity.Error : 0)
-                | (s_showWarnings ? 1 << (int)ControllerAnalyzer.Severity.Warning : 0)
-                | (s_showInfo ? 1 << (int)ControllerAnalyzer.Severity.Info : 0);
         }
 
         void DrawIssueRow(ControllerAnalyzer.Issue issue)
@@ -1853,7 +1863,8 @@ namespace Yozolab.DaerD
                 : issue.severity == ControllerAnalyzer.Severity.Warning ? MessageType.Warning
                 : MessageType.None;
             EditorGUILayout.BeginHorizontal();
-            EditorGUILayout.HelpBox("[" + issue.category + "] " + issue.message, messageType);
+            EditorGUILayout.HelpBox(
+                "[" + ControllerAnalyzer.CategoryLabel(issue.kind) + "] " + issue.message, messageType);
             var buttons = new GUILayoutOption[] { GUILayout.Width(46), GUILayout.Height(issue.fix != null ? 19 : 38) };
             if (issue.fix != null || issue.context != null)
             {
@@ -1882,7 +1893,8 @@ namespace Yozolab.DaerD
             foreach (var severity in IssueSeverityOrder)
                 foreach (var issue in _issues)
                     if (issue.severity == severity)
-                        sb.AppendLine($"[{issue.severity}] [{issue.category}] {issue.message}");
+                        sb.AppendLine(
+                            $"[{issue.severity}] [{ControllerAnalyzer.CategoryLabel(issue.kind)}] {issue.message}");
             EditorGUIUtility.systemCopyBuffer = sb.ToString();
         }
 
