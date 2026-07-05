@@ -92,13 +92,28 @@ namespace Yozolab.DaerD.Tests
         public void MissingMotion_StateWithoutMotion_IsFlagged()
         {
             var controller = NewController(out var sm);
-            sm.AddState("Bare");
+            sm.AddState("Bare").writeDefaultValues = true;
 
             var issues = OfKind(controller, ControllerAnalyzer.Kind.MissingMotion);
 
             Assert.AreEqual(1, issues.Count);
             StringAssert.Contains("'Bare'", issues[0].message);
             Assert.AreEqual(ControllerAnalyzer.Severity.Warning, issues[0].severity);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void MissingMotion_OnWriteDefaultsOffState_IsAnError()
+        {
+            var controller = NewController(out var sm);
+            sm.AddState("Frozen").writeDefaultValues = false;
+
+            var issues = OfKind(controller, ControllerAnalyzer.Kind.MissingMotion);
+
+            Assert.AreEqual(1, issues.Count);
+            StringAssert.Contains("'Frozen'", issues[0].message);
+            Assert.AreEqual(ControllerAnalyzer.Severity.Error, issues[0].severity);
 
             Object.DestroyImmediate(controller);
         }

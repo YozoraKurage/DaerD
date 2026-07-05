@@ -113,6 +113,8 @@ namespace Yozolab.DaerD
                 "レイヤー '{0}' のステートで Write Defaults の ON と OFF が混在しています。",
             ["State '{0}' has no motion assigned."] =
                 "ステート '{0}' にモーションが設定されていません。",
+            ["State '{0}' has Write Defaults OFF and no motion; animated properties freeze at their last value while it plays."] =
+                "ステート '{0}' は Write Defaults が OFF なのにモーションが未設定です。再生中、アニメーション対象のプロパティが直前の値のまま固まります。",
             ["Blend tree '{0}' in state '{1}' has a child slot with no motion."] =
                 "ステート '{1}' のブレンドツリー '{0}' にモーション未設定の子スロットがあります。",
             ["Layer '{0}' contains no states."] =

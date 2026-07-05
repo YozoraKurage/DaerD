@@ -343,11 +343,17 @@ namespace Yozolab.DaerD
             {
                 if (s.motion == null)
                 {
+                    // With Write Defaults OFF an empty state samples nothing and writes
+                    // nothing back, so every animated property freezes at its last value —
+                    // that's a real malfunction, not a cosmetic gap.
+                    bool wdOff = !s.writeDefaultValues;
                     issues.Add(new Issue
                     {
-                        severity = Severity.Warning,
+                        severity = wdOff ? Severity.Error : Severity.Warning,
                         kind = Kind.MissingMotion,
-                        message = L.Tr("State '{0}' has no motion assigned.", s.name),
+                        message = wdOff
+                            ? L.Tr("State '{0}' has Write Defaults OFF and no motion; animated properties freeze at their last value while it plays.", s.name)
+                            : L.Tr("State '{0}' has no motion assigned.", s.name),
                         context = s,
                     });
                     continue;
