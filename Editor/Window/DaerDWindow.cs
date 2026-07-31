@@ -184,7 +184,15 @@ namespace Yozolab.DaerD
 
                 tab.RegisterCallback<MouseDownEvent>(evt =>
                 {
-                    if (evt.button == 0) { ActivateController(captured); evt.StopPropagation(); }
+                    if (evt.button == 0)
+                    {
+                        // The first click activates the tab (and rebuilds this bar); the second
+                        // still arrives with clickCount 2 because UI Toolkit tracks click count
+                        // per pointer, not per element.
+                        if (evt.clickCount == 2) EditorGUIUtility.PingObject(captured);
+                        else ActivateController(captured);
+                        evt.StopPropagation();
+                    }
                     else if (evt.button == 2) { CloseController(captured); evt.StopPropagation(); }   // middle-click
                 });
                 close.RegisterCallback<MouseDownEvent>(evt =>
@@ -275,6 +283,13 @@ namespace Yozolab.DaerD
             mainSplit.Add(centerRightSplit);
             rootVisualElement.Add(mainSplit);
 
+            // Shift + scroll steps through the controller's layers (scroll down = next layer).
+            // TrickleDown on the root so the graph view's zoom never sees the event while Shift
+            // is held; unregister first because CreateGUI can run again after a domain reload
+            // and rootVisualElement.Clear() does not remove callbacks on the root itself.
+            rootVisualElement.UnregisterCallback<WheelEvent>(OnShiftScroll, TrickleDown.TrickleDown);
+            rootVisualElement.RegisterCallback<WheelEvent>(OnShiftScroll, TrickleDown.TrickleDown);
+
             _context.LayerChanged += RefreshBreadcrumb;
             _context.StateMachinePathChanged += RefreshBreadcrumb;
             _context.BlendTreePathChanged += RefreshBreadcrumb;
@@ -302,6 +317,23 @@ namespace Yozolab.DaerD
             }
 
             RefreshTabBar();
+        }
+
+        void OnShiftScroll(WheelEvent evt)
+        {
+            if (!evt.shiftKey || _context == null || _context.Controller == null) return;
+            // Consume every Shift+wheel so the gesture never zooms the graph, even when the
+            // layer index is already clamped at either end of the list.
+            evt.StopPropagation();
+
+            // Some platforms deliver Shift+wheel as a horizontal delta.
+            float delta = Mathf.Abs(evt.delta.y) >= Mathf.Abs(evt.delta.x) ? evt.delta.y : evt.delta.x;
+            if (Mathf.Approximately(delta, 0f)) return;
+
+            int count = _context.Controller.layers.Length;
+            int next = Mathf.Clamp(_context.LayerIndex + (delta > 0f ? 1 : -1), 0, Mathf.Max(0, count - 1));
+            if (next != _context.LayerIndex)
+                _context.SetLayer(next);
         }
 
         void SyncSerializedState()

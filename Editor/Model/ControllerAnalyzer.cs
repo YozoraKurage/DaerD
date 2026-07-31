@@ -33,6 +33,9 @@ namespace Yozolab.DaerD
             public Severity severity;
             public string message;
             public Object context;
+            /// <summary>For layer-scoped issues whose context is the controller itself, the
+            /// layer the message talks about — lets Ping open that layer. -1 when unset.</summary>
+            public int layerIndex = -1;
             /// <summary>Optional one-click repair. Runs its own Undo registration; the caller
             /// re-analyzes afterwards, so the delegate doesn't need to update any UI.</summary>
             public System.Action fix;
@@ -314,8 +317,10 @@ namespace Yozolab.DaerD
 
         static void AddWriteDefaultsIssues(AnimatorController controller, List<Issue> issues)
         {
-            foreach (var layer in controller.layers)
+            var layers = controller.layers;
+            for (int li = 0; li < layers.Length; li++)
             {
+                var layer = layers[li];
                 bool hasTrue = false, hasFalse = false;
                 foreach (var sm in layer.stateMachine.SelfAndDescendants())
                     foreach (var cs in sm.states)
@@ -331,6 +336,7 @@ namespace Yozolab.DaerD
                         kind = Kind.WriteDefaults,
                         message = L.Tr("Layer '{0}' mixes Write Defaults ON and OFF across its states.", layer.name),
                         context = controller,
+                        layerIndex = li,
                     });
             }
         }
@@ -339,6 +345,8 @@ namespace Yozolab.DaerD
         {
             // A shared blend tree is reported once (for the first state found using it).
             var visited = new HashSet<BlendTree>();
+            // The controller's designated Empty clip enables a one-click "fill the hole" fix.
+            var empty = GraphFrameData.GetEmptyClip(controller);
             foreach (var s in controller.AllStates())
             {
                 if (s.motion == null)
@@ -347,7 +355,7 @@ namespace Yozolab.DaerD
                     // nothing back, so every animated property freezes at its last value —
                     // that's a real malfunction, not a cosmetic gap.
                     bool wdOff = !s.writeDefaultValues;
-                    issues.Add(new Issue
+                    var issue = new Issue
                     {
                         severity = wdOff ? Severity.Error : Severity.Warning,
                         kind = Kind.MissingMotion,
@@ -355,32 +363,75 @@ namespace Yozolab.DaerD
                             ? L.Tr("State '{0}' has Write Defaults OFF and no motion; animated properties freeze at their last value while it plays.", s.name)
                             : L.Tr("State '{0}' has no motion assigned.", s.name),
                         context = s,
-                    });
+                    };
+                    if (empty != null)
+                    {
+                        var state = s;
+                        issue.fixLabel = L.Tr("Fill");
+                        issue.fixTooltip = L.Tr("Assign this controller's Empty clip");
+                        issue.fix = () => AssignEmptyClip(state, empty);
+                    }
+                    issues.Add(issue);
                     continue;
                 }
-                AddEmptyBlendTreeSlots(s.motion, s, visited, issues);
+                AddEmptyBlendTreeSlots(s.motion, s, visited, issues, empty);
             }
         }
 
         static void AddEmptyBlendTreeSlots(Motion motion, AnimatorState owner,
-            HashSet<BlendTree> visited, List<Issue> issues)
+            HashSet<BlendTree> visited, List<Issue> issues, AnimationClip empty)
         {
             if (!(motion is BlendTree tree) || !visited.Add(tree)) return;
             bool hasEmptySlot = false;
             foreach (var child in tree.children)
             {
                 if (child.motion == null) hasEmptySlot = true;
-                else AddEmptyBlendTreeSlots(child.motion, owner, visited, issues);
+                else AddEmptyBlendTreeSlots(child.motion, owner, visited, issues, empty);
             }
             if (hasEmptySlot)
-                issues.Add(new Issue
+            {
+                var issue = new Issue
                 {
                     severity = Severity.Warning,
                     kind = Kind.MissingMotion,
                     message = L.Tr("Blend tree '{0}' in state '{1}' has a child slot with no motion.",
                         tree.name, owner.name),
                     context = tree,
-                });
+                };
+                if (empty != null)
+                {
+                    issue.fixLabel = L.Tr("Fill");
+                    issue.fixTooltip = L.Tr("Fill the empty child slots with this controller's Empty clip");
+                    issue.fix = () => FillEmptySlots(tree, empty);
+                }
+                issues.Add(issue);
+            }
+        }
+
+        public static void AssignEmptyClip(AnimatorState state, AnimationClip clip)
+        {
+            if (state == null || clip == null || state.motion != null) return;
+            Undo.RegisterCompleteObjectUndo(state, "Assign Empty Clip");
+            state.motion = clip;
+            EditorUtility.SetDirty(state);
+        }
+
+        /// <summary>Fills every empty child slot of the tree (direct children only) with the clip.</summary>
+        public static void FillEmptySlots(BlendTree tree, AnimationClip clip)
+        {
+            if (tree == null || clip == null) return;
+            var children = tree.children;
+            bool changed = false;
+            for (int i = 0; i < children.Length; i++)
+            {
+                if (children[i].motion != null) continue;
+                children[i].motion = clip;
+                changed = true;
+            }
+            if (!changed) return;
+            Undo.RegisterCompleteObjectUndo(tree, "Fill Empty Slots");
+            tree.children = children;
+            EditorUtility.SetDirty(tree);
         }
 
         static void AddLayerIssues(AnimatorController controller, List<Issue> issues)
@@ -405,6 +456,7 @@ namespace Yozolab.DaerD
                         kind = Kind.EmptyLayer,
                         message = L.Tr("Layer '{0}' contains no states.", layer.name),
                         context = controller,
+                        layerIndex = i,
                     });
 
                 // The base layer's weight is forced to 1 at runtime, so only flag the others.
@@ -418,6 +470,7 @@ namespace Yozolab.DaerD
                             "Layer '{0}' has default weight 0; it has no effect until its weight is raised at runtime.",
                             layer.name),
                         context = controller,
+                        layerIndex = i,
                     });
             }
         }

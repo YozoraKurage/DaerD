@@ -265,6 +265,49 @@ namespace Yozolab.DaerD.Tests
         }
 
         [Test]
+        public void AssignEmptyClip_FillsOnlyMotionlessStates()
+        {
+            var controller = NewController(out var sm);
+            var empty = new AnimationClip { name = "Empty" };
+            var other = new AnimationClip { name = "Other" };
+            var bare = sm.AddState("Bare");
+            var filled = sm.AddState("Filled");
+            filled.motion = other;
+
+            ControllerAnalyzer.AssignEmptyClip(bare, empty);
+            ControllerAnalyzer.AssignEmptyClip(filled, empty);
+
+            Assert.AreSame(empty, bare.motion);
+            Assert.AreSame(other, filled.motion);   // an assigned motion is never overwritten
+
+            Object.DestroyImmediate(controller);
+            Object.DestroyImmediate(empty);
+            Object.DestroyImmediate(other);
+        }
+
+        [Test]
+        public void FillEmptySlots_FillsOnlyTheEmptyChildren()
+        {
+            var empty = new AnimationClip { name = "Empty" };
+            var other = new AnimationClip { name = "Other" };
+            var tree = new BlendTree { name = "T" };
+            tree.children = new[]
+            {
+                new ChildMotion { motion = other, timeScale = 1f },
+                new ChildMotion { motion = null, timeScale = 1f },
+            };
+
+            ControllerAnalyzer.FillEmptySlots(tree, empty);
+
+            Assert.AreSame(other, tree.children[0].motion);
+            Assert.AreSame(empty, tree.children[1].motion);
+
+            Object.DestroyImmediate(tree);
+            Object.DestroyImmediate(empty);
+            Object.DestroyImmediate(other);
+        }
+
+        [Test]
         public void TransitionIntoSubStateMachine_CountsAsLeavingViaItsDefaultState()
         {
             var controller = NewController(out var sm);

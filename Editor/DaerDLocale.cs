@@ -131,10 +131,15 @@ namespace Yozolab.DaerD
             // ---- analyzer fixes --------------------------------------------
             ["Delete"] = "削除",
             ["Fix"] = "修正",
+            ["Fill"] = "穴埋め",
             ["Delete this unused parameter"] = "この未使用パラメーターを削除します",
             ["Delete this transition"] = "この遷移を削除します",
             ["Remove the duplicate conditions"] = "重複している条件を取り除きます",
             ["Remove the missing behaviour entries"] = "参照が壊れた Behaviour エントリを取り除きます",
+            ["Assign this controller's Empty clip"] =
+                "このコントローラーの Empty クリップを割り当てます",
+            ["Fill the empty child slots with this controller's Empty clip"] =
+                "モーション未設定の子スロットにこのコントローラーの Empty クリップを割り当てます",
 
             // ---- overview / analysis UI ------------------------------------
             ["Controller"] = "コントローラー",
@@ -167,6 +172,42 @@ namespace Yozolab.DaerD
             ["Copy the full report to the clipboard"] = "レポート全文をクリップボードにコピーします",
             ["Highlight this object in the Project / graph"] =
                 "対象のオブジェクトを Project / グラフ上でハイライトします",
+
+            // ---- clip index / cleanup --------------------------------------
+            ["Empty Animation Clip"] = "Empty アニメーションクリップ",
+            ["Empty Clip"] = "Empty クリップ",
+            ["Stored with this controller. New states are created with it, and the analyzer's Fill fix assigns it to states with no motion."] =
+                "このコントローラーと一緒に保存されます。新規ステート作成時に自動で設定され、解析の「穴埋め」修正でモーション未設定のステートやブレンドツリーの空スロットにも割り当てられます。",
+            ["Animation Clips"] = "アニメーションクリップ",
+            ["List Clips"] = "クリップ一覧",
+            ["List every AnimationClip this controller references and the states that use it."] =
+                "このコントローラーが参照しているすべての AnimationClip と、それを使っているステートを一覧表示します。",
+            ["No clips are referenced by this controller."] =
+                "このコントローラーが参照しているクリップはありません。",
+            ["{0} clip(s) referenced."] = "参照クリップ {0} 件。",
+            ["(embedded)"] = "（内包アセット）",
+            ["Jump"] = "移動",
+            ["Open the layer and select the state that uses this clip"] =
+                "このクリップを使っているステートを開いて選択します",
+            ["Replace With"] = "差し替え先",
+            ["Swap every use of this clip in this controller for the picked clip (undoable)"] =
+                "このコントローラー内でこのクリップを使っている箇所を、指定したクリップにすべて差し替えます（Undo 可）",
+            ["Cleanup"] = "クリーンアップ",
+            ["Find sub-assets stored in the .controller file that nothing references any more."] =
+                "もうどこからも参照されていないのに .controller ファイル内に残っているサブアセット（ゴミ）を検出します。",
+            ["Scan For Leftovers"] = "ゴミを検索",
+            ["Blend trees, clips and states deleted from the graph can survive as invisible sub-assets; find them."] =
+                "グラフから削除したブレンドツリー・クリップ・ステートは、見えないサブアセットとしてファイル内に残ることがあります。それらを検索します。",
+            ["(unsaved controller — nothing to scan)"] =
+                "（未保存のコントローラーのため、スキャンできません）",
+            ["No leftover sub-assets found."] = "未使用のサブアセットは見つかりませんでした。",
+            ["{0} leftover sub-asset(s) in this .controller file."] =
+                "この .controller ファイルに未使用のサブアセットが {0} 件残っています。",
+            ["Delete All"] = "すべて削除",
+            ["Delete this leftover sub-asset from the .controller file"] =
+                "この未使用サブアセットを .controller ファイルから削除します",
+            ["Delete {0} leftover sub-asset(s) from '{1}'?\n\nNothing in this file references them. This can be undone."] =
+                "'{1}' から未使用のサブアセット {0} 件を削除しますか？\n\nこのファイル内のどこからも参照されていません。この操作は Undo で取り消せます。",
 
             // ---- settings ---------------------------------------------------
             ["Language"] = "言語 (Language)",

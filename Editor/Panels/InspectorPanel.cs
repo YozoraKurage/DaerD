@@ -26,6 +26,9 @@ namespace Yozolab.DaerD
         object _lastSelection;
         bool _showBlendTree = true;
         List<ControllerAnalyzer.Issue> _issues;
+        List<ControllerCleanup.ClipEntry> _clipEntries;
+        List<UnityEngine.Object> _leftovers;
+        readonly HashSet<AnimationClip> _expandedClips = new HashSet<AnimationClip>();
         // VRC Parameter Driver: remembered "selected row" per behaviour so the Add/Up/Down/Delete
         // buttons know which entry they act on. Keyed by StateMachineBehaviour instance ID; stale
         // entries are harmless (Unity domain reload clears them) so we don't bother pruning.
@@ -64,6 +67,11 @@ namespace Yozolab.DaerD
         void ClearAnalysis()
         {
             _issues = null;
+            // The clip index and the leftover scan (and the object references captured in
+            // them) belong to the outgoing controller too.
+            _clipEntries = null;
+            _leftovers = null;
+            _expandedClips.Clear();
             Refresh();
         }
 
@@ -1792,6 +1800,23 @@ namespace Yozolab.DaerD
             EditorGUILayout.EndHorizontal();
 
             EditorGUILayout.Space(6);
+            EditorGUILayout.LabelField(L.Tr("Empty Animation Clip"), EditorStyles.boldLabel);
+            EditorGUILayout.LabelField(
+                L.Tr("Stored with this controller. New states are created with it, and the analyzer's Fill fix assigns it to states with no motion."),
+                EditorStyles.miniLabel);
+            var currentEmpty = GraphFrameData.GetEmptyClip(controller);
+            var pickedEmpty = (AnimationClip)EditorGUILayout.ObjectField(
+                L.Tr("Empty Clip"), currentEmpty, typeof(AnimationClip), false);
+            if (pickedEmpty != currentEmpty)
+                GraphFrameData.SetEmptyClip(controller, pickedEmpty);
+
+            EditorGUILayout.Space(6);
+            DrawClipIndexSection(controller);
+
+            EditorGUILayout.Space(6);
+            DrawCleanupSection(controller);
+
+            EditorGUILayout.Space(6);
             if (GUILayout.Button(new GUIContent(L.Tr("Analyze Controller"),
                     L.Tr("Audit this controller for unused parameters, broken conditions, unreachable states and more."))))
                 _issues = ControllerAnalyzer.Analyze(controller);
@@ -1871,7 +1896,14 @@ namespace Yozolab.DaerD
                 EditorGUILayout.BeginVertical(GUILayout.Width(46));
                 if (issue.context != null && GUILayout.Button(
                         new GUIContent(L.Tr("Ping"), L.Tr("Highlight this object in the Project / graph")), buttons))
-                    EditorGUIUtility.PingObject(issue.context);
+                {
+                    if (TryFocusIssue(issue))
+                    {
+                        EditorGUILayout.EndVertical();
+                        EditorGUILayout.EndHorizontal();
+                        GUIUtility.ExitGUI();   // navigation changed the selection under this layout pass
+                    }
+                }
                 if (issue.fix != null && GUILayout.Button(
                         new GUIContent(issue.fixLabel, issue.fixTooltip), buttons))
                 {
@@ -1898,6 +1930,32 @@ namespace Yozolab.DaerD
             EditorGUIUtility.systemCopyBuffer = sb.ToString();
         }
 
+        /// <summary>
+        /// Ping that actually lands somewhere useful: states, sub-state machines, transitions
+        /// and blend trees are located inside the controller and focused in the DaerD graph
+        /// (a plain PingObject only blinks the .controller asset in the Project window, which
+        /// is why sub-assets never got focused). Layer-scoped issues open their layer; anything
+        /// unlocatable falls back to the Project ping. Returns true when it navigated.
+        /// </summary>
+        bool TryFocusIssue(ControllerAnalyzer.Issue issue)
+        {
+            var location = ControllerLocator.Locate(Context.Controller, issue.context);
+            if (location == null && issue.layerIndex >= 0
+                && issue.layerIndex < Context.Controller.layers.Length)
+                location = new ControllerLocator.Location { layerIndex = issue.layerIndex };
+            if (location == null)
+            {
+                EditorGUIUtility.PingObject(issue.context);
+                return false;
+            }
+            // Same dance as the toolbar search: leave blend tree mode first so the state
+            // machine graph that holds the hit is actually visible.
+            if (Context.IsViewingBlendTree)
+                Context.ExitBlendTree();
+            Context.NavigateTo(location.layerIndex, location.stateMachinePath, location.target);
+            return true;
+        }
+
         void ApplyIssueFix(ControllerAnalyzer.Issue issue)
         {
             issue.fix();
@@ -1919,6 +1977,159 @@ namespace Yozolab.DaerD
             ControllerAnalyzer.SetAllWriteDefaults(controller, value);
             _issues = ControllerAnalyzer.Analyze(controller);
             _graphView.Sync.RefreshAllStateNodes();   // WD badges update immediately
+        }
+
+        // ---- clip index / cleanup --------------------------------------------
+
+        void DrawClipIndexSection(AnimatorController controller)
+        {
+            EditorGUILayout.LabelField(L.Tr("Animation Clips"), EditorStyles.boldLabel);
+            if (GUILayout.Button(new GUIContent(L.Tr("List Clips"),
+                    L.Tr("List every AnimationClip this controller references and the states that use it."))))
+                _clipEntries = ControllerCleanup.CollectClipUsages(controller);
+            if (_clipEntries == null) return;
+
+            if (_clipEntries.Count == 0)
+            {
+                EditorGUILayout.HelpBox(L.Tr("No clips are referenced by this controller."), MessageType.Info);
+                return;
+            }
+            EditorGUILayout.LabelField(L.Tr("{0} clip(s) referenced.", _clipEntries.Count), EditorStyles.miniLabel);
+            foreach (var entry in _clipEntries)
+            {
+                if (entry.clip == null) continue;   // deleted since the list was built
+                DrawClipEntry(entry);
+            }
+        }
+
+        void DrawClipEntry(ControllerCleanup.ClipEntry entry)
+        {
+            EditorGUILayout.BeginHorizontal();
+            bool expanded = _expandedClips.Contains(entry.clip);
+            string title = entry.clip.name + " (" + entry.usages.Count + ")"
+                + (entry.embedded ? " " + L.Tr("(embedded)") : string.Empty);
+            bool now = EditorGUILayout.Foldout(expanded, title, true);
+            if (now != expanded)
+            {
+                if (now) _expandedClips.Add(entry.clip);
+                else _expandedClips.Remove(entry.clip);
+            }
+            if (GUILayout.Button(new GUIContent(L.Tr("Ping"), L.Tr("Highlight this object in the Project / graph")),
+                    EditorStyles.miniButton, GUILayout.Width(46)))
+                EditorGUIUtility.PingObject(entry.clip);
+            EditorGUILayout.EndHorizontal();
+
+            if (!now) return;
+            EditorGUI.indentLevel++;
+
+            // Dropping / picking a clip here retargets every use of this clip at once.
+            // The field always displays None — it is an action slot, not a stored value.
+            var replacement = (AnimationClip)EditorGUILayout.ObjectField(
+                new GUIContent(L.Tr("Replace With"),
+                    L.Tr("Swap every use of this clip in this controller for the picked clip (undoable)")),
+                null, typeof(AnimationClip), false);
+            if (replacement != null && replacement != entry.clip)
+            {
+                int replaced = ControllerCleanup.ReplaceClip(Context.Controller, entry.clip, replacement);
+                if (replaced > 0)
+                {
+                    // Keep this entry open under its new clip so the result is visible.
+                    _expandedClips.Remove(entry.clip);
+                    _expandedClips.Add(replacement);
+                    _clipEntries = ControllerCleanup.CollectClipUsages(Context.Controller);
+                    Context.NotifyGraphStructureChanged();   // node labels show motion names
+                    EditorGUI.indentLevel--;
+                    GUIUtility.ExitGUI();   // the clip list was rebuilt under this layout pass
+                }
+            }
+
+            foreach (var usage in entry.usages)
+            {
+                if (usage.state == null) continue;   // stale after a structure edit
+                EditorGUILayout.BeginHorizontal();
+                EditorGUILayout.LabelField(new GUIContent(usage.label, usage.label), EditorStyles.miniLabel);
+                if (GUILayout.Button(new GUIContent(L.Tr("Jump"),
+                        L.Tr("Open the layer and select the state that uses this clip")),
+                        EditorStyles.miniButton, GUILayout.Width(46)))
+                {
+                    // Same dance as the toolbar search: leave blend tree mode first so the
+                    // state machine graph that holds the hit is actually visible.
+                    if (Context.IsViewingBlendTree)
+                        Context.ExitBlendTree();
+                    Context.NavigateTo(usage.layerIndex, usage.stateMachinePath, usage.state);
+                    EditorGUILayout.EndHorizontal();
+                    EditorGUI.indentLevel--;
+                    GUIUtility.ExitGUI();   // the selection changed under this layout pass
+                }
+                EditorGUILayout.EndHorizontal();
+            }
+            EditorGUI.indentLevel--;
+        }
+
+        void DrawCleanupSection(AnimatorController controller)
+        {
+            EditorGUILayout.LabelField(L.Tr("Cleanup"), EditorStyles.boldLabel);
+            EditorGUILayout.LabelField(
+                L.Tr("Find sub-assets stored in the .controller file that nothing references any more."),
+                EditorStyles.miniLabel);
+
+            bool isAsset = !string.IsNullOrEmpty(AssetDatabase.GetAssetPath(controller));
+            using (new EditorGUI.DisabledScope(!isAsset))
+                if (GUILayout.Button(new GUIContent(L.Tr("Scan For Leftovers"),
+                        L.Tr("Blend trees, clips and states deleted from the graph can survive as invisible sub-assets; find them."))))
+                    _leftovers = ControllerCleanup.FindLeftoverSubAssets(controller);
+            if (!isAsset)
+                EditorGUILayout.LabelField(L.Tr("(unsaved controller — nothing to scan)"), EditorStyles.miniLabel);
+            if (_leftovers == null) return;
+
+            // Entries deleted (or restored by Undo) since the scan linger as fake nulls.
+            int live = 0;
+            foreach (var asset in _leftovers)
+                if (asset != null) live++;
+            if (live == 0)
+            {
+                EditorGUILayout.HelpBox(L.Tr("No leftover sub-assets found."), MessageType.Info);
+                return;
+            }
+
+            EditorGUILayout.HelpBox(L.Tr("{0} leftover sub-asset(s) in this .controller file.", live),
+                MessageType.Warning);
+            foreach (var asset in _leftovers)
+            {
+                if (asset == null) continue;
+                EditorGUILayout.BeginHorizontal();
+                EditorGUILayout.LabelField(ControllerCleanup.Describe(asset), EditorStyles.miniLabel);
+                if (GUILayout.Button(new GUIContent(L.Tr("Ping"), L.Tr("Highlight this object in the Project / graph")),
+                        EditorStyles.miniButton, GUILayout.Width(46)))
+                    EditorGUIUtility.PingObject(asset);
+                if (GUILayout.Button(new GUIContent(L.Tr("Delete"),
+                        L.Tr("Delete this leftover sub-asset from the .controller file")),
+                        EditorStyles.miniButton, GUILayout.Width(46)))
+                {
+                    // Undoable single delete — no dialog, matching the analyzer's one-click fixes.
+                    ControllerCleanup.DeleteSubAssets(controller, new[] { asset });
+                    _leftovers = ControllerCleanup.FindLeftoverSubAssets(controller);
+                    EditorGUILayout.EndHorizontal();
+                    GUIUtility.ExitGUI();   // the leftover list was rebuilt under this layout pass
+                }
+                EditorGUILayout.EndHorizontal();
+            }
+            if (GUILayout.Button(L.Tr("Delete All")))
+            {
+                DeleteAllLeftovers(controller, live);
+                GUIUtility.ExitGUI();
+            }
+        }
+
+        void DeleteAllLeftovers(AnimatorController controller, int count)
+        {
+            if (!EditorUtility.DisplayDialog(L.Tr("Cleanup"),
+                    L.Tr("Delete {0} leftover sub-asset(s) from '{1}'?\n\nNothing in this file references them. This can be undone.",
+                        count, controller.name),
+                    L.Tr("Delete"), L.Tr("Cancel")))
+                return;
+            ControllerCleanup.DeleteSubAssets(controller, _leftovers);
+            _leftovers = ControllerCleanup.FindLeftoverSubAssets(controller);
         }
 
         // ---- helpers ---------------------------------------------------------
