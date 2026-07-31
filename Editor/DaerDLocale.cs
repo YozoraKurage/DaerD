@@ -93,6 +93,7 @@ namespace Yozolab.DaerD
             ["Layer Weight"] = "レイヤーウェイト",
             ["Missing Behaviour"] = "Behaviour 参照切れ",
             ["Duplicate Condition"] = "条件の重複",
+            ["Direct Blend Tree"] = "Direct ブレンドツリー",
 
             // ---- analyzer messages -----------------------------------------
             ["Parameter '{0}' is never referenced."] =
@@ -127,6 +128,14 @@ namespace Yozolab.DaerD
                 "ステートマシン '{0}' に参照が壊れた（null の）Behaviour があります。",
             ["Transition {0} has duplicate conditions."] =
                 "遷移 {0} に同じ内容の条件が重複しています。",
+            ["State '{0}' plays a Direct blend tree but has Write Defaults OFF."] =
+                "ステート '{0}' は Direct ブレンドツリーを再生しますが、Write Defaults が OFF です。",
+            ["Direct blend tree '{0}' has a child with no weight parameter; that child never plays."] =
+                "Direct ブレンドツリー '{0}' にウェイトパラメーター未設定の子があります。その子は再生されません。",
+            ["Direct blend tree '{0}' weights a child with missing parameter '{1}'."] =
+                "Direct ブレンドツリー '{0}' の子が、存在しないパラメーター '{1}' をウェイトに使用しています。",
+            ["Weight parameter '{1}' of Direct blend tree '{0}' is not a Float."] =
+                "Direct ブレンドツリー '{0}' のウェイトパラメーター '{1}' が Float ではありません。",
 
             // ---- analyzer fixes --------------------------------------------
             ["Delete"] = "削除",
@@ -136,6 +145,7 @@ namespace Yozolab.DaerD
             ["Delete this transition"] = "この遷移を削除します",
             ["Remove the duplicate conditions"] = "重複している条件を取り除きます",
             ["Remove the missing behaviour entries"] = "参照が壊れた Behaviour エントリを取り除きます",
+            ["Turn Write Defaults ON for this state"] = "このステートの Write Defaults を ON にします",
             ["Assign this controller's Empty clip"] =
                 "このコントローラーの Empty クリップを割り当てます",
             ["Fill the empty child slots with this controller's Empty clip"] =
@@ -162,6 +172,9 @@ namespace Yozolab.DaerD
             ["Audit this controller for unused parameters, broken conditions, unreachable states and more."] =
                 "未使用パラメーター・壊れた条件・到達不能ステートなどをまとめて診断します。",
             ["No issues found."] = "問題は見つかりませんでした。",
+            ["DaerD Analyzer"] = "DaerD 解析",
+            ["Assign an Animator Controller to analyze."] =
+                "解析する Animator Controller を指定してください。",
             ["{0} error(s)"] = "エラー {0} 件",
             ["{0} warning(s)"] = "警告 {0} 件",
             ["{0} info"] = "情報 {0} 件",
@@ -174,12 +187,14 @@ namespace Yozolab.DaerD
                 "対象のオブジェクトを Project / グラフ上でハイライトします",
 
             // ---- clip index / cleanup --------------------------------------
-            ["Empty Animation Clip"] = "Empty アニメーションクリップ",
             ["Empty Clip"] = "Empty クリップ",
             ["Stored with this controller. New states are created with it, and the analyzer's Fill fix assigns it to states with no motion."] =
                 "このコントローラーと一緒に保存されます。新規ステート作成時に自動で設定され、解析の「穴埋め」修正でモーション未設定のステートやブレンドツリーの空スロットにも割り当てられます。",
-            ["Animation Clips"] = "アニメーションクリップ",
             ["List Clips"] = "クリップ一覧",
+            ["DaerD Clips"] = "DaerD クリップ一覧",
+            ["Assign an Animator Controller to list its animation clips."] =
+                "クリップを一覧表示する Animator Controller を指定してください。",
+            ["Refresh"] = "更新",
             ["List every AnimationClip this controller references and the states that use it."] =
                 "このコントローラーが参照しているすべての AnimationClip と、それを使っているステートを一覧表示します。",
             ["No clips are referenced by this controller."] =
@@ -208,6 +223,80 @@ namespace Yozolab.DaerD
                 "この未使用サブアセットを .controller ファイルから削除します",
             ["Delete {0} leftover sub-asset(s) from '{1}'?\n\nNothing in this file references them. This can be undone."] =
                 "'{1}' から未使用のサブアセット {0} 件を削除しますか？\n\nこのファイル内のどこからも参照されていません。この操作は Undo で取り消せます。",
+
+            // ---- AAP smoothing / DBT -----------------------------------------
+            ["This controller has no Float parameters to smooth."] =
+                "このコントローラーにはスムーズ化できる Float パラメーターがありません。",
+            ["Output Parameter"] = "出力パラメーター",
+            ["Smoothing Parameter"] = "スムージング量パラメーター",
+            ["Default Smoothing"] = "スムージング量の初期値",
+            ["0 = follow instantly; closer to 1 = smoother and slower. Stored as the smoothing parameter's default value."] =
+                "0 で即追従、1 に近いほど滑らかで遅くなります。スムージング量パラメーターの初期値として保存されます。",
+            ["Range Min"] = "最小値",
+            ["Range Max"] = "最大値",
+            ["Target Layer"] = "追加先レイヤー",
+            ["Create new layer"] = "新規レイヤーを作成",
+            ["New Layer Name"] = "新規レイヤー名",
+            ["Create"] = "作成",
+            ["No controller."] = "コントローラーがありません。",
+            ["The source must be an existing Float parameter."] =
+                "元パラメーターには既存の Float パラメーターを指定してください。",
+            ["The output parameter needs a name different from the source."] =
+                "出力パラメーターには元パラメーターと異なる名前が必要です。",
+            ["A parameter named '{0}' already exists."] =
+                "パラメーター '{0}' は既に存在します。",
+            ["The smoothing parameter needs its own name."] =
+                "スムージング量パラメーターには他と重複しない名前が必要です。",
+            ["Parameter '{0}' exists but is not a Float."] =
+                "パラメーター '{0}' は存在しますが Float ではありません。",
+            ["Range Min must be smaller than Range Max."] =
+                "最小値は最大値より小さくしてください。",
+            ["The target layer no longer exists."] =
+                "追加先レイヤーが存在しません。",
+            ["The target layer must be empty or contain only Direct blend tree states."] =
+                "追加先レイヤーは空か、Direct ブレンドツリーのステートのみで構成されている必要があります。",
+            ["The new layer needs a name."] = "新規レイヤーの名前を入力してください。",
+            ["Every state in this layer is a Direct blend tree"] =
+                "このレイヤーのステートはすべて Direct ブレンドツリーです",
+            ["DBT Gadget"] = "DBT ガジェット",
+            ["Adds a Direct blend tree gadget that computes the picked operation every frame. The generated clips and trees are stored as sub-assets of this controller."] =
+                "選択した演算を毎フレーム計算する Direct ブレンドツリーの仕掛けを追加します。生成されるクリップとツリーはこのコントローラーのサブアセットとして保存されます。",
+            ["Operation"] = "演算",
+            ["Input A"] = "入力 A",
+            ["Input B"] = "入力 B",
+            ["Output Min"] = "出力の最小値",
+            ["Output Max"] = "出力の最大値",
+            ["Input Min"] = "入力の最小値",
+            ["Input Max"] = "入力の最大値",
+            ["Threshold"] = "しきい値",
+            ["The second input must be an existing Float parameter."] =
+                "入力 B には既存の Float パラメーターを指定してください。",
+            ["The output parameter needs a name different from the inputs."] =
+                "出力パラメーターには入力と異なる名前が必要です。",
+            ["Input Min must be smaller than Input Max."] =
+                "入力の最小値は最大値より小さくしてください。",
+            ["output = lerp(input, output, smoothing) — exponential smoothing recalculated every frame."] =
+                "output = lerp(入力, 出力, スムージング量)。毎フレーム再計算される指数スムージングです。",
+            ["output = A + B. Positive values only (Direct weights clamp at 0); use Add (Ranged) for signed inputs."] =
+                "output = A + B。正の値専用です（Direct のウェイトは 0 未満にならないため）。負の値を扱う場合は Add (Ranged) を使用してください。",
+            ["output = A + B over the given range; works with negative values."] =
+                "指定した範囲で output = A + B を計算します。負の値にも対応します。",
+            ["output = A - B. Positive values only; use Sub (Ranged) for signed inputs."] =
+                "output = A - B。正の値専用です。負の値を扱う場合は Sub (Ranged) を使用してください。",
+            ["output = A - B over the given range; use a symmetric range (Min = -Max)."] =
+                "指定した範囲で output = A - B を計算します。範囲は対称（最小値 = -最大値）にしてください。",
+            ["output = A × B via nested Direct trees. Positive values only."] =
+                "Direct ツリーのネストで output = A × B を計算します。正の値専用です。",
+            ["output = A AND B, for 0/1 inputs."] =
+                "output = A AND B（0/1 の入力用）。",
+            ["output = A OR B, for 0/1 inputs."] =
+                "output = A OR B（0/1 の入力用）。",
+            ["output = 1 - input, for 0/1 inputs."] =
+                "output = 1 - 入力（0/1 の入力用）。",
+            ["output = 1 when the input is at or above the threshold, else 0."] =
+                "入力がしきい値以上のとき output = 1、未満のとき 0 になります。",
+            ["Linearly remaps the input range to the output range (reversed output ranges invert the slope)."] =
+                "入力範囲を出力範囲へ線形にリマップします（出力範囲を逆順にすると傾きが反転します）。",
 
             // ---- settings ---------------------------------------------------
             ["Language"] = "言語 (Language)",

@@ -60,19 +60,96 @@ namespace Yozolab.DaerD
 
         public static bool TrySetClip(EditorWindow window, AnimationClip clip)
         {
-            if (window == null) return false;
-            if (!ResolveClipAccess()) return false;
+            if (window == null || clip == null) return false;
+
+            // First try the public animationClip property. Its setter silently refuses when
+            // the clip is not among the selected GameObject's clips — e.g. the user edits a
+            // controller that is not on the selected Animator (a VRChat FX layer), or nothing
+            // is selected at all. So verify via the getter instead of trusting the call, and
+            // fall back to the window's internal state when it didn't stick.
+            if (ResolveClipAccess())
+            {
+                try
+                {
+                    s_clipProp.SetValue(window, clip);
+                    if ((AnimationClip)s_clipProp.GetValue(window) == clip)
+                    {
+                        window.Repaint();
+                        return true;
+                    }
+                    if (VerboseLogging)
+                        Debug.Log("[DaerD] animationClip setter refused (clip not on the selection); trying state fallback");
+                }
+                catch (Exception ex)
+                {
+                    if (VerboseLogging) Debug.LogWarning("[DaerD] TrySetClip threw: " + ex.Message);
+                }
+            }
+            return TrySetClipViaState(window, clip);
+        }
+
+        /// <summary>
+        /// Pushes the clip through AnimationWindowState instead of the public property.
+        /// <c>state.activeAnimationClip</c> is what the window's own clip popup assigns —
+        /// it only requires a root GameObject, not clip membership, so it accepts clips from
+        /// controllers that aren't on the selected Animator. If even that refuses (no
+        /// selection item yet), write the selection item's clip directly and let the state
+        /// rebuild, mirroring what the state setter does after its own check.
+        /// </summary>
+        static bool TrySetClipViaState(EditorWindow window, AnimationClip clip)
+        {
+            var animEditor = ResolveAnimEditor(window);
+            if (animEditor == null)
+            {
+                if (VerboseLogging) Debug.LogWarning("[DaerD] TrySetClipViaState: AnimEditor instance not reachable");
+                return false;
+            }
+            var state = ResolveMember(animEditor, "state", "m_State");
+            if (state == null)
+            {
+                if (VerboseLogging) Debug.LogWarning("[DaerD] TrySetClipViaState: AnimationWindowState not reachable");
+                return false;
+            }
+
             try
             {
-                s_clipProp.SetValue(window, clip);
-                window.Repaint();
-                return true;
+                var stateClip = state.GetType().GetProperty("activeAnimationClip", AllInstance);
+                if (stateClip != null && stateClip.CanWrite)
+                {
+                    stateClip.SetValue(state, clip);
+                    if ((AnimationClip)stateClip.GetValue(state) == clip)
+                    {
+                        if (VerboseLogging) Debug.Log("[DaerD] clip set via AnimationWindowState.activeAnimationClip");
+                        window.Repaint();
+                        return true;
+                    }
+                }
+
+                var selection = ResolveMember(state, "selection", "m_Selection");
+                if (selection != null)
+                {
+                    var itemClip = selection.GetType().GetProperty("animationClip", AllInstance);
+                    if (itemClip != null && itemClip.CanWrite)
+                    {
+                        itemClip.SetValue(selection, clip);
+                        var refresh = state.GetType().GetMethod(
+                            "OnSelectionChanged", AllInstance, null, Type.EmptyTypes, null);
+                        refresh?.Invoke(state, null);
+                        window.Repaint();
+                        bool stuck = stateClip == null || (AnimationClip)stateClip.GetValue(state) == clip;
+                        if (VerboseLogging)
+                            Debug.Log("[DaerD] clip set via selection item (stuck=" + stuck + ")");
+                        return stuck;
+                    }
+                }
             }
             catch (Exception ex)
             {
-                if (VerboseLogging) Debug.LogWarning("[DaerD] TrySetClip threw: " + ex.Message);
-                return false;
+                if (VerboseLogging) Debug.LogWarning("[DaerD] TrySetClipViaState threw: " + ex.Message);
             }
+            if (VerboseLogging) Debug.LogWarning("[DaerD] TrySetClip: every strategy failed " +
+                "(is a GameObject selected for the Animation window?)");
+            return false;
         }
 
         /// <summary>

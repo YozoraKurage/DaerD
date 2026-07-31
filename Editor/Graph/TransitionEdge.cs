@@ -298,12 +298,24 @@ namespace Yozolab.DaerD
             {
                 case AnimatorConditionMode.If: return condition.parameter;
                 case AnimatorConditionMode.IfNot: return "!" + condition.parameter;
-                case AnimatorConditionMode.Greater: return condition.parameter + " > " + condition.threshold.ToString("0.##");
-                case AnimatorConditionMode.Less: return condition.parameter + " < " + condition.threshold.ToString("0.##");
-                case AnimatorConditionMode.Equals: return condition.parameter + " = " + condition.threshold.ToString("0.##");
-                case AnimatorConditionMode.NotEqual: return condition.parameter + " ≠ " + condition.threshold.ToString("0.##");
+                case AnimatorConditionMode.Greater: return condition.parameter + " > " + DescribeThreshold(condition);
+                case AnimatorConditionMode.Less: return condition.parameter + " < " + DescribeThreshold(condition);
+                case AnimatorConditionMode.Equals: return condition.parameter + " = " + DescribeThreshold(condition);
+                case AnimatorConditionMode.NotEqual: return condition.parameter + " ≠ " + DescribeThreshold(condition);
                 default: return condition.parameter;
             }
+        }
+
+        /// <summary>GestureLeft / GestureRight values read as gesture names ("Fist"), other
+        /// thresholds as plain numbers.</summary>
+        static string DescribeThreshold(AnimatorCondition condition)
+        {
+            if (VrcParameters.IsGestureParameter(condition.parameter))
+            {
+                var gesture = VrcParameters.GestureLabel(condition.threshold);
+                if (gesture != null) return gesture;
+            }
+            return condition.threshold.ToString("0.##");
         }
     }
 

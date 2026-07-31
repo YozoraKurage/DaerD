@@ -25,6 +25,7 @@ namespace Yozolab.DaerD
             LayerWeight,
             MissingBehaviour,
             DuplicateCondition,
+            DirectBlendTree,
         }
 
         public class Issue
@@ -60,6 +61,7 @@ namespace Yozolab.DaerD
                 case Kind.LayerWeight: return L.Tr("Layer Weight");
                 case Kind.MissingBehaviour: return L.Tr("Missing Behaviour");
                 case Kind.DuplicateCondition: return L.Tr("Duplicate Condition");
+                case Kind.DirectBlendTree: return L.Tr("Direct Blend Tree");
             }
             return kind.ToString();
         }
@@ -88,6 +90,12 @@ namespace Yozolab.DaerD
                 if (s.cycleOffsetParameterActive) set.Add(s.cycleOffsetParameter);
                 if (s.mirrorParameterActive) set.Add(s.mirrorParameter);
             }
+
+            // A parameter only touched by a VRC Parameter Driver is still in use — without
+            // this, the unused-parameter fix would offer to delete it and break the driver.
+            foreach (var behaviour in controller.AllBehaviours())
+                VrcParameterDriver.CollectReferencedParameters(behaviour, set);
+
             return set;
         }
 
@@ -120,6 +128,7 @@ namespace Yozolab.DaerD
             AddMissingMotionIssues(controller, issues);
             AddLayerIssues(controller, issues);
             AddMissingBehaviourIssues(controller, issues);
+            AddDirectBlendTreeIssues(controller, issues);
 
             return issues;
         }
@@ -528,6 +537,108 @@ namespace Yozolab.DaerD
             foreach (var b in behaviours)
                 if (b != null) kept.Add(b);
             return kept.ToArray();
+        }
+
+        /// <summary>
+        /// Health checks for the Direct-blend-tree (AAP gadget) idiom: a state hosting a
+        /// Direct tree must run with Write Defaults ON (additive weight mixing and AAP
+        /// writes silently misbehave otherwise), and every Direct child needs an existing
+        /// Float weight parameter — a missing or unset one pins that child's weight to 0.
+        /// </summary>
+        static void AddDirectBlendTreeIssues(AnimatorController controller, List<Issue> issues)
+        {
+            foreach (var s in controller.AllStates())
+            {
+                if (s.writeDefaultValues || !(s.motion is BlendTree tree) || !ContainsDirectTree(tree))
+                    continue;
+                var state = s;
+                issues.Add(new Issue
+                {
+                    severity = Severity.Error,
+                    kind = Kind.DirectBlendTree,
+                    message = L.Tr("State '{0}' plays a Direct blend tree but has Write Defaults OFF.", s.name),
+                    context = s,
+                    fixLabel = L.Tr("Fix"),
+                    fixTooltip = L.Tr("Turn Write Defaults ON for this state"),
+                    fix = () => SetWriteDefaults(state, true),
+                });
+            }
+
+            var paramTypes = new Dictionary<string, AnimatorControllerParameterType>();
+            foreach (var p in controller.parameters) paramTypes[p.name] = p.type;
+
+            foreach (var bt in controller.AllBlendTrees())
+            {
+                if (bt.blendType != BlendTreeType.Direct) continue;
+                // One issue per distinct problem per tree — a shared weight parameter that
+                // is missing would otherwise repeat for every child using it.
+                bool reportedEmpty = false;
+                var reported = new HashSet<string>();
+                foreach (var child in bt.children)
+                {
+                    var weight = child.directBlendParameter;
+                    if (string.IsNullOrEmpty(weight))
+                    {
+                        if (reportedEmpty) continue;
+                        reportedEmpty = true;
+                        issues.Add(new Issue
+                        {
+                            severity = Severity.Warning,
+                            kind = Kind.DirectBlendTree,
+                            message = L.Tr("Direct blend tree '{0}' has a child with no weight parameter; that child never plays.", bt.name),
+                            context = bt,
+                        });
+                    }
+                    else if (!paramTypes.TryGetValue(weight, out var type))
+                    {
+                        if (!reported.Add(weight)) continue;
+                        issues.Add(new Issue
+                        {
+                            severity = Severity.Error,
+                            kind = Kind.DirectBlendTree,
+                            message = L.Tr("Direct blend tree '{0}' weights a child with missing parameter '{1}'.", bt.name, weight),
+                            context = bt,
+                        });
+                    }
+                    else if (type != AnimatorControllerParameterType.Float)
+                    {
+                        if (!reported.Add(weight)) continue;
+                        issues.Add(new Issue
+                        {
+                            severity = Severity.Warning,
+                            kind = Kind.DirectBlendTree,
+                            message = L.Tr("Weight parameter '{1}' of Direct blend tree '{0}' is not a Float.", bt.name, weight),
+                            context = bt,
+                        });
+                    }
+                }
+            }
+        }
+
+        /// <summary>True when the motion tree contains a Direct blend tree at any depth.</summary>
+        static bool ContainsDirectTree(BlendTree root)
+        {
+            var visited = new HashSet<BlendTree>();
+            var stack = new Stack<BlendTree>();
+            stack.Push(root);
+            while (stack.Count > 0)
+            {
+                var tree = stack.Pop();
+                if (tree == null || !visited.Add(tree)) continue;
+                if (tree.blendType == BlendTreeType.Direct) return true;
+                foreach (var child in tree.children)
+                    if (child.motion is BlendTree nested)
+                        stack.Push(nested);
+            }
+            return false;
+        }
+
+        static void SetWriteDefaults(AnimatorState state, bool value)
+        {
+            if (state == null) return;
+            Undo.RegisterCompleteObjectUndo(state, "Set Write Defaults");
+            state.writeDefaultValues = value;
+            EditorUtility.SetDirty(state);
         }
 
         /// <summary>

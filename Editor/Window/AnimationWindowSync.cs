@@ -53,7 +53,17 @@ namespace Yozolab.DaerD
             // focus and surprise the user. SetEnabled opens it once on opt-in instead.
             var window = AnimationWindowAccess.FindOpen();
             if (window == null) return;
-            AnimationWindowAccess.TrySetClip(window, clip);
+            if (AnimationWindowAccess.TrySetClip(window, clip)) return;
+
+            // A window that hasn't run an OnGUI pass yet (just opened, or just given a
+            // GameObject selection) has no AnimEditor/selection item to write to. One retry
+            // a tick later covers that, without looping on genuinely un-settable clips.
+            EditorApplication.delayCall += () =>
+            {
+                if (!_enabled || !ReferenceEquals(_context.Selection, state)) return;
+                var retryWindow = AnimationWindowAccess.FindOpen();
+                if (retryWindow != null) AnimationWindowAccess.TrySetClip(retryWindow, clip);
+            };
         }
     }
 }

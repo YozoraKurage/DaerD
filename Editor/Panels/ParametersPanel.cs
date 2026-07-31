@@ -147,7 +147,19 @@ namespace Yozolab.DaerD
                 menu.AddItem(removeLabel, false, () => RemoveUnused(unused));
             else
                 menu.AddDisabledItem(removeLabel);
+            menu.AddSeparator(string.Empty);
+            menu.AddItem(new GUIContent("DBT Gadget (AAP)..."), false, () =>
+                AapGadgetWindow.Open(Context.Controller, OnDbtGadgetApplied));
             menu.ShowAsContext();
+        }
+
+        /// <summary>A DBT gadget added parameters, possibly a layer and a blend tree — let
+        /// every panel and the graph pick that up.</summary>
+        void OnDbtGadgetApplied()
+        {
+            Context.NotifyParametersChanged();
+            Context.NotifyLayersChanged();
+            Context.NotifyGraphStructureChanged();
         }
 
         void ShowUsagesMenu(string parameterName)
@@ -193,6 +205,12 @@ namespace Yozolab.DaerD
                 var captured = type;
                 menu.AddItem(new GUIContent(type.ToString()), false, () => AddParameter(captured));
             }
+
+            // Computed parameters: a DBT gadget adds its output (and helper) parameters and
+            // the Direct-blend-tree machinery that drives them.
+            menu.AddSeparator(string.Empty);
+            menu.AddItem(new GUIContent("DBT Gadget (AAP)..."), false, () =>
+                AapGadgetWindow.Open(Context.Controller, OnDbtGadgetApplied));
 
             // VRChat built-in parameters. Already-present ones show as a checked, disabled entry so
             // the menu doubles as a quick "which standard parameters does this controller have?".

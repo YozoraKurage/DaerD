@@ -383,7 +383,7 @@ namespace Yozolab.DaerD
             _frameAllButton = new ToolbarButton(() => _graphView.FrameAll());
             _frameAllButton.AddToClassList("dd-toolbar-item");
             toolbar.Add(_frameAllButton);
-            _analyzeButton = new ToolbarButton(() => _inspectorPanel.ShowAnalysis());
+            _analyzeButton = new ToolbarButton(() => AnalyzerWindow.Open(_context.Controller));
             _analyzeButton.AddToClassList("dd-toolbar-item");
             toolbar.Add(_analyzeButton);
             _settingsButton = new ToolbarButton(
@@ -513,6 +513,51 @@ namespace Yozolab.DaerD
                 _rightSplit = null;
                 _rightColumn.Add(_inspectorPanel);
             }
+        }
+
+        /// <summary>
+        /// Ping from the analyzer window that actually lands somewhere useful: states,
+        /// sub-state machines, transitions and blend trees are located inside the controller
+        /// and focused in the graph (a plain PingObject only blinks the .controller asset in
+        /// the Project window, which is why sub-assets never got focused). Layer-scoped issues
+        /// open their layer. Returns true when it navigated; the caller falls back to a
+        /// Project ping otherwise.
+        /// </summary>
+        internal bool TryFocusIssue(ControllerAnalyzer.Issue issue)
+        {
+            // Freshly opened window: CreateGUI (and with it the context) hasn't run yet.
+            if (_context == null || _context.Controller == null) return false;
+
+            var location = ControllerLocator.Locate(_context.Controller, issue.context);
+            if (location == null && issue.layerIndex >= 0
+                && issue.layerIndex < _context.Controller.layers.Length)
+                location = new ControllerLocator.Location { layerIndex = issue.layerIndex };
+            if (location == null) return false;
+            return TryNavigateTo(location.layerIndex, location.stateMachinePath, location.target);
+        }
+
+        /// <summary>Navigation entry point for the satellite windows (analyzer, clip index):
+        /// jumps to the given layer / drill path and selects the target. Returns false when
+        /// the window has no live context yet (freshly opened, CreateGUI pending).</summary>
+        internal bool TryNavigateTo(int layerIndex, IList<AnimatorStateMachine> stateMachinePath, object target)
+        {
+            if (_context == null || _context.Controller == null) return false;
+            // Same dance as the toolbar search: leave blend tree mode first so the state
+            // machine graph that holds the hit is actually visible.
+            if (_context.IsViewingBlendTree)
+                _context.ExitBlendTree();
+            _context.NavigateTo(layerIndex, stateMachinePath, target);
+            return true;
+        }
+
+        /// <summary>Called after another window (the analyzer's Fix) mutates a controller;
+        /// refreshes the graph and panels when that controller is the one on screen.</summary>
+        internal void OnControllerModifiedExternally(AnimatorController controller)
+        {
+            if (_context == null || controller == null || _context.Controller != controller) return;
+            _context.ValidatePath();
+            _context.NotifyParametersChanged();
+            _context.NotifyGraphStructureChanged();
         }
 
         void OnUndoRedo()

@@ -16,6 +16,16 @@ namespace Yozolab.DaerD
         };
         static readonly AnimatorConditionMode[] FloatModes = { AnimatorConditionMode.Greater, AnimatorConditionMode.Less };
         static readonly string[] BoolValueLabels = { "true", "false" };
+        static readonly string[] GestureValueLabels = BuildGestureValueLabels();
+
+        static string[] BuildGestureValueLabels()
+        {
+            var names = VrcParameters.GestureNames;
+            var labels = new string[names.Length];
+            for (int i = 0; i < names.Length; i++)
+                labels[i] = i + ": " + names[i];
+            return labels;
+        }
 
         readonly AnimatorGraphView _graphView;
         readonly List<AnimatorTransitionBase> _selectedTransitions = new List<AnimatorTransitionBase>();
@@ -25,10 +35,7 @@ namespace Yozolab.DaerD
         int _rangeAnchor = -1;
         object _lastSelection;
         bool _showBlendTree = true;
-        List<ControllerAnalyzer.Issue> _issues;
-        List<ControllerCleanup.ClipEntry> _clipEntries;
         List<UnityEngine.Object> _leftovers;
-        readonly HashSet<AnimationClip> _expandedClips = new HashSet<AnimationClip>();
         // VRC Parameter Driver: remembered "selected row" per behaviour so the Add/Up/Down/Delete
         // buttons know which entry they act on. Keyed by StateMachineBehaviour instance ID; stale
         // entries are harmless (Unity domain reload clears them) so we don't bother pruning.
@@ -39,10 +46,9 @@ namespace Yozolab.DaerD
         {
             _graphView = graphView;
             context.SelectionChanged += OnSelectionChanged;
-            // Analysis results (and the destructive fix delegates captured in them) belong to
-            // the outgoing controller — drop them, or a Fix click after a tab switch would
-            // silently mutate the previous asset.
-            context.ControllerChanged += ClearAnalysis;
+            // The leftover scan (and the object references captured in it) belongs to the
+            // outgoing controller — drop it on a tab switch.
+            context.ControllerChanged += ClearControllerCaches;
             context.GraphStructureChanged += Refresh;
             context.GraphRebuilt += Refresh;
             context.ParametersChanged += Refresh;
@@ -64,23 +70,9 @@ namespace Yozolab.DaerD
             Refresh();
         }
 
-        void ClearAnalysis()
+        void ClearControllerCaches()
         {
-            _issues = null;
-            // The clip index and the leftover scan (and the object references captured in
-            // them) belong to the outgoing controller too.
-            _clipEntries = null;
             _leftovers = null;
-            _expandedClips.Clear();
-            Refresh();
-        }
-
-        /// <summary>Runs the analyzer and shows the result in the overview view.</summary>
-        public void ShowAnalysis()
-        {
-            if (!Context.HasController) return;
-            _issues = ControllerAnalyzer.Analyze(Context.Controller);
-            Context.Select(null);
             Refresh();
         }
 
@@ -1686,12 +1678,26 @@ namespace Yozolab.DaerD
                 default:
                 {
                     var modes = ModesFor(type);
+                    // GestureLeft / GestureRight thresholds read as an enum ("1: Fist"…), so
+                    // give the value popup the wider slot and shrink the mode popup — the
+                    // row's total width stays aligned with the plain numeric layout.
+                    bool gesture = type == AnimatorControllerParameterType.Int
+                        && VrcParameters.IsGestureParameter(condition.parameter)
+                        && VrcParameters.GestureLabel(condition.threshold) != null;
                     int modeIndex = Mathf.Max(0, Array.IndexOf(modes, condition.mode));
-                    modeIndex = EditorGUILayout.Popup(modeIndex, ModeLabels(modes), GUILayout.Width(80));
+                    modeIndex = EditorGUILayout.Popup(modeIndex, ModeLabels(modes), GUILayout.Width(gesture ? 56 : 80));
                     condition.mode = modes[modeIndex];
-                    condition.threshold = delayed
-                        ? EditorGUILayout.DelayedFloatField(condition.threshold, GUILayout.Width(56))
-                        : EditorGUILayout.FloatField(condition.threshold, GUILayout.Width(56));
+                    if (gesture)
+                    {
+                        int current = (int)Math.Round(condition.threshold);
+                        condition.threshold = EditorGUILayout.Popup(current, GestureValueLabels, GUILayout.Width(80));
+                    }
+                    else
+                    {
+                        condition.threshold = delayed
+                            ? EditorGUILayout.DelayedFloatField(condition.threshold, GUILayout.Width(56))
+                            : EditorGUILayout.FloatField(condition.threshold, GUILayout.Width(56));
+                    }
                     break;
                 }
             }
@@ -1773,12 +1779,11 @@ namespace Yozolab.DaerD
                 Context.EnterStateMachine(stateMachine);
         }
 
-        // ---- overview / analysis --------------------------------------------
+        // ---- overview ---------------------------------------------------------
 
-        // Severity filter for the analysis list. Session-static: shared by every window,
-        // reset on domain reload — a per-user display preference isn't worth an EditorPref.
-        static bool s_showErrors = true, s_showWarnings = true, s_showInfo = true;
-
+        // Deliberately sparse: identity rows, the two per-controller settings and three
+        // action buttons. Explanations live in tooltips (and confirm dialogs), not in
+        // always-visible labels — the reports themselves open in their own windows.
         void DrawOverview()
         {
             var controller = Context.Controller;
@@ -1788,182 +1793,37 @@ namespace Yozolab.DaerD
             EditorGUILayout.LabelField(L.Tr("Parameters"), controller.parameters.Length.ToString());
 
             EditorGUILayout.Space(6);
-            EditorGUILayout.LabelField(L.Tr("Write Defaults"), EditorStyles.boldLabel);
-            EditorGUILayout.LabelField(
-                L.Tr("Bulk-set every state. Layers containing only Direct blend trees stay ON."),
-                EditorStyles.miniLabel);
-            EditorGUILayout.BeginHorizontal();
-            if (GUILayout.Button(L.Tr("Set All ON")))
-                BulkSetWriteDefaults(controller, true);
-            if (GUILayout.Button(L.Tr("Set All OFF")))
-                BulkSetWriteDefaults(controller, false);
-            EditorGUILayout.EndHorizontal();
-
-            EditorGUILayout.Space(6);
-            EditorGUILayout.LabelField(L.Tr("Empty Animation Clip"), EditorStyles.boldLabel);
-            EditorGUILayout.LabelField(
-                L.Tr("Stored with this controller. New states are created with it, and the analyzer's Fill fix assigns it to states with no motion."),
-                EditorStyles.miniLabel);
             var currentEmpty = GraphFrameData.GetEmptyClip(controller);
             var pickedEmpty = (AnimationClip)EditorGUILayout.ObjectField(
-                L.Tr("Empty Clip"), currentEmpty, typeof(AnimationClip), false);
+                new GUIContent(L.Tr("Empty Clip"),
+                    L.Tr("Stored with this controller. New states are created with it, and the analyzer's Fill fix assigns it to states with no motion.")),
+                currentEmpty, typeof(AnimationClip), false);
             if (pickedEmpty != currentEmpty)
                 GraphFrameData.SetEmptyClip(controller, pickedEmpty);
 
-            EditorGUILayout.Space(6);
-            DrawClipIndexSection(controller);
+            var wdTooltip = L.Tr("Bulk-set every state. Layers containing only Direct blend trees stay ON.");
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.PrefixLabel(new GUIContent(L.Tr("Write Defaults"), wdTooltip));
+            if (GUILayout.Button(new GUIContent(L.Tr("Set All ON"), wdTooltip)))
+                BulkSetWriteDefaults(controller, true);
+            if (GUILayout.Button(new GUIContent(L.Tr("Set All OFF"), wdTooltip)))
+                BulkSetWriteDefaults(controller, false);
+            EditorGUILayout.EndHorizontal();
 
-            EditorGUILayout.Space(6);
-            DrawCleanupSection(controller);
-
-            EditorGUILayout.Space(6);
+            EditorGUILayout.Space(10);
             if (GUILayout.Button(new GUIContent(L.Tr("Analyze Controller"),
                     L.Tr("Audit this controller for unused parameters, broken conditions, unreachable states and more."))))
-                _issues = ControllerAnalyzer.Analyze(controller);
-
-            if (_issues == null) return;
-
-            EditorGUILayout.Space(2);
-            if (_issues.Count == 0)
             {
-                EditorGUILayout.HelpBox(L.Tr("No issues found."), MessageType.Info);
-                return;
+                AnalyzerWindow.Open(controller);
+                GUIUtility.ExitGUI();   // the focus moved to another window under this layout pass
             }
-
-            DrawIssueFilter();
-
-            bool anyShown = false;
-            // Errors first — the filter toggles double as a legend, so keep the same order here.
-            foreach (var severity in IssueSeverityOrder)
+            if (GUILayout.Button(new GUIContent(L.Tr("List Clips"),
+                    L.Tr("List every AnimationClip this controller references and the states that use it."))))
             {
-                if (!IsSeverityShown(severity)) continue;
-                foreach (var issue in _issues)
-                {
-                    if (issue.severity != severity) continue;
-                    anyShown = true;
-                    DrawIssueRow(issue);
-                }
+                ClipsWindow.Open(controller);
+                GUIUtility.ExitGUI();   // the focus moved to another window under this layout pass
             }
-            if (!anyShown)
-                EditorGUILayout.HelpBox(L.Tr("All {0} issue(s) are hidden by the filter above.", _issues.Count),
-                    MessageType.None);
-        }
-
-        static readonly ControllerAnalyzer.Severity[] IssueSeverityOrder =
-        {
-            ControllerAnalyzer.Severity.Error,
-            ControllerAnalyzer.Severity.Warning,
-            ControllerAnalyzer.Severity.Info,
-        };
-
-        static bool IsSeverityShown(ControllerAnalyzer.Severity severity) =>
-            severity == ControllerAnalyzer.Severity.Error ? s_showErrors
-            : severity == ControllerAnalyzer.Severity.Warning ? s_showWarnings
-            : s_showInfo;
-
-        /// <summary>Toggle row with per-severity counts, plus the copy-report button.</summary>
-        void DrawIssueFilter()
-        {
-            int errors = 0, warnings = 0, infos = 0;
-            foreach (var issue in _issues)
-            {
-                if (issue.severity == ControllerAnalyzer.Severity.Error) errors++;
-                else if (issue.severity == ControllerAnalyzer.Severity.Warning) warnings++;
-                else infos++;
-            }
-
-            EditorGUILayout.BeginHorizontal();
-            s_showErrors = GUILayout.Toggle(s_showErrors, L.Tr("{0} error(s)", errors), EditorStyles.miniButtonLeft);
-            s_showWarnings = GUILayout.Toggle(s_showWarnings, L.Tr("{0} warning(s)", warnings), EditorStyles.miniButtonMid);
-            s_showInfo = GUILayout.Toggle(s_showInfo, L.Tr("{0} info", infos), EditorStyles.miniButtonRight);
-            if (GUILayout.Button(new GUIContent(L.Tr("Copy"), L.Tr("Copy the full report to the clipboard")),
-                    EditorStyles.miniButton, GUILayout.Width(60)))
-                CopyIssueReport();
-            EditorGUILayout.EndHorizontal();
-        }
-
-        void DrawIssueRow(ControllerAnalyzer.Issue issue)
-        {
-            var messageType = issue.severity == ControllerAnalyzer.Severity.Error ? MessageType.Error
-                : issue.severity == ControllerAnalyzer.Severity.Warning ? MessageType.Warning
-                : MessageType.None;
-            EditorGUILayout.BeginHorizontal();
-            EditorGUILayout.HelpBox(
-                "[" + ControllerAnalyzer.CategoryLabel(issue.kind) + "] " + issue.message, messageType);
-            var buttons = new GUILayoutOption[] { GUILayout.Width(46), GUILayout.Height(issue.fix != null ? 19 : 38) };
-            if (issue.fix != null || issue.context != null)
-            {
-                EditorGUILayout.BeginVertical(GUILayout.Width(46));
-                if (issue.context != null && GUILayout.Button(
-                        new GUIContent(L.Tr("Ping"), L.Tr("Highlight this object in the Project / graph")), buttons))
-                {
-                    if (TryFocusIssue(issue))
-                    {
-                        EditorGUILayout.EndVertical();
-                        EditorGUILayout.EndHorizontal();
-                        GUIUtility.ExitGUI();   // navigation changed the selection under this layout pass
-                    }
-                }
-                if (issue.fix != null && GUILayout.Button(
-                        new GUIContent(issue.fixLabel, issue.fixTooltip), buttons))
-                {
-                    ApplyIssueFix(issue);
-                    EditorGUILayout.EndVertical();
-                    EditorGUILayout.EndHorizontal();
-                    GUIUtility.ExitGUI();   // the issue list was rebuilt under this layout pass
-                }
-                EditorGUILayout.EndVertical();
-            }
-            EditorGUILayout.EndHorizontal();
-        }
-
-        /// <summary>Puts a plain-text version of every issue (ignoring the filter) on the clipboard.</summary>
-        void CopyIssueReport()
-        {
-            var sb = new System.Text.StringBuilder();
-            sb.AppendLine(Context.Controller.name + " (" + _issues.Count + ")");
-            foreach (var severity in IssueSeverityOrder)
-                foreach (var issue in _issues)
-                    if (issue.severity == severity)
-                        sb.AppendLine(
-                            $"[{issue.severity}] [{ControllerAnalyzer.CategoryLabel(issue.kind)}] {issue.message}");
-            EditorGUIUtility.systemCopyBuffer = sb.ToString();
-        }
-
-        /// <summary>
-        /// Ping that actually lands somewhere useful: states, sub-state machines, transitions
-        /// and blend trees are located inside the controller and focused in the DaerD graph
-        /// (a plain PingObject only blinks the .controller asset in the Project window, which
-        /// is why sub-assets never got focused). Layer-scoped issues open their layer; anything
-        /// unlocatable falls back to the Project ping. Returns true when it navigated.
-        /// </summary>
-        bool TryFocusIssue(ControllerAnalyzer.Issue issue)
-        {
-            var location = ControllerLocator.Locate(Context.Controller, issue.context);
-            if (location == null && issue.layerIndex >= 0
-                && issue.layerIndex < Context.Controller.layers.Length)
-                location = new ControllerLocator.Location { layerIndex = issue.layerIndex };
-            if (location == null)
-            {
-                EditorGUIUtility.PingObject(issue.context);
-                return false;
-            }
-            // Same dance as the toolbar search: leave blend tree mode first so the state
-            // machine graph that holds the hit is actually visible.
-            if (Context.IsViewingBlendTree)
-                Context.ExitBlendTree();
-            Context.NavigateTo(location.layerIndex, location.stateMachinePath, location.target);
-            return true;
-        }
-
-        void ApplyIssueFix(ControllerAnalyzer.Issue issue)
-        {
-            issue.fix();
-            _issues = ControllerAnalyzer.Analyze(Context.Controller);
-            // A fix may have deleted a parameter or a transition — let every panel and the
-            // graph pick that up.
-            Context.NotifyParametersChanged();
-            Context.NotifyGraphStructureChanged();
+            DrawCleanupSection(controller);
         }
 
         void BulkSetWriteDefaults(AnimatorController controller, bool value)
@@ -1975,108 +1835,18 @@ namespace Yozolab.DaerD
                     value ? L.Tr("Set ON") : L.Tr("Set OFF"), L.Tr("Cancel")))
                 return;
             ControllerAnalyzer.SetAllWriteDefaults(controller, value);
-            _issues = ControllerAnalyzer.Analyze(controller);
             _graphView.Sync.RefreshAllStateNodes();   // WD badges update immediately
         }
 
-        // ---- clip index / cleanup --------------------------------------------
-
-        void DrawClipIndexSection(AnimatorController controller)
-        {
-            EditorGUILayout.LabelField(L.Tr("Animation Clips"), EditorStyles.boldLabel);
-            if (GUILayout.Button(new GUIContent(L.Tr("List Clips"),
-                    L.Tr("List every AnimationClip this controller references and the states that use it."))))
-                _clipEntries = ControllerCleanup.CollectClipUsages(controller);
-            if (_clipEntries == null) return;
-
-            if (_clipEntries.Count == 0)
-            {
-                EditorGUILayout.HelpBox(L.Tr("No clips are referenced by this controller."), MessageType.Info);
-                return;
-            }
-            EditorGUILayout.LabelField(L.Tr("{0} clip(s) referenced.", _clipEntries.Count), EditorStyles.miniLabel);
-            foreach (var entry in _clipEntries)
-            {
-                if (entry.clip == null) continue;   // deleted since the list was built
-                DrawClipEntry(entry);
-            }
-        }
-
-        void DrawClipEntry(ControllerCleanup.ClipEntry entry)
-        {
-            EditorGUILayout.BeginHorizontal();
-            bool expanded = _expandedClips.Contains(entry.clip);
-            string title = entry.clip.name + " (" + entry.usages.Count + ")"
-                + (entry.embedded ? " " + L.Tr("(embedded)") : string.Empty);
-            bool now = EditorGUILayout.Foldout(expanded, title, true);
-            if (now != expanded)
-            {
-                if (now) _expandedClips.Add(entry.clip);
-                else _expandedClips.Remove(entry.clip);
-            }
-            if (GUILayout.Button(new GUIContent(L.Tr("Ping"), L.Tr("Highlight this object in the Project / graph")),
-                    EditorStyles.miniButton, GUILayout.Width(46)))
-                EditorGUIUtility.PingObject(entry.clip);
-            EditorGUILayout.EndHorizontal();
-
-            if (!now) return;
-            EditorGUI.indentLevel++;
-
-            // Dropping / picking a clip here retargets every use of this clip at once.
-            // The field always displays None — it is an action slot, not a stored value.
-            var replacement = (AnimationClip)EditorGUILayout.ObjectField(
-                new GUIContent(L.Tr("Replace With"),
-                    L.Tr("Swap every use of this clip in this controller for the picked clip (undoable)")),
-                null, typeof(AnimationClip), false);
-            if (replacement != null && replacement != entry.clip)
-            {
-                int replaced = ControllerCleanup.ReplaceClip(Context.Controller, entry.clip, replacement);
-                if (replaced > 0)
-                {
-                    // Keep this entry open under its new clip so the result is visible.
-                    _expandedClips.Remove(entry.clip);
-                    _expandedClips.Add(replacement);
-                    _clipEntries = ControllerCleanup.CollectClipUsages(Context.Controller);
-                    Context.NotifyGraphStructureChanged();   // node labels show motion names
-                    EditorGUI.indentLevel--;
-                    GUIUtility.ExitGUI();   // the clip list was rebuilt under this layout pass
-                }
-            }
-
-            foreach (var usage in entry.usages)
-            {
-                if (usage.state == null) continue;   // stale after a structure edit
-                EditorGUILayout.BeginHorizontal();
-                EditorGUILayout.LabelField(new GUIContent(usage.label, usage.label), EditorStyles.miniLabel);
-                if (GUILayout.Button(new GUIContent(L.Tr("Jump"),
-                        L.Tr("Open the layer and select the state that uses this clip")),
-                        EditorStyles.miniButton, GUILayout.Width(46)))
-                {
-                    // Same dance as the toolbar search: leave blend tree mode first so the
-                    // state machine graph that holds the hit is actually visible.
-                    if (Context.IsViewingBlendTree)
-                        Context.ExitBlendTree();
-                    Context.NavigateTo(usage.layerIndex, usage.stateMachinePath, usage.state);
-                    EditorGUILayout.EndHorizontal();
-                    EditorGUI.indentLevel--;
-                    GUIUtility.ExitGUI();   // the selection changed under this layout pass
-                }
-                EditorGUILayout.EndHorizontal();
-            }
-            EditorGUI.indentLevel--;
-        }
+        // ---- cleanup ----------------------------------------------------------
 
         void DrawCleanupSection(AnimatorController controller)
         {
-            EditorGUILayout.LabelField(L.Tr("Cleanup"), EditorStyles.boldLabel);
-            EditorGUILayout.LabelField(
-                L.Tr("Find sub-assets stored in the .controller file that nothing references any more."),
-                EditorStyles.miniLabel);
-
             bool isAsset = !string.IsNullOrEmpty(AssetDatabase.GetAssetPath(controller));
             using (new EditorGUI.DisabledScope(!isAsset))
                 if (GUILayout.Button(new GUIContent(L.Tr("Scan For Leftovers"),
-                        L.Tr("Blend trees, clips and states deleted from the graph can survive as invisible sub-assets; find them."))))
+                        L.Tr("Find sub-assets stored in the .controller file that nothing references any more.") + "\n"
+                        + L.Tr("Blend trees, clips and states deleted from the graph can survive as invisible sub-assets; find them."))))
                     _leftovers = ControllerCleanup.FindLeftoverSubAssets(controller);
             if (!isAsset)
                 EditorGUILayout.LabelField(L.Tr("(unsaved controller — nothing to scan)"), EditorStyles.miniLabel);

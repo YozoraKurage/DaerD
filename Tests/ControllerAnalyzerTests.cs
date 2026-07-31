@@ -307,6 +307,90 @@ namespace Yozolab.DaerD.Tests
             Object.DestroyImmediate(other);
         }
 
+        // ---- direct blend tree health -----------------------------------------
+
+        static List<ControllerAnalyzer.Issue> DirectTreeIssues(AnimatorController controller)
+        {
+            var result = new List<ControllerAnalyzer.Issue>();
+            foreach (var issue in ControllerAnalyzer.Analyze(controller))
+                if (issue.kind == ControllerAnalyzer.Kind.DirectBlendTree)
+                    result.Add(issue);
+            return result;
+        }
+
+        [Test]
+        public void DirectTreeStateWithWriteDefaultsOff_IsFlagged_AndTheFixTurnsItOn()
+        {
+            var controller = NewController(out var sm);
+            controller.AddParameter("One", UnityEngine.AnimatorControllerParameterType.Float);
+            var state = sm.AddState("DBT");
+            state.writeDefaultValues = false;
+            var tree = new BlendTree { name = "Root", blendType = BlendTreeType.Direct };
+            state.motion = tree;
+
+            var issues = DirectTreeIssues(controller);
+            Assert.AreEqual(1, issues.Count);
+            Assert.AreEqual(ControllerAnalyzer.Severity.Error, issues[0].severity);
+            Assert.IsNotNull(issues[0].fix);
+
+            issues[0].fix();
+            Assert.IsTrue(state.writeDefaultValues);
+            Assert.AreEqual(0, DirectTreeIssues(controller).Count);
+
+            Object.DestroyImmediate(controller);
+            Object.DestroyImmediate(tree);
+        }
+
+        [Test]
+        public void DirectChildWeights_MissingEmptyAndNonFloat_AreFlagged()
+        {
+            var controller = NewController(out var sm);
+            controller.AddParameter("IntWeight", UnityEngine.AnimatorControllerParameterType.Int);
+            var state = sm.AddState("DBT");
+            state.writeDefaultValues = true;
+            var clip = new AnimationClip();
+            var tree = new BlendTree { name = "Root", blendType = BlendTreeType.Direct };
+            tree.AddChild(clip);
+            tree.AddChild(clip);
+            tree.AddChild(clip);
+            var children = tree.children;
+            children[0].directBlendParameter = "";           // never plays → Warning
+            children[1].directBlendParameter = "Missing";    // no such parameter → Error
+            children[2].directBlendParameter = "IntWeight";  // wrong type → Warning
+            tree.children = children;
+            state.motion = tree;
+
+            var issues = DirectTreeIssues(controller);
+            Assert.AreEqual(3, issues.Count);
+
+            Object.DestroyImmediate(controller);
+            Object.DestroyImmediate(tree);
+            Object.DestroyImmediate(clip);
+        }
+
+        [Test]
+        public void GeneratedDbtGadget_PassesTheDirectTreeChecks()
+        {
+            var controller = NewController(out _);
+            controller.AddParameter("A", UnityEngine.AnimatorControllerParameterType.Float);
+            controller.AddParameter("B", UnityEngine.AnimatorControllerParameterType.Float);
+
+            Assert.IsTrue(AapGadgets.Apply(new AapGadgets.Request
+            {
+                controller = controller,
+                kind = AapGadgets.Kind.AddRanged,
+                inputA = "A",
+                inputB = "B",
+                output = "Out",
+                layerIndex = -1,
+                newLayerName = "DBT",
+            }));
+
+            Assert.AreEqual(0, DirectTreeIssues(controller).Count);
+
+            Object.DestroyImmediate(controller);
+        }
+
         [Test]
         public void TransitionIntoSubStateMachine_CountsAsLeavingViaItsDefaultState()
         {
