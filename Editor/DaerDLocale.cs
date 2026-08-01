@@ -300,8 +300,7 @@ namespace Yozolab.DaerD
 
             // ---- object toggle wizard --------------------------------------
             ["Object Toggle"] = "オブジェクトトグル",
-            ["Object Toggle…"] = "オブジェクトトグル…",
-            ["Generate ON/OFF clips for picked GameObjects and the layer or Direct blend tree machinery that plays them."] =
+                        ["Generate ON/OFF clips for picked GameObjects and the layer or Direct blend tree machinery that plays them."] =
                 "選択した GameObject の ON/OFF クリップと、それを再生するレイヤーまたは Direct ブレンドツリーの仕掛けを生成します。",
             ["Creates ON/OFF clips that toggle the listed GameObjects and wires them to a parameter. The clips are saved next to the controller asset."] =
                 "リストした GameObject を切り替える ON/OFF クリップを作成し、パラメーターに配線します。クリップはコントローラーアセットと同じフォルダに保存されます。",
@@ -365,9 +364,8 @@ namespace Yozolab.DaerD
                 "対象パス '{0}' が重複しています。",
 
             // ---- round-robin sync ------------------------------------------
-            ["Round-Robin Sync"] = "巡回同期",
-            ["Round-Robin Sync…"] = "巡回同期…",
-            ["Time-multiplex several parameters over a few synced ones (index + value channels) — parameter compression."] =
+            ["Async Sync"] = "非同期同期",
+                        ["Time-multiplex several parameters over a few synced ones (index + value channels) — parameter compression."] =
                 "少数の同期パラメーター（インデックス + 値チャンネル）に複数のパラメーターを時分割多重します（パラメーター圧縮）。",
             ["Time-multiplexes the ticked parameters over a few synced parameters (an index plus one value channel per type): a local cycle copies each parameter into its channel in turn, and remote clients decode it back. The targets themselves stay unsynced — values update round-robin, one slot per step."] =
                 "チェックしたパラメーターを、インデックス + 型ごとの値チャンネルという少数の同期パラメーターに時分割多重します。ローカル側の巡回ステートが各パラメーターを順番にチャンネルへコピーし、リモート側がデコードして書き戻します。対象パラメーター自体は非同期のままで、値は 1 ステップにつき 1 スロットずつ巡回更新されます。",
@@ -406,34 +404,7 @@ namespace Yozolab.DaerD
                 "対象パラメーターのいくつかがパラメーターストアで synced のままです。ビットを節約するにはストア側で同期を外してください。",
 
             // ---- network sync ----------------------------------------------
-            ["Network Sync (Beta)"] = "ネットワーク同期（ベータ）",
-            ["Network Sync (Beta)…"] = "ネットワーク同期（ベータ）…",
-            ["Generate the local-driver + remote-mirror structure that syncs this layer to other VRChat players. Beta: the generated structure may still change."] =
-                "このレイヤーを他の VRChat プレイヤーへ同期させる、ローカル側 Driver + リモート側ミラーの構造を生成します。ベータ: 生成される構造は今後変わる可能性があります。",
-            ["Beta: the generated structure may still change between versions — review the result before shipping. For syncing parameter VALUES (rather than mirroring a whole layer), consider Round-Robin Sync instead."] =
-                "ベータ機能です。生成される構造はバージョン間で変わる可能性があるため、配布前に必ず結果を確認してください。レイヤー全体のミラーではなくパラメーターの値を同期したい場合は、巡回同期の利用を検討してください。",
             ["Network Sync"] = "ネットワーク同期",
-            ["Makes a layer driven by local-only parameters visible to remote players: each state writes its index into a synced parameter via a Parameter Driver, and generated remote states mirror the layer for everyone else. IsLocal separates the two halves."] =
-                "ローカル専用パラメーターで動くレイヤーをリモートプレイヤーにも見えるようにします。各ステートが Parameter Driver で自分の番号を同期パラメーターに書き込み、生成されるリモートステート群がその値を条件にレイヤーをミラー再生します。ローカル側とリモート側は IsLocal で分離されます。",
-            ["Encoding"] = "エンコード",
-            ["{0} bit(s): {1} … {2}"] = "{0} bit: {1} … {2}",
-            ["Sync Parameter"] = "同期パラメーター",
-            ["Remote Wiring"] = "リモート遷移方式",
-            ["Any State: N transitions from the Any State node. All-to-All: N×(N-1) transitions between the mirror states."] =
-                "Any State: AnyState ノードから N 本の遷移。All-to-All: ミラーステート間の総当たり N×(N-1) 本の遷移。",
-            ["Preserve Transition Timing"] = "遷移タイミングを引き継ぐ",
-            ["Copy blend duration and interruption settings from each state's first outgoing transition (exit time stays off). Off generates instant transitions."] =
-                "各ステートの最初の遷移からブレンド時間や割り込み設定をコピーします（Exit Time は常に OFF）。OFF の場合は即時遷移を生成します。",
-            ["Remote State Prefix"] = "リモートステート接頭辞",
-            ["Strip Behaviours On Mirrors"] = "ミラーの Behaviour を除去",
-            ["Remote copies drop their StateMachineBehaviours so drivers and audio don't fire twice."] =
-                "リモート側の複製から StateMachineBehaviour を除去し、Driver や Audio の二重発火を防ぎます。",
-            ["Pack Into Sub-State Machine"] = "サブステートマシンに格納",
-            ["Group the generated remote states into a 'Network' sub-state machine to keep the layer readable."] =
-                "生成されるリモートステート群を 'Network' サブステートマシンにまとめ、レイヤーを見やすく保ちます。",
-            ["Own Driver Instance"] = "専用 Driver インスタンス",
-            ["Write the sync values through a dedicated Parameter Driver named 'Network' instead of appending rows to a driver already on the state."] =
-                "同期値の書き込みを、ステートに既にある Driver へ追記せず 'Network' という名前の専用 Parameter Driver で行います。",
             ["The target layer needs at least two states to sync."] =
                 "同期するにはレイヤーに 2 つ以上のステートが必要です。",
             ["The sync parameter needs a name."] =
@@ -457,7 +428,7 @@ namespace Yozolab.DaerD
 
             // ---- VRC expression parameters ---------------------------------
             ["VRC Parameters"] = "VRC パラメーター",
-            ["Sync…"] = "同期…",
+            ["Sync"] = "同期",
             ["Network synced (costs bits)"] = "ネットワーク同期（bit を消費）",
             ["Saved between worlds"] = "ワールド間で保存",
             ["Add to the VRC expression parameters asset"] =
@@ -499,7 +470,7 @@ namespace Yozolab.DaerD
 
             // ---- VRC expressions menu --------------------------------------
             ["DaerD Menu"] = "DaerD メニュー",
-            ["Expressions Menu…"] = "Expressions メニュー…",
+            ["Expressions Menu"] = "Expressions メニュー",
             ["Edit the avatar's VRC Expressions Menu (auto-detected from the scene)."] =
                 "アバターの VRC Expressions Menu を編集します（シーンから自動検出）。",
             ["Assign a VRC Expressions Menu asset (auto-detected from the scene avatar when possible)."] =
@@ -536,7 +507,7 @@ namespace Yozolab.DaerD
             ["Paste Settings"] = "設定を貼り付け",
             ["Apply only the copied layer's settings (weight, blending, mask, IK) to this layer."] =
                 "コピーしたレイヤーの設定（ウェイト・ブレンド・マスク・IK）のみをこのレイヤーに適用します。",
-            ["Save as Template…"] = "テンプレートとして保存…",
+            ["Save as Template"] = "テンプレートとして保存",
             ["Save this layer (with its parameters) as a reusable template asset."] =
                 "このレイヤーを（使用パラメーター込みで）再利用可能なテンプレートアセットとして保存します。",
             ["Save Layer Template"] = "レイヤーテンプレートを保存",
@@ -553,7 +524,7 @@ namespace Yozolab.DaerD
             ["Clip '{0}' has {1} binding(s) whose path no longer exists under '{2}'."] =
                 "クリップ '{0}' に、'{2}' 配下に存在しないパスのバインディングが {1} 件あります。",
             ["DaerD Remap"] = "DaerD リパス",
-            ["Remap…"] = "リパス…",
+            ["Remap"] = "リパス",
             ["Fix clip bindings whose hierarchy paths broke (renames / moves)."] =
                 "リネームや移動で壊れたクリップのバインディングパスを修復します。",
             ["Assign the controller and the avatar (the GameObject with the Animator) to scan for broken animation paths."] =

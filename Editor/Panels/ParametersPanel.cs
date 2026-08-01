@@ -252,7 +252,7 @@ namespace Yozolab.DaerD
                 EditorStyles.miniLabel);
             GUI.color = prev;
             GUILayout.FlexibleSpace();
-            if (GUILayout.Button(new GUIContent(L.Tr("Sync…"),
+            if (GUILayout.Button(new GUIContent(L.Tr("Sync"),
                     L.Tr("Align the parameter store to this controller's parameter list (with a diff preview).")),
                     EditorStyles.miniButton, GUILayout.Width(52)))
             {
@@ -490,12 +490,12 @@ namespace Yozolab.DaerD
             // Computed parameters: a DBT gadget adds its output (and helper) parameters and
             // the Direct-blend-tree machinery that drives them.
             menu.AddSeparator(string.Empty);
-            menu.AddItem(new GUIContent("DBT Gadget (AAP)..."), false, () =>
+            menu.AddItem(new GUIContent("DBT Gadget (AAP)"), false, () =>
                 AapGadgetWindow.Open(Context.Controller, OnDbtGadgetApplied));
-            menu.AddItem(new GUIContent("Object Toggle..."), false, () =>
+            menu.AddItem(new GUIContent("Object Toggle"), false, () =>
                 ToggleBuilderWindow.Open(Context.Controller, _ => OnDbtGadgetApplied()));
-            menu.AddItem(new GUIContent("Round-Robin Sync..."), false, () =>
-                RoundRobinSyncWindow.Open(Context.Controller, _ => OnDbtGadgetApplied()));
+            menu.AddItem(new GUIContent("Async Sync"), false, () =>
+                AsyncSyncWindow.Open(Context.Controller, _ => OnDbtGadgetApplied()));
 
             // VRChat built-in parameters. Already-present ones show as a checked, disabled entry so
             // the menu doubles as a quick "which standard parameters does this controller have?".
@@ -508,7 +508,7 @@ namespace Yozolab.DaerD
                 menu.AddItem(new GUIContent("VRChat/Add All Missing (" + missing + ")"), false, AddAllVrcParameters);
             else
                 menu.AddDisabledItem(new GUIContent("VRChat/Add All Missing"));
-            var syncLabel = new GUIContent("VRChat/Sync Expression Parameters Asset...");
+            var syncLabel = new GUIContent("VRChat/Sync Expression Parameters Asset");
             if (_store != null)
             {
                 var store = _store;

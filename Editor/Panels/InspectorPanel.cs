@@ -2006,25 +2006,19 @@ namespace Yozolab.DaerD
                 ClipsWindow.Open(controller);
                 GUIUtility.ExitGUI();   // the focus moved to another window under this layout pass
             }
-            if (GUILayout.Button(new GUIContent(L.Tr("Object Toggle…"),
+            if (GUILayout.Button(new GUIContent(L.Tr("Object Toggle"),
                     L.Tr("Generate ON/OFF clips for picked GameObjects and the layer or Direct blend tree machinery that plays them."))))
             {
                 ToggleBuilderWindow.Open(controller, OnToggleApplied);
                 GUIUtility.ExitGUI();   // the focus moved to another window under this layout pass
             }
-            if (GUILayout.Button(new GUIContent(L.Tr("Round-Robin Sync…"),
+            if (GUILayout.Button(new GUIContent(L.Tr("Async Sync"),
                     L.Tr("Time-multiplex several parameters over a few synced ones (index + value channels) — parameter compression."))))
             {
-                RoundRobinSyncWindow.Open(controller, OnToggleApplied);
+                AsyncSyncWindow.Open(controller, OnToggleApplied);
                 GUIUtility.ExitGUI();   // the focus moved to another window under this layout pass
             }
-            if (GUILayout.Button(new GUIContent(L.Tr("Network Sync (Beta)…"),
-                    L.Tr("Generate the local-driver + remote-mirror structure that syncs this layer to other VRChat players. Beta: the generated structure may still change."))))
-            {
-                NetworkSyncWindow.Open(controller, Context.LayerIndex, OnToggleApplied);
-                GUIUtility.ExitGUI();   // the focus moved to another window under this layout pass
-            }
-            if (GUILayout.Button(new GUIContent(L.Tr("Expressions Menu…"),
+            if (GUILayout.Button(new GUIContent(L.Tr("Expressions Menu"),
                     L.Tr("Edit the avatar's VRC Expressions Menu (auto-detected from the scene)."))))
             {
                 VrcMenuWindow.Open(controller);

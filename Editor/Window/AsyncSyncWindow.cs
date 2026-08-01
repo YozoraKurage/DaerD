@@ -7,11 +7,11 @@ using UnityEngine;
 namespace Yozolab.DaerD
 {
     /// <summary>
-    /// Wizard for <see cref="RoundRobinSyncBuilder"/>: tick the parameters to multiplex,
+    /// Wizard for <see cref="AsyncSyncBuilder"/>: tick the parameters to multiplex,
     /// pick the index encoding and step interval, and generate the send-cycle / decoder
     /// layer. Shows the synced-bit cost against syncing each parameter directly.
     /// </summary>
-    class RoundRobinSyncWindow : EditorWindow
+    class AsyncSyncWindow : EditorWindow
     {
         class Row
         {
@@ -24,8 +24,8 @@ namespace Yozolab.DaerD
         Action<int> _onApplied;
 
         readonly List<Row> _rows = new List<Row>();
-        string _baseName = "RRSync";
-        RoundRobinSyncBuilder.IndexEncoding _encoding = RoundRobinSyncBuilder.IndexEncoding.Int;
+        string _baseName = "Async";
+        AsyncSyncBuilder.IndexEncoding _encoding = AsyncSyncBuilder.IndexEncoding.Int;
         float _stepSeconds = 0.3f;
         bool _addToStore = true;
         Vector2 _scroll;
@@ -35,8 +35,8 @@ namespace Yozolab.DaerD
         /// <summary>onApplied receives the index of the generated layer.</summary>
         public static void Open(AnimatorController controller, Action<int> onApplied)
         {
-            var window = CreateInstance<RoundRobinSyncWindow>();
-            window.titleContent = new GUIContent(L.Tr("Round-Robin Sync"));
+            var window = CreateInstance<AsyncSyncWindow>();
+            window.titleContent = new GUIContent(L.Tr("Async Sync"));
             window.minSize = new Vector2(460, 420);
             window._controller = controller;
             window._onApplied = onApplied;
@@ -61,13 +61,13 @@ namespace Yozolab.DaerD
                 return;
             }
 
-            EditorGUILayout.LabelField(L.Tr("Round-Robin Sync"), EditorStyles.boldLabel);
+            EditorGUILayout.LabelField(L.Tr("Async Sync"), EditorStyles.boldLabel);
             EditorGUILayout.HelpBox(
                 L.Tr("Time-multiplexes the ticked parameters over a few synced parameters (an index plus one value channel per type): a local cycle copies each parameter into its channel in turn, and remote clients decode it back. The targets themselves stay unsynced — values update round-robin, one slot per step."),
                 MessageType.Info);
 
             _baseName = EditorGUILayout.TextField(L.Tr("Base Name"), _baseName);
-            _encoding = (RoundRobinSyncBuilder.IndexEncoding)EditorGUILayout.Popup(
+            _encoding = (AsyncSyncBuilder.IndexEncoding)EditorGUILayout.Popup(
                 L.Tr("Index Encoding"), (int)_encoding, EncodingLabels);
             _stepSeconds = EditorGUILayout.FloatField(
                 new GUIContent(L.Tr("Step Interval (s)"),
@@ -95,13 +95,13 @@ namespace Yozolab.DaerD
             var request = BuildRequest(store);
             if (request.targets.Count >= 2)
             {
-                int direct = RoundRobinSyncBuilder.DirectBits(request);
-                int compressed = RoundRobinSyncBuilder.CompressedBits(request);
+                int direct = AsyncSyncBuilder.DirectBits(request);
+                int compressed = AsyncSyncBuilder.CompressedBits(request);
                 EditorGUILayout.LabelField(
                     L.Tr("Synced cost: {0} bit (direct sync would be {1} bit)", compressed, direct),
                     EditorStyles.miniLabel);
             }
-            foreach (var warning in RoundRobinSyncBuilder.Warnings(request))
+            foreach (var warning in AsyncSyncBuilder.Warnings(request))
                 EditorGUILayout.HelpBox(warning, MessageType.Warning);
 
             EditorGUILayout.Space(8);
@@ -114,9 +114,9 @@ namespace Yozolab.DaerD
             EditorGUILayout.EndHorizontal();
         }
 
-        RoundRobinSyncBuilder.Request BuildRequest(ParameterStore store)
+        AsyncSyncBuilder.Request BuildRequest(ParameterStore store)
         {
-            var request = new RoundRobinSyncBuilder.Request
+            var request = new AsyncSyncBuilder.Request
             {
                 controller = _controller,
                 baseName = _baseName != null ? _baseName.Trim() : string.Empty,
@@ -131,15 +131,15 @@ namespace Yozolab.DaerD
             return request;
         }
 
-        void TryApply(RoundRobinSyncBuilder.Request request)
+        void TryApply(AsyncSyncBuilder.Request request)
         {
-            var error = RoundRobinSyncBuilder.Validate(request);
+            var error = AsyncSyncBuilder.Validate(request);
             if (error != null)
             {
-                EditorUtility.DisplayDialog(L.Tr("Round-Robin Sync"), error, "OK");
+                EditorUtility.DisplayDialog(L.Tr("Async Sync"), error, "OK");
                 return;
             }
-            RoundRobinSyncBuilder.Apply(request);
+            AsyncSyncBuilder.Apply(request);
             _onApplied?.Invoke(_controller.layers.Length - 1);
             Close();
         }

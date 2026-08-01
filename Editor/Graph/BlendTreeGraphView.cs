@@ -70,7 +70,7 @@ namespace Yozolab.DaerD
             var controller = _context.Controller;
             if (tree == null || controller == null) return;
 
-            evt.menu.AppendAction("Save as Template…", _ => SaveTemplate(controller, tree));
+            evt.menu.AppendAction("Save as Template", _ => SaveTemplate(controller, tree));
             var templates = DaerDBlendTreeTemplate.All();
             if (templates.Count == 0)
                 evt.menu.AppendAction("Import Template", null, DropdownMenuAction.Status.Disabled);
@@ -87,7 +87,7 @@ namespace Yozolab.DaerD
                 evt.menu.AppendAction("Delete Template/" + captured.name.Replace('.', '/'),
                     _ => DeleteTemplate(captured));
             }
-            evt.menu.AppendAction("Remap Parameters…",
+            evt.menu.AppendAction("Remap Parameters",
                 _ => BlendTreeRemapWindow.Open(controller, tree, () =>
                 {
                     _context.NotifyBlendTreeChanged();

@@ -130,7 +130,7 @@ namespace Yozolab.DaerD
                         L.Tr("List every AnimationClip this controller references and the states that use it.")),
                         GUILayout.Width(80)))
                     RefreshEntries();
-                if (GUILayout.Button(new GUIContent(L.Tr("Remap…"),
+                if (GUILayout.Button(new GUIContent(L.Tr("Remap"),
                         L.Tr("Fix clip bindings whose hierarchy paths broke (renames / moves).")),
                         GUILayout.Width(80)))
                 {

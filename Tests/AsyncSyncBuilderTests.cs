@@ -5,7 +5,7 @@ using UnityEngine;
 
 namespace Yozolab.DaerD.Tests
 {
-    public class RoundRobinSyncBuilderTests
+    public class AsyncSyncBuilderTests
     {
         static AnimatorController NewController()
         {
@@ -17,13 +17,13 @@ namespace Yozolab.DaerD.Tests
             return controller;
         }
 
-        static RoundRobinSyncBuilder.Request NewRequest(AnimatorController controller,
+        static AsyncSyncBuilder.Request NewRequest(AnimatorController controller,
             params string[] targets)
         {
-            var request = new RoundRobinSyncBuilder.Request
+            var request = new AsyncSyncBuilder.Request
             {
                 controller = controller,
-                baseName = "RR",
+                baseName = "Async",
                 skipDrivers = true,
             };
             request.targets.AddRange(targets);
@@ -46,23 +46,23 @@ namespace Yozolab.DaerD.Tests
         public void Validate_RejectsBadRequests()
         {
             var controller = NewController();
-            Assert.IsNotNull(RoundRobinSyncBuilder.Validate(NewRequest(null, "F", "B")));
-            Assert.IsNotNull(RoundRobinSyncBuilder.Validate(NewRequest(controller, "F")));
-            Assert.IsNotNull(RoundRobinSyncBuilder.Validate(NewRequest(controller, "F", "F")));
-            Assert.IsNotNull(RoundRobinSyncBuilder.Validate(NewRequest(controller, "F", "Missing")));
+            Assert.IsNotNull(AsyncSyncBuilder.Validate(NewRequest(null, "F", "B")));
+            Assert.IsNotNull(AsyncSyncBuilder.Validate(NewRequest(controller, "F")));
+            Assert.IsNotNull(AsyncSyncBuilder.Validate(NewRequest(controller, "F", "F")));
+            Assert.IsNotNull(AsyncSyncBuilder.Validate(NewRequest(controller, "F", "Missing")));
 
             controller.AddParameter("T", AnimatorControllerParameterType.Trigger);
-            Assert.IsNotNull(RoundRobinSyncBuilder.Validate(NewRequest(controller, "F", "T")));
+            Assert.IsNotNull(AsyncSyncBuilder.Validate(NewRequest(controller, "F", "T")));
 
             var zeroStep = NewRequest(controller, "F", "B");
             zeroStep.stepSeconds = 0f;
-            Assert.IsNotNull(RoundRobinSyncBuilder.Validate(zeroStep));
+            Assert.IsNotNull(AsyncSyncBuilder.Validate(zeroStep));
 
             var clash = NewController();
-            clash.AddParameter("RR/Index", AnimatorControllerParameterType.Float);
-            Assert.IsNotNull(RoundRobinSyncBuilder.Validate(NewRequest(clash, "F", "B")));
+            clash.AddParameter("Async/Index", AnimatorControllerParameterType.Float);
+            Assert.IsNotNull(AsyncSyncBuilder.Validate(NewRequest(clash, "F", "B")));
 
-            Assert.IsNull(RoundRobinSyncBuilder.Validate(NewRequest(controller, "F", "B", "I")));
+            Assert.IsNull(AsyncSyncBuilder.Validate(NewRequest(controller, "F", "B", "I")));
         }
 
         // ---- structure ------------------------------------------------------
@@ -71,18 +71,18 @@ namespace Yozolab.DaerD.Tests
         public void Apply_BuildsSendCycleAndDecoder()
         {
             var controller = NewController();
-            Assert.IsTrue(RoundRobinSyncBuilder.Apply(NewRequest(controller, "F", "B", "I")));
+            Assert.IsTrue(AsyncSyncBuilder.Apply(NewRequest(controller, "F", "B", "I")));
 
             Assert.AreEqual(AnimatorControllerParameterType.Bool,
                 DbtBuilder.FindParameter(controller, "IsLocal").type);
             Assert.AreEqual(AnimatorControllerParameterType.Int,
-                DbtBuilder.FindParameter(controller, "RR/Index").type);
+                DbtBuilder.FindParameter(controller, "Async/Index").type);
             Assert.AreEqual(AnimatorControllerParameterType.Float,
-                DbtBuilder.FindParameter(controller, "RR/Float").type);
+                DbtBuilder.FindParameter(controller, "Async/Float").type);
             Assert.AreEqual(AnimatorControllerParameterType.Bool,
-                DbtBuilder.FindParameter(controller, "RR/Bool").type);
+                DbtBuilder.FindParameter(controller, "Async/Bool").type);
             Assert.AreEqual(AnimatorControllerParameterType.Int,
-                DbtBuilder.FindParameter(controller, "RR/Int").type);
+                DbtBuilder.FindParameter(controller, "Async/Int").type);
 
             Assert.AreEqual(2, controller.layers.Length);
             var stateMachine = controller.layers[1].stateMachine;
@@ -119,7 +119,7 @@ namespace Yozolab.DaerD.Tests
             var recvB = FindState(stateMachine, "Recv B");
             foreach (var transition in stateMachine.anyStateTransitions)
                 if (transition.destinationState == recvB)
-                    Assert.IsTrue(HasCondition(transition, "RR/Index", AnimatorConditionMode.Equals, 1f));
+                    Assert.IsTrue(HasCondition(transition, "Async/Index", AnimatorConditionMode.Equals, 1f));
         }
 
         static AnimatorState FindState(AnimatorStateMachine stateMachine, string name)
@@ -136,22 +136,22 @@ namespace Yozolab.DaerD.Tests
         {
             var controller = NewController();
             var request = NewRequest(controller, "F", "B", "I");   // 3 slots -> 2 bits
-            request.encoding = RoundRobinSyncBuilder.IndexEncoding.Bool;
-            Assert.IsTrue(RoundRobinSyncBuilder.Apply(request));
+            request.encoding = AsyncSyncBuilder.IndexEncoding.Bool;
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
 
-            Assert.IsNull(DbtBuilder.FindParameter(controller, "RR/Index"));
+            Assert.IsNull(DbtBuilder.FindParameter(controller, "Async/Index"));
             Assert.AreEqual(AnimatorControllerParameterType.Bool,
-                DbtBuilder.FindParameter(controller, "RR/Index/b0").type);
+                DbtBuilder.FindParameter(controller, "Async/Index/b0").type);
             Assert.AreEqual(AnimatorControllerParameterType.Bool,
-                DbtBuilder.FindParameter(controller, "RR/Index/b1").type);
+                DbtBuilder.FindParameter(controller, "Async/Index/b1").type);
 
             var stateMachine = controller.layers[1].stateMachine;
             var recvI = FindState(stateMachine, "Recv I");   // slot 2 = b0 off, b1 on
             foreach (var transition in stateMachine.anyStateTransitions)
                 if (transition.destinationState == recvI)
                 {
-                    Assert.IsTrue(HasCondition(transition, "RR/Index/b0", AnimatorConditionMode.IfNot, 0f));
-                    Assert.IsTrue(HasCondition(transition, "RR/Index/b1", AnimatorConditionMode.If, 0f));
+                    Assert.IsTrue(HasCondition(transition, "Async/Index/b0", AnimatorConditionMode.IfNot, 0f));
+                    Assert.IsTrue(HasCondition(transition, "Async/Index/b1", AnimatorConditionMode.If, 0f));
                 }
         }
 
@@ -159,10 +159,10 @@ namespace Yozolab.DaerD.Tests
         public void Apply_OnlyCreatesChannelsForPresentTypes()
         {
             var controller = NewController();
-            Assert.IsTrue(RoundRobinSyncBuilder.Apply(NewRequest(controller, "F", "B")));
-            Assert.IsNotNull(DbtBuilder.FindParameter(controller, "RR/Float"));
-            Assert.IsNotNull(DbtBuilder.FindParameter(controller, "RR/Bool"));
-            Assert.IsNull(DbtBuilder.FindParameter(controller, "RR/Int"));
+            Assert.IsTrue(AsyncSyncBuilder.Apply(NewRequest(controller, "F", "B")));
+            Assert.IsNotNull(DbtBuilder.FindParameter(controller, "Async/Float"));
+            Assert.IsNotNull(DbtBuilder.FindParameter(controller, "Async/Bool"));
+            Assert.IsNull(DbtBuilder.FindParameter(controller, "Async/Int"));
         }
 
         [Test]
@@ -172,15 +172,15 @@ namespace Yozolab.DaerD.Tests
             var asset = ScriptableObject.CreateInstance<VRCExpressionParameters>();
             var request = NewRequest(controller, "F", "B");
             request.store = ParameterStore.TryWrap(asset);
-            Assert.IsTrue(RoundRobinSyncBuilder.Apply(request));
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
 
-            var index = VrcExpressionParameters.Find(asset, "RR/Index");
+            var index = VrcExpressionParameters.Find(asset, "Async/Index");
             Assert.IsNotNull(index);
             Assert.AreEqual(VrcExpressionParameters.ValueType.Int, index.valueType);
             Assert.IsTrue(index.synced);
             Assert.IsFalse(index.saved);
-            Assert.IsNotNull(VrcExpressionParameters.Find(asset, "RR/Float"));
-            Assert.IsNotNull(VrcExpressionParameters.Find(asset, "RR/Bool"));
+            Assert.IsNotNull(VrcExpressionParameters.Find(asset, "Async/Float"));
+            Assert.IsNotNull(VrcExpressionParameters.Find(asset, "Async/Bool"));
             // The targets themselves are NOT added.
             Assert.IsNull(VrcExpressionParameters.Find(asset, "F"));
         }
@@ -191,8 +191,8 @@ namespace Yozolab.DaerD.Tests
             var controller = NewController();
             var request = NewRequest(controller, "F", "B", "I");
             // direct: 8 (F) + 1 (B) + 8 (I) = 17; compressed: 8 index + 8 F + 1 B + 8 I = 25
-            Assert.AreEqual(17, RoundRobinSyncBuilder.DirectBits(request));
-            Assert.AreEqual(25, RoundRobinSyncBuilder.CompressedBits(request));
+            Assert.AreEqual(17, AsyncSyncBuilder.DirectBits(request));
+            Assert.AreEqual(25, AsyncSyncBuilder.CompressedBits(request));
 
             // Compression pays off as slots share channels: 4 floats direct = 32,
             // compressed = 8 index + 8 channel = 16.
@@ -200,12 +200,12 @@ namespace Yozolab.DaerD.Tests
             controller.AddParameter("F3", AnimatorControllerParameterType.Float);
             controller.AddParameter("F4", AnimatorControllerParameterType.Float);
             var floats = NewRequest(controller, "F", "F2", "F3", "F4");
-            Assert.AreEqual(32, RoundRobinSyncBuilder.DirectBits(floats));
-            Assert.AreEqual(16, RoundRobinSyncBuilder.CompressedBits(floats));
+            Assert.AreEqual(32, AsyncSyncBuilder.DirectBits(floats));
+            Assert.AreEqual(16, AsyncSyncBuilder.CompressedBits(floats));
 
             var bits = NewRequest(controller, "F", "F2", "F3", "F4");
-            bits.encoding = RoundRobinSyncBuilder.IndexEncoding.Bool;
-            Assert.AreEqual(10, RoundRobinSyncBuilder.CompressedBits(bits));   // 2 bits + 8
+            bits.encoding = AsyncSyncBuilder.IndexEncoding.Bool;
+            Assert.AreEqual(10, AsyncSyncBuilder.CompressedBits(bits));   // 2 bits + 8
         }
     }
 }

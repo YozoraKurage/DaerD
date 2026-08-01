@@ -6,6 +6,11 @@ using UnityEngine;
 namespace Yozolab.DaerD
 {
     /// <summary>
+    /// NOTE: currently not exposed in the UI (the layer-mirroring approach is being
+    /// reconsidered; see AsyncSyncBuilder for the value-sync alternative). The model and its
+    /// tests are kept — AsyncSyncBuilder shares IsLocalParameter / BitsRequired, and the
+    /// wizard can be revived from history if the approach earns its place back.
+    ///
     /// Generates the VRChat network-sync pattern for a layer whose states only change locally
     /// (Parameter Drivers, contacts, …): every root-level state writes its index into a synced
     /// parameter (one Int, or ceil(log2 N) Bool bits, LSB-first) through a Parameter Driver,

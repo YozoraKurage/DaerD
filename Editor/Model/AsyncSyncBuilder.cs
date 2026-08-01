@@ -6,7 +6,7 @@ using UnityEngine;
 namespace Yozolab.DaerD
 {
     /// <summary>
-    /// Parameter compression via time-multiplexing ("round-robin sync"): instead of syncing
+    /// Parameter compression via time-multiplexing ("async sync"): instead of syncing
     /// N parameters at 8 bits each, only a small fixed set of expression parameters is
     /// synced — an index plus one value channel per value type — and the parameters take
     /// turns. A local-only state cycle copies parameter i into its type's channel and sets
@@ -18,7 +18,7 @@ namespace Yozolab.DaerD
     /// remote joining mid-cycle fills in over one full cycle, and index/value are separate
     /// synced parameters so a step can transiently pair a fresh index with a stale value.
     /// </summary>
-    static class RoundRobinSyncBuilder
+    static class AsyncSyncBuilder
     {
         public enum IndexEncoding
         {
@@ -34,7 +34,7 @@ namespace Yozolab.DaerD
             /// <summary>Existing Float / Int / Bool parameters to multiplex, in slot order.</summary>
             public List<string> targets = new List<string>();
             /// <summary>Prefix for the generated synced parameters ("/Index", "/Float", …).</summary>
-            public string baseName = "RRSync";
+            public string baseName = "Async";
             public IndexEncoding encoding = IndexEncoding.Int;
             /// <summary>Dwell per slot in seconds. VRChat syncs roughly every 0.3 s — shorter
             /// steps risk remotes skipping slots.</summary>
@@ -186,9 +186,9 @@ namespace Yozolab.DaerD
             if (Validate(r) != null) return false;
             var controller = r.controller;
 
-            using (new UndoScope("Round-Robin Sync"))
+            using (new UndoScope("Async Sync"))
             {
-                Undo.RegisterCompleteObjectUndo(controller, "Round-Robin Sync");
+                Undo.RegisterCompleteObjectUndo(controller, "Async Sync");
 
                 EnsureParameter(controller, NetworkSyncBuilder.IsLocalParameter,
                     AnimatorControllerParameterType.Bool);
@@ -202,7 +202,7 @@ namespace Yozolab.DaerD
                 layers[layers.Length - 1].defaultWeight = 1f;
                 controller.layers = layers;
                 var stateMachine = layers[layers.Length - 1].stateMachine;
-                Undo.RegisterCompleteObjectUndo(stateMachine, "Round-Robin Sync");
+                Undo.RegisterCompleteObjectUndo(stateMachine, "Async Sync");
 
                 int count = r.targets.Count;
                 string[] indexBits = null;
@@ -227,9 +227,9 @@ namespace Yozolab.DaerD
                     sendStates.Add(state);
 
                     if (r.skipDrivers) continue;
-                    var driver = VrcParameterDriver.AddTo(state, "RR Send");
+                    var driver = VrcParameterDriver.AddTo(state, "Async Send");
                     if (driver == null) continue;
-                    Undo.RegisterCompleteObjectUndo(driver, "Round-Robin Sync");
+                    Undo.RegisterCompleteObjectUndo(driver, "Async Sync");
                     VrcParameterDriver.SetLocalOnly(driver, true);
                     var type = DbtBuilder.FindParameter(controller, r.targets[i]).type;
                     // Value first, then the index — remotes react to the index change.
@@ -264,10 +264,10 @@ namespace Yozolab.DaerD
 
                     if (!r.skipDrivers)
                     {
-                        var driver = VrcParameterDriver.AddTo(state, "RR Recv");
+                        var driver = VrcParameterDriver.AddTo(state, "Async Recv");
                         if (driver != null)
                         {
-                            Undo.RegisterCompleteObjectUndo(driver, "Round-Robin Sync");
+                            Undo.RegisterCompleteObjectUndo(driver, "Async Sync");
                             VrcParameterDriver.SetLocalOnly(driver, false);
                             var type = DbtBuilder.FindParameter(controller, r.targets[i]).type;
                             VrcParameterDriver.AddCopyEntry(driver,
