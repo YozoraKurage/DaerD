@@ -445,6 +445,24 @@ namespace Yozolab.DaerD
             ["Expression parameter '{0}' is {1} but the controller parameter is {2}."] =
                 "Expression パラメーター '{0}' は {1} 型ですが、コントローラー側は {2} 型です。",
 
+            // ---- VRC behaviours --------------------------------------------
+            ["Paste"] = "貼り付け",
+            ["Copy every behaviour on this state; paste from a state's right-click menu or here."] =
+                "このステートの全 Behaviour をコピーします。ステートの右クリックメニューかここから貼り付けできます。",
+            ["Append the copied behaviours to this state."] =
+                "コピーした Behaviour をこのステートに追加します。",
+            ["Enable"] = "有効",
+            ["Disable"] = "無効",
+            ["Enter"] = "Enter",
+            ["Exit"] = "Exit",
+            ["Fixed Delay"] = "固定遅延",
+            ["On: the delay is in seconds. Off: normalized time of the state."] =
+                "ON: 遅延を秒で解釈します。OFF: ステートの正規化時間で解釈します。",
+            ["Goal Weight"] = "目標ウェイト",
+            ["Resolve From AudioSource"] = "AudioSource から解決",
+            ["Drop the avatar's AudioSource to fill the source path."] =
+                "アバターの AudioSource をドロップするとソースパスが入力されます。",
+
             // ---- settings ---------------------------------------------------
             ["Language"] = "言語 (Language)",
             ["Auto (System Language)"] = "自動（システム言語）",

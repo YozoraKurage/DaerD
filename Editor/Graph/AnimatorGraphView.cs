@@ -612,6 +612,7 @@ namespace Yozolab.DaerD
                 StateClipboard.HasData ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
             evt.menu.AppendAction("Duplicate State(s)", _ => DuplicateSelectedStates(),
                 stateCount > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+            BuildBehaviourClipboardEntries(evt, stateCount);
             evt.menu.AppendAction("Delete", _ => DeleteCurrentSelection(),
                 HasDeletableSelection() ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
 
@@ -684,6 +685,42 @@ namespace Yozolab.DaerD
                 evt.menu.AppendAction("Disconnect All", _ => DisconnectStateNode(stateNode),
                     connected > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
             }
+        }
+
+        /// <summary>Copy Behaviours from one state / paste onto every selected state. Paste
+        /// offers Replace (clear targets first) and Append.</summary>
+        void BuildBehaviourClipboardEntries(ContextualMenuPopulateEvent evt, int stateCount)
+        {
+            var states = GetSelectedStates();
+            bool anyBehaviours = false;
+            foreach (var state in states)
+                if (state.behaviours != null && state.behaviours.Length > 0)
+                { anyBehaviours = true; break; }
+
+            evt.menu.AppendAction("Behaviours/Copy From This State",
+                _ => VrcBehaviours.Copy(FirstSelected<StateNode>().State.behaviours),
+                stateCount == 1 && anyBehaviours
+                    ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+
+            int copied = VrcBehaviours.ClipboardCount;
+            string suffix = copied > 0 ? " (" + copied + ")" : string.Empty;
+            var pasteStatus = stateCount > 0 && copied > 0
+                ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled;
+            evt.menu.AppendAction("Behaviours/Paste (Append)" + suffix,
+                _ => PasteBehavioursOnSelection(replace: false), pasteStatus);
+            evt.menu.AppendAction("Behaviours/Paste (Replace)" + suffix,
+                _ => PasteBehavioursOnSelection(replace: true), pasteStatus);
+        }
+
+        void PasteBehavioursOnSelection(bool replace)
+        {
+            var states = GetSelectedStates();
+            using (new UndoScope("Paste Behaviours"))
+                foreach (var state in states)
+                {
+                    VrcBehaviours.Paste(state, replace);
+                    _sync.RefreshStateNode(state);   // B badge updates immediately
+                }
         }
 
         // Source set marked for the two-step cross-product flow. Static so it survives the menu

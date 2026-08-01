@@ -545,14 +545,52 @@ namespace Yozolab.DaerD
         {
             EditorGUILayout.Space(4);
             var behaviours = state.behaviours;
+            EditorGUILayout.BeginHorizontal();
             EditorGUILayout.LabelField("Behaviours (" + behaviours.Length + ")", EditorStyles.boldLabel);
+            using (new EditorGUI.DisabledScope(behaviours.Length == 0))
+                if (GUILayout.Button(new GUIContent(L.Tr("Copy"),
+                        L.Tr("Copy every behaviour on this state; paste from a state's right-click menu or here.")),
+                        EditorStyles.miniButton, GUILayout.Width(50)))
+                    VrcBehaviours.Copy(behaviours);
+            using (new EditorGUI.DisabledScope(VrcBehaviours.ClipboardCount == 0))
+                if (GUILayout.Button(new GUIContent(L.Tr("Paste"),
+                        L.Tr("Append the copied behaviours to this state.")),
+                        EditorStyles.miniButton, GUILayout.Width(50)))
+                {
+                    VrcBehaviours.Paste(state, replace: false);
+                    _graphView.Sync.RefreshStateNode(state);
+                    GUIUtility.ExitGUI();
+                }
+            EditorGUILayout.EndHorizontal();
 
-            foreach (var behaviour in behaviours)
+            for (int i = 0; i < behaviours.Length; i++)
             {
+                var behaviour = behaviours[i];
                 if (behaviour == null) continue;
                 EditorGUILayout.BeginVertical(EditorStyles.helpBox);
                 EditorGUILayout.BeginHorizontal();
-                EditorGUILayout.LabelField(behaviour.GetType().Name, EditorStyles.boldLabel);
+                EditorGUILayout.LabelField(BehaviourTitle(behaviour), EditorStyles.boldLabel);
+
+                // Repeatable VRC types get a per-instance name so multiple rows stay
+                // distinguishable (drivers named "Network" by the sync generator, etc.).
+                string typeName = behaviour.GetType().Name;
+                if (VrcBehaviours.IsVrcType(typeName) && !VrcBehaviours.IsSingleton(typeName))
+                {
+                    string instanceName = EditorGUILayout.DelayedTextField(behaviour.name, GUILayout.Width(90));
+                    if (instanceName != behaviour.name)
+                    {
+                        Undo.RegisterCompleteObjectUndo(behaviour, "Rename Behaviour");
+                        behaviour.name = instanceName;
+                        EditorUtility.SetDirty(behaviour);
+                    }
+                }
+
+                using (new EditorGUI.DisabledScope(i == 0))
+                    if (GUILayout.Button("↑", EditorStyles.miniButton, GUILayout.Width(22)))
+                    { VrcBehaviours.Move(state, i, -1); GUIUtility.ExitGUI(); }
+                using (new EditorGUI.DisabledScope(i == behaviours.Length - 1))
+                    if (GUILayout.Button("↓", EditorStyles.miniButton, GUILayout.Width(22)))
+                    { VrcBehaviours.Move(state, i, +1); GUIUtility.ExitGUI(); }
                 if (GUILayout.Button("Remove", EditorStyles.miniButton, GUILayout.Width(60)))
                 {
                     RemoveBehaviour(state, behaviour);
@@ -569,6 +607,13 @@ namespace Yozolab.DaerD
                 ShowAddBehaviourMenu(state);
         }
 
+        static string BehaviourTitle(StateMachineBehaviour behaviour)
+        {
+            string typeName = behaviour.GetType().Name;
+            // The VRC prefix is noise inside an already VRC-labeled box; keep titles short.
+            return typeName.StartsWith("VRC") ? typeName.Substring(3) : typeName;
+        }
+
         /// <summary>
         /// Render VRC SDK behaviours (Tracking Control, Parameter Driver) with a UI matching
         /// their native inspector. Detected by type name, so we don't need to reference VRCSDK.
@@ -580,8 +625,121 @@ namespace Yozolab.DaerD
             {
                 case "VRCAnimatorTrackingControl": DrawVrcTrackingControl(behaviour); return true;
                 case "VRCAvatarParameterDriver": DrawVrcParameterDriver(behaviour); return true;
+                case "VRCAnimatorPlayAudio": DrawVrcPlayAudio(behaviour); return true;
+                case "VRCAnimatorLocomotionControl": DrawVrcLocomotionControl(behaviour); return true;
+                case "VRCAnimatorLayerControl": DrawVrcLayerControl(behaviour); return true;
+                case "VRCPlayableLayerControl": DrawVrcPlayableLayerControl(behaviour); return true;
+                case "VRCAnimatorTemporaryPoseSpace": DrawVrcPoseSpace(behaviour); return true;
                 default: return false;
             }
+        }
+
+        /// <summary>Two-button exclusive toggle; returns the (possibly new) value.</summary>
+        static bool DrawTwoWayToggle(bool value, string whenTrue, string whenFalse)
+        {
+            EditorGUILayout.BeginHorizontal();
+            var prev = GUI.backgroundColor;
+            GUI.backgroundColor = value ? new Color(0.55f, 0.85f, 0.55f) : prev;
+            if (GUILayout.Button(whenTrue, EditorStyles.miniButtonLeft) && !value) value = true;
+            GUI.backgroundColor = !value ? new Color(0.55f, 0.85f, 0.55f) : prev;
+            if (GUILayout.Button(whenFalse, EditorStyles.miniButtonRight) && value) value = false;
+            GUI.backgroundColor = prev;
+            EditorGUILayout.EndHorizontal();
+            return value;
+        }
+
+        /// <summary>PropertyField for a named property when it exists (SDK layouts vary).</summary>
+        static void PropertyRow(SerializedObject so, string property, string label)
+        {
+            var prop = so.FindProperty(property);
+            if (prop != null)
+                EditorGUILayout.PropertyField(prop, new GUIContent(label), true);
+        }
+
+        void DrawVrcLocomotionControl(StateMachineBehaviour behaviour)
+        {
+            var so = new SerializedObject(behaviour);
+            so.Update();
+            var disable = so.FindProperty("disableLocomotion");
+            if (disable != null)
+                disable.boolValue = !DrawTwoWayToggle(!disable.boolValue, L.Tr("Enable"), L.Tr("Disable"));
+            PropertyRow(so, "debugString", "Debug String");
+            so.ApplyModifiedProperties();
+        }
+
+        void DrawVrcPoseSpace(StateMachineBehaviour behaviour)
+        {
+            var so = new SerializedObject(behaviour);
+            so.Update();
+            var enter = so.FindProperty("enterPoseSpace");
+            if (enter != null)
+                enter.boolValue = DrawTwoWayToggle(enter.boolValue, L.Tr("Enter"), L.Tr("Exit"));
+            var fixedDelay = so.FindProperty("fixedDelay");
+            if (fixedDelay != null)
+                EditorGUILayout.PropertyField(fixedDelay,
+                    new GUIContent(L.Tr("Fixed Delay"),
+                        L.Tr("On: the delay is in seconds. Off: normalized time of the state.")));
+            PropertyRow(so, "delayTime", "Delay Time");
+            PropertyRow(so, "debugString", "Debug String");
+            so.ApplyModifiedProperties();
+        }
+
+        void DrawVrcLayerControl(StateMachineBehaviour behaviour)
+        {
+            var so = new SerializedObject(behaviour);
+            so.Update();
+            PropertyRow(so, "playable", "Playable");
+            PropertyRow(so, "layer", "Layer");
+            var goal = so.FindProperty("goalWeight");
+            if (goal != null)
+                goal.floatValue = EditorGUILayout.Slider(L.Tr("Goal Weight"), goal.floatValue, 0f, 1f);
+            PropertyRow(so, "blendDuration", "Blend Duration");
+            PropertyRow(so, "debugString", "Debug String");
+            so.ApplyModifiedProperties();
+        }
+
+        void DrawVrcPlayableLayerControl(StateMachineBehaviour behaviour)
+        {
+            var so = new SerializedObject(behaviour);
+            so.Update();
+            PropertyRow(so, "layer", "Layer");
+            var goal = so.FindProperty("goalWeight");
+            if (goal != null)
+                goal.floatValue = EditorGUILayout.Slider(L.Tr("Goal Weight"), goal.floatValue, 0f, 1f);
+            PropertyRow(so, "blendDuration", "Blend Duration");
+            PropertyRow(so, "debugString", "Debug String");
+            so.ApplyModifiedProperties();
+        }
+
+        /// <summary>Play Audio has a large, SDK-version-dependent field set: a drag slot
+        /// resolves the source path, everything else renders generically.</summary>
+        void DrawVrcPlayAudio(StateMachineBehaviour behaviour)
+        {
+            var so = new SerializedObject(behaviour);
+            so.Update();
+            var sourcePath = so.FindProperty("SourcePath");
+            if (sourcePath != null)
+            {
+                EditorGUILayout.PropertyField(sourcePath, new GUIContent("Source Path"));
+                // Action slot: dropping an AudioSource fills the path (relative to its root).
+                var dropped = (AudioSource)EditorGUILayout.ObjectField(
+                    new GUIContent(L.Tr("Resolve From AudioSource"),
+                        L.Tr("Drop the avatar's AudioSource to fill the source path.")),
+                    null, typeof(AudioSource), true);
+                if (dropped != null)
+                    sourcePath.stringValue = AnimationUtility.CalculateTransformPath(
+                        dropped.transform, dropped.transform.root);
+            }
+            var iterator = so.GetIterator();
+            bool enterChildren = true;
+            while (iterator.NextVisible(enterChildren))
+            {
+                enterChildren = false;
+                if (iterator.propertyPath == "m_Script" || iterator.propertyPath == "SourcePath")
+                    continue;
+                EditorGUILayout.PropertyField(iterator, true);
+            }
+            so.ApplyModifiedProperties();
         }
 
         // Body part rows in the order the VRCSDK inspector shows them: display label + the
@@ -912,11 +1070,36 @@ namespace Yozolab.DaerD
         void ShowAddBehaviourMenu(AnimatorState state)
         {
             var menu = new GenericMenu();
+
+            // VRC types first (the common case on this kind of controller). Singletons gray
+            // out once present; repeatable types always add another instance.
+            bool anyVrc = false;
+            foreach (var typeName in VrcBehaviours.All)
+            {
+                if (VrcBehaviours.Find(typeName) == null) continue;
+                anyVrc = true;
+                var captured = typeName;
+                var label = new GUIContent(typeName);
+                if (VrcBehaviours.IsSingleton(typeName) && VrcBehaviours.Has(state, typeName))
+                    menu.AddDisabledItem(label);
+                else
+                    menu.AddItem(label, false, () =>
+                    {
+                        VrcBehaviours.Add(state, captured);
+                        _graphView.Sync.RefreshStateNode(state);   // B badge updates immediately
+                        Refresh();
+                    });
+            }
+            if (anyVrc)
+                menu.AddSeparator(string.Empty);
+
             foreach (var type in TypeCache.GetTypesDerivedFrom<StateMachineBehaviour>())
             {
                 if (type.IsAbstract) continue;
+                if (anyVrc && VrcBehaviours.IsVrcType(type.Name)) continue;   // already listed above
                 var captured = type;
-                menu.AddItem(new GUIContent(type.Name), false, () =>
+                var label = anyVrc ? "Other/" + type.Name : type.Name;
+                menu.AddItem(new GUIContent(label), false, () =>
                 {
                     Undo.RegisterCompleteObjectUndo(state, "Add Behaviour");
                     state.AddStateMachineBehaviour(captured);
