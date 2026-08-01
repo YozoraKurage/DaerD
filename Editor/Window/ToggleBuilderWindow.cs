@@ -14,10 +14,45 @@ namespace Yozolab.DaerD
     /// </summary>
     class ToggleBuilderWindow : EditorWindow
     {
+        class ShapeRow
+        {
+            public string name;
+            public float off;
+            public float on = 100f;
+        }
+
         class Row
         {
             public string path = string.Empty;
             public bool activeWhenOn = true;
+            /// <summary>Scene object the row was created from; null for hand-typed paths.
+            /// Component chips need it to know what exists on the target.</summary>
+            public GameObject source;
+            public bool toggleActive = true;
+            public bool renderer;
+            public bool particle;
+            public bool audio;
+            public bool light;
+            public bool physBone;
+            public bool shapesExpanded;
+            public readonly List<ShapeRow> shapes = new List<ShapeRow>();
+        }
+
+        /// <summary>VRCPhysBone type when the VRChat SDK is present; resolved once per window.</summary>
+        Type _physBoneType;
+        bool _physBoneTypeResolved;
+
+        Type PhysBoneType
+        {
+            get
+            {
+                if (!_physBoneTypeResolved)
+                {
+                    _physBoneType = ToggleBuilder.FindComponentType("VRCPhysBone");
+                    _physBoneTypeResolved = true;
+                }
+                return _physBoneType;
+            }
         }
 
         AnimatorController _controller;
@@ -177,20 +212,11 @@ namespace Yozolab.DaerD
                     AddTarget(picked);
             EditorGUILayout.EndHorizontal();
 
-            _scroll = EditorGUILayout.BeginScrollView(_scroll, GUILayout.MinHeight(70));
+            _scroll = EditorGUILayout.BeginScrollView(_scroll, GUILayout.MinHeight(90));
             int remove = -1;
             for (int i = 0; i < _rows.Count; i++)
-            {
-                EditorGUILayout.BeginHorizontal();
-                _rows[i].path = EditorGUILayout.TextField(_rows[i].path);
-                _rows[i].activeWhenOn = GUILayout.Toggle(_rows[i].activeWhenOn,
-                    new GUIContent(L.Tr("Active"),
-                        L.Tr("Checked: the object is active while the toggle is ON. Unchecked inverts it.")),
-                    GUILayout.Width(60));
-                if (GUILayout.Button("−", EditorStyles.miniButton, GUILayout.Width(22)))
+                if (!DrawRow(_rows[i]))
                     remove = i;
-                EditorGUILayout.EndHorizontal();
-            }
             if (remove >= 0)
                 _rows.RemoveAt(remove);
             if (_rows.Count == 0)
@@ -198,6 +224,115 @@ namespace Yozolab.DaerD
                     L.Tr("No targets yet. Drop GameObjects above or type hierarchy paths (relative to the Animator root)."),
                     MessageType.None);
             EditorGUILayout.EndScrollView();
+        }
+
+        /// <summary>One target row: path line, then component chips for scene-backed rows.
+        /// Returns false when the row's remove button was pressed.</summary>
+        bool DrawRow(Row row)
+        {
+            EditorGUILayout.BeginHorizontal();
+            row.path = EditorGUILayout.TextField(row.path);
+            row.activeWhenOn = GUILayout.Toggle(row.activeWhenOn,
+                new GUIContent(L.Tr("Active"),
+                    L.Tr("Checked: the object is active while the toggle is ON. Unchecked inverts it.")),
+                GUILayout.Width(60));
+            bool removed = GUILayout.Button("−", EditorStyles.miniButton, GUILayout.Width(22));
+            EditorGUILayout.EndHorizontal();
+            if (removed) return false;
+
+            if (row.source == null) return true;   // hand-typed path: m_IsActive only
+
+            EditorGUILayout.BeginHorizontal();
+            GUILayout.Space(12);
+            row.toggleActive = GUILayout.Toggle(row.toggleActive,
+                new GUIContent("Object", L.Tr("Animate GameObject.m_IsActive")),
+                EditorStyles.miniButton);
+            DrawChip(ref row.renderer, "Renderer", row.source.GetComponent<Renderer>() != null,
+                L.Tr("Animate the Renderer's enabled flag"));
+            DrawChip(ref row.particle, "Particle", row.source.GetComponent<ParticleSystem>() != null,
+                L.Tr("Animate the ParticleSystem's enabled flag"));
+            DrawChip(ref row.audio, "Audio", row.source.GetComponent<AudioSource>() != null,
+                L.Tr("Animate the AudioSource's enabled flag"));
+            DrawChip(ref row.light, "Light", row.source.GetComponent<Light>() != null,
+                L.Tr("Animate the Light's enabled flag"));
+            if (PhysBoneType != null)
+                DrawChip(ref row.physBone, "PhysBone", row.source.GetComponent(PhysBoneType) != null,
+                    L.Tr("Animate the VRCPhysBone's enabled flag"));
+
+            var skinned = row.source.GetComponent<SkinnedMeshRenderer>();
+            bool hasShapes = skinned != null && skinned.sharedMesh != null
+                && skinned.sharedMesh.blendShapeCount > 0;
+            if (hasShapes)
+                row.shapesExpanded = GUILayout.Toggle(row.shapesExpanded,
+                    new GUIContent("BlendShapes", L.Tr("Animate blendshape weights (OFF/ON values per shape)")),
+                    EditorStyles.miniButton);
+            GUILayout.FlexibleSpace();
+            EditorGUILayout.EndHorizontal();
+
+            if (hasShapes && row.shapesExpanded)
+                DrawShapeRows(row, skinned);
+            return true;
+        }
+
+        static void DrawChip(ref bool value, string label, bool available, string tooltip)
+        {
+            if (!available)
+            {
+                value = false;
+                return;
+            }
+            value = GUILayout.Toggle(value, new GUIContent(label, tooltip), EditorStyles.miniButton);
+        }
+
+        void DrawShapeRows(Row row, SkinnedMeshRenderer skinned)
+        {
+            int removeShape = -1;
+            for (int i = 0; i < row.shapes.Count; i++)
+            {
+                var shape = row.shapes[i];
+                EditorGUILayout.BeginHorizontal();
+                GUILayout.Space(24);
+                EditorGUILayout.LabelField(shape.name, GUILayout.MinWidth(60));
+                float saved = EditorGUIUtility.labelWidth;
+                EditorGUIUtility.labelWidth = 26f;
+                shape.off = EditorGUILayout.FloatField(L.Tr("Off"), shape.off, GUILayout.Width(70));
+                shape.on = EditorGUILayout.FloatField(L.Tr("On"), shape.on, GUILayout.Width(70));
+                EditorGUIUtility.labelWidth = saved;
+                if (GUILayout.Button("−", EditorStyles.miniButton, GUILayout.Width(22)))
+                    removeShape = i;
+                EditorGUILayout.EndHorizontal();
+            }
+            if (removeShape >= 0)
+                row.shapes.RemoveAt(removeShape);
+
+            EditorGUILayout.BeginHorizontal();
+            GUILayout.Space(24);
+            if (GUILayout.Button("+", EditorStyles.miniButton, GUILayout.Width(22)))
+                ShowAddShapeMenu(row, skinned);
+            EditorGUILayout.EndHorizontal();
+        }
+
+        void ShowAddShapeMenu(Row row, SkinnedMeshRenderer skinned)
+        {
+            var taken = new HashSet<string>();
+            foreach (var shape in row.shapes) taken.Add(shape.name);
+            var menu = new GenericMenu();
+            var mesh = skinned.sharedMesh;
+            for (int i = 0; i < mesh.blendShapeCount; i++)
+            {
+                string name = mesh.GetBlendShapeName(i);
+                if (taken.Contains(name))
+                {
+                    menu.AddDisabledItem(new GUIContent(name));
+                    continue;
+                }
+                var captured = name;
+                menu.AddItem(new GUIContent(name), false,
+                    () => row.shapes.Add(new ShapeRow { name = captured }));
+            }
+            if (menu.GetItemCount() == 0)
+                menu.AddDisabledItem(new GUIContent(L.Tr("No blendshapes")));
+            menu.ShowAsContext();
         }
 
         void AddTarget(GameObject picked)
@@ -219,7 +354,7 @@ namespace Yozolab.DaerD
             foreach (var row in _rows)
                 if (row.path == path)
                     return;   // already listed
-            _rows.Add(new Row { path = path });
+            _rows.Add(new Row { path = path, source = picked });
         }
 
         /// <summary>Hierarchy path relative to the root, or null when the object is outside it.
@@ -229,6 +364,33 @@ namespace Yozolab.DaerD
             var root = _root != null ? _root.transform : picked.transform.root;
             if (!picked.transform.IsChildOf(root)) return null;
             return AnimationUtility.CalculateTransformPath(picked.transform, root);
+        }
+
+        /// <summary>Chips become concrete-type m_Enabled bindings (curves must bind the actual
+        /// component type, e.g. SkinnedMeshRenderer rather than Renderer).</summary>
+        ToggleBuilder.Target BuildTarget(Row row)
+        {
+            var target = new ToggleBuilder.Target
+            {
+                path = row.path,
+                activeWhenOn = row.activeWhenOn,
+                toggleActive = row.source == null || row.toggleActive,
+            };
+            if (row.source == null) return target;
+
+            if (row.renderer && row.source.GetComponent<Renderer>() is Renderer renderer)
+                target.bindings.Add(ToggleBuilder.Binding.Enabled(renderer.GetType()));
+            if (row.particle && row.source.GetComponent<ParticleSystem>() != null)
+                target.bindings.Add(ToggleBuilder.Binding.Enabled(typeof(ParticleSystem)));
+            if (row.audio && row.source.GetComponent<AudioSource>() != null)
+                target.bindings.Add(ToggleBuilder.Binding.Enabled(typeof(AudioSource)));
+            if (row.light && row.source.GetComponent<Light>() != null)
+                target.bindings.Add(ToggleBuilder.Binding.Enabled(typeof(Light)));
+            if (row.physBone && PhysBoneType != null && row.source.GetComponent(PhysBoneType) != null)
+                target.bindings.Add(ToggleBuilder.Binding.Enabled(PhysBoneType));
+            foreach (var shape in row.shapes)
+                target.bindings.Add(ToggleBuilder.Binding.BlendShape(shape.name, shape.off, shape.on));
+            return target;
         }
 
         void TryApply()
@@ -246,11 +408,7 @@ namespace Yozolab.DaerD
                 newLayerName = _newLayerName != null ? _newLayerName.Trim() : string.Empty,
             };
             foreach (var row in _rows)
-                request.targets.Add(new ToggleBuilder.Target
-                {
-                    path = row.path,
-                    activeWhenOn = row.activeWhenOn,
-                });
+                request.targets.Add(BuildTarget(row));
 
             var error = ToggleBuilder.Validate(request);
             if (error != null)

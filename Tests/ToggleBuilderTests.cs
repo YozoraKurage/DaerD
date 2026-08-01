@@ -271,6 +271,85 @@ namespace Yozolab.DaerD.Tests
             Assert.IsFalse(ToggleBuilder.Apply(request));
         }
 
+        // ---- component / blendshape bindings --------------------------------
+
+        static float BindingValue(Motion motion, string path, System.Type type, string property)
+        {
+            var clip = (AnimationClip)motion;
+            foreach (var binding in AnimationUtility.GetCurveBindings(clip))
+                if (binding.path == path && binding.type == type && binding.propertyName == property)
+                    return AnimationUtility.GetEditorCurve(clip, binding).keys[0].value;
+            Assert.Fail("No curve for " + type.Name + "." + property + " at '" + path + "'.");
+            return -1f;
+        }
+
+        [Test]
+        public void Bindings_EnabledCurvesFollowTheToggle()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, ToggleBuilder.Mode.Layer, "Hat");
+            request.targets[0].bindings.Add(ToggleBuilder.Binding.Enabled(typeof(Light)));
+            Assert.IsTrue(ToggleBuilder.Apply(request));
+
+            var states = controller.layers[1].stateMachine.states;
+            Assert.AreEqual(0f, BindingValue(states[0].state.motion, "Hat", typeof(Light), "m_Enabled"));
+            Assert.AreEqual(1f, BindingValue(states[1].state.motion, "Hat", typeof(Light), "m_Enabled"));
+        }
+
+        [Test]
+        public void Bindings_BlendShapeUsesOffOnValues()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, ToggleBuilder.Mode.Layer, "Face");
+            request.targets[0].toggleActive = false;
+            request.targets[0].bindings.Add(ToggleBuilder.Binding.BlendShape("Smile", 10f, 90f));
+            Assert.IsTrue(ToggleBuilder.Apply(request));
+
+            var states = controller.layers[1].stateMachine.states;
+            Assert.AreEqual(10f, BindingValue(states[0].state.motion, "Face",
+                typeof(SkinnedMeshRenderer), "blendShape.Smile"));
+            Assert.AreEqual(90f, BindingValue(states[1].state.motion, "Face",
+                typeof(SkinnedMeshRenderer), "blendShape.Smile"));
+            // toggleActive off: no m_IsActive curve at all
+            foreach (var binding in AnimationUtility.GetCurveBindings((AnimationClip)states[0].state.motion))
+                Assert.AreNotEqual("m_IsActive", binding.propertyName);
+        }
+
+        [Test]
+        public void Bindings_InvertedTargetSwapsComponentValuesToo()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, ToggleBuilder.Mode.Layer, "Hat");
+            request.targets[0].activeWhenOn = false;
+            request.targets[0].bindings.Add(ToggleBuilder.Binding.BlendShape("Smile", 10f, 90f));
+            Assert.IsTrue(ToggleBuilder.Apply(request));
+
+            var states = controller.layers[1].stateMachine.states;
+            // OFF clip carries the ON values because the target is inverted.
+            Assert.AreEqual(90f, BindingValue(states[0].state.motion, "Hat",
+                typeof(SkinnedMeshRenderer), "blendShape.Smile"));
+            Assert.AreEqual(10f, BindingValue(states[1].state.motion, "Hat",
+                typeof(SkinnedMeshRenderer), "blendShape.Smile"));
+        }
+
+        [Test]
+        public void Validate_RejectsTargetWithNothingToAnimate()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, ToggleBuilder.Mode.Layer, "Hat");
+            request.targets[0].toggleActive = false;
+            Assert.IsNotNull(ToggleBuilder.Validate(request));
+        }
+
+        [Test]
+        public void Validate_RejectsInvalidBinding()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, ToggleBuilder.Mode.Layer, "Hat");
+            request.targets[0].bindings.Add(new ToggleBuilder.Binding { type = null, property = "m_Enabled" });
+            Assert.IsNotNull(ToggleBuilder.Validate(request));
+        }
+
         // ---- clips ---------------------------------------------------------
 
         [Test]

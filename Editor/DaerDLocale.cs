@@ -338,6 +338,21 @@ namespace Yozolab.DaerD
                 "'{0}' はパスのルート '{1}' の子ではありません。",
             ["The path root itself can't be toggled — animations can't re-enable the object that hosts the Animator."] =
                 "パスのルート自体はトグルできません。Animator を持つオブジェクトを無効にすると、アニメーションで再有効化できなくなります。",
+            ["Animate GameObject.m_IsActive"] = "GameObject の有効状態 (m_IsActive) をアニメーションします",
+            ["Animate the Renderer's enabled flag"] = "Renderer の enabled をアニメーションします",
+            ["Animate the ParticleSystem's enabled flag"] = "ParticleSystem の enabled をアニメーションします",
+            ["Animate the AudioSource's enabled flag"] = "AudioSource の enabled をアニメーションします",
+            ["Animate the Light's enabled flag"] = "Light の enabled をアニメーションします",
+            ["Animate the VRCPhysBone's enabled flag"] = "VRCPhysBone の enabled をアニメーションします",
+            ["Animate blendshape weights (OFF/ON values per shape)"] =
+                "ブレンドシェイプのウェイトをアニメーションします（シェイプごとに OFF/ON 値を指定）",
+            ["Off"] = "Off",
+            ["On"] = "On",
+            ["No blendshapes"] = "ブレンドシェイプがありません",
+            ["Target '{0}' has nothing to animate — enable Object or add a component binding."] =
+                "対象 '{0}' にアニメーションする項目がありません。Object を有効にするか、コンポーネントを追加してください。",
+            ["Target '{0}' has an invalid component binding."] =
+                "対象 '{0}' のコンポーネント指定が不正です。",
             ["The toggle needs a name."] = "トグルの名前を入力してください。",
             ["The parameter needs a name."] = "パラメーターの名前を入力してください。",
             ["Parameter '{0}' exists but is not a Bool."] =
