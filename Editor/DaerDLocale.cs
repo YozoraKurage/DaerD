@@ -516,6 +516,34 @@ namespace Yozolab.DaerD
             ["Create new"] = "新規作成",
             ["Import"] = "インポート",
 
+            // ---- clip remapper ---------------------------------------------
+            ["Clip Bindings"] = "クリップバインディング",
+            ["Clip '{0}' has {1} binding(s) whose path no longer exists under '{2}'."] =
+                "クリップ '{0}' に、'{2}' 配下に存在しないパスのバインディングが {1} 件あります。",
+            ["DaerD Remap"] = "DaerD リパス",
+            ["Remap…"] = "リパス…",
+            ["Fix clip bindings whose hierarchy paths broke (renames / moves)."] =
+                "リネームや移動で壊れたクリップのバインディングパスを修復します。",
+            ["Assign the controller and the avatar (the GameObject with the Animator) to scan for broken animation paths."] =
+                "コントローラーとアバター（Animator の付いた GameObject）を指定すると、壊れたアニメーションパスをスキャンできます。",
+            ["Scan For Broken Paths"] = "壊れたパスをスキャン",
+            ["Auto-Repath"] = "自動リパス",
+            ["While this window is open, follow renames and moves under the avatar and rewrite the bindings that were valid when this was enabled."] =
+                "このウィンドウを開いている間、アバター配下のリネーム・移動を追跡し、有効化時点で正しかったバインディングを自動で書き換えます。",
+            ["From"] = "変更前",
+            ["To"] = "変更後",
+            ["Only clips selected in the Project window"] =
+                "Project ウィンドウで選択中のクリップのみ",
+            ["Off: every clip this controller references."] =
+                "OFF: このコントローラーが参照するすべてのクリップが対象です。",
+            ["Rewrite Paths"] = "パスを書き換え",
+            ["{0} binding(s) rewritten."] = "{0} 件のバインディングを書き換えました。",
+            ["No broken bindings found."] = "壊れたバインディングは見つかりませんでした。",
+            ["{0} broken binding(s) — click a path to fill From:"] =
+                "壊れたバインディング {0} 件。パスをクリックすると「変更前」に入力されます:",
+            ["Auto-Repath rewrote {0} binding(s)."] =
+                "自動リパスが {0} 件のバインディングを書き換えました。",
+
             // ---- settings ---------------------------------------------------
             ["Language"] = "言語 (Language)",
             ["Auto (System Language)"] = "自動（システム言語）",

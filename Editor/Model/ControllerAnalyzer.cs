@@ -27,6 +27,7 @@ namespace Yozolab.DaerD
             DuplicateCondition,
             DirectBlendTree,
             VrcParameters,
+            ClipBindings,
         }
 
         public class Issue
@@ -64,6 +65,7 @@ namespace Yozolab.DaerD
                 case Kind.DuplicateCondition: return L.Tr("Duplicate Condition");
                 case Kind.DirectBlendTree: return L.Tr("Direct Blend Tree");
                 case Kind.VrcParameters: return L.Tr("VRC Parameters");
+                case Kind.ClipBindings: return L.Tr("Clip Bindings");
             }
             return kind.ToString();
         }
@@ -137,6 +139,7 @@ namespace Yozolab.DaerD
             var expressionAsset = VrcExpressionParameters.FindAssetFor(controller);
             if (expressionAsset != null)
                 VrcExpressionParameters.Analyze(controller, expressionAsset, issues);
+            ClipRepather.Analyze(controller, issues);
 
             return issues;
         }
