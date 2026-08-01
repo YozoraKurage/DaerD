@@ -349,6 +349,53 @@ namespace Yozolab.DaerD
             ["Target path '{0}' is listed more than once."] =
                 "対象パス '{0}' が重複しています。",
 
+            // ---- network sync ----------------------------------------------
+            ["Network Sync"] = "ネットワーク同期",
+            ["Network Sync…"] = "ネットワーク同期…",
+            ["Generate the local-driver + remote-mirror structure that syncs this layer to other VRChat players."] =
+                "このレイヤーを他の VRChat プレイヤーへ同期させる、ローカル側 Driver + リモート側ミラーの構造を生成します。",
+            ["Makes a layer driven by local-only parameters visible to remote players: each state writes its index into a synced parameter via a Parameter Driver, and generated remote states mirror the layer for everyone else. IsLocal separates the two halves."] =
+                "ローカル専用パラメーターで動くレイヤーをリモートプレイヤーにも見えるようにします。各ステートが Parameter Driver で自分の番号を同期パラメーターに書き込み、生成されるリモートステート群がその値を条件にレイヤーをミラー再生します。ローカル側とリモート側は IsLocal で分離されます。",
+            ["Encoding"] = "エンコード",
+            ["{0} bit(s): {1} … {2}"] = "{0} bit: {1} … {2}",
+            ["Sync Parameter"] = "同期パラメーター",
+            ["Remote Wiring"] = "リモート遷移方式",
+            ["Any State: N transitions from the Any State node. All-to-All: N×(N-1) transitions between the mirror states."] =
+                "Any State: AnyState ノードから N 本の遷移。All-to-All: ミラーステート間の総当たり N×(N-1) 本の遷移。",
+            ["Preserve Transition Timing"] = "遷移タイミングを引き継ぐ",
+            ["Copy blend duration and interruption settings from each state's first outgoing transition (exit time stays off). Off generates instant transitions."] =
+                "各ステートの最初の遷移からブレンド時間や割り込み設定をコピーします（Exit Time は常に OFF）。OFF の場合は即時遷移を生成します。",
+            ["Remote State Prefix"] = "リモートステート接頭辞",
+            ["Strip Behaviours On Mirrors"] = "ミラーの Behaviour を除去",
+            ["Remote copies drop their StateMachineBehaviours so drivers and audio don't fire twice."] =
+                "リモート側の複製から StateMachineBehaviour を除去し、Driver や Audio の二重発火を防ぎます。",
+            ["Pack Into Sub-State Machine"] = "サブステートマシンに格納",
+            ["Group the generated remote states into a 'Network' sub-state machine to keep the layer readable."] =
+                "生成されるリモートステート群を 'Network' サブステートマシンにまとめ、レイヤーを見やすく保ちます。",
+            ["Own Driver Instance"] = "専用 Driver インスタンス",
+            ["Write the sync values through a dedicated Parameter Driver named 'Network' instead of appending rows to a driver already on the state."] =
+                "同期値の書き込みを、ステートに既にある Driver へ追記せず 'Network' という名前の専用 Parameter Driver で行います。",
+            ["The target layer needs at least two states to sync."] =
+                "同期するにはレイヤーに 2 つ以上のステートが必要です。",
+            ["The sync parameter needs a name."] =
+                "同期パラメーターの名前を入力してください。",
+            ["The remote state prefix must not be empty."] =
+                "リモートステートの接頭辞を入力してください。",
+            ["Int encoding supports up to 255 states."] =
+                "Int エンコードは最大 255 ステートまで対応します。",
+            ["Bool encoding supports up to 8 bits (256 states)."] =
+                "Bool エンコードは最大 8 bit（256 ステート）まで対応します。",
+            ["Parameter '{0}' exists but is not an Int."] =
+                "パラメーター '{0}' は存在しますが Int ではありません。",
+            ["VRChat SDK not found — the Parameter Driver behaviour is required."] =
+                "VRChat SDK が見つかりません。Parameter Driver ビヘイビアが必要です。",
+            ["Some states already carry the remote prefix — this layer may already be synced."] =
+                "リモート接頭辞の付いたステートが既にあります。このレイヤーは同期済みかもしれません。",
+            ["Sub-state machines are not mirrored; only root-level states are synced."] =
+                "サブステートマシンはミラーされません。同期対象はルート直下のステートのみです。",
+            ["The existing parameter '{0}' will be reused."] =
+                "既存のパラメーター '{0}' を再利用します。",
+
             // ---- settings ---------------------------------------------------
             ["Language"] = "言語 (Language)",
             ["Auto (System Language)"] = "自動（システム言語）",

@@ -74,7 +74,7 @@ namespace Yozolab.DaerD
                 _index = index;
             }
 
-            public override Vector2 GetWindowSize() => new Vector2(300f, 184f);
+            public override Vector2 GetWindowSize() => new Vector2(300f, 210f);
 
             public override void OnGUI(Rect rect)
             {
@@ -113,6 +113,17 @@ namespace Yozolab.DaerD
                 }
 
                 EditorGUILayout.Space(6);
+                if (GUILayout.Button(new GUIContent(L.Tr("Network Sync…"),
+                        L.Tr("Generate the local-driver + remote-mirror structure that syncs this layer to other VRChat players."))))
+                {
+                    var panel = _panel;
+                    int index = _index;
+                    editorWindow.Close();
+                    // Deferred: the wizard steals focus, which would dismiss this popup mid-OnGUI.
+                    EditorApplication.delayCall += () =>
+                        NetworkSyncWindow.Open(panel.Context.Controller, index, panel.OnNetworkSyncApplied);
+                    GUIUtility.ExitGUI();
+                }
                 EditorGUILayout.BeginHorizontal();
                 if (GUILayout.Button("Duplicate"))
                 {
@@ -138,6 +149,18 @@ namespace Yozolab.DaerD
                 }
                 EditorGUILayout.EndHorizontal();
             }
+        }
+
+        /// <summary>Network Sync added parameters, states and possibly a sub-state machine —
+        /// let every panel and the graph pick that up, and show the synced layer.</summary>
+        internal void OnNetworkSyncApplied(int layerIndex)
+        {
+            var controller = Context.Controller;
+            Context.NotifyParametersChanged();
+            Context.NotifyLayersChanged();
+            Context.NotifyGraphStructureChanged();
+            if (controller != null && layerIndex >= 0 && layerIndex < controller.layers.Length)
+                Context.SetLayer(layerIndex);
         }
 
         void AddLayer()
