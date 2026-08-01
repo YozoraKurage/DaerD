@@ -95,6 +95,9 @@ namespace Yozolab.DaerD
                     {
                         if (_exprAsset != null)
                             VrcExpressionParameters.Rename(_exprAsset, p.name, newName);
+                        var rootMenu = VrcMenuAccess.FindMenuFor(controller);
+                        if (rootMenu != null)
+                            VrcMenuAccess.RenameParameterReferences(rootMenu, p.name, newName);
                         OfferSiblingRename(controller, p.name, newName);
                     }
                     Context.NotifyParametersChanged();

@@ -463,6 +463,33 @@ namespace Yozolab.DaerD
             ["Drop the avatar's AudioSource to fill the source path."] =
                 "アバターの AudioSource をドロップするとソースパスが入力されます。",
 
+            // ---- VRC expressions menu --------------------------------------
+            ["DaerD Menu"] = "DaerD メニュー",
+            ["Expressions Menu…"] = "Expressions メニュー…",
+            ["Edit the avatar's VRC Expressions Menu (auto-detected from the scene)."] =
+                "アバターの VRC Expressions Menu を編集します（シーンから自動検出）。",
+            ["Assign a VRC Expressions Menu asset (auto-detected from the scene avatar when possible)."] =
+                "VRC Expressions Menu アセットを指定してください（可能な場合はシーンのアバターから自動検出されます）。",
+            ["That asset is not a VRC Expressions Menu."] =
+                "そのアセットは VRC Expressions Menu ではありません。",
+            ["Re-resolve the menu asset from the scene."] =
+                "シーンからメニューアセットを再検出します。",
+            ["Open"] = "開く",
+            ["Edit this submenu"] = "このサブメニューを編集します",
+            ["Icon"] = "アイコン",
+            ["Type"] = "種類",
+            ["Sub Menu"] = "サブメニュー",
+            ["Value"] = "値",
+            ["Rotation"] = "回転",
+            ["Horizontal"] = "水平",
+            ["Vertical"] = "垂直",
+            ["Label {0}"] = "ラベル {0}",
+            ["No matching parameters"] = "該当するパラメーターがありません",
+            ["Parameter '{0}' is not in the controller."] =
+                "パラメーター '{0}' はコントローラーに存在しません。",
+            ["Puppet parameters must be Float; '{0}' is {1}."] =
+                "Puppet のパラメーターは Float である必要があります。'{0}' は {1} 型です。",
+
             // ---- settings ---------------------------------------------------
             ["Language"] = "言語 (Language)",
             ["Auto (System Language)"] = "自動（システム言語）",

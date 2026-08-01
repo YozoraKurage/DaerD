@@ -2018,6 +2018,12 @@ namespace Yozolab.DaerD
                 NetworkSyncWindow.Open(controller, Context.LayerIndex, OnToggleApplied);
                 GUIUtility.ExitGUI();   // the focus moved to another window under this layout pass
             }
+            if (GUILayout.Button(new GUIContent(L.Tr("Expressions Menu…"),
+                    L.Tr("Edit the avatar's VRC Expressions Menu (auto-detected from the scene)."))))
+            {
+                VrcMenuWindow.Open(controller);
+                GUIUtility.ExitGUI();   // the focus moved to another window under this layout pass
+            }
             DrawCleanupSection(controller);
         }
 
