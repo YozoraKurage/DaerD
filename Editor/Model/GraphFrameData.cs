@@ -46,6 +46,17 @@ namespace Yozolab.DaerD
         /// </summary>
         public AnimationClip emptyClip;
 
+        /// <summary>
+        /// The parameter store this controller is explicitly associated with — a
+        /// VRCExpressionParameters asset or an MA Parameters component. DaerD never guesses
+        /// this from the scene on its own (gimmick controllers aren't wired to any avatar);
+        /// the user assigns it, optionally via an explicit Detect action.
+        /// </summary>
+        public UnityEngine.Object parameterStore;
+
+        /// <summary>The VRC Expressions Menu this controller is explicitly associated with.</summary>
+        public UnityEngine.Object expressionsMenu;
+
         public static AnimationClip GetEmptyClip(AnimatorController controller)
         {
             var data = Find(controller);
@@ -59,6 +70,36 @@ namespace Yozolab.DaerD
             if (data == null || data.emptyClip == clip) return;
             Undo.RegisterCompleteObjectUndo(data, "Set Empty Clip");
             data.emptyClip = clip;
+            EditorUtility.SetDirty(data);
+        }
+
+        public static UnityEngine.Object GetParameterStore(AnimatorController controller)
+        {
+            var data = Find(controller);
+            return data != null ? data.parameterStore : null;
+        }
+
+        public static void SetParameterStore(AnimatorController controller, UnityEngine.Object store)
+        {
+            var data = store == null ? Find(controller) : GetOrCreate(controller);
+            if (data == null || data.parameterStore == store) return;
+            Undo.RegisterCompleteObjectUndo(data, "Set Parameter Store");
+            data.parameterStore = store;
+            EditorUtility.SetDirty(data);
+        }
+
+        public static UnityEngine.Object GetExpressionsMenu(AnimatorController controller)
+        {
+            var data = Find(controller);
+            return data != null ? data.expressionsMenu : null;
+        }
+
+        public static void SetExpressionsMenu(AnimatorController controller, UnityEngine.Object menu)
+        {
+            var data = menu == null ? Find(controller) : GetOrCreate(controller);
+            if (data == null || data.expressionsMenu == menu) return;
+            Undo.RegisterCompleteObjectUndo(data, "Set Expressions Menu");
+            data.expressionsMenu = menu;
             EditorUtility.SetDirty(data);
         }
 

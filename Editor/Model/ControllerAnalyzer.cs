@@ -134,11 +134,12 @@ namespace Yozolab.DaerD
             AddMissingBehaviourIssues(controller, issues);
             AddDirectBlendTreeIssues(controller, issues);
 
-            // Expression-parameter checks only run when a scene avatar resolves the asset;
-            // headless analysis (tests, no avatar open) is unaffected.
-            var expressionAsset = VrcExpressionParameters.FindAssetFor(controller);
-            if (expressionAsset != null)
-                VrcExpressionParameters.Analyze(controller, expressionAsset, issues);
+            // Parameter-store checks only run against the store the user explicitly
+            // associated with this controller (never a scene guess — DaerD is also used on
+            // NDMF gimmick controllers that belong to no avatar).
+            var store = ParameterStore.Of(controller);
+            if (store != null)
+                store.Analyze(controller, issues);
             ClipRepather.Analyze(controller, issues);
 
             return issues;

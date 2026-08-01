@@ -38,7 +38,10 @@ GraphView ベースの AnimatorController エディタ。パラメーターの�
   Bool×n bit）+ Parameter Driver + リモートミラーステートの定石構成でワンクリック同期化。
   AnyState / 総当たりの 2 方式、IsLocal 分離、サブステートマシン格納に対応
   （レイヤーの歯車メニューまたはコントローラー概要から）
-- VRC 連携 — Expression Parameters のビット予算表示・synced/saved トグル・差分プレビュー付き同期、
+- VRC / NDMF 連携 — パラメーターストア（VRC Expression Parameters アセット **または
+  Modular Avatar の MA Parameters コンポーネント**）をコントローラーに明示的に割り当てて、
+  ビット予算表示・synced/saved トグル・差分プレビュー付き同期を利用可能。
+  自動検出は「検出」ボタンを押したときの完全一致のみ（ギミック用 Animator でも誤爆しない）。
   Expressions Menu の組み込みエディタ（パンくず・コントロール編集・パラメーター警告）、
   Play Audio / Locomotion / Layer Control / Playable Layer Control / Pose Space の編集、
   Behaviour のステート間コピー&ペースト、PhysBone 系パラメーターファミリーの一括リネーム。

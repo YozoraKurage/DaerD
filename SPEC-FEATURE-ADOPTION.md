@@ -1,7 +1,7 @@
 # DaerD 機能拡張仕様書 — YGDR Animator Editor 機能アイデアの取り込み
 
 対象バージョン: 0.9 以降(フェーズ分けは末尾)
-ステータス: **実装済み(0.8.1 ブランチ)** — §1〜§9 を実装。既知の仕様差分:
+ステータス: **実装済み(0.8.1 ブランチ)** — §1〜§10 を実装。既知の仕様差分:
 §4 のマルチステート選択時のインスタンス名マッチング編集は未実装(Behaviour の
 ステート間コピー & ペーストで代替)、§9.2 の条件クエリ選択・Redirect/Replicate 専用モードは
 既存のトランジションコピー(コンテキスト付きペースト)と Seeded 生成で代替。
@@ -333,7 +333,41 @@ VRChat では Parameter Driver やコンタクト等でローカルにのみ変�
 
 ---
 
-## 10. フェーズ計画
+## 10. パラメーターストア抽象化と MA Parameters 対応 【P1・追加】
+
+**背景**: DaerD はアバターの FX だけでなく、NDMF ギミック用の Animator にも使われる。
+ギミックのコントローラーは編集時点ではどのアバターにも割り当てられていないため、
+「シーンのアバターから自動解決する」設計は成立しない上、フォールバック
+（シーンに 1 体ならそのアバターを採用）は**無関係なアバターのアセットを書き換える事故**につながる。
+
+### 10.1 明示的な関連付け
+
+- コントローラー ↔ パラメーターストアの関連付けは `GraphFrameData`（コントローラーの
+  サイドカーサブアセット）に保存する（`parameterStore` / `expressionsMenu`）。
+- パラメーターパネルに **Params スロット**（ObjectField）を常設。ここに割り当てたものだけが
+  編集・検査対象。**シーンからの自動解決は全廃**。
+- **Detect ボタン**（オプトイン・明示操作のみ）: 完全一致だけを検索する。
+  ① Playable レイヤーにこのコントローラーを割り当てたアバターディスクリプタ、
+  ② このコントローラーを参照する MA Merge Animator（同一オブジェクトまたは親の
+  MA Parameters を採用）。「シーンに 1 体だけならそれ」のフォールバックは持たない。
+- Expressions Menu も同様（メニューウィンドウのスロット + Detect、`GraphFrameData` 保存）。
+- Analyzer の VRC Parameters 検査は保存された関連付けがあるときのみ実行。
+
+### 10.2 ParameterStore 抽象
+
+- `Editor/Model/ParameterStore.cs`: `Read / WriteAll / Add / Remove / Edit / Rename /
+  UsedBits / Capacity / Analyze` を持つ抽象クラス。エントリ形状は共通
+  （name / valueType / saved / synced / defaultValue / typed）。
+- **VRC バックエンド**: 既存 `VrcExpressionParameters` アクセサへの委譲。順序付き WriteAll。
+- **MA バックエンド**: `ModularAvatarParameters` を型名 + SerializedObject でアクセス
+  （MA 参照なし）。マッピング: nameOrPrefix ↔ name、syncType(NotSynced=0/Int=1/Float=2/Bool=3)
+  ↔ valueType + typed（NotSynced は typed=false で型検査対象外）、synced = syncType≠NotSynced
+  かつ !localOnly、saved ↔ saved。isPrefix 行（PhysBone ファミリー）は保持しつつ編集対象外。
+  MA は名前マッチで統合されるため WriteAll は**差分適用**（順序は持たない）。
+  Capacity は -1（アバター全体の予算に合算されるため上限非表示）。
+- パネルの予算バー / S/D トグル / +追加 / Sync / リネームカスケードはすべてストア経由。
+
+## 11. フェーズ計画
 
 | フェーズ | 内容 |
 |---|---|

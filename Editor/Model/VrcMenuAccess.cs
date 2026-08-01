@@ -70,8 +70,12 @@ namespace Yozolab.DaerD
             return FallbackMaxControls;
         }
 
-        /// <summary>The menu asset of the avatar running this controller (same resolution
-        /// rules as <see cref="VrcExpressionParameters.FindAssetFor"/>).</summary>
+        /// <summary>
+        /// The menu asset of a scene avatar descriptor whose playable layers reference this
+        /// controller — an EXACT match only, used by the explicit Detect action. Gimmick
+        /// controllers belong to no avatar, so there is deliberately no "the only avatar in
+        /// the scene" fallback.
+        /// </summary>
         public static Object FindMenuFor(AnimatorController controller)
         {
             if (controller == null) return null;
@@ -80,15 +84,11 @@ namespace Yozolab.DaerD
                 if (!type.IsAbstract && type.Name == DescriptorTypeName) { descriptorType = type; break; }
             if (descriptorType == null) return null;
 
-            Object fallback = null;
-            int descriptorsWithMenu = 0;
             foreach (var descriptor in Object.FindObjectsOfType(descriptorType, true))
             {
                 var so = new SerializedObject(descriptor);
                 var menu = so.FindProperty("expressionsMenu")?.objectReferenceValue;
                 if (menu == null) continue;
-                descriptorsWithMenu++;
-                fallback = menu;
                 foreach (var arrayName in new[] { "baseAnimationLayers", "specialAnimationLayers" })
                 {
                     var layers = so.FindProperty(arrayName);
@@ -99,7 +99,7 @@ namespace Yozolab.DaerD
                             return menu;
                 }
             }
-            return descriptorsWithMenu == 1 ? fallback : null;
+            return null;
         }
 
         // ---- reading ---------------------------------------------------------

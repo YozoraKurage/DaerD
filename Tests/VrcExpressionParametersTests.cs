@@ -126,7 +126,7 @@ namespace Yozolab.DaerD.Tests
                 Entry("Orphan", VrcExpressionParameters.ValueType.Bool));
 
             var issues = new List<ControllerAnalyzer.Issue>();
-            VrcExpressionParameters.Analyze(controller, asset, issues);
+            ParameterStore.TryWrap(asset).Analyze(controller, issues);
 
             Assert.AreEqual(2, issues.Count);
             bool sawMismatch = false, sawOrphan = false;

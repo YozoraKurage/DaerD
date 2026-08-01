@@ -26,6 +26,9 @@ namespace Yozolab.DaerD
             public bool saved = true;
             public bool synced = true;
             public float defaultValue;
+            /// <summary>False when the backing store has no concrete type for this entry
+            /// (MA "NotSynced" rows) — type-mismatch checks skip it.</summary>
+            public bool typed = true;
         }
 
         public static bool Is(Object asset) =>
@@ -47,9 +50,10 @@ namespace Yozolab.DaerD
         }
 
         /// <summary>
-        /// The expression parameters asset belonging to this controller: a scene avatar
-        /// descriptor whose playable layers reference the controller. Falls back to the only
-        /// descriptor in the scene when exactly one carries an asset.
+        /// The expression parameters asset of a scene avatar descriptor whose playable layers
+        /// reference this controller — an EXACT match only, used by the explicit Detect
+        /// action. DaerD is also used on NDMF gimmick controllers that belong to no avatar,
+        /// so there is deliberately no "the only avatar in the scene" fallback.
         /// </summary>
         public static Object FindAssetFor(AnimatorController controller)
         {
@@ -57,19 +61,15 @@ namespace Yozolab.DaerD
             var descriptorType = FindDescriptorType();
             if (descriptorType == null) return null;
 
-            Object fallback = null;
-            int descriptorsWithAsset = 0;
             foreach (var descriptor in Object.FindObjectsOfType(descriptorType, true))
             {
                 var so = new SerializedObject(descriptor);
                 var asset = so.FindProperty("expressionParameters")?.objectReferenceValue;
                 if (asset == null) continue;
-                descriptorsWithAsset++;
-                fallback = asset;
                 if (ReferencesController(so, controller))
                     return asset;
             }
-            return descriptorsWithAsset == 1 ? fallback : null;
+            return null;
         }
 
         static System.Type FindDescriptorType()
@@ -224,55 +224,5 @@ namespace Yozolab.DaerD
         public static bool Rename(Object asset, string oldName, string newName) =>
             Edit(asset, oldName, entry => entry.name = newName);
 
-        // ---- analysis --------------------------------------------------------
-
-        /// <summary>Expression-parameter checks, appended to the analyzer's issue list.</summary>
-        public static void Analyze(AnimatorController controller, Object asset,
-            List<ControllerAnalyzer.Issue> issues)
-        {
-            if (controller == null || !Is(asset)) return;
-            var entries = Read(asset);
-
-            int used = 0;
-            foreach (var entry in entries)
-                if (entry.synced)
-                    used += BitCost(entry.valueType);
-            int capacity = Capacity(asset);
-            if (used > capacity)
-                issues.Add(new ControllerAnalyzer.Issue
-                {
-                    kind = ControllerAnalyzer.Kind.VrcParameters,
-                    severity = ControllerAnalyzer.Severity.Error,
-                    message = L.Tr("Expression parameters use {0} of {1} synced bits.", used, capacity),
-                    context = asset,
-                });
-
-            foreach (var entry in entries)
-            {
-                var controllerParameter = DbtBuilder.FindParameter(controller, entry.name);
-                if (controllerParameter == null)
-                {
-                    if (entry.synced)
-                        issues.Add(new ControllerAnalyzer.Issue
-                        {
-                            kind = ControllerAnalyzer.Kind.VrcParameters,
-                            severity = ControllerAnalyzer.Severity.Info,
-                            message = L.Tr("Expression parameter '{0}' has no matching controller parameter.", entry.name),
-                            context = asset,
-                        });
-                    continue;
-                }
-                var mapped = MapType(controllerParameter.type);
-                if (mapped != null && mapped.Value != entry.valueType)
-                    issues.Add(new ControllerAnalyzer.Issue
-                    {
-                        kind = ControllerAnalyzer.Kind.VrcParameters,
-                        severity = ControllerAnalyzer.Severity.Error,
-                        message = L.Tr("Expression parameter '{0}' is {1} but the controller parameter is {2}.",
-                            entry.name, entry.valueType, controllerParameter.type),
-                        context = asset,
-                    });
-            }
-        }
     }
 }

@@ -413,14 +413,7 @@ namespace Yozolab.DaerD
 
             // ---- VRC expression parameters ---------------------------------
             ["VRC Parameters"] = "VRC パラメーター",
-            ["VRC Parameters: {0} / {1} bit"] = "VRC パラメーター: {0} / {1} bit",
-            ["Synced bits used by the avatar's expression parameters asset (Bool = 1, Int / Float = 8)."] =
-                "アバターの Expression Parameters アセットが使用中の同期ビット数です（Bool = 1、Int / Float = 8）。",
             ["Sync…"] = "同期…",
-            ["Align the VRC expression parameters asset to this controller's parameter list and order (with a diff preview)."] =
-                "VRC Expression Parameters アセットをこのコントローラーのパラメーター一覧・順序に合わせます（差分プレビュー付き）。",
-            ["Re-resolve the expression parameters asset from the scene."] =
-                "シーンから Expression Parameters アセットを再検出します。",
             ["Network synced (costs bits)"] = "ネットワーク同期（bit を消費）",
             ["Saved between worlds"] = "ワールド間で保存",
             ["Add to the VRC expression parameters asset"] =
@@ -430,9 +423,6 @@ namespace Yozolab.DaerD
                 "同じ PhysBone/Contact プレフィックスを持つパラメーターが {0} 件あります。まとめてリネームしますか？",
             ["Rename All"] = "すべてリネーム",
             ["Only This One"] = "これだけ",
-            ["Sync VRC Parameters"] = "VRC パラメーター同期",
-            ["Aligns the VRC expression parameters asset to this controller's parameter list and order. Unchecked rows are left untouched."] =
-                "VRC Expression Parameters アセットをコントローラーのパラメーター一覧・順序に整列します。チェックを外した行は変更されません。",
             ["Add ({0})"] = "追加 ({0})",
             ["Remove ({0})"] = "削除 ({0})",
             ["Already in sync — applying only reorders entries."] =
@@ -472,8 +462,6 @@ namespace Yozolab.DaerD
                 "VRC Expressions Menu アセットを指定してください（可能な場合はシーンのアバターから自動検出されます）。",
             ["That asset is not a VRC Expressions Menu."] =
                 "そのアセットは VRC Expressions Menu ではありません。",
-            ["Re-resolve the menu asset from the scene."] =
-                "シーンからメニューアセットを再検出します。",
             ["Open"] = "開く",
             ["Edit this submenu"] = "このサブメニューを編集します",
             ["Icon"] = "アイコン",
@@ -561,6 +549,32 @@ namespace Yozolab.DaerD
             ["Delete and Clean"] = "削除してクリーン",
             ["Delete '{0}' and remove every condition and driver entry that references it?"] =
                 "'{0}' を削除し、これを参照するすべての条件と Driver エントリを取り除きますか？",
+
+            // ---- parameter store (VRC / MA) --------------------------------
+            ["Params"] = "パラメーター",
+            ["The parameter store this controller belongs to: a VRC Expression Parameters asset, or a GameObject carrying an MA Parameters component. Assigned explicitly — DaerD never guesses it from the scene."] =
+                "このコントローラーが属するパラメーターストアです。VRC Expression Parameters アセット、または MA Parameters コンポーネントの付いた GameObject を指定します。明示的な割り当てのみで、DaerD がシーンから勝手に推測することはありません。",
+            ["Parameter Store"] = "パラメーターストア",
+            ["Assign a VRC Expression Parameters asset or an object with an MA Parameters component."] =
+                "VRC Expression Parameters アセット、または MA Parameters コンポーネントを持つオブジェクトを指定してください。",
+            ["Detect"] = "検出",
+            ["Search the scene for an exact match: an avatar running this controller, or an MA Merge Animator referencing it. Nothing is picked up automatically without this button."] =
+                "シーンから完全一致のみを検索します。このコントローラーを実行するアバター、またはこれを参照する MA Merge Animator が対象です。このボタンを押さない限り自動検出は行われません。",
+            ["No exact match in the scene — no avatar or MA Merge Animator references this controller."] =
+                "シーンに完全一致がありません。このコントローラーを参照するアバターや MA Merge Animator が見つかりませんでした。",
+            ["{0}: {1} / {2} bit"] = "{0}: {1} / {2} bit",
+            ["{0}: {1} bit"] = "{0}: {1} bit",
+            ["Synced bits used by this store (Bool = 1, Int / Float = 8). MA components contribute to the avatar's total, so no capacity is shown."] =
+                "このストアが使用中の同期ビット数です（Bool = 1、Int / Float = 8）。MA コンポーネントはアバター全体の予算に合算されるため、上限は表示されません。",
+            ["Align the parameter store to this controller's parameter list (with a diff preview)."] =
+                "パラメーターストアをこのコントローラーのパラメーター一覧に合わせます（差分プレビュー付き）。",
+            ["Sync Parameters"] = "パラメーター同期",
+            ["Aligns the parameter store to this controller's parameter list. Unchecked rows are left untouched."] =
+                "パラメーターストアをコントローラーのパラメーター一覧に整列します。チェックを外した行は変更されません。",
+            ["Search the scene for an avatar whose playable layers run this controller (exact match only)."] =
+                "このコントローラーを Playable レイヤーで実行しているアバターをシーンから検索します（完全一致のみ）。",
+            ["No exact match in the scene — no avatar runs this controller."] =
+                "シーンに完全一致がありません。このコントローラーを実行しているアバターが見つかりませんでした。",
 
             // ---- settings ---------------------------------------------------
             ["Language"] = "言語 (Language)",

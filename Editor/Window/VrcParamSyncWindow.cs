@@ -7,10 +7,11 @@ using UnityEngine;
 namespace Yozolab.DaerD
 {
     /// <summary>
-    /// Diff preview for "Sync VRC Parameters Asset": lists the entries that would be added
-    /// (controller parameters missing from the asset, Triggers excluded) and removed (asset
-    /// entries with no controller parameter), each with a checkbox, then rewrites the asset
-    /// aligned to the controller's parameter order. Unchecked rows are left untouched.
+    /// Diff preview for "Sync Parameters": lists the entries that would be added (controller
+    /// parameters missing from the store, Triggers excluded) and removed (store entries with
+    /// no controller parameter), each with a checkbox, then aligns the store to the
+    /// controller's parameter list (order where the store is ordered). Unchecked rows are
+    /// left untouched. Works on any <see cref="ParameterStore"/> backend.
     /// </summary>
     class VrcParamSyncWindow : EditorWindow
     {
@@ -23,19 +24,19 @@ namespace Yozolab.DaerD
         }
 
         AnimatorController _controller;
-        UnityEngine.Object _asset;
+        ParameterStore _store;
         Action _onApplied;
         readonly List<Item> _adds = new List<Item>();
         readonly List<Item> _removes = new List<Item>();
         Vector2 _scroll;
 
-        public static void Open(AnimatorController controller, UnityEngine.Object asset, Action onApplied)
+        public static void Open(AnimatorController controller, ParameterStore store, Action onApplied)
         {
             var window = CreateInstance<VrcParamSyncWindow>();
-            window.titleContent = new GUIContent(L.Tr("Sync VRC Parameters"));
+            window.titleContent = new GUIContent(L.Tr("Sync Parameters"));
             window.minSize = new Vector2(420, 300);
             window._controller = controller;
-            window._asset = asset;
+            window._store = store;
             window._onApplied = onApplied;
             window.BuildDiff();
             window.ShowUtility();
@@ -45,7 +46,7 @@ namespace Yozolab.DaerD
         {
             _adds.Clear();
             _removes.Clear();
-            var entries = VrcExpressionParameters.Read(_asset);
+            var entries = _store.Read();
             var entryNames = new HashSet<string>();
             foreach (var entry in entries) entryNames.Add(entry.name);
 
@@ -73,14 +74,14 @@ namespace Yozolab.DaerD
 
         void OnGUI()
         {
-            if (_controller == null || _asset == null)
+            if (_controller == null || _store == null || _store.Target == null)
             {
                 Close();
                 return;
             }
 
             EditorGUILayout.HelpBox(
-                L.Tr("Aligns the VRC expression parameters asset to this controller's parameter list and order. Unchecked rows are left untouched."),
+                L.Tr("Aligns the parameter store to this controller's parameter list. Unchecked rows are left untouched."),
                 MessageType.Info);
 
             _scroll = EditorGUILayout.BeginScrollView(_scroll);
@@ -119,7 +120,7 @@ namespace Yozolab.DaerD
 
         void Apply()
         {
-            var entries = VrcExpressionParameters.Read(_asset);
+            var entries = _store.Read();
             var byName = new Dictionary<string, VrcExpressionParameters.Entry>();
             foreach (var entry in entries) byName[entry.name] = entry;
 
@@ -147,8 +148,7 @@ namespace Yozolab.DaerD
                 if (byName.Remove(entry.name))
                     ordered.Add(entry);
 
-            Undo.RegisterCompleteObjectUndo(_asset, "Sync VRC Parameters");
-            VrcExpressionParameters.WriteAll(_asset, ordered);
+            _store.WriteAll(ordered);
         }
     }
 }

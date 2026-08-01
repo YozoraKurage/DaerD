@@ -44,8 +44,11 @@ namespace Yozolab.DaerD
             if (controller != null)
             {
                 window._controller = controller;
-                if (window._rootMenu == null)
-                    window._rootMenu = VrcMenuAccess.FindMenuFor(controller);
+                // Only the explicit, persisted association — never a scene guess (DaerD is
+                // also used on gimmick controllers that belong to no avatar).
+                var stored = GraphFrameData.GetExpressionsMenu(controller);
+                if (VrcMenuAccess.Is(stored))
+                    window._rootMenu = stored;
                 window.ResetToRoot();
             }
             window.Show();
@@ -112,17 +115,27 @@ namespace Yozolab.DaerD
                 if (pickedMenu == null || VrcMenuAccess.Is(pickedMenu))
                 {
                     _rootMenu = pickedMenu;
+                    GraphFrameData.SetExpressionsMenu(_controller, pickedMenu);
                     ResetToRoot();
                 }
                 else
                     EditorUtility.DisplayDialog(L.Tr("DaerD Menu"),
                         L.Tr("That asset is not a VRC Expressions Menu."), "OK");
             }
-            if (GUILayout.Button(new GUIContent("↻", L.Tr("Re-resolve the menu asset from the scene.")),
-                    GUILayout.Width(24)))
+            if (GUILayout.Button(new GUIContent(L.Tr("Detect"),
+                    L.Tr("Search the scene for an avatar whose playable layers run this controller (exact match only).")),
+                    GUILayout.Width(52)))
             {
-                _rootMenu = VrcMenuAccess.FindMenuFor(_controller);
-                ResetToRoot();
+                var detected = VrcMenuAccess.FindMenuFor(_controller);
+                if (detected == null)
+                    EditorUtility.DisplayDialog(L.Tr("DaerD Menu"),
+                        L.Tr("No exact match in the scene — no avatar runs this controller."), "OK");
+                else
+                {
+                    _rootMenu = detected;
+                    GraphFrameData.SetExpressionsMenu(_controller, detected);
+                    ResetToRoot();
+                }
             }
             EditorGUILayout.EndHorizontal();
         }
