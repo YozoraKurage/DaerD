@@ -74,6 +74,31 @@ namespace Yozolab.DaerD
             EditorUtility.SetDirty(driver);
         }
 
+        /// <summary>Appends a Copy entry (type 3) reading <paramref name="source"/> into
+        /// <paramref name="destination"/> (no range conversion).</summary>
+        public static void AddCopyEntry(StateMachineBehaviour driver, string source, string destination)
+        {
+            if (!Is(driver)) return;
+            var so = new SerializedObject(driver);
+            var list = so.FindProperty("parameters");
+            if (list == null || !list.isArray) return;
+            int index = list.arraySize;
+            list.InsertArrayElementAtIndex(index);
+            var entry = list.GetArrayElementAtIndex(index);
+            // InsertArrayElementAtIndex clones the previous entry — overwrite every field we
+            // rely on so the new row is a clean Copy.
+            var type = entry.FindPropertyRelative("type");
+            if (type != null) type.intValue = 3;   // ChangeType.Copy
+            var sourceProp = entry.FindPropertyRelative("source");
+            if (sourceProp != null) sourceProp.stringValue = source;
+            var name = entry.FindPropertyRelative("name");
+            if (name != null) name.stringValue = destination;
+            var convert = entry.FindPropertyRelative("convertRange");
+            if (convert != null) convert.boolValue = false;
+            so.ApplyModifiedProperties();
+            EditorUtility.SetDirty(driver);
+        }
+
         /// <summary>Removes every entry that writes the parameter (or Copy-reads it as its
         /// source). Used by Delete-and-Clean.</summary>
         public static bool RemoveEntriesReferencing(StateMachineBehaviour behaviour, string parameterName)

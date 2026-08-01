@@ -364,11 +364,55 @@ namespace Yozolab.DaerD
             ["Target path '{0}' is listed more than once."] =
                 "対象パス '{0}' が重複しています。",
 
+            // ---- round-robin sync ------------------------------------------
+            ["Round-Robin Sync"] = "巡回同期",
+            ["Round-Robin Sync…"] = "巡回同期…",
+            ["Time-multiplex several parameters over a few synced ones (index + value channels) — parameter compression."] =
+                "少数の同期パラメーター（インデックス + 値チャンネル）に複数のパラメーターを時分割多重します（パラメーター圧縮）。",
+            ["Time-multiplexes the ticked parameters over a few synced parameters (an index plus one value channel per type): a local cycle copies each parameter into its channel in turn, and remote clients decode it back. The targets themselves stay unsynced — values update round-robin, one slot per step."] =
+                "チェックしたパラメーターを、インデックス + 型ごとの値チャンネルという少数の同期パラメーターに時分割多重します。ローカル側の巡回ステートが各パラメーターを順番にチャンネルへコピーし、リモート側がデコードして書き戻します。対象パラメーター自体は非同期のままで、値は 1 ステップにつき 1 スロットずつ巡回更新されます。",
+            ["Base Name"] = "ベース名",
+            ["Index Encoding"] = "インデックスのエンコード",
+            ["Step Interval (s)"] = "ステップ間隔（秒）",
+            ["Dwell per slot. VRChat syncs roughly every 0.3 s — shorter steps risk remotes skipping slots."] =
+                "1 スロットあたりの滞在時間です。VRChat の同期はおおよそ 0.3 秒間隔のため、それより短くするとリモートがスロットを取りこぼす可能性があります。",
+            ["Add Synced Params To Store"] = "同期パラメーターをストアに追加",
+            ["Add the generated index and channel parameters to the associated parameter store as synced."] =
+                "生成されるインデックスとチャンネルのパラメーターを、関連付けたパラメーターストアに synced として追加します。",
+            ["Parameters To Multiplex"] = "多重化するパラメーター",
+            ["This controller has no Float / Int / Bool parameters."] =
+                "このコントローラーに Float / Int / Bool のパラメーターがありません。",
+            ["Synced cost: {0} bit (direct sync would be {1} bit)"] =
+                "同期コスト: {0} bit（個別に同期すると {1} bit）",
+            ["Pick at least two parameters to multiplex."] =
+                "多重化するパラメーターを 2 つ以上選んでください。",
+            ["The step interval must be greater than zero."] =
+                "ステップ間隔は 0 より大きくしてください。",
+            ["Parameter '{0}' is listed more than once."] =
+                "パラメーター '{0}' が重複しています。",
+            ["Parameter '{0}' does not exist."] =
+                "パラメーター '{0}' が存在しません。",
+            ["Triggers can't be multiplexed ('{0}')."] =
+                "Trigger は多重化できません（'{0}'）。",
+            ["Generated parameter '{0}' collides with a target."] =
+                "生成されるパラメーター '{0}' が対象パラメーターと衝突します。",
+            ["Parameter '{0}' exists with a different type."] =
+                "パラメーター '{0}' は別の型で既に存在します。",
+            ["Steps shorter than VRChat's ~0.3 s sync cadence risk remotes skipping slots."] =
+                "VRChat の同期間隔（約 0.3 秒）より短いステップは、リモートがスロットを取りこぼす可能性があります。",
+            ["The synced Float channel carries -1..1 at 8-bit precision — values outside that range won't survive the trip."] =
+                "同期 Float チャンネルは -1〜1 を 8bit 精度で運びます。この範囲外の値は正しく伝わりません。",
+            ["Some targets are still synced in the parameter store — unsync them there to actually save bits."] =
+                "対象パラメーターのいくつかがパラメーターストアで synced のままです。ビットを節約するにはストア側で同期を外してください。",
+
             // ---- network sync ----------------------------------------------
+            ["Network Sync (Beta)"] = "ネットワーク同期（ベータ）",
+            ["Network Sync (Beta)…"] = "ネットワーク同期（ベータ）…",
+            ["Generate the local-driver + remote-mirror structure that syncs this layer to other VRChat players. Beta: the generated structure may still change."] =
+                "このレイヤーを他の VRChat プレイヤーへ同期させる、ローカル側 Driver + リモート側ミラーの構造を生成します。ベータ: 生成される構造は今後変わる可能性があります。",
+            ["Beta: the generated structure may still change between versions — review the result before shipping. For syncing parameter VALUES (rather than mirroring a whole layer), consider Round-Robin Sync instead."] =
+                "ベータ機能です。生成される構造はバージョン間で変わる可能性があるため、配布前に必ず結果を確認してください。レイヤー全体のミラーではなくパラメーターの値を同期したい場合は、巡回同期の利用を検討してください。",
             ["Network Sync"] = "ネットワーク同期",
-            ["Network Sync…"] = "ネットワーク同期…",
-            ["Generate the local-driver + remote-mirror structure that syncs this layer to other VRChat players."] =
-                "このレイヤーを他の VRChat プレイヤーへ同期させる、ローカル側 Driver + リモート側ミラーの構造を生成します。",
             ["Makes a layer driven by local-only parameters visible to remote players: each state writes its index into a synced parameter via a Parameter Driver, and generated remote states mirror the layer for everyone else. IsLocal separates the two halves."] =
                 "ローカル専用パラメーターで動くレイヤーをリモートプレイヤーにも見えるようにします。各ステートが Parameter Driver で自分の番号を同期パラメーターに書き込み、生成されるリモートステート群がその値を条件にレイヤーをミラー再生します。ローカル側とリモート側は IsLocal で分離されます。",
             ["Encoding"] = "エンコード",

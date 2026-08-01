@@ -210,8 +210,8 @@ namespace Yozolab.DaerD
                 }
 
                 EditorGUILayout.Space(6);
-                if (GUILayout.Button(new GUIContent(L.Tr("Network Sync…"),
-                        L.Tr("Generate the local-driver + remote-mirror structure that syncs this layer to other VRChat players."))))
+                if (GUILayout.Button(new GUIContent(L.Tr("Network Sync (Beta)…"),
+                        L.Tr("Generate the local-driver + remote-mirror structure that syncs this layer to other VRChat players. Beta: the generated structure may still change."))))
                 {
                     var panel = _panel;
                     int index = _index;

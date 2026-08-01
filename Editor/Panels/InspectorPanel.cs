@@ -2012,8 +2012,14 @@ namespace Yozolab.DaerD
                 ToggleBuilderWindow.Open(controller, OnToggleApplied);
                 GUIUtility.ExitGUI();   // the focus moved to another window under this layout pass
             }
-            if (GUILayout.Button(new GUIContent(L.Tr("Network Sync…"),
-                    L.Tr("Generate the local-driver + remote-mirror structure that syncs this layer to other VRChat players."))))
+            if (GUILayout.Button(new GUIContent(L.Tr("Round-Robin Sync…"),
+                    L.Tr("Time-multiplex several parameters over a few synced ones (index + value channels) — parameter compression."))))
+            {
+                RoundRobinSyncWindow.Open(controller, OnToggleApplied);
+                GUIUtility.ExitGUI();   // the focus moved to another window under this layout pass
+            }
+            if (GUILayout.Button(new GUIContent(L.Tr("Network Sync (Beta)…"),
+                    L.Tr("Generate the local-driver + remote-mirror structure that syncs this layer to other VRChat players. Beta: the generated structure may still change."))))
             {
                 NetworkSyncWindow.Open(controller, Context.LayerIndex, OnToggleApplied);
                 GUIUtility.ExitGUI();   // the focus moved to another window under this layout pass

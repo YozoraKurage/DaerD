@@ -71,7 +71,10 @@ namespace Yozolab.DaerD
                 return;
             }
 
-            EditorGUILayout.LabelField(L.Tr("Network Sync"), EditorStyles.boldLabel);
+            EditorGUILayout.LabelField(L.Tr("Network Sync (Beta)"), EditorStyles.boldLabel);
+            EditorGUILayout.HelpBox(
+                L.Tr("Beta: the generated structure may still change between versions — review the result before shipping. For syncing parameter VALUES (rather than mirroring a whole layer), consider Round-Robin Sync instead."),
+                MessageType.Warning);
             EditorGUILayout.HelpBox(
                 L.Tr("Makes a layer driven by local-only parameters visible to remote players: each state writes its index into a synced parameter via a Parameter Driver, and generated remote states mirror the layer for everyone else. IsLocal separates the two halves."),
                 MessageType.Info);

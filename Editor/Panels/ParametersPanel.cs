@@ -494,6 +494,8 @@ namespace Yozolab.DaerD
                 AapGadgetWindow.Open(Context.Controller, OnDbtGadgetApplied));
             menu.AddItem(new GUIContent("Object Toggle..."), false, () =>
                 ToggleBuilderWindow.Open(Context.Controller, _ => OnDbtGadgetApplied()));
+            menu.AddItem(new GUIContent("Round-Robin Sync..."), false, () =>
+                RoundRobinSyncWindow.Open(Context.Controller, _ => OnDbtGadgetApplied()));
 
             // VRChat built-in parameters. Already-present ones show as a checked, disabled entry so
             // the menu doubles as a quick "which standard parameters does this controller have?".
