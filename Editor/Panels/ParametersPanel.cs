@@ -607,13 +607,17 @@ namespace Yozolab.DaerD
             Context.NotifyParametersChanged();
         }
 
+        // NOTE: a controller-side type conversion deliberately does NOT touch the store's
+        // valueType. Differing types are a supported VRChat technique ("parameter
+        // mismatching" — VRChat converts between all combinations, e.g. a 1-bit synced Bool
+        // driving an animator Float), and silently rewriting the store would both destroy
+        // that intent and change the synced bit cost. Edit the store type from its own row.
         void HandleTypeChange(string parameterName, AnimatorControllerParameterType newType)
         {
             var plan = ParameterConverter.ComputeConversion(Context.Controller, parameterName, newType);
             if (plan.conditionChanges.Count == 0 && plan.warnings.Count == 0)
             {
                 ParameterConverter.Apply(plan);
-                SyncExpressionType(parameterName, newType);
                 Context.NotifyParametersChanged();
                 Context.NotifyGraphStructureChanged();
             }
@@ -621,20 +625,10 @@ namespace Yozolab.DaerD
             {
                 ParameterConversionPreviewWindow.Open(plan, () =>
                 {
-                    SyncExpressionType(parameterName, newType);
                     Context.NotifyParametersChanged();
                     Context.NotifyGraphStructureChanged();
                 });
             }
-        }
-
-        /// <summary>Keeps the expression asset's valueType in step with a controller-side
-        /// type conversion (Trigger has no expression equivalent and leaves it untouched).</summary>
-        void SyncExpressionType(string parameterName, AnimatorControllerParameterType newType)
-        {
-            var mapped = VrcExpressionParameters.MapType(newType);
-            if (_store != null && mapped != null)
-                _store.Edit(parameterName, e => e.valueType = mapped.Value);
         }
 
         static string MakeUniqueName(AnimatorController controller, string baseName)

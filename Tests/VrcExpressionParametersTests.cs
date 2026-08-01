@@ -118,26 +118,24 @@ namespace Yozolab.DaerD.Tests
             var controller = new AnimatorController();
             controller.AddLayer("Base");
             controller.AddParameter("Match", AnimatorControllerParameterType.Bool);
-            controller.AddParameter("Wrong", AnimatorControllerParameterType.Float);
+            controller.AddParameter("Mismatched", AnimatorControllerParameterType.Float);
 
             var asset = NewAsset(
                 Entry("Match", VrcExpressionParameters.ValueType.Bool),
-                Entry("Wrong", VrcExpressionParameters.ValueType.Bool),
+                Entry("Mismatched", VrcExpressionParameters.ValueType.Bool),
                 Entry("Orphan", VrcExpressionParameters.ValueType.Bool));
 
             var issues = new List<ControllerAnalyzer.Issue>();
             ParameterStore.TryWrap(asset).Analyze(controller, issues);
 
+            // Type mismatches are a supported VRChat technique (parameter mismatching) —
+            // both findings are informational, never errors.
             Assert.AreEqual(2, issues.Count);
-            bool sawMismatch = false, sawOrphan = false;
             foreach (var issue in issues)
             {
                 Assert.AreEqual(ControllerAnalyzer.Kind.VrcParameters, issue.kind);
-                if (issue.severity == ControllerAnalyzer.Severity.Error) sawMismatch = true;
-                if (issue.severity == ControllerAnalyzer.Severity.Info) sawOrphan = true;
+                Assert.AreEqual(ControllerAnalyzer.Severity.Info, issue.severity);
             }
-            Assert.IsTrue(sawMismatch);
-            Assert.IsTrue(sawOrphan);
         }
     }
 

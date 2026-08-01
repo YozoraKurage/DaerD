@@ -117,14 +117,18 @@ namespace Yozolab.DaerD
                         });
                     continue;
                 }
+                // Differing types are NOT an error: VRChat converts between every
+                // combination ("parameter mismatching", e.g. a 1-bit synced Bool driving an
+                // animator Float — https://vrc.school/docs/Other/Parameter-Mismatching).
+                // Surface it as info so accidental mismatches stay visible.
                 if (!entry.typed) continue;
                 var mapped = VrcExpressionParameters.MapType(controllerParameter.type);
                 if (mapped != null && mapped.Value != entry.valueType)
                     issues.Add(new ControllerAnalyzer.Issue
                     {
                         kind = ControllerAnalyzer.Kind.VrcParameters,
-                        severity = ControllerAnalyzer.Severity.Error,
-                        message = L.Tr("Expression parameter '{0}' is {1} but the controller parameter is {2}.",
+                        severity = ControllerAnalyzer.Severity.Info,
+                        message = L.Tr("Expression parameter '{0}' is {1} while the controller parameter is {2} — VRChat converts between them (parameter mismatching); make sure it's intentional.",
                             entry.name, entry.valueType, controllerParameter.type),
                         context = Target,
                     });

@@ -432,8 +432,8 @@ namespace Yozolab.DaerD
                 "Expression Parameters が同期ビットを {0} / {1} 使用しています。",
             ["Expression parameter '{0}' has no matching controller parameter."] =
                 "Expression パラメーター '{0}' に対応するコントローラーのパラメーターがありません。",
-            ["Expression parameter '{0}' is {1} but the controller parameter is {2}."] =
-                "Expression パラメーター '{0}' は {1} 型ですが、コントローラー側は {2} 型です。",
+            ["Expression parameter '{0}' is {1} while the controller parameter is {2} — VRChat converts between them (parameter mismatching); make sure it's intentional."] =
+                "Expression パラメーター '{0}' は {1} 型、コントローラー側は {2} 型です。VRChat が相互変換するため動作します（パラメーターミスマッチング）。意図した組み合わせか確認してください。",
 
             // ---- VRC behaviours --------------------------------------------
             ["Paste"] = "貼り付け",

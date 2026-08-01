@@ -15,6 +15,11 @@ namespace Yozolab.DaerD
     {
         [SerializeField] AnimatorController _controller;
         [SerializeField] Object _rootMenu;
+        // Menus bind EXPRESSION parameters, so type checks prefer the controller's
+        // associated parameter store; the controller parameter is only the fallback
+        // (deliberate type mismatches are a supported VRChat technique).
+        ParameterStore _paramStore;
+        bool _paramStoreLoaded;
         // Breadcrumb path; [0] is the root menu. Object references survive domain reloads
         // poorly in plain lists — rebuilt to root when anything went stale.
         readonly List<Object> _stack = new List<Object>();
@@ -70,6 +75,25 @@ namespace Yozolab.DaerD
         }
 
         void ApplyTitle() => titleContent = new GUIContent(L.Tr("DaerD Menu"));
+
+        void OnFocus() => _paramStoreLoaded = false;
+
+        /// <summary>The effective type a control's parameter binds to: the store entry when
+        /// the controller has an associated parameter store, else the controller parameter.
+        /// Null when neither knows the name.</summary>
+        VrcExpressionParameters.ValueType? BoundType(string parameterName)
+        {
+            if (!_paramStoreLoaded)
+            {
+                _paramStore = ParameterStore.Of(_controller);
+                _paramStoreLoaded = true;
+            }
+            var entry = _paramStore?.Find(parameterName);
+            if (entry != null && entry.typed) return entry.valueType;
+            var parameter = _controller != null
+                ? DbtBuilder.FindParameter(_controller, parameterName) : null;
+            return parameter != null ? VrcExpressionParameters.MapType(parameter.type) : null;
+        }
 
         void ResetToRoot()
         {
@@ -302,8 +326,9 @@ namespace Yozolab.DaerD
                 if (_controller != null)
                     foreach (var parameter in _controller.parameters)
                     {
-                        if (wantFloat && parameter.type != AnimatorControllerParameterType.Float)
-                            continue;
+                        // No type filter: with parameter mismatching the expression-side
+                        // type can differ from the controller's — the warning below flags
+                        // actually-unsuitable picks.
                         var captured = parameter.name;
                         picker.AddItem(new GUIContent(captured.Replace('/', '∕')),
                             captured == current,
@@ -316,15 +341,18 @@ namespace Yozolab.DaerD
             EditorGUILayout.EndHorizontal();
 
             if (string.IsNullOrEmpty(current) || _controller == null) return;
-            var bound = DbtBuilder.FindParameter(_controller, current);
+            var bound = BoundType(current);
             if (bound == null)
-                EditorGUILayout.HelpBox(L.Tr("Parameter '{0}' is not in the controller.", current),
-                    MessageType.Warning);
-            else if (wantFloat && bound.type != AnimatorControllerParameterType.Float)
+            {
+                if (DbtBuilder.FindParameter(_controller, current) == null)
+                    EditorGUILayout.HelpBox(L.Tr("Parameter '{0}' is not in the controller.", current),
+                        MessageType.Warning);
+            }
+            else if (wantFloat && bound.Value != VrcExpressionParameters.ValueType.Float)
                 EditorGUILayout.HelpBox(L.Tr("Puppet parameters must be Float; '{0}' is {1}.",
-                        current, bound.type), MessageType.Warning);
+                        current, bound.Value), MessageType.Warning);
             else
-                EditorGUILayout.LabelField(" ", bound.type.ToString(), EditorStyles.miniLabel);
+                EditorGUILayout.LabelField(" ", bound.Value.ToString(), EditorStyles.miniLabel);
         }
 
         void ApplyParameter(Object menu, int index, int slot, string parameterName)
@@ -333,15 +361,15 @@ namespace Yozolab.DaerD
             else VrcMenuAccess.SetSubParameter(menu, index, slot, parameterName);
         }
 
-        /// <summary>Value written when the control fires; UI adapts to the bound type.</summary>
+        /// <summary>Value written when the control fires; UI adapts to the bound
+        /// (expression-store first) type.</summary>
         void DrawValueField(Object menu, int index, VrcMenuAccess.Control control)
         {
-            var bound = _controller != null
-                ? DbtBuilder.FindParameter(_controller, control.parameter) : null;
+            var bound = BoundType(control.parameter);
             float newValue;
-            if (bound != null && bound.type == AnimatorControllerParameterType.Int)
+            if (bound == VrcExpressionParameters.ValueType.Int)
                 newValue = EditorGUILayout.IntSlider(L.Tr("Value"), Mathf.RoundToInt(control.value), 0, 255);
-            else if (bound != null && bound.type == AnimatorControllerParameterType.Bool)
+            else if (bound == VrcExpressionParameters.ValueType.Bool)
             {
                 using (new EditorGUI.DisabledScope(true))
                     EditorGUILayout.Slider(L.Tr("Value"), 1f, 0f, 1f);
