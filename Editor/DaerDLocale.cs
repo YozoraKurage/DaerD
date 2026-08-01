@@ -490,6 +490,32 @@ namespace Yozolab.DaerD
             ["Puppet parameters must be Float; '{0}' is {1}."] =
                 "Puppet のパラメーターは Float である必要があります。'{0}' は {1} 型です。",
 
+            // ---- layer clipboard / templates -------------------------------
+            ["With templates saved (or a copied layer), this opens a menu. Use '.' in a template's asset name to nest it into submenus."] =
+                "テンプレートを保存済み（またはレイヤーをコピー済み）の場合はメニューが開きます。テンプレートのアセット名に '.' を入れるとサブメニューに整理されます。",
+            ["New Layer"] = "新規レイヤー",
+            ["Paste Layer '{0}'"] = "レイヤー '{0}' を貼り付け",
+            ["Delete Template"] = "テンプレートを削除",
+            ["Delete layer template '{0}'?\n\n{1}"] =
+                "レイヤーテンプレート '{0}' を削除しますか？\n\n{1}",
+            ["Copy Layer"] = "レイヤーをコピー",
+            ["Copy this layer (states, behaviours, frames) — paste it into any open controller from '+ Add Layer'."] =
+                "このレイヤー（ステート・Behaviour・フレーム）をコピーします。開いている任意のコントローラーの「+ Add Layer」から貼り付けできます。",
+            ["Paste Settings"] = "設定を貼り付け",
+            ["Apply only the copied layer's settings (weight, blending, mask, IK) to this layer."] =
+                "コピーしたレイヤーの設定（ウェイト・ブレンド・マスク・IK）のみをこのレイヤーに適用します。",
+            ["Save as Template…"] = "テンプレートとして保存…",
+            ["Save this layer (with its parameters) as a reusable template asset."] =
+                "このレイヤーを（使用パラメーター込みで）再利用可能なテンプレートアセットとして保存します。",
+            ["Save Layer Template"] = "レイヤーテンプレートを保存",
+            ["Use '.' in the file name to nest the template into submenus."] =
+                "ファイル名に '.' を入れるとサブメニューに整理されます。",
+            ["Import Template"] = "テンプレートをインポート",
+            ["Wire each template parameter to an existing parameter or create it under a new name."] =
+                "テンプレートの各パラメーターを既存パラメーターに割り当てるか、新しい名前で作成します。",
+            ["Create new"] = "新規作成",
+            ["Import"] = "インポート",
+
             // ---- settings ---------------------------------------------------
             ["Language"] = "言語 (Language)",
             ["Auto (System Language)"] = "自動（システム言語）",

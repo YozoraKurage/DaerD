@@ -58,8 +58,105 @@ namespace Yozolab.DaerD
             _reorder.End(MoveLayer);
 
             EditorGUILayout.Space(4);
-            if (GUILayout.Button("+ Add Layer"))
+            if (GUILayout.Button(new GUIContent("+ Add Layer",
+                    L.Tr("With templates saved (or a copied layer), this opens a menu. Use '.' in a template's asset name to nest it into submenus."))))
+                ShowAddLayerMenu();
+        }
+
+        /// <summary>Plain add when nothing else is available; otherwise a menu with the
+        /// copied layer and the saved templates.</summary>
+        void ShowAddLayerMenu()
+        {
+            var templates = DaerDLayerTemplate.All();
+            if (templates.Count == 0 && !LayerClipboard.HasData)
+            {
                 AddLayer();
+                return;
+            }
+            var menu = new GenericMenu();
+            menu.AddItem(new GUIContent(L.Tr("New Layer")), false, AddLayer);
+            if (LayerClipboard.HasData)
+                menu.AddItem(new GUIContent(L.Tr("Paste Layer '{0}'", LayerClipboard.CopiedLayerName)),
+                    false, PasteLayer);
+            if (templates.Count > 0)
+            {
+                menu.AddSeparator(string.Empty);
+                foreach (var template in templates)
+                {
+                    var captured = template;
+                    menu.AddItem(new GUIContent(TemplateMenuLabel(captured)), false,
+                        () => ImportTemplate(captured));
+                }
+                menu.AddSeparator(string.Empty);
+                foreach (var template in templates)
+                {
+                    var captured = template;
+                    menu.AddItem(new GUIContent("Delete Template/" + TemplateMenuLabel(captured)),
+                        false, () => DeleteTemplate(captured));
+                }
+            }
+            menu.ShowAsContext();
+        }
+
+        /// <summary>'.' in the asset name becomes submenu nesting ("VRC.Toggle" → VRC/Toggle).</summary>
+        static string TemplateMenuLabel(DaerDLayerTemplate template) =>
+            template.name.Replace('.', '/');
+
+        void PasteLayer()
+        {
+            int index = LayerClipboard.Paste(Context.Controller);
+            if (index >= 0)
+                OnLayerStructureChanged(index);
+        }
+
+        void ImportTemplate(DaerDLayerTemplate template)
+        {
+            var controller = Context.Controller;
+            LayerTemplateImportWindow.Open(controller, template.name, template.parameters, map =>
+            {
+                int index = template.Import(controller, map);
+                if (index >= 0)
+                    OnLayerStructureChanged(index);
+            });
+        }
+
+        void DeleteTemplate(DaerDLayerTemplate template)
+        {
+            string path = AssetDatabase.GetAssetPath(template);
+            if (!EditorUtility.DisplayDialog(L.Tr("Delete Template"),
+                    L.Tr("Delete layer template '{0}'?\n\n{1}", template.name, path),
+                    L.Tr("Delete"), L.Tr("Cancel")))
+                return;
+            AssetDatabase.DeleteAsset(path);
+        }
+
+        internal void CopyLayer(int index) => LayerClipboard.Copy(Context.Controller, index);
+
+        internal void PasteLayerSettings(int index)
+        {
+            if (LayerClipboard.PasteSettings(Context.Controller, index))
+                Context.NotifyLayersChanged();
+        }
+
+        internal void SaveLayerTemplate(int index)
+        {
+            var controller = Context.Controller;
+            if (controller == null || index < 0 || index >= controller.layers.Length) return;
+            string path = EditorUtility.SaveFilePanelInProject(L.Tr("Save Layer Template"),
+                controller.layers[index].name, "asset",
+                L.Tr("Use '.' in the file name to nest the template into submenus."));
+            if (string.IsNullOrEmpty(path)) return;
+            DaerDLayerTemplate.Save(controller, index, path);
+        }
+
+        void OnLayerStructureChanged(int layerIndex)
+        {
+            var controller = Context.Controller;
+            Context.NotifyParametersChanged();
+            Context.NotifyLayersChanged();
+            Context.NotifyGraphStructureChanged();
+            if (controller != null && layerIndex >= 0 && layerIndex < controller.layers.Length)
+                Context.SetLayer(layerIndex);
         }
 
         /// <summary>Editable settings for one layer, anchored to its row's gear button.</summary>
@@ -74,7 +171,7 @@ namespace Yozolab.DaerD
                 _index = index;
             }
 
-            public override Vector2 GetWindowSize() => new Vector2(300f, 210f);
+            public override Vector2 GetWindowSize() => new Vector2(300f, 262f);
 
             public override void OnGUI(Rect rect)
             {
@@ -122,6 +219,33 @@ namespace Yozolab.DaerD
                     // Deferred: the wizard steals focus, which would dismiss this popup mid-OnGUI.
                     EditorApplication.delayCall += () =>
                         NetworkSyncWindow.Open(panel.Context.Controller, index, panel.OnNetworkSyncApplied);
+                    GUIUtility.ExitGUI();
+                }
+                EditorGUILayout.BeginHorizontal();
+                if (GUILayout.Button(new GUIContent(L.Tr("Copy Layer"),
+                        L.Tr("Copy this layer (states, behaviours, frames) — paste it into any open controller from '+ Add Layer'."))))
+                {
+                    _panel.CopyLayer(_index);
+                    editorWindow.Close();
+                    GUIUtility.ExitGUI();
+                }
+                using (new EditorGUI.DisabledScope(!LayerClipboard.HasData))
+                    if (GUILayout.Button(new GUIContent(L.Tr("Paste Settings"),
+                            L.Tr("Apply only the copied layer's settings (weight, blending, mask, IK) to this layer."))))
+                    {
+                        _panel.PasteLayerSettings(_index);
+                        editorWindow.Close();
+                        GUIUtility.ExitGUI();
+                    }
+                EditorGUILayout.EndHorizontal();
+                if (GUILayout.Button(new GUIContent(L.Tr("Save as Template…"),
+                        L.Tr("Save this layer (with its parameters) as a reusable template asset."))))
+                {
+                    var panel = _panel;
+                    int index = _index;
+                    // Deferred: the save dialog steals focus, which would dismiss this popup mid-OnGUI.
+                    editorWindow.Close();
+                    EditorApplication.delayCall += () => panel.SaveLayerTemplate(index);
                     GUIUtility.ExitGUI();
                 }
                 EditorGUILayout.BeginHorizontal();
