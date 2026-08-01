@@ -26,6 +26,7 @@ namespace Yozolab.DaerD
             MissingBehaviour,
             DuplicateCondition,
             DirectBlendTree,
+            VrcParameters,
         }
 
         public class Issue
@@ -62,6 +63,7 @@ namespace Yozolab.DaerD
                 case Kind.MissingBehaviour: return L.Tr("Missing Behaviour");
                 case Kind.DuplicateCondition: return L.Tr("Duplicate Condition");
                 case Kind.DirectBlendTree: return L.Tr("Direct Blend Tree");
+                case Kind.VrcParameters: return L.Tr("VRC Parameters");
             }
             return kind.ToString();
         }
@@ -129,6 +131,12 @@ namespace Yozolab.DaerD
             AddLayerIssues(controller, issues);
             AddMissingBehaviourIssues(controller, issues);
             AddDirectBlendTreeIssues(controller, issues);
+
+            // Expression-parameter checks only run when a scene avatar resolves the asset;
+            // headless analysis (tests, no avatar open) is unaffected.
+            var expressionAsset = VrcExpressionParameters.FindAssetFor(controller);
+            if (expressionAsset != null)
+                VrcExpressionParameters.Analyze(controller, expressionAsset, issues);
 
             return issues;
         }

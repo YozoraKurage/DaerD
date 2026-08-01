@@ -411,6 +411,40 @@ namespace Yozolab.DaerD
             ["The existing parameter '{0}' will be reused."] =
                 "既存のパラメーター '{0}' を再利用します。",
 
+            // ---- VRC expression parameters ---------------------------------
+            ["VRC Parameters"] = "VRC パラメーター",
+            ["VRC Parameters: {0} / {1} bit"] = "VRC パラメーター: {0} / {1} bit",
+            ["Synced bits used by the avatar's expression parameters asset (Bool = 1, Int / Float = 8)."] =
+                "アバターの Expression Parameters アセットが使用中の同期ビット数です（Bool = 1、Int / Float = 8）。",
+            ["Sync…"] = "同期…",
+            ["Align the VRC expression parameters asset to this controller's parameter list and order (with a diff preview)."] =
+                "VRC Expression Parameters アセットをこのコントローラーのパラメーター一覧・順序に合わせます（差分プレビュー付き）。",
+            ["Re-resolve the expression parameters asset from the scene."] =
+                "シーンから Expression Parameters アセットを再検出します。",
+            ["Network synced (costs bits)"] = "ネットワーク同期（bit を消費）",
+            ["Saved between worlds"] = "ワールド間で保存",
+            ["Add to the VRC expression parameters asset"] =
+                "VRC Expression Parameters アセットに追加します",
+            ["Rename Parameter Family"] = "パラメーターファミリーのリネーム",
+            ["{0} sibling parameter(s) share this PhysBone/Contact prefix. Rename them to match?"] =
+                "同じ PhysBone/Contact プレフィックスを持つパラメーターが {0} 件あります。まとめてリネームしますか？",
+            ["Rename All"] = "すべてリネーム",
+            ["Only This One"] = "これだけ",
+            ["Sync VRC Parameters"] = "VRC パラメーター同期",
+            ["Aligns the VRC expression parameters asset to this controller's parameter list and order. Unchecked rows are left untouched."] =
+                "VRC Expression Parameters アセットをコントローラーのパラメーター一覧・順序に整列します。チェックを外した行は変更されません。",
+            ["Add ({0})"] = "追加 ({0})",
+            ["Remove ({0})"] = "削除 ({0})",
+            ["Already in sync — applying only reorders entries."] =
+                "既に同期済みです。適用すると並び順のみ整列されます。",
+            ["Apply"] = "適用",
+            ["Expression parameters use {0} of {1} synced bits."] =
+                "Expression Parameters が同期ビットを {0} / {1} 使用しています。",
+            ["Expression parameter '{0}' has no matching controller parameter."] =
+                "Expression パラメーター '{0}' に対応するコントローラーのパラメーターがありません。",
+            ["Expression parameter '{0}' is {1} but the controller parameter is {2}."] =
+                "Expression パラメーター '{0}' は {1} 型ですが、コントローラー側は {2} 型です。",
+
             // ---- settings ---------------------------------------------------
             ["Language"] = "言語 (Language)",
             ["Auto (System Language)"] = "自動（システム言語）",

@@ -12,6 +12,13 @@ namespace Yozolab.DaerD
         readonly ListReorder _reorder = new ListReorder();
         string _search = string.Empty;
 
+        // VRC expression parameters asset (resolved from the scene avatar). Lazy: the scene
+        // scan runs once per controller, not per repaint. The entry map is rebuilt every
+        // DrawContent — the asset is small and edits elsewhere must show up immediately.
+        UnityEngine.Object _exprAsset;
+        bool _exprResolved;
+        Dictionary<string, VrcExpressionParameters.Entry> _exprEntries;
+
         static readonly GUIContent FindContent = new GUIContent("?",
             "Find where this parameter is used (click to list every usage)");
 
@@ -20,6 +27,13 @@ namespace Yozolab.DaerD
         {
             context.ControllerChanged += Refresh;
             context.ParametersChanged += Refresh;
+            context.ControllerChanged += InvalidateExpressionAsset;
+        }
+
+        void InvalidateExpressionAsset()
+        {
+            _exprResolved = false;
+            _exprAsset = null;
         }
 
         protected override void DrawContent()
@@ -28,6 +42,19 @@ namespace Yozolab.DaerD
             var parameters = controller.parameters;
 
             var unused = new HashSet<string>(ControllerAnalyzer.FindUnusedParameters(controller));
+
+            if (!_exprResolved)
+            {
+                _exprAsset = VrcExpressionParameters.FindAssetFor(controller);
+                _exprResolved = true;
+            }
+            _exprEntries = null;
+            if (_exprAsset != null)
+            {
+                _exprEntries = new Dictionary<string, VrcExpressionParameters.Entry>();
+                foreach (var entry in VrcExpressionParameters.Read(_exprAsset))
+                    _exprEntries[entry.name] = entry;
+            }
 
             // Add is pinned to the LEFT so a narrow panel clips the search field, not the
             // button.
@@ -38,6 +65,7 @@ namespace Yozolab.DaerD
                 GUILayout.MinWidth(0), GUILayout.ExpandWidth(true));
             EditorGUILayout.EndHorizontal();
 
+            DrawVrcBudget();
             EditorGUILayout.Space(2);
 
             // Maps each drawn (search-filtered) row back to its index in the full array.
@@ -63,6 +91,12 @@ namespace Yozolab.DaerD
                     if (!ParameterRenamer.Rename(controller, p.name, newName))
                         EditorUtility.DisplayDialog("Rename Failed",
                             "A parameter named '" + newName + "' already exists.", "OK");
+                    else
+                    {
+                        if (_exprAsset != null)
+                            VrcExpressionParameters.Rename(_exprAsset, p.name, newName);
+                        OfferSiblingRename(controller, p.name, newName);
+                    }
                     Context.NotifyParametersChanged();
                     Context.NotifyGraphStructureChanged();
                     GUIUtility.ExitGUI();
@@ -78,6 +112,7 @@ namespace Yozolab.DaerD
                 }
 
                 DrawDefaultValue(controller, parameters, i);
+                DrawVrcFlags(p);
 
                 // Find-uses: lists every transition condition / blend-tree blend slot / state
                 // parameter override that mentions this parameter, with click-to-navigate.
@@ -126,7 +161,111 @@ namespace Yozolab.DaerD
                 p.defaultBool = b;
                 controller.parameters = parameters;
                 EditorUtility.SetDirty(controller);
+
+                // Defaults stay linked with the avatar's expression parameters asset.
+                if (_exprAsset != null && _exprEntries != null && _exprEntries.ContainsKey(p.name))
+                {
+                    float linked = p.type == AnimatorControllerParameterType.Float ? f
+                        : p.type == AnimatorControllerParameterType.Int ? n
+                        : b ? 1f : 0f;
+                    VrcExpressionParameters.Edit(_exprAsset, p.name, e => e.defaultValue = linked);
+                }
             }
+        }
+
+        /// <summary>Budget line for the resolved VRC expression parameters asset: used /
+        /// available synced bits, plus the Sync and re-resolve actions.</summary>
+        void DrawVrcBudget()
+        {
+            if (_exprAsset == null) return;
+            int used = VrcExpressionParameters.UsedBits(_exprAsset);
+            int capacity = VrcExpressionParameters.Capacity(_exprAsset);
+
+            EditorGUILayout.BeginHorizontal();
+            var prev = GUI.color;
+            if (used > capacity) GUI.color = new Color(1f, 0.5f, 0.5f);
+            EditorGUILayout.LabelField(
+                new GUIContent(L.Tr("VRC Parameters: {0} / {1} bit", used, capacity),
+                    L.Tr("Synced bits used by the avatar's expression parameters asset (Bool = 1, Int / Float = 8).")),
+                EditorStyles.miniLabel);
+            GUI.color = prev;
+            GUILayout.FlexibleSpace();
+            if (GUILayout.Button(new GUIContent(L.Tr("Sync…"),
+                    L.Tr("Align the VRC expression parameters asset to this controller's parameter list and order (with a diff preview).")),
+                    EditorStyles.miniButton, GUILayout.Width(52)))
+            {
+                VrcParamSyncWindow.Open(Context.Controller, _exprAsset, Refresh);
+                GUIUtility.ExitGUI();
+            }
+            if (GUILayout.Button(new GUIContent("↻", L.Tr("Re-resolve the expression parameters asset from the scene.")),
+                    EditorStyles.miniButton, GUILayout.Width(22)))
+                InvalidateExpressionAsset();
+            EditorGUILayout.EndHorizontal();
+        }
+
+        /// <summary>Per-row S (synced) / D (saved) toggles for parameters present in the
+        /// expression asset, and a "+" to add the ones that aren't.</summary>
+        void DrawVrcFlags(AnimatorControllerParameter parameter)
+        {
+            if (_exprAsset == null || _exprEntries == null) return;
+            if (_exprEntries.TryGetValue(parameter.name, out var entry))
+            {
+                bool synced = GUILayout.Toggle(entry.synced,
+                    new GUIContent("S", L.Tr("Network synced (costs bits)")),
+                    EditorStyles.miniButton, GUILayout.Width(22));
+                bool saved = GUILayout.Toggle(entry.saved,
+                    new GUIContent("D", L.Tr("Saved between worlds")),
+                    EditorStyles.miniButton, GUILayout.Width(22));
+                if (synced != entry.synced || saved != entry.saved)
+                    VrcExpressionParameters.Edit(_exprAsset, parameter.name, e =>
+                    {
+                        e.synced = synced;
+                        e.saved = saved;
+                    });
+                return;
+            }
+
+            var mapped = VrcExpressionParameters.MapType(parameter.type);
+            using (new EditorGUI.DisabledScope(mapped == null))
+                if (GUILayout.Button(new GUIContent("+", L.Tr("Add to the VRC expression parameters asset")),
+                        EditorStyles.miniButton, GUILayout.Width(46)))
+                    VrcExpressionParameters.Add(_exprAsset, new VrcExpressionParameters.Entry
+                    {
+                        name = parameter.name,
+                        valueType = mapped.Value,
+                        defaultValue = parameter.type == AnimatorControllerParameterType.Float
+                            ? parameter.defaultFloat
+                            : parameter.type == AnimatorControllerParameterType.Int
+                                ? parameter.defaultInt
+                                : parameter.defaultBool ? 1f : 0f,
+                    });
+        }
+
+        /// <summary>PhysBone / Contact parameter families share a prefix — offer to carry a
+        /// prefix rename over to the sibling parameters.</summary>
+        void OfferSiblingRename(AnimatorController controller, string oldName, string newName)
+        {
+            var siblings = PhysBoneSiblings.Siblings(controller, oldName);
+            if (siblings.Count == 0) return;
+            var renames = new List<(string from, string to)>();
+            foreach (var sibling in siblings)
+            {
+                var renamed = PhysBoneSiblings.RenamedSibling(sibling, oldName, newName);
+                if (renamed != null && DbtBuilder.FindParameter(controller, renamed) == null)
+                    renames.Add((sibling, renamed));
+            }
+            if (renames.Count == 0) return;
+            if (!EditorUtility.DisplayDialog(L.Tr("Rename Parameter Family"),
+                    L.Tr("{0} sibling parameter(s) share this PhysBone/Contact prefix. Rename them to match?", renames.Count),
+                    L.Tr("Rename All"), L.Tr("Only This One")))
+                return;
+            using (new UndoScope("Rename Parameter Family"))
+                foreach (var (from, to) in renames)
+                {
+                    ParameterRenamer.Rename(controller, from, to);
+                    if (_exprAsset != null)
+                        VrcExpressionParameters.Rename(_exprAsset, from, to);
+                }
         }
 
         /// <summary>A DBT gadget added parameters, possibly a layer and a blend tree — let
@@ -201,6 +340,14 @@ namespace Yozolab.DaerD
                 menu.AddItem(new GUIContent("VRChat/Add All Missing (" + missing + ")"), false, AddAllVrcParameters);
             else
                 menu.AddDisabledItem(new GUIContent("VRChat/Add All Missing"));
+            var syncLabel = new GUIContent("VRChat/Sync Expression Parameters Asset...");
+            if (_exprAsset != null)
+            {
+                var asset = _exprAsset;
+                menu.AddItem(syncLabel, false, () => VrcParamSyncWindow.Open(controller, asset, Refresh));
+            }
+            else
+                menu.AddDisabledItem(syncLabel);
             menu.AddSeparator("VRChat/");
 
             foreach (var def in VrcParameters.All)
@@ -300,6 +447,7 @@ namespace Yozolab.DaerD
             if (plan.conditionChanges.Count == 0 && plan.warnings.Count == 0)
             {
                 ParameterConverter.Apply(plan);
+                SyncExpressionType(parameterName, newType);
                 Context.NotifyParametersChanged();
                 Context.NotifyGraphStructureChanged();
             }
@@ -307,10 +455,20 @@ namespace Yozolab.DaerD
             {
                 ParameterConversionPreviewWindow.Open(plan, () =>
                 {
+                    SyncExpressionType(parameterName, newType);
                     Context.NotifyParametersChanged();
                     Context.NotifyGraphStructureChanged();
                 });
             }
+        }
+
+        /// <summary>Keeps the expression asset's valueType in step with a controller-side
+        /// type conversion (Trigger has no expression equivalent and leaves it untouched).</summary>
+        void SyncExpressionType(string parameterName, AnimatorControllerParameterType newType)
+        {
+            var mapped = VrcExpressionParameters.MapType(newType);
+            if (_exprAsset != null && mapped != null)
+                VrcExpressionParameters.Edit(_exprAsset, parameterName, e => e.valueType = mapped.Value);
         }
 
         static string MakeUniqueName(AnimatorController controller, string baseName)
