@@ -1823,7 +1823,25 @@ namespace Yozolab.DaerD
                 ClipsWindow.Open(controller);
                 GUIUtility.ExitGUI();   // the focus moved to another window under this layout pass
             }
+            if (GUILayout.Button(new GUIContent(L.Tr("Object Toggle…"),
+                    L.Tr("Generate ON/OFF clips for picked GameObjects and the layer or Direct blend tree machinery that plays them."))))
+            {
+                ToggleBuilderWindow.Open(controller, OnToggleApplied);
+                GUIUtility.ExitGUI();   // the focus moved to another window under this layout pass
+            }
             DrawCleanupSection(controller);
+        }
+
+        /// <summary>The toggle wizard added a parameter, clips and possibly a layer — let
+        /// every panel and the graph pick that up, and show the layer it landed in.</summary>
+        void OnToggleApplied(int layerIndex)
+        {
+            var controller = Context.Controller;
+            Context.NotifyParametersChanged();
+            Context.NotifyLayersChanged();
+            Context.NotifyGraphStructureChanged();
+            if (controller != null && layerIndex >= 0 && layerIndex < controller.layers.Length)
+                Context.SetLayer(layerIndex);
         }
 
         void BulkSetWriteDefaults(AnimatorController controller, bool value)

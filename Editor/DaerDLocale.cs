@@ -298,6 +298,57 @@ namespace Yozolab.DaerD
             ["Linearly remaps the input range to the output range (reversed output ranges invert the slope)."] =
                 "入力範囲を出力範囲へ線形にリマップします（出力範囲を逆順にすると傾きが反転します）。",
 
+            // ---- object toggle wizard --------------------------------------
+            ["Object Toggle"] = "オブジェクトトグル",
+            ["Object Toggle…"] = "オブジェクトトグル…",
+            ["Generate ON/OFF clips for picked GameObjects and the layer or Direct blend tree machinery that plays them."] =
+                "選択した GameObject の ON/OFF クリップと、それを再生するレイヤーまたは Direct ブレンドツリーの仕掛けを生成します。",
+            ["Creates ON/OFF clips that toggle the listed GameObjects and wires them to a parameter. The clips are saved next to the controller asset."] =
+                "リストした GameObject を切り替える ON/OFF クリップを作成し、パラメーターに配線します。クリップはコントローラーアセットと同じフォルダに保存されます。",
+            ["Toggle Name"] = "トグル名",
+            ["Wiring"] = "配線方式",
+            ["Adds a layer with OFF/ON states and instant transitions driven by a Bool parameter."] =
+                "OFF/ON の 2 ステートと Bool パラメーターによる即時遷移を持つレイヤーを追加します。",
+            ["Adds a 1D tree (0 = OFF, 1 = ON) driven by a Float parameter to a Direct blend tree layer — many toggles can share one layer."] =
+                "Float パラメーターで駆動する 1D ツリー（0 = OFF、1 = ON）を Direct ブレンドツリーレイヤーに追加します。複数のトグルで 1 レイヤーを共有できます。",
+            ["Parameter"] = "パラメーター",
+            ["Default ON"] = "初期状態 ON",
+            ["Stored as the parameter's default value; the layer also starts on the ON state."] =
+                "パラメーターの初期値として保存されます。レイヤー方式では ON ステートから開始します。",
+            ["Uses the existing '{0}' parameter."] =
+                "既存のパラメーター '{0}' を使用します。",
+            ["Parameter '{0}' exists but is a {1} — pick another name or wiring."] =
+                "パラメーター '{0}' は {1} 型として既に存在します。別の名前か配線方式を選んでください。",
+            ["Target Objects"] = "対象オブジェクト",
+            ["Path Root"] = "パスのルート",
+            ["The GameObject holding the Animator; dropped objects get their path relative to it."] =
+                "Animator を持つ GameObject です。ドロップしたオブジェクトのパスはここからの相対で計算されます。",
+            ["Add Object"] = "オブジェクト追加",
+            ["Drop a scene GameObject to add it as a target."] =
+                "シーン上の GameObject をドロップすると対象に追加されます。",
+            ["Add Selection"] = "選択中を追加",
+            ["Add every GameObject selected in the Hierarchy."] =
+                "Hierarchy で選択中のすべての GameObject を追加します。",
+            ["Active"] = "ON で表示",
+            ["Checked: the object is active while the toggle is ON. Unchecked inverts it."] =
+                "チェック時はトグル ON でオブジェクトが有効になります。外すと反転します。",
+            ["No targets yet. Drop GameObjects above or type hierarchy paths (relative to the Animator root)."] =
+                "対象がまだありません。上の欄に GameObject をドロップするか、階層パス（Animator ルートからの相対）を入力してください。",
+            ["'{0}' is not a child of the path root '{1}'."] =
+                "'{0}' はパスのルート '{1}' の子ではありません。",
+            ["The path root itself can't be toggled — animations can't re-enable the object that hosts the Animator."] =
+                "パスのルート自体はトグルできません。Animator を持つオブジェクトを無効にすると、アニメーションで再有効化できなくなります。",
+            ["The toggle needs a name."] = "トグルの名前を入力してください。",
+            ["The parameter needs a name."] = "パラメーターの名前を入力してください。",
+            ["Parameter '{0}' exists but is not a Bool."] =
+                "パラメーター '{0}' は存在しますが Bool ではありません。",
+            ["Add at least one target object."] =
+                "対象オブジェクトを 1 つ以上追加してください。",
+            ["Every target needs a hierarchy path."] =
+                "すべての対象に階層パスが必要です。",
+            ["Target path '{0}' is listed more than once."] =
+                "対象パス '{0}' が重複しています。",
+
             // ---- settings ---------------------------------------------------
             ["Language"] = "言語 (Language)",
             ["Auto (System Language)"] = "自動（システム言語）",

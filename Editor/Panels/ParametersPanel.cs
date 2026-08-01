@@ -11,15 +11,9 @@ namespace Yozolab.DaerD
     {
         readonly ListReorder _reorder = new ListReorder();
         string _search = string.Empty;
-        GUIContent _settingsIcon;
 
         static readonly GUIContent FindContent = new GUIContent("?",
             "Find where this parameter is used (click to list every usage)");
-
-        /// <summary>Wrench glyph (lazy: editor skin not ready at field-init time).</summary>
-        GUIContent SettingsIcon =>
-            _settingsIcon ??= new GUIContent(EditorGUIUtility.IconContent("_Popup").image,
-                "Maintenance actions (Remove Unused, …)");
 
         public ParametersPanel(DaerDContext context)
             : base(context, "Parameters")
@@ -36,16 +30,12 @@ namespace Yozolab.DaerD
             var unused = new HashSet<string>(ControllerAnalyzer.FindUnusedParameters(controller));
 
             // Add is pinned to the LEFT so a narrow panel clips the search field, not the
-            // button. The wrench menu on the right holds rarely-used maintenance actions
-            // (Remove Unused, …) so they stay out of the way without disappearing on
-            // narrow widths.
+            // button.
             EditorGUILayout.BeginHorizontal();
             if (GUILayout.Button("Add", EditorStyles.toolbarButton, GUILayout.Width(40)))
                 ShowAddMenu();
             _search = EditorGUILayout.TextField(_search, EditorStyles.toolbarSearchField,
                 GUILayout.MinWidth(0), GUILayout.ExpandWidth(true));
-            if (GUILayout.Button(SettingsIcon, EditorStyles.toolbarButton, GUILayout.Width(24)))
-                ShowMaintenanceMenu(unused);
             EditorGUILayout.EndHorizontal();
 
             EditorGUILayout.Space(2);
@@ -139,20 +129,6 @@ namespace Yozolab.DaerD
             }
         }
 
-        void ShowMaintenanceMenu(HashSet<string> unused)
-        {
-            var menu = new GenericMenu();
-            var removeLabel = new GUIContent("Remove Unused Parameters (" + unused.Count + ")");
-            if (unused.Count > 0)
-                menu.AddItem(removeLabel, false, () => RemoveUnused(unused));
-            else
-                menu.AddDisabledItem(removeLabel);
-            menu.AddSeparator(string.Empty);
-            menu.AddItem(new GUIContent("DBT Gadget (AAP)..."), false, () =>
-                AapGadgetWindow.Open(Context.Controller, OnDbtGadgetApplied));
-            menu.ShowAsContext();
-        }
-
         /// <summary>A DBT gadget added parameters, possibly a layer and a blend tree — let
         /// every panel and the graph pick that up.</summary>
         void OnDbtGadgetApplied()
@@ -211,6 +187,8 @@ namespace Yozolab.DaerD
             menu.AddSeparator(string.Empty);
             menu.AddItem(new GUIContent("DBT Gadget (AAP)..."), false, () =>
                 AapGadgetWindow.Open(Context.Controller, OnDbtGadgetApplied));
+            menu.AddItem(new GUIContent("Object Toggle..."), false, () =>
+                ToggleBuilderWindow.Open(Context.Controller, _ => OnDbtGadgetApplied()));
 
             // VRChat built-in parameters. Already-present ones show as a checked, disabled entry so
             // the menu doubles as a quick "which standard parameters does this controller have?".
@@ -294,17 +272,6 @@ namespace Yozolab.DaerD
             var controller = Context.Controller;
             Undo.RegisterCompleteObjectUndo(controller, "Remove Parameter");
             controller.RemoveParameter(index);
-            EditorUtility.SetDirty(controller);
-            Context.NotifyParametersChanged();
-        }
-
-        void RemoveUnused(HashSet<string> unused)
-        {
-            var controller = Context.Controller;
-            Undo.RegisterCompleteObjectUndo(controller, "Remove Unused Parameters");
-            for (int i = controller.parameters.Length - 1; i >= 0; i--)
-                if (unused.Contains(controller.parameters[i].name))
-                    controller.RemoveParameter(i);
             EditorUtility.SetDirty(controller);
             Context.NotifyParametersChanged();
         }
