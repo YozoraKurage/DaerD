@@ -41,6 +41,9 @@ namespace Yozolab.DaerD
             public float stepSeconds = 0.3f;
             /// <summary>Layer to create; defaults to the base name.</summary>
             public string layerName;
+            /// <summary>Existing async-sync layer to REGENERATE in place (its states are
+            /// rebuilt), or -1 to create a new layer.</summary>
+            public int layerIndex = -1;
             /// <summary>When set, the generated synced parameters are added to this store.</summary>
             public ParameterStore store;
             public bool addToStore = true;
@@ -105,6 +108,8 @@ namespace Yozolab.DaerD
                 return L.Tr("Int encoding supports up to 255 states.");
             if (!(r.stepSeconds > 0f))
                 return L.Tr("The step interval must be greater than zero.");
+            if (r.layerIndex >= controller.layers.Length)
+                return L.Tr("The target layer no longer exists.");
 
             var seen = new HashSet<string>();
             foreach (var name in r.targets)
@@ -196,13 +201,24 @@ namespace Yozolab.DaerD
                 foreach (var (name, type) in generated)
                     EnsureParameter(controller, name, type);
 
-                string layerName = string.IsNullOrEmpty(r.layerName) ? r.baseName : r.layerName;
-                controller.AddLayer(DbtBuilder.UniqueLayerName(controller, layerName));
-                var layers = controller.layers;
-                layers[layers.Length - 1].defaultWeight = 1f;
-                controller.layers = layers;
-                var stateMachine = layers[layers.Length - 1].stateMachine;
-                Undo.RegisterCompleteObjectUndo(stateMachine, "Async Sync");
+                AnimatorStateMachine stateMachine;
+                if (r.layerIndex >= 0)
+                {
+                    // Regenerate the designated layer in place instead of stacking new ones.
+                    stateMachine = controller.layers[r.layerIndex].stateMachine;
+                    Undo.RegisterCompleteObjectUndo(stateMachine, "Async Sync");
+                    ClearStateMachine(stateMachine);
+                }
+                else
+                {
+                    string layerName = string.IsNullOrEmpty(r.layerName) ? r.baseName : r.layerName;
+                    controller.AddLayer(DbtBuilder.UniqueLayerName(controller, layerName));
+                    var layers = controller.layers;
+                    layers[layers.Length - 1].defaultWeight = 1f;
+                    controller.layers = layers;
+                    stateMachine = layers[layers.Length - 1].stateMachine;
+                    Undo.RegisterCompleteObjectUndo(stateMachine, "Async Sync");
+                }
 
                 int count = r.targets.Count;
                 string[] indexBits = null;
@@ -313,10 +329,44 @@ namespace Yozolab.DaerD
                         });
                     }
 
+                // Remember the setup with the controller so the wizard can re-open and
+                // regenerate this layer later (same pattern as the DBT layer choice).
+                GraphFrameData.SaveAsyncSync(controller, new GraphFrameData.AsyncSyncConfig
+                {
+                    layer = stateMachine,
+                    baseName = r.baseName,
+                    encoding = (int)r.encoding,
+                    stepSeconds = r.stepSeconds,
+                    targets = new List<string>(r.targets),
+                });
+
                 EditorUtility.SetDirty(stateMachine);
                 EditorUtility.SetDirty(controller);
             }
             return true;
+        }
+
+        /// <summary>Empties a layer for regeneration: transitions, states (and their
+        /// behaviours, so no orphaned sub-assets pile up) and nested machines.</summary>
+        static void ClearStateMachine(AnimatorStateMachine stateMachine)
+        {
+            foreach (var transition in stateMachine.anyStateTransitions)
+                if (transition != null)
+                    stateMachine.RemoveAnyStateTransition(transition);
+            foreach (var transition in stateMachine.entryTransitions)
+                if (transition != null)
+                    stateMachine.RemoveEntryTransition(transition);
+            foreach (var child in stateMachine.states)
+            {
+                if (child.state == null) continue;
+                foreach (var behaviour in child.state.behaviours)
+                    if (behaviour != null)
+                        Undo.DestroyObjectImmediate(behaviour);
+                stateMachine.RemoveState(child.state);
+            }
+            foreach (var child in stateMachine.stateMachines)
+                if (child.stateMachine != null)
+                    stateMachine.RemoveStateMachine(child.stateMachine);
         }
 
         static void EnsureParameter(AnimatorController controller, string name,

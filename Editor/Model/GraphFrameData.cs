@@ -57,6 +57,55 @@ namespace Yozolab.DaerD
         /// <summary>The VRC Expressions Menu this controller is explicitly associated with.</summary>
         public UnityEngine.Object expressionsMenu;
 
+        /// <summary>
+        /// One generated async (round-robin) sync setup: the layer that hosts it plus the
+        /// wizard inputs, so the wizard can re-open the setup and regenerate the layer in
+        /// place instead of piling up new ones.
+        /// </summary>
+        [Serializable]
+        public class AsyncSyncConfig
+        {
+            /// <summary>Root state machine of the generated layer (identifies the layer
+            /// across renames and reorders).</summary>
+            public AnimatorStateMachine layer;
+            public string baseName = "Async";
+            public int encoding;
+            public float stepSeconds = 0.3f;
+            public List<string> targets = new List<string>();
+        }
+
+        public List<AsyncSyncConfig> asyncSyncs = new List<AsyncSyncConfig>();
+
+        /// <summary>Live configs (entries whose layer was deleted are pruned).</summary>
+        public List<AsyncSyncConfig> AsyncSyncs()
+        {
+            asyncSyncs.RemoveAll(config => config == null || config.layer == null);
+            return new List<AsyncSyncConfig>(asyncSyncs);
+        }
+
+        /// <summary>Adds or replaces the config for its layer.</summary>
+        public void SaveAsyncSync(AsyncSyncConfig config)
+        {
+            if (config == null || config.layer == null) return;
+            Undo.RegisterCompleteObjectUndo(this, "Save Async Sync Config");
+            asyncSyncs.RemoveAll(existing => existing == null || existing.layer == null
+                || existing.layer == config.layer);
+            asyncSyncs.Add(config);
+            EditorUtility.SetDirty(this);
+        }
+
+        public static List<AsyncSyncConfig> GetAsyncSyncs(AnimatorController controller)
+        {
+            var data = Find(controller);
+            return data != null ? data.AsyncSyncs() : new List<AsyncSyncConfig>();
+        }
+
+        public static void SaveAsyncSync(AnimatorController controller, AsyncSyncConfig config)
+        {
+            var data = GetOrCreate(controller);
+            if (data != null) data.SaveAsyncSync(config);
+        }
+
         public static AnimationClip GetEmptyClip(AnimatorController controller)
         {
             var data = Find(controller);

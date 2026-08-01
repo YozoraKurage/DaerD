@@ -156,6 +156,70 @@ namespace Yozolab.DaerD.Tests
         }
 
         [Test]
+        public void Apply_RegeneratesExistingLayerInPlace()
+        {
+            var controller = NewController();
+            Assert.IsTrue(AsyncSyncBuilder.Apply(NewRequest(controller, "F", "B", "I")));
+            Assert.AreEqual(2, controller.layers.Length);
+            Assert.AreEqual(7, controller.layers[1].stateMachine.states.Length);
+
+            // Rerun against the same layer with fewer targets: no new layer, rebuilt content.
+            var again = NewRequest(controller, "F", "B");
+            again.layerIndex = 1;
+            Assert.IsTrue(AsyncSyncBuilder.Apply(again));
+            Assert.AreEqual(2, controller.layers.Length);
+            var stateMachine = controller.layers[1].stateMachine;
+            Assert.AreEqual(5, stateMachine.states.Length);   // 2 send + idle + 2 recv
+            Assert.AreEqual(2, stateMachine.anyStateTransitions.Length);
+            Assert.AreEqual(1, stateMachine.entryTransitions.Length);
+        }
+
+        [Test]
+        public void Apply_RejectsMissingRegenerationTarget()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B");
+            request.layerIndex = 5;
+            Assert.IsNotNull(AsyncSyncBuilder.Validate(request));
+        }
+
+        [Test]
+        public void AsyncSyncConfig_SaveReplacesPerLayerAndPrunesDeadEntries()
+        {
+            var data = ScriptableObject.CreateInstance<GraphFrameData>();
+            var layerA = new AnimatorStateMachine { name = "A" };
+            var layerB = new AnimatorStateMachine { name = "B" };
+
+            data.SaveAsyncSync(new GraphFrameData.AsyncSyncConfig
+            {
+                layer = layerA,
+                baseName = "One",
+                targets = new List<string> { "F" },
+            });
+            data.SaveAsyncSync(new GraphFrameData.AsyncSyncConfig { layer = layerB, baseName = "Two" });
+            // Same layer again → replaces instead of stacking.
+            data.SaveAsyncSync(new GraphFrameData.AsyncSyncConfig
+            {
+                layer = layerA,
+                baseName = "One v2",
+                targets = new List<string> { "F", "B" },
+            });
+
+            var configs = data.AsyncSyncs();
+            Assert.AreEqual(2, configs.Count);
+            foreach (var config in configs)
+                if (config.layer == layerA)
+                {
+                    Assert.AreEqual("One v2", config.baseName);
+                    Assert.AreEqual(2, config.targets.Count);
+                }
+
+            // A deleted layer prunes its entry.
+            Object.DestroyImmediate(layerB);
+            Assert.AreEqual(1, data.AsyncSyncs().Count);
+        }
+
+        [Test]
         public void Apply_OnlyCreatesChannelsForPresentTypes()
         {
             var controller = NewController();

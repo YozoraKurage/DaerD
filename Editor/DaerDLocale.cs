@@ -364,11 +364,13 @@ namespace Yozolab.DaerD
                 "対象パス '{0}' が重複しています。",
 
             // ---- round-robin sync ------------------------------------------
-            ["Async Sync"] = "非同期同期",
+            ["Async Sync"] = "巡回同期",
                         ["Time-multiplex several parameters over a few synced ones (index + value channels) — parameter compression."] =
                 "少数の同期パラメーター（インデックス + 値チャンネル）に複数のパラメーターを時分割多重します（パラメーター圧縮）。",
             ["Time-multiplexes the ticked parameters over a few synced parameters (an index plus one value channel per type): a local cycle copies each parameter into its channel in turn, and remote clients decode it back. The targets themselves stay unsynced — values update round-robin, one slot per step."] =
                 "チェックしたパラメーターを、インデックス + 型ごとの値チャンネルという少数の同期パラメーターに時分割多重します。ローカル側の巡回ステートが各パラメーターを順番にチャンネルへコピーし、リモート側がデコードして書き戻します。対象パラメーター自体は非同期のままで、値は 1 ステップにつき 1 スロットずつ巡回更新されます。",
+            ["Applying regenerates the selected layer in place (its states are rebuilt)."] =
+                "適用すると選択したレイヤーをその場で再生成します（ステートは作り直されます）。",
             ["Base Name"] = "ベース名",
             ["Index Encoding"] = "インデックスのエンコード",
             ["Step Interval (s)"] = "ステップ間隔（秒）",

@@ -24,6 +24,12 @@ namespace Yozolab.DaerD
         Action<int> _onApplied;
 
         readonly List<Row> _rows = new List<Row>();
+        // Saved setups (persisted in GraphFrameData): picking one prefills the wizard and
+        // regenerates that layer in place — same idea as the DBT gadget's layer choice.
+        readonly List<GraphFrameData.AsyncSyncConfig> _configs =
+            new List<GraphFrameData.AsyncSyncConfig>();
+        /// <summary>0 = create a new layer; 1.. = _configs[index - 1].</summary>
+        int _layerChoice;
         string _baseName = "Async";
         AsyncSyncBuilder.IndexEncoding _encoding = AsyncSyncBuilder.IndexEncoding.Int;
         float _stepSeconds = 0.3f;
@@ -41,6 +47,12 @@ namespace Yozolab.DaerD
             window._controller = controller;
             window._onApplied = onApplied;
             window.BuildRows();
+            window._configs.AddRange(GraphFrameData.GetAsyncSyncs(controller));
+            if (window._configs.Count > 0)
+            {
+                window._layerChoice = 1;
+                window.LoadConfig(window._configs[0]);
+            }
             window.ShowUtility();
         }
 
@@ -66,6 +78,7 @@ namespace Yozolab.DaerD
                 L.Tr("Time-multiplexes the ticked parameters over a few synced parameters (an index plus one value channel per type): a local cycle copies each parameter into its channel in turn, and remote clients decode it back. The targets themselves stay unsynced — values update round-robin, one slot per step."),
                 MessageType.Info);
 
+            DrawLayerChoice();
             _baseName = EditorGUILayout.TextField(L.Tr("Base Name"), _baseName);
             _encoding = (AsyncSyncBuilder.IndexEncoding)EditorGUILayout.Popup(
                 L.Tr("Index Encoding"), (int)_encoding, EncodingLabels);
@@ -114,6 +127,55 @@ namespace Yozolab.DaerD
             EditorGUILayout.EndHorizontal();
         }
 
+        /// <summary>Saved setups double as the layer choice: "create new" or regenerate an
+        /// existing async-sync layer in place with the (editable) saved inputs.</summary>
+        void DrawLayerChoice()
+        {
+            var labels = new string[_configs.Count + 1];
+            labels[0] = L.Tr("Create new layer");
+            for (int i = 0; i < _configs.Count; i++)
+                labels[i + 1] = LayerNameOf(_configs[i]);
+            int picked = EditorGUILayout.Popup(L.Tr("Target Layer"),
+                Mathf.Clamp(_layerChoice, 0, labels.Length - 1), labels);
+            if (picked != _layerChoice)
+            {
+                _layerChoice = picked;
+                if (picked > 0)
+                    LoadConfig(_configs[picked - 1]);
+            }
+            if (_layerChoice > 0)
+                EditorGUILayout.HelpBox(
+                    L.Tr("Applying regenerates the selected layer in place (its states are rebuilt)."),
+                    MessageType.None);
+        }
+
+        string LayerNameOf(GraphFrameData.AsyncSyncConfig config)
+        {
+            var layers = _controller.layers;
+            foreach (var layer in layers)
+                if (layer.stateMachine == config.layer)
+                    return layer.name;
+            return config.layer != null ? config.layer.name : "?";
+        }
+
+        int LayerIndexOf(GraphFrameData.AsyncSyncConfig config)
+        {
+            var layers = _controller.layers;
+            for (int i = 0; i < layers.Length; i++)
+                if (layers[i].stateMachine == config.layer)
+                    return i;
+            return -1;
+        }
+
+        void LoadConfig(GraphFrameData.AsyncSyncConfig config)
+        {
+            _baseName = config.baseName;
+            _encoding = (AsyncSyncBuilder.IndexEncoding)config.encoding;
+            _stepSeconds = config.stepSeconds;
+            foreach (var row in _rows)
+                row.selected = config.targets.Contains(row.name);
+        }
+
         AsyncSyncBuilder.Request BuildRequest(ParameterStore store)
         {
             var request = new AsyncSyncBuilder.Request
@@ -124,6 +186,8 @@ namespace Yozolab.DaerD
                 stepSeconds = _stepSeconds,
                 store = store,
                 addToStore = _addToStore,
+                layerIndex = _layerChoice > 0 && _layerChoice - 1 < _configs.Count
+                    ? LayerIndexOf(_configs[_layerChoice - 1]) : -1,
             };
             foreach (var row in _rows)
                 if (row.selected)
@@ -140,7 +204,8 @@ namespace Yozolab.DaerD
                 return;
             }
             AsyncSyncBuilder.Apply(request);
-            _onApplied?.Invoke(_controller.layers.Length - 1);
+            _onApplied?.Invoke(request.layerIndex >= 0
+                ? request.layerIndex : _controller.layers.Length - 1);
             Close();
         }
     }
