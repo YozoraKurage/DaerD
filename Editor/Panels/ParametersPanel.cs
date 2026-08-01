@@ -19,6 +19,15 @@ namespace Yozolab.DaerD
         bool _exprResolved;
         Dictionary<string, VrcExpressionParameters.Entry> _exprEntries;
 
+        // Parameters written by AAP clips (one-key Animator-binding curves). Scanning every
+        // clip is too costly per repaint, so the set is cached and dropped on structure edits.
+        HashSet<string> _aapParams;
+        AnimatorController _aapCacheController;
+
+        /// <summary>Session clipboard for one parameter definition; survives controller
+        /// switches so parameters can be copied across open tabs.</summary>
+        static AnimatorControllerParameter s_parameterClipboard;
+
         static readonly GUIContent FindContent = new GUIContent("?",
             "Find where this parameter is used (click to list every usage)");
 
@@ -28,6 +37,8 @@ namespace Yozolab.DaerD
             context.ControllerChanged += Refresh;
             context.ParametersChanged += Refresh;
             context.ControllerChanged += InvalidateExpressionAsset;
+            context.GraphStructureChanged += () => _aapParams = null;
+            context.ParametersChanged += () => _aapParams = null;
         }
 
         void InvalidateExpressionAsset()
@@ -114,14 +125,20 @@ namespace Yozolab.DaerD
                     GUIUtility.ExitGUI();
                 }
 
+                if (AapParams(controller).Contains(p.name))
+                    GUILayout.Label(new GUIContent("AAP",
+                        L.Tr("Driven by an animation clip (Animator-Animated Parameter)")),
+                        EditorStyles.centeredGreyMiniLabel, GUILayout.Width(30));
+
                 DrawDefaultValue(controller, parameters, i);
                 DrawVrcFlags(p);
 
                 // Find-uses: lists every transition condition / blend-tree blend slot / state
-                // parameter override that mentions this parameter, with click-to-navigate.
+                // parameter override that mentions this parameter, plus row actions
+                // (duplicate / copy / remap / delete-and-clean).
                 if (GUILayout.Button(FindContent, EditorStyles.miniButton, GUILayout.Width(22)))
                 {
-                    ShowUsagesMenu(p.name);
+                    ShowUsagesMenu(p.name, i);
                     GUIUtility.ExitGUI();
                 }
 
@@ -280,9 +297,10 @@ namespace Yozolab.DaerD
             Context.NotifyGraphStructureChanged();
         }
 
-        void ShowUsagesMenu(string parameterName)
+        void ShowUsagesMenu(string parameterName, int index)
         {
-            var usages = ParameterUsageFinder.Find(Context.Controller, parameterName);
+            var controller = Context.Controller;
+            var usages = ParameterUsageFinder.Find(controller, parameterName);
             var menu = new GenericMenu();
             if (usages.Count == 0)
             {
@@ -302,7 +320,114 @@ namespace Yozolab.DaerD
                         Context.NavigateTo(captured.layerIndex, captured.stateMachinePath, captured.selection));
                 }
             }
+
+            menu.AddSeparator(string.Empty);
+            menu.AddItem(new GUIContent("Duplicate"), false, () => DuplicateParameter(index));
+            menu.AddItem(new GUIContent("Copy"), false, () => CopyParameter(index));
+            if (s_parameterClipboard != null)
+                menu.AddItem(new GUIContent("Paste After ('" + s_parameterClipboard.name + "')"),
+                    false, () => PasteParameterAfter(index));
+            else
+                menu.AddDisabledItem(new GUIContent("Paste After"));
+
+            // Redirect every reference to another parameter (both stay in the list).
+            bool anyTarget = false;
+            foreach (var other in controller.parameters)
+            {
+                if (other.name == parameterName) continue;
+                anyTarget = true;
+                var captured = other.name;
+                menu.AddItem(new GUIContent("Remap References To/" + captured.Replace('/', '∕')),
+                    false, () =>
+                    {
+                        ParameterRenamer.RedirectReferences(Context.Controller, parameterName, captured);
+                        Context.NotifyParametersChanged();
+                        Context.NotifyGraphStructureChanged();
+                    });
+            }
+            if (!anyTarget)
+                menu.AddDisabledItem(new GUIContent("Remap References To"));
+
+            menu.AddItem(new GUIContent("Delete and Clean"), false, () =>
+            {
+                if (!EditorUtility.DisplayDialog(L.Tr("Delete and Clean"),
+                        L.Tr("Delete '{0}' and remove every condition and driver entry that references it?", parameterName),
+                        L.Tr("Delete"), L.Tr("Cancel")))
+                    return;
+                ParameterRenamer.DeleteAndClean(Context.Controller, parameterName);
+                Context.NotifyParametersChanged();
+                Context.NotifyGraphStructureChanged();
+            });
             menu.ShowAsContext();
+        }
+
+        /// <summary>Parameters written by clips (AAP); cached per controller and dropped on
+        /// structure edits.</summary>
+        HashSet<string> AapParams(AnimatorController controller)
+        {
+            if (_aapParams != null && _aapCacheController == controller) return _aapParams;
+            _aapParams = new HashSet<string>();
+            _aapCacheController = controller;
+            foreach (var entry in ControllerCleanup.CollectClipUsages(controller))
+            {
+                if (entry.clip == null) continue;
+                foreach (var binding in AnimationUtility.GetCurveBindings(entry.clip))
+                    if (binding.type == typeof(Animator) && string.IsNullOrEmpty(binding.path))
+                        _aapParams.Add(binding.propertyName);
+            }
+            return _aapParams;
+        }
+
+        void DuplicateParameter(int index)
+        {
+            var controller = Context.Controller;
+            var parameters = controller.parameters;
+            if (index < 0 || index >= parameters.Length) return;
+            var source = parameters[index];
+            Undo.RegisterCompleteObjectUndo(controller, "Duplicate Parameter");
+            controller.AddParameter(new AnimatorControllerParameter
+            {
+                name = MakeUniqueName(controller, source.name),
+                type = source.type,
+                defaultFloat = source.defaultFloat,
+                defaultInt = source.defaultInt,
+                defaultBool = source.defaultBool,
+            });
+            MoveParameter(controller.parameters.Length - 1, index + 1);
+            Context.NotifyParametersChanged();
+        }
+
+        void CopyParameter(int index)
+        {
+            var parameters = Context.Controller.parameters;
+            if (index < 0 || index >= parameters.Length) return;
+            var source = parameters[index];
+            s_parameterClipboard = new AnimatorControllerParameter
+            {
+                name = source.name,
+                type = source.type,
+                defaultFloat = source.defaultFloat,
+                defaultInt = source.defaultInt,
+                defaultBool = source.defaultBool,
+            };
+        }
+
+        void PasteParameterAfter(int index)
+        {
+            var controller = Context.Controller;
+            if (s_parameterClipboard == null) return;
+            Undo.RegisterCompleteObjectUndo(controller, "Paste Parameter");
+            controller.AddParameter(new AnimatorControllerParameter
+            {
+                name = MakeUniqueName(controller, s_parameterClipboard.name),
+                type = s_parameterClipboard.type,
+                defaultFloat = s_parameterClipboard.defaultFloat,
+                defaultInt = s_parameterClipboard.defaultInt,
+                defaultBool = s_parameterClipboard.defaultBool,
+            });
+            MoveParameter(controller.parameters.Length - 1,
+                Mathf.Min(index + 1, controller.parameters.Length - 1));
+            Context.NotifyParametersChanged();
         }
 
         void ShowAddMenu()

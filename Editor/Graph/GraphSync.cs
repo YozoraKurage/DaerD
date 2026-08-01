@@ -1198,7 +1198,7 @@ namespace Yozolab.DaerD
 
         // ---- chain / fan transitions --------------------------------------------
 
-        public void ChainNodes(IList<GraphNodeBase> nodes)
+        public void ChainNodes(IList<GraphNodeBase> nodes, bool seeded = false)
         {
             if (nodes == null || nodes.Count < 2) return;
             var sm = _context.CurrentStateMachine;
@@ -1208,13 +1208,14 @@ namespace Yozolab.DaerD
             {
                 for (int i = 0; i < nodes.Count - 1; i++)
                     AddBatchTransition(nodes[i], nodes[i + 1], sm, created);
+                if (seeded) SeedCreated(created);
             }
             if (created.Count == 0) return;
             Rebuild();
             _context.Select(created[0]);
         }
 
-        public void FanOutNodes(GraphNodeBase source, IEnumerable<GraphNodeBase> targets)
+        public void FanOutNodes(GraphNodeBase source, IEnumerable<GraphNodeBase> targets, bool seeded = false)
         {
             if (source == null || targets == null) return;
             var sm = _context.CurrentStateMachine;
@@ -1224,13 +1225,14 @@ namespace Yozolab.DaerD
             {
                 foreach (var target in targets)
                     AddBatchTransition(source, target, sm, created);
+                if (seeded) SeedCreated(created);
             }
             if (created.Count == 0) return;
             Rebuild();
             _context.Select(created[0]);
         }
 
-        public void FanInNodes(IEnumerable<GraphNodeBase> sources, GraphNodeBase target)
+        public void FanInNodes(IEnumerable<GraphNodeBase> sources, GraphNodeBase target, bool seeded = false)
         {
             if (sources == null || target == null) return;
             var sm = _context.CurrentStateMachine;
@@ -1240,13 +1242,14 @@ namespace Yozolab.DaerD
             {
                 foreach (var source in sources)
                     AddBatchTransition(source, target, sm, created);
+                if (seeded) SeedCreated(created);
             }
             if (created.Count == 0) return;
             Rebuild();
             _context.Select(created[0]);
         }
 
-        public void CrossProductNodes(IList<GraphNodeBase> sources, IList<GraphNodeBase> targets)
+        public void CrossProductNodes(IList<GraphNodeBase> sources, IList<GraphNodeBase> targets, bool seeded = false)
         {
             if (sources == null || targets == null || sources.Count == 0 || targets.Count == 0) return;
             var sm = _context.CurrentStateMachine;
@@ -1257,10 +1260,21 @@ namespace Yozolab.DaerD
                 foreach (var source in sources)
                     foreach (var target in targets)
                         AddBatchTransition(source, target, sm, created);
+                if (seeded) SeedCreated(created);
             }
             if (created.Count == 0) return;
             Rebuild();
             _context.Select(created[0]);
+        }
+
+        /// <summary>Seeded batch creation: the first copied transition's settings and
+        /// conditions stamp every created transition.</summary>
+        static void SeedCreated(List<AnimatorTransitionBase> created)
+        {
+            if (!TransitionClipboard.HasData) return;
+            var snapshot = TransitionClipboard.Snapshots[0];
+            foreach (var transition in created)
+                TransitionClipboard.Apply(transition, snapshot);
         }
 
         /// <summary>

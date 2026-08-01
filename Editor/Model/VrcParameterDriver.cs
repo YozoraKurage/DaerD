@@ -73,6 +73,41 @@ namespace Yozolab.DaerD
             EditorUtility.SetDirty(driver);
         }
 
+        /// <summary>Removes every entry that writes the parameter (or Copy-reads it as its
+        /// source). Used by Delete-and-Clean.</summary>
+        public static bool RemoveEntriesReferencing(StateMachineBehaviour behaviour, string parameterName)
+        {
+            if (!Is(behaviour)) return false;
+            var so = new SerializedObject(behaviour);
+            var list = so.FindProperty("parameters");
+            if (list == null || !list.isArray) return false;
+            bool modified = false;
+            for (int i = list.arraySize - 1; i >= 0; i--)
+            {
+                var entry = list.GetArrayElementAtIndex(i);
+                var name = entry.FindPropertyRelative("name");
+                bool matches = name != null && name.stringValue == parameterName;
+                if (!matches)
+                {
+                    // `source` only means something on Copy entries (type 3); other types
+                    // may carry stale clone values there.
+                    var source = entry.FindPropertyRelative("source");
+                    var type = entry.FindPropertyRelative("type");
+                    matches = source != null && source.stringValue == parameterName
+                        && type != null && type.intValue == 3;
+                }
+                if (!matches) continue;
+                list.DeleteArrayElementAtIndex(i);
+                modified = true;
+            }
+            if (modified)
+            {
+                so.ApplyModifiedProperties();
+                EditorUtility.SetDirty(behaviour);
+            }
+            return modified;
+        }
+
         /// <summary>Sets the driver's localOnly flag (drivers behind an IsLocal fence should
         /// not also run on remote clients).</summary>
         public static void SetLocalOnly(StateMachineBehaviour driver, bool localOnly)

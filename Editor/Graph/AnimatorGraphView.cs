@@ -335,7 +335,18 @@ namespace Yozolab.DaerD
                 return;
             }
 
-            if (!(evt.ctrlKey || evt.commandKey)) return;
+            if (!(evt.ctrlKey || evt.commandKey))
+            {
+                // I / O / P select the incoming / outgoing / all transitions of the selected
+                // state nodes — quick keyboard access to the context-menu selections.
+                if (evt.keyCode == KeyCode.I && SelectTransitionsOfSelection(incoming: true, outgoing: false))
+                    evt.StopPropagation();
+                else if (evt.keyCode == KeyCode.O && SelectTransitionsOfSelection(incoming: false, outgoing: true))
+                    evt.StopPropagation();
+                else if (evt.keyCode == KeyCode.P && SelectTransitionsOfSelection(incoming: true, outgoing: true))
+                    evt.StopPropagation();
+                return;
+            }
             if (evt.keyCode == KeyCode.C)
             {
                 CopySelection();
@@ -352,6 +363,55 @@ namespace Yozolab.DaerD
                 DuplicateSelectedStates();
                 evt.StopPropagation();
             }
+            else if (evt.keyCode == KeyCode.A)
+            {
+                if (evt.shiftKey) SelectAllTransitions();
+                else SelectAllNodes();
+                evt.StopPropagation();
+            }
+        }
+
+        /// <summary>Ctrl+A: every node (states, sub-state machines, special nodes).</summary>
+        void SelectAllNodes()
+        {
+            ClearSelection();
+            nodes.ForEach(node =>
+            {
+                if (node is StateNode || node is SubStateMachineNode || node is SpecialNode)
+                    AddToSelection(node);
+            });
+        }
+
+        /// <summary>Ctrl+Shift+A: every transition edge (the default-state link is not one).</summary>
+        void SelectAllTransitions()
+        {
+            ClearSelection();
+            edges.ForEach(edge =>
+            {
+                if (edge is TransitionEdge transitionEdge && !transitionEdge.IsDefaultEdge)
+                    AddToSelection(transitionEdge);
+            });
+        }
+
+        /// <summary>Selects the transitions touching any selected state node; false when no
+        /// state is selected (so the key can fall through).</summary>
+        bool SelectTransitionsOfSelection(bool incoming, bool outgoing)
+        {
+            var stateNodes = new HashSet<StateNode>();
+            foreach (var selected in selection)
+                if (selected is StateNode stateNode)
+                    stateNodes.Add(stateNode);
+            if (stateNodes.Count == 0) return false;
+
+            ClearSelection();
+            edges.ForEach(edge =>
+            {
+                if (!(edge is TransitionEdge transitionEdge) || transitionEdge.IsDefaultEdge) return;
+                if ((incoming && transitionEdge.input?.node is StateNode into && stateNodes.Contains(into))
+                    || (outgoing && transitionEdge.output?.node is StateNode from && stateNodes.Contains(from)))
+                    AddToSelection(transitionEdge);
+            });
+            return true;
         }
 
         /// <summary>Duplicates the selected states in place (Ctrl+D), keeping their internal transitions.</summary>
@@ -667,12 +727,27 @@ namespace Yozolab.DaerD
                         : DropdownMenuAction.Status.Disabled);
             }
 
+            // Loop-time toggle for the clips of the selected states (skips blend trees).
+            int clipStates = CountSelectedClipStates();
+            var loopStatus = clipStates > 0
+                ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled;
+            evt.menu.AppendAction("Clip Loop Time/On (" + clipStates + ")",
+                _ => SetSelectedClipLoopTime(true), loopStatus);
+            evt.menu.AppendAction("Clip Loop Time/Off (" + clipStates + ")",
+                _ => SetSelectedClipLoopTime(false), loopStatus);
+
             evt.menu.AppendSeparator();
             // Align acts on the current multi-selection, so it grays out until ≥2 states are selected.
             evt.menu.AppendAction("Align horizontal",
                 _ => AlignSelectedStates(GraphLayout.AlignAxis.Row), AlignStatus);
             evt.menu.AppendAction("Align vertical",
                 _ => AlignSelectedStates(GraphLayout.AlignAxis.Column), AlignStatus);
+            var distributeStatus = GetSelectedStates().Count >= 3
+                ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled;
+            evt.menu.AppendAction("Distribute horizontal",
+                _ => DistributeSelectedStates(GraphLayout.AlignAxis.Row), distributeStatus);
+            evt.menu.AppendAction("Distribute vertical",
+                _ => DistributeSelectedStates(GraphLayout.AlignAxis.Column), distributeStatus);
             evt.menu.AppendAction("Frame All", _ => FrameAll());
 
             if (stateCount == 1)
@@ -735,10 +810,15 @@ namespace Yozolab.DaerD
         void BuildConnectMenu(ContextualMenuPopulateEvent evt)
         {
             var selected = GetSelectedConnectables();
+            var chainStatus = selected.Count >= 2
+                ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled;
             evt.menu.AppendAction(
                 "Connect States/Chain In Click Order (" + selected.Count + ")",
-                _ => _sync.ChainNodes(GetSelectedConnectables()),
-                selected.Count >= 2 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+                _ => _sync.ChainNodes(GetSelectedConnectables()), chainStatus);
+            if (TransitionClipboard.HasData)
+                evt.menu.AppendAction(
+                    "Connect States/Chain In Click Order (Seeded)",
+                    _ => _sync.ChainNodes(GetSelectedConnectables(), seeded: true), chainStatus);
 
             BuildFanEntries(evt, selected);
             BuildCrossProductEntries(evt, selected);
@@ -762,6 +842,15 @@ namespace Yozolab.DaerD
                 _ => _sync.FanOutNodes(target, others));
             evt.menu.AppendAction("Connect States/Other Selected (" + others.Count + ") → This",
                 _ => _sync.FanInNodes(others, target));
+            if (TransitionClipboard.HasData)
+            {
+                // Seeded: the first copied transition's settings and conditions stamp every
+                // created transition, so a template fans out in one action.
+                evt.menu.AppendAction("Connect States/This → Other Selected (Seeded)",
+                    _ => _sync.FanOutNodes(target, others, seeded: true));
+                evt.menu.AppendAction("Connect States/Other Selected → This (Seeded)",
+                    _ => _sync.FanInNodes(others, target, seeded: true));
+            }
         }
 
         /// <summary>
@@ -789,6 +878,14 @@ namespace Yozolab.DaerD
                 marked > 0 && selected.Count > 0
                     ? DropdownMenuAction.Status.Normal
                     : DropdownMenuAction.Status.Disabled);
+            if (marked > 0 && selected.Count > 0 && TransitionClipboard.HasData)
+                evt.menu.AppendAction(
+                    "Connect States/Marked Sources → Selected (Seeded)",
+                    _ =>
+                    {
+                        _sync.CrossProductNodes(ResolveMarkedSources(), GetSelectedConnectables(), seeded: true);
+                        s_markedSources = null;
+                    });
             if (marked > 0)
                 evt.menu.AppendAction("Connect States/Clear Marked Sources",
                     _ => s_markedSources = null);
@@ -931,6 +1028,38 @@ namespace Yozolab.DaerD
         {
             GraphLayout.Align(_context.CurrentStateMachine, GetSelectedStates(), axis);
             _sync.RequestRebuild();
+        }
+
+        void DistributeSelectedStates(GraphLayout.AlignAxis axis)
+        {
+            GraphLayout.Distribute(_context.CurrentStateMachine, GetSelectedStates(), axis);
+            _sync.RequestRebuild();
+        }
+
+        int CountSelectedClipStates()
+        {
+            int count = 0;
+            foreach (var state in GetSelectedStates())
+                if (state.motion is AnimationClip) count++;
+            return count;
+        }
+
+        /// <summary>Toggles loop time on the clips assigned to the selected states. Edits the
+        /// clip assets themselves — every other state using the same clip is affected too.</summary>
+        void SetSelectedClipLoopTime(bool loop)
+        {
+            var seen = new HashSet<AnimationClip>();
+            using (new UndoScope("Set Clip Loop Time"))
+                foreach (var state in GetSelectedStates())
+                {
+                    if (!(state.motion is AnimationClip clip) || !seen.Add(clip)) continue;
+                    var settings = AnimationUtility.GetAnimationClipSettings(clip);
+                    if (settings.loopTime == loop) continue;
+                    Undo.RegisterCompleteObjectUndo(clip, "Set Clip Loop Time");
+                    settings.loopTime = loop;
+                    AnimationUtility.SetAnimationClipSettings(clip, settings);
+                    EditorUtility.SetDirty(clip);
+                }
         }
 
         DropdownMenuAction.Status AlignStatus(DropdownMenuAction _) =>

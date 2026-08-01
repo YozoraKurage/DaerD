@@ -555,6 +555,13 @@ namespace Yozolab.DaerD
             ["Delete blend tree template '{0}'?\n\n{1}"] =
                 "ブレンドツリーテンプレート '{0}' を削除しますか？\n\n{1}",
 
+            // ---- parameter QoL ---------------------------------------------
+            ["Driven by an animation clip (Animator-Animated Parameter)"] =
+                "アニメーションクリップから書き込まれています（AAP）",
+            ["Delete and Clean"] = "削除してクリーン",
+            ["Delete '{0}' and remove every condition and driver entry that references it?"] =
+                "'{0}' を削除し、これを参照するすべての条件と Driver エントリを取り除きますか？",
+
             // ---- settings ---------------------------------------------------
             ["Language"] = "言語 (Language)",
             ["Auto (System Language)"] = "自動（システム言語）",
