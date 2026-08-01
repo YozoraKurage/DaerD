@@ -52,6 +52,15 @@ namespace Yozolab.DaerD
             }
         }
 
+        /// <summary>Remaps one blend tree subtree only (used by the blend tree graph's
+        /// Remap Parameter action and template imports). Same ownership caveat as
+        /// <see cref="Remap"/>: only call on trees the caller owns.</summary>
+        public static void RemapTree(BlendTree tree, IReadOnlyDictionary<string, string> map)
+        {
+            if (tree == null || map == null || map.Count == 0) return;
+            RemapBlendTree(tree, map, new HashSet<BlendTree>());
+        }
+
         static void RemapConditions(AnimatorTransitionBase transition,
             IReadOnlyDictionary<string, string> map)
         {

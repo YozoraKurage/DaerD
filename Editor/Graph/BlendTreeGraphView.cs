@@ -63,6 +63,76 @@ namespace Yozolab.DaerD
             });
         }
 
+        /// <summary>Template save/import and parameter remap for the clicked (or focused) tree.</summary>
+        public override void BuildContextualMenu(ContextualMenuPopulateEvent evt)
+        {
+            var tree = SelectedTree() ?? _context.CurrentBlendTree;
+            var controller = _context.Controller;
+            if (tree == null || controller == null) return;
+
+            evt.menu.AppendAction("Save as Template…", _ => SaveTemplate(controller, tree));
+            var templates = DaerDBlendTreeTemplate.All();
+            if (templates.Count == 0)
+                evt.menu.AppendAction("Import Template", null, DropdownMenuAction.Status.Disabled);
+            else
+                foreach (var template in templates)
+                {
+                    var captured = template;
+                    evt.menu.AppendAction("Import Template/" + captured.name.Replace('.', '/'),
+                        _ => ImportTemplate(controller, captured, tree));
+                }
+            foreach (var template in templates)
+            {
+                var captured = template;
+                evt.menu.AppendAction("Delete Template/" + captured.name.Replace('.', '/'),
+                    _ => DeleteTemplate(captured));
+            }
+            evt.menu.AppendAction("Remap Parameters…",
+                _ => BlendTreeRemapWindow.Open(controller, tree, () =>
+                {
+                    _context.NotifyBlendTreeChanged();
+                    _context.NotifyGraphStructureChanged();
+                }));
+        }
+
+        BlendTree SelectedTree()
+        {
+            foreach (var selected in selection)
+                if (selected is BlendTreeRootNode node)
+                    return node.Tree;
+            return null;
+        }
+
+        void SaveTemplate(AnimatorController controller, BlendTree tree)
+        {
+            string path = EditorUtility.SaveFilePanelInProject(L.Tr("Save Blend Tree Template"),
+                tree.name, "asset",
+                L.Tr("Use '.' in the file name to nest the template into submenus."));
+            if (string.IsNullOrEmpty(path)) return;
+            DaerDBlendTreeTemplate.Save(controller, tree, path);
+        }
+
+        void ImportTemplate(AnimatorController controller, DaerDBlendTreeTemplate template, BlendTree parent)
+        {
+            LayerTemplateImportWindow.Open(controller, template.name, template.parameters, map =>
+            {
+                template.Import(controller, parent, map);
+                _context.NotifyParametersChanged();
+                _context.NotifyBlendTreeChanged();
+                _context.NotifyGraphStructureChanged();
+            });
+        }
+
+        static void DeleteTemplate(DaerDBlendTreeTemplate template)
+        {
+            string path = AssetDatabase.GetAssetPath(template);
+            if (!EditorUtility.DisplayDialog(L.Tr("Delete Template"),
+                    L.Tr("Delete blend tree template '{0}'?\n\n{1}", template.name, path),
+                    L.Tr("Delete"), L.Tr("Cancel")))
+                return;
+            AssetDatabase.DeleteAsset(path);
+        }
+
         public void Rebuild()
         {
             _treeNodes.Clear();

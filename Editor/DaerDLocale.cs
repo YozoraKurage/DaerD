@@ -544,6 +544,17 @@ namespace Yozolab.DaerD
             ["Auto-Repath rewrote {0} binding(s)."] =
                 "自動リパスが {0} 件のバインディングを書き換えました。",
 
+            // ---- blend tree templates / remap ------------------------------
+            ["Remap Parameters"] = "パラメーターをリマップ",
+            ["This subtree references no parameters."] =
+                "このサブツリーはパラメーターを参照していません。",
+            ["Pick a replacement for each parameter this subtree uses. 'Keep' leaves it unchanged."] =
+                "このサブツリーが使用する各パラメーターの置き換え先を選びます。「維持」はそのまま残します。",
+            ["Keep"] = "維持",
+            ["Save Blend Tree Template"] = "ブレンドツリーテンプレートを保存",
+            ["Delete blend tree template '{0}'?\n\n{1}"] =
+                "ブレンドツリーテンプレート '{0}' を削除しますか？\n\n{1}",
+
             // ---- settings ---------------------------------------------------
             ["Language"] = "言語 (Language)",
             ["Auto (System Language)"] = "自動（システム言語）",

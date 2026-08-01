@@ -197,6 +197,13 @@ namespace Yozolab.DaerD
                 }
         }
 
+        /// <summary>Deep copy of a motion when it's a blend tree (attached to the host asset);
+        /// clips and null pass through unchanged.</summary>
+        public static Motion DeepCopyMotion(Object host, Motion motion) =>
+            motion is BlendTree tree
+                ? DeepCopyTree(host, tree, new Dictionary<BlendTree, BlendTree>())
+                : motion;
+
         static BlendTree DeepCopyTree(Object host, BlendTree tree, Dictionary<BlendTree, BlendTree> cache)
         {
             if (cache.TryGetValue(tree, out var existing)) return existing;
@@ -283,6 +290,14 @@ namespace Yozolab.DaerD
             if (transition == null) return;
             foreach (var condition in transition.conditions)
                 AddName(names, condition.parameter);
+        }
+
+        /// <summary>Every parameter name a blend tree subtree references.</summary>
+        public static HashSet<string> CollectBlendTreeParameterNames(BlendTree tree)
+        {
+            var names = new HashSet<string>();
+            AddBlendTreeParameters(tree, names, new HashSet<BlendTree>());
+            return names;
         }
 
         static void AddBlendTreeParameters(BlendTree tree, HashSet<string> names, HashSet<BlendTree> seen)
