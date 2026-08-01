@@ -34,6 +34,22 @@ GraphView ベースの AnimatorController エディタ。パラメーターの�
   （トグル ON で非表示）にも対応。生成されるクリップは .controller と同じフォルダに
   .anim アセットとして保存。コントローラー概要（何も選択していないときのインスペクター）の
   「オブジェクトトグル…」またはパラメーターパネルの「Add」メニューから
+- ネットワーク同期 — ローカル専用パラメーターで動くレイヤーを、同期パラメーター（Int または
+  Bool×n bit）+ Parameter Driver + リモートミラーステートの定石構成でワンクリック同期化。
+  AnyState / 総当たりの 2 方式、IsLocal 分離、サブステートマシン格納に対応
+  （レイヤーの歯車メニューまたはコントローラー概要から）
+- VRC 連携 — Expression Parameters のビット予算表示・synced/saved トグル・差分プレビュー付き同期、
+  Expressions Menu の組み込みエディタ（パンくず・コントロール編集・パラメーター警告）、
+  Play Audio / Locomotion / Layer Control / Playable Layer Control / Pose Space の編集、
+  Behaviour のステート間コピー&ペースト、PhysBone 系パラメーターファミリーの一括リネーム。
+  すべて VRChat SDK 不在でもコンパイル・動作可能（該当機能のみ非表示）
+- レイヤーのコピー&ペースト（コントローラー跨ぎ・参照パラメーター自動追加・フレーム引き継ぎ）と
+  レイヤー / ブレンドツリーテンプレート（パラメーターリマップ付きインポート）
+- リパスツール — 階層変更で壊れたクリップのバインディングをスキャン・一括書き換え、
+  Hierarchy の変更を追従する自動リパス（クリップ一覧の「リパス…」から）
+- QoL — 雛形付き一括トランジション生成（Seeded）、I / O / P・Ctrl+A・Ctrl+Shift+A ショートカット、
+  クリップの Loop Time 一括切り替え、等間隔整列、パラメーターの複製 / コピー / 参照リマップ /
+  クリーン削除、AAP バッジ表示
 - 日本語 / English 表示切り替え（Preferences > Yozolab > daerD、既定はシステム言語に追従）
 
 # Vibe Coding
