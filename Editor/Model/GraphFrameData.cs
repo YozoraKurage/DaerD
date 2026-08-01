@@ -39,6 +39,29 @@ namespace Yozolab.DaerD
         public List<Frame> frames = new List<Frame>();
         public List<Note> notes = new List<Note>();
 
+        /// <summary>
+        /// This controller's designated placeholder clip. Assigned to new states on creation
+        /// and offered by the analyzer as the fill-in fix for states (and blend tree slots)
+        /// with no motion.
+        /// </summary>
+        public AnimationClip emptyClip;
+
+        public static AnimationClip GetEmptyClip(AnimatorController controller)
+        {
+            var data = Find(controller);
+            return data != null ? data.emptyClip : null;
+        }
+
+        public static void SetEmptyClip(AnimatorController controller, AnimationClip clip)
+        {
+            // Clearing must not create the holder on controllers that never had one.
+            var data = clip == null ? Find(controller) : GetOrCreate(controller);
+            if (data == null || data.emptyClip == clip) return;
+            Undo.RegisterCompleteObjectUndo(data, "Set Empty Clip");
+            data.emptyClip = clip;
+            EditorUtility.SetDirty(data);
+        }
+
         /// <summary>The frame holder already stored on the controller, or null when none exists.</summary>
         public static GraphFrameData Find(AnimatorController controller)
         {

@@ -52,6 +52,19 @@ namespace Yozolab.DaerD
                     if (t != null) yield return t;
         }
 
+        /// <summary>Every StateMachineBehaviour attached to any state or state machine, each
+        /// instance yielded once even when shared.</summary>
+        public static IEnumerable<UnityEngine.StateMachineBehaviour> AllBehaviours(this AnimatorController controller)
+        {
+            var seen = new HashSet<UnityEngine.StateMachineBehaviour>();
+            foreach (var state in controller.AllStates())
+                foreach (var behaviour in state.behaviours)
+                    if (behaviour != null && seen.Add(behaviour)) yield return behaviour;
+            foreach (var sm in controller.AllStateMachines())
+                foreach (var behaviour in sm.behaviours)
+                    if (behaviour != null && seen.Add(behaviour)) yield return behaviour;
+        }
+
         public static IEnumerable<BlendTree> AllBlendTrees(this AnimatorController controller)
         {
             // The visited set guards against self-nested (cyclic) blend trees, which would
@@ -60,6 +73,20 @@ namespace Yozolab.DaerD
             foreach (var state in controller.AllStates())
                 foreach (var bt in BlendTreesIn(state.motion, visited))
                     yield return bt;
+
+            // A synced layer replays another layer's states with its own per-state override
+            // motions; those trees appear nowhere in the state walk above.
+            var layers = controller.layers;
+            for (int i = 0; i < layers.Length; i++)
+            {
+                int source = layers[i].syncedLayerIndex;
+                if (source < 0 || source >= layers.Length || layers[source].stateMachine == null) continue;
+                foreach (var sm in layers[source].stateMachine.SelfAndDescendants())
+                    foreach (var child in sm.states)
+                        if (child.state != null)
+                            foreach (var bt in BlendTreesIn(layers[i].GetOverrideMotion(child.state), visited))
+                                yield return bt;
+            }
         }
 
         static IEnumerable<BlendTree> BlendTreesIn(UnityEngine.Motion motion, HashSet<BlendTree> visited)

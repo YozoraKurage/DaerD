@@ -40,6 +40,13 @@ namespace Yozolab.DaerD
                     Context.SetLayer(i);
                 GUI.backgroundColor = prev;
 
+                // Direct-blend-tree-only layers (the WD-ON DBT idiom) get a small badge so
+                // they read as "machinery, not motion" at a glance.
+                if (ControllerAnalyzer.IsDirectBlendTreeOnlyLayer(layers[i]))
+                    GUILayout.Label(new GUIContent("DBT",
+                        L.Tr("Every state in this layer is a Direct blend tree")),
+                        EditorStyles.centeredGreyMiniLabel, GUILayout.Width(28));
+
                 // Gear button on the right edge opens this layer's settings popup, so the
                 // settings always belong unambiguously to the clicked layer.
                 if (GUILayout.Button(SettingsIcon, EditorStyles.miniButton, GUILayout.Width(26)))

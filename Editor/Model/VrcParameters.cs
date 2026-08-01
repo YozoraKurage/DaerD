@@ -65,5 +65,28 @@ namespace Yozolab.DaerD
             new Definition("ScaleFactorInverse", ParamType.Float, "Avatar Scaling"),
             new Definition("AdjustedScaleFactor", ParamType.Float, "Avatar Scaling"),
         };
+
+        // ---- gestures ---------------------------------------------------------
+
+        /// <summary>VRChat's hand-gesture indices, in value order (0..7). Used to show
+        /// GestureLeft / GestureRight thresholds as names instead of raw numbers.</summary>
+        public static readonly string[] GestureNames =
+        {
+            "Neutral", "Fist", "HandOpen", "FingerPoint",
+            "Victory", "RockNRoll", "HandGun", "ThumbsUp",
+        };
+
+        public static bool IsGestureParameter(string name) =>
+            name == "GestureLeft" || name == "GestureRight";
+
+        /// <summary>The gesture name for a condition threshold, or null when the value is
+        /// not one of the eight gesture indices (fractional or out of range).</summary>
+        public static string GestureLabel(float threshold)
+        {
+            int index = (int)System.Math.Round(threshold);
+            if (index < 0 || index >= GestureNames.Length) return null;
+            if (System.Math.Abs(threshold - index) > 0.0001f) return null;
+            return GestureNames[index];
+        }
     }
 }

@@ -6,8 +6,9 @@ namespace Yozolab.DaerD
     /// <summary>
     /// Locates every place that references a parameter by name inside an AnimatorController:
     /// transition conditions, state-level parameter overrides (Speed / Motion Time / Mirror /
-    /// Cycle Offset) and blend-tree blend parameters (X, Y, Direct per-child). Each result
-    /// carries the layer index and state-machine drill path needed to navigate to it.
+    /// Cycle Offset), blend-tree blend parameters (X, Y, Direct per-child) and VRC Parameter
+    /// Driver entries. Each result carries the layer index and state-machine drill path
+    /// needed to navigate to it.
     /// </summary>
     static class ParameterUsageFinder
     {
@@ -64,6 +65,10 @@ namespace Yozolab.DaerD
                             $"{pathLabel} / {childSm.name} {ParameterConverter.DescribeTransition(t)}", t));
             }
 
+            foreach (var behaviour in sm.behaviours)
+                if (VrcParameterDriver.References(behaviour, param))
+                    usages.Add(MakeUsage(layerIndex, path, $"{pathLabel} (Parameter Driver)", sm));
+
             foreach (var cs in sm.states)
             {
                 var s = cs.state;
@@ -82,6 +87,10 @@ namespace Yozolab.DaerD
                     usages.Add(MakeUsage(layerIndex, path, $"{pathLabel} / {s.name} (Mirror)", s));
                 if (s.cycleOffsetParameterActive && s.cycleOffsetParameter == param)
                     usages.Add(MakeUsage(layerIndex, path, $"{pathLabel} / {s.name} (Cycle Offset)", s));
+
+                foreach (var behaviour in s.behaviours)
+                    if (VrcParameterDriver.References(behaviour, param))
+                        usages.Add(MakeUsage(layerIndex, path, $"{pathLabel} / {s.name} (Parameter Driver)", s));
 
                 if (s.motion is BlendTree bt)
                     WalkBlendTree(bt, layerIndex, path, $"{pathLabel} / {s.name}", param, usages, new HashSet<BlendTree>());

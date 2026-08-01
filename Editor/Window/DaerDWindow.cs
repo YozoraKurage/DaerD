@@ -21,6 +21,15 @@ namespace Yozolab.DaerD
 
         DaerDContext _context;
         VisualElement _tabBar;
+        // Kept so a language change can restamp their labels in place. Rebuilding the toolbar
+        // instead would re-fire the toggle callbacks (opening the Animation window as a side
+        // effect) and reset toggle state.
+        ToolbarToggle _selectSyncToggle;
+        ToolbarToggle _previewToggle;
+        ToolbarButton _frameAllButton;
+        ToolbarButton _analyzeButton;
+        ToolbarButton _settingsButton;
+        StateSearchField _searchField;
         AnimatorGraphView _graphView;
         BlendTreeGraphView _blendTreeView;
         VisualElement _graphHost;
@@ -169,13 +178,21 @@ namespace Yozolab.DaerD
                 label.AddToClassList("dd-tab__label");
                 tab.Add(label);
 
-                var close = new Label("×") { tooltip = "Close tab" };   // U+00D7, widely available
+                var close = new Label("×") { tooltip = L.Tr("Close tab") };   // U+00D7, widely available
                 close.AddToClassList("dd-tab__close");
                 tab.Add(close);
 
                 tab.RegisterCallback<MouseDownEvent>(evt =>
                 {
-                    if (evt.button == 0) { ActivateController(captured); evt.StopPropagation(); }
+                    if (evt.button == 0)
+                    {
+                        // The first click activates the tab (and rebuilds this bar); the second
+                        // still arrives with clickCount 2 because UI Toolkit tracks click count
+                        // per pointer, not per element.
+                        if (evt.clickCount == 2) EditorGUIUtility.PingObject(captured);
+                        else ActivateController(captured);
+                        evt.StopPropagation();
+                    }
                     else if (evt.button == 2) { CloseController(captured); evt.StopPropagation(); }   // middle-click
                 });
                 close.RegisterCallback<MouseDownEvent>(evt =>
@@ -201,6 +218,7 @@ namespace Yozolab.DaerD
             Undo.undoRedoPerformed -= OnUndoRedo;
             EditorApplication.update -= PollRuntime;
             EditorApplication.playModeStateChanged -= OnPlayModeChanged;
+            L.LanguageChanged -= OnLanguageChanged;
             _graphView?.Cleanup();
             _statePreview?.Stop();
             _animationSync?.Stop();
@@ -222,6 +240,8 @@ namespace Yozolab.DaerD
                 rootVisualElement.styleSheets.Add(styleSheet);
 
             rootVisualElement.Add(BuildToolbar());
+            L.LanguageChanged -= OnLanguageChanged;   // CreateGUI can run again after a reload
+            L.LanguageChanged += OnLanguageChanged;
 
             _tabBar = new VisualElement();
             _tabBar.AddToClassList("dd-tabbar");
@@ -263,6 +283,13 @@ namespace Yozolab.DaerD
             mainSplit.Add(centerRightSplit);
             rootVisualElement.Add(mainSplit);
 
+            // Shift + scroll steps through the controller's layers (scroll down = next layer).
+            // TrickleDown on the root so the graph view's zoom never sees the event while Shift
+            // is held; unregister first because CreateGUI can run again after a domain reload
+            // and rootVisualElement.Clear() does not remove callbacks on the root itself.
+            rootVisualElement.UnregisterCallback<WheelEvent>(OnShiftScroll, TrickleDown.TrickleDown);
+            rootVisualElement.RegisterCallback<WheelEvent>(OnShiftScroll, TrickleDown.TrickleDown);
+
             _context.LayerChanged += RefreshBreadcrumb;
             _context.StateMachinePathChanged += RefreshBreadcrumb;
             _context.BlendTreePathChanged += RefreshBreadcrumb;
@@ -292,6 +319,23 @@ namespace Yozolab.DaerD
             RefreshTabBar();
         }
 
+        void OnShiftScroll(WheelEvent evt)
+        {
+            if (!evt.shiftKey || _context == null || _context.Controller == null) return;
+            // Consume every Shift+wheel so the gesture never zooms the graph, even when the
+            // layer index is already clamped at either end of the list.
+            evt.StopPropagation();
+
+            // Some platforms deliver Shift+wheel as a horizontal delta.
+            float delta = Mathf.Abs(evt.delta.y) >= Mathf.Abs(evt.delta.x) ? evt.delta.y : evt.delta.x;
+            if (Mathf.Approximately(delta, 0f)) return;
+
+            int count = _context.Controller.layers.Length;
+            int next = Mathf.Clamp(_context.LayerIndex + (delta > 0f ? 1 : -1), 0, Mathf.Max(0, count - 1));
+            if (next != _context.LayerIndex)
+                _context.SetLayer(next);
+        }
+
         void SyncSerializedState()
         {
             _controller = _context.Controller;
@@ -311,52 +355,73 @@ namespace Yozolab.DaerD
             spacer.style.flexGrow = 1;
             toolbar.Add(spacer);
 
+            _searchField = new StateSearchField(_context, rootVisualElement);
+            toolbar.Add(_searchField);
+
             // Pushes the selected State's AnimationClip into the Animation window. On by
             // default so first-time users see the sync land immediately; opening the DD window
             // will auto-open the Animation window as part of enabling the sync.
-            var selectSyncToggle = new ToolbarToggle
-            {
-                text = "Select Sync",
-                tooltip = "Sync the Animation window's clip to the selected State's AnimationClip",
-            };
-            selectSyncToggle.AddToClassList("dd-toolbar-item");
-            selectSyncToggle.RegisterValueChangedCallback(evt => _animationSync.SetEnabled(evt.newValue));
-            selectSyncToggle.value = true;   // default ON; fires the callback above
-            toolbar.Add(selectSyncToggle);
+            _selectSyncToggle = new ToolbarToggle();
+            _selectSyncToggle.AddToClassList("dd-toolbar-item");
+            _selectSyncToggle.RegisterValueChangedCallback(evt => _animationSync.SetEnabled(evt.newValue));
+            toolbar.Add(_selectSyncToggle);
 
             // Preview presupposes Select Sync — without the clip push, there's no new clip for
             // Preview to re-toggle against. Flipping Preview on therefore auto-flips Select Sync
             // on too; flipping Preview off leaves Select Sync where the user had it.
-            var previewToggle = new ToolbarToggle
+            _previewToggle = new ToolbarToggle();
+            _previewToggle.AddToClassList("dd-toolbar-item");
+            _previewToggle.RegisterValueChangedCallback(evt =>
             {
-                text = "Preview",
-                tooltip = "Auto-toggle the Animation window's Preview on clip change. " +
-                          "Implies Select Sync. Requires a scene GameObject with an Animator " +
-                          "running this controller to be selected — Unity's preview can't run " +
-                          "without a target.",
-            };
-            previewToggle.AddToClassList("dd-toolbar-item");
-            previewToggle.RegisterValueChangedCallback(evt =>
-            {
-                if (evt.newValue && !selectSyncToggle.value)
-                    selectSyncToggle.value = true;   // also fires its own ValueChanged → SelectSync ON
+                if (evt.newValue && !_selectSyncToggle.value)
+                    _selectSyncToggle.value = true;   // also fires its own ValueChanged → SelectSync ON
                 _statePreview.SetEnabled(evt.newValue);
             });
-            toolbar.Add(previewToggle);
+            toolbar.Add(_previewToggle);
 
             // Layout (Grid / Hierarchical / Align Selected) lives in the graph's right-click menu now.
-            var frameAllButton = new ToolbarButton(() => _graphView.FrameAll()) { text = "Frame All" };
-            frameAllButton.AddToClassList("dd-toolbar-item");
-            toolbar.Add(frameAllButton);
-            var analyzeButton = new ToolbarButton(() => _inspectorPanel.ShowAnalysis()) { text = "Analyze" };
-            analyzeButton.AddToClassList("dd-toolbar-item");
-            toolbar.Add(analyzeButton);
-            var settingsButton = new ToolbarButton(
-                () => SettingsService.OpenUserPreferences(DaerDSettingsProvider.Path)) { text = "Settings" };
-            settingsButton.AddToClassList("dd-toolbar-item");
-            toolbar.Add(settingsButton);
+            _frameAllButton = new ToolbarButton(() => _graphView.FrameAll());
+            _frameAllButton.AddToClassList("dd-toolbar-item");
+            toolbar.Add(_frameAllButton);
+            _analyzeButton = new ToolbarButton(() => AnalyzerWindow.Open(_context.Controller));
+            _analyzeButton.AddToClassList("dd-toolbar-item");
+            toolbar.Add(_analyzeButton);
+            _settingsButton = new ToolbarButton(
+                () => SettingsService.OpenUserPreferences(DaerDSettingsProvider.Path));
+            _settingsButton.AddToClassList("dd-toolbar-item");
+            toolbar.Add(_settingsButton);
+
+            ApplyToolbarTexts();
+            _selectSyncToggle.value = true;   // default ON; fires the callback above
 
             return toolbar;
+        }
+
+        /// <summary>(Re)stamps the localized toolbar labels; used at build time and on language change.</summary>
+        void ApplyToolbarTexts()
+        {
+            _selectSyncToggle.text = L.Tr("Select Sync");
+            _selectSyncToggle.tooltip =
+                L.Tr("Sync the Animation window's clip to the selected State's AnimationClip");
+            _previewToggle.text = L.Tr("Preview");
+            _previewToggle.tooltip =
+                L.Tr("Auto-toggle the Animation window's Preview on clip change. " +
+                     "Implies Select Sync. Requires a scene GameObject with an Animator " +
+                     "running this controller to be selected — Unity's preview can't run " +
+                     "without a target.");
+            _frameAllButton.text = L.Tr("Frame All");
+            _analyzeButton.text = L.Tr("Analyze");
+            _settingsButton.text = L.Tr("Settings");
+            _searchField.RefreshTooltip();
+        }
+
+        /// <summary>Restamps localized labels in place — no rebuild, so toggle state and the
+        /// subsystems they drive are untouched.</summary>
+        void OnLanguageChanged()
+        {
+            if (_selectSyncToggle == null) return;
+            ApplyToolbarTexts();
+            RefreshTabBar();   // "Close tab" tooltips
         }
 
         void RefreshBreadcrumb()
@@ -448,6 +513,51 @@ namespace Yozolab.DaerD
                 _rightSplit = null;
                 _rightColumn.Add(_inspectorPanel);
             }
+        }
+
+        /// <summary>
+        /// Ping from the analyzer window that actually lands somewhere useful: states,
+        /// sub-state machines, transitions and blend trees are located inside the controller
+        /// and focused in the graph (a plain PingObject only blinks the .controller asset in
+        /// the Project window, which is why sub-assets never got focused). Layer-scoped issues
+        /// open their layer. Returns true when it navigated; the caller falls back to a
+        /// Project ping otherwise.
+        /// </summary>
+        internal bool TryFocusIssue(ControllerAnalyzer.Issue issue)
+        {
+            // Freshly opened window: CreateGUI (and with it the context) hasn't run yet.
+            if (_context == null || _context.Controller == null) return false;
+
+            var location = ControllerLocator.Locate(_context.Controller, issue.context);
+            if (location == null && issue.layerIndex >= 0
+                && issue.layerIndex < _context.Controller.layers.Length)
+                location = new ControllerLocator.Location { layerIndex = issue.layerIndex };
+            if (location == null) return false;
+            return TryNavigateTo(location.layerIndex, location.stateMachinePath, location.target);
+        }
+
+        /// <summary>Navigation entry point for the satellite windows (analyzer, clip index):
+        /// jumps to the given layer / drill path and selects the target. Returns false when
+        /// the window has no live context yet (freshly opened, CreateGUI pending).</summary>
+        internal bool TryNavigateTo(int layerIndex, IList<AnimatorStateMachine> stateMachinePath, object target)
+        {
+            if (_context == null || _context.Controller == null) return false;
+            // Same dance as the toolbar search: leave blend tree mode first so the state
+            // machine graph that holds the hit is actually visible.
+            if (_context.IsViewingBlendTree)
+                _context.ExitBlendTree();
+            _context.NavigateTo(layerIndex, stateMachinePath, target);
+            return true;
+        }
+
+        /// <summary>Called after another window (the analyzer's Fix) mutates a controller;
+        /// refreshes the graph and panels when that controller is the one on screen.</summary>
+        internal void OnControllerModifiedExternally(AnimatorController controller)
+        {
+            if (_context == null || controller == null || _context.Controller != controller) return;
+            _context.ValidatePath();
+            _context.NotifyParametersChanged();
+            _context.NotifyGraphStructureChanged();
         }
 
         void OnUndoRedo()
