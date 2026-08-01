@@ -5,7 +5,7 @@ using UnityEngine;
 namespace Yozolab.DaerD
 {
     /// <summary>
-    /// Pure-C# ports of the ylaac AAP gadget templates (AacTemplate.cs) — no AnimatorAsCode
+    /// Pure-C# ports of the ylaac AAP gadget templates — no AnimatorAsCode
     /// dependency. Each gadget is a blend tree that computes a float operation once per
     /// frame inside a Write-Defaults-ON Direct blend tree layer, writing its result through
     /// AAP clips (one-key clips animating an Animator parameter).
