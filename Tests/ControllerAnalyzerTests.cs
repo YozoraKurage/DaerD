@@ -85,6 +85,312 @@ namespace Yozolab.DaerD.Tests
             Object.DestroyImmediate(controller);
         }
 
+        static List<ControllerAnalyzer.Issue> OfKind(AnimatorController controller, ControllerAnalyzer.Kind kind) =>
+            ControllerAnalyzer.Analyze(controller).FindAll(i => i.kind == kind);
+
+        [Test]
+        public void MissingMotion_StateWithoutMotion_IsFlagged()
+        {
+            var controller = NewController(out var sm);
+            sm.AddState("Bare").writeDefaultValues = true;
+
+            var issues = OfKind(controller, ControllerAnalyzer.Kind.MissingMotion);
+
+            Assert.AreEqual(1, issues.Count);
+            StringAssert.Contains("'Bare'", issues[0].message);
+            Assert.AreEqual(ControllerAnalyzer.Severity.Warning, issues[0].severity);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void MissingMotion_OnWriteDefaultsOffState_IsAnError()
+        {
+            var controller = NewController(out var sm);
+            sm.AddState("Frozen").writeDefaultValues = false;
+
+            var issues = OfKind(controller, ControllerAnalyzer.Kind.MissingMotion);
+
+            Assert.AreEqual(1, issues.Count);
+            StringAssert.Contains("'Frozen'", issues[0].message);
+            Assert.AreEqual(ControllerAnalyzer.Severity.Error, issues[0].severity);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void MissingMotion_StateWithClip_IsNotFlagged()
+        {
+            var controller = NewController(out var sm);
+            var clip = new AnimationClip();
+            sm.AddState("HasClip").motion = clip;
+
+            Assert.AreEqual(0, OfKind(controller, ControllerAnalyzer.Kind.MissingMotion).Count);
+
+            Object.DestroyImmediate(clip);
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void MissingMotion_BlendTreeWithEmptyChildSlot_IsFlagged()
+        {
+            var controller = NewController(out var sm);
+            var clip = new AnimationClip();
+            var tree = new BlendTree { name = "Move" };
+            tree.children = new[]
+            {
+                new ChildMotion { motion = clip, timeScale = 1f },
+                new ChildMotion { motion = null, timeScale = 1f },
+            };
+            sm.AddState("Locomotion").motion = tree;
+
+            var issues = OfKind(controller, ControllerAnalyzer.Kind.MissingMotion);
+
+            Assert.AreEqual(1, issues.Count);
+            StringAssert.Contains("'Move'", issues[0].message);
+            Assert.AreEqual(tree, issues[0].context);
+
+            Object.DestroyImmediate(tree);
+            Object.DestroyImmediate(clip);
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void UnusedParameter_FixDeletesIt()
+        {
+            var controller = NewController(out _);
+            controller.AddParameter("Ghost", AnimatorControllerParameterType.Bool);
+
+            var issues = OfKind(controller, ControllerAnalyzer.Kind.UnusedParameter);
+
+            Assert.AreEqual(1, issues.Count);
+            Assert.IsNotNull(issues[0].fix);
+            issues[0].fix();
+            Assert.AreEqual(0, controller.parameters.Length);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void DeadTransition_FixDeletesIt()
+        {
+            var controller = NewController(out var sm);
+            var a = sm.AddState("A");
+            var b = sm.AddState("B");
+            var t = a.AddTransition(b);
+            t.hasExitTime = false;   // no conditions + no exit time → can never fire
+
+            var issues = OfKind(controller, ControllerAnalyzer.Kind.DeadTransition);
+
+            Assert.AreEqual(1, issues.Count);
+            Assert.IsNotNull(issues[0].fix);
+            issues[0].fix();
+            Assert.AreEqual(0, a.transitions.Length);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void DuplicateCondition_FixKeepsOneOfEach()
+        {
+            var controller = NewController(out var sm);
+            controller.AddParameter("P", AnimatorControllerParameterType.Bool);
+            var a = sm.AddState("A");
+            var b = sm.AddState("B");
+            var t = a.AddTransition(b);
+            t.AddCondition(AnimatorConditionMode.If, 0f, "P");
+            t.AddCondition(AnimatorConditionMode.If, 0f, "P");
+
+            var issues = OfKind(controller, ControllerAnalyzer.Kind.DuplicateCondition);
+
+            Assert.AreEqual(1, issues.Count);
+            Assert.IsNotNull(issues[0].fix);
+            issues[0].fix();
+            Assert.AreEqual(1, t.conditions.Length);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void EmptyLayer_IsFlagged()
+        {
+            var controller = NewController(out var sm);
+            sm.AddState("A");
+            controller.AddLayer("Hollow");
+
+            var issues = OfKind(controller, ControllerAnalyzer.Kind.EmptyLayer);
+
+            Assert.AreEqual(1, issues.Count);
+            StringAssert.Contains("'Hollow'", issues[0].message);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void ZeroWeightLayer_IsFlagged_UntilWeightIsRaised()
+        {
+            var controller = NewController(out var sm);
+            sm.AddState("A");
+            controller.AddLayer("Fx");
+            controller.layers[1].stateMachine.AddState("B");
+
+            var layers = controller.layers;
+            layers[1].defaultWeight = 0f;
+            controller.layers = layers;
+            Assert.AreEqual(1, OfKind(controller, ControllerAnalyzer.Kind.LayerWeight).Count);
+
+            layers = controller.layers;
+            layers[1].defaultWeight = 1f;
+            controller.layers = layers;
+            Assert.AreEqual(0, OfKind(controller, ControllerAnalyzer.Kind.LayerWeight).Count);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void MissingBehaviour_FixStripsNullEntries()
+        {
+            var controller = NewController(out var sm);
+            var a = sm.AddState("A");
+            a.behaviours = new StateMachineBehaviour[] { null };
+
+            var issues = OfKind(controller, ControllerAnalyzer.Kind.MissingBehaviour);
+
+            Assert.AreEqual(1, issues.Count);
+            Assert.IsNotNull(issues[0].fix);
+            issues[0].fix();
+            Assert.AreEqual(0, a.behaviours.Length);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void AssignEmptyClip_FillsOnlyMotionlessStates()
+        {
+            var controller = NewController(out var sm);
+            var empty = new AnimationClip { name = "Empty" };
+            var other = new AnimationClip { name = "Other" };
+            var bare = sm.AddState("Bare");
+            var filled = sm.AddState("Filled");
+            filled.motion = other;
+
+            ControllerAnalyzer.AssignEmptyClip(bare, empty);
+            ControllerAnalyzer.AssignEmptyClip(filled, empty);
+
+            Assert.AreSame(empty, bare.motion);
+            Assert.AreSame(other, filled.motion);   // an assigned motion is never overwritten
+
+            Object.DestroyImmediate(controller);
+            Object.DestroyImmediate(empty);
+            Object.DestroyImmediate(other);
+        }
+
+        [Test]
+        public void FillEmptySlots_FillsOnlyTheEmptyChildren()
+        {
+            var empty = new AnimationClip { name = "Empty" };
+            var other = new AnimationClip { name = "Other" };
+            var tree = new BlendTree { name = "T" };
+            tree.children = new[]
+            {
+                new ChildMotion { motion = other, timeScale = 1f },
+                new ChildMotion { motion = null, timeScale = 1f },
+            };
+
+            ControllerAnalyzer.FillEmptySlots(tree, empty);
+
+            Assert.AreSame(other, tree.children[0].motion);
+            Assert.AreSame(empty, tree.children[1].motion);
+
+            Object.DestroyImmediate(tree);
+            Object.DestroyImmediate(empty);
+            Object.DestroyImmediate(other);
+        }
+
+        // ---- direct blend tree health -----------------------------------------
+
+        static List<ControllerAnalyzer.Issue> DirectTreeIssues(AnimatorController controller)
+        {
+            var result = new List<ControllerAnalyzer.Issue>();
+            foreach (var issue in ControllerAnalyzer.Analyze(controller))
+                if (issue.kind == ControllerAnalyzer.Kind.DirectBlendTree)
+                    result.Add(issue);
+            return result;
+        }
+
+        [Test]
+        public void DirectTreeStateWithWriteDefaultsOff_IsFlagged_AndTheFixTurnsItOn()
+        {
+            var controller = NewController(out var sm);
+            controller.AddParameter("One", UnityEngine.AnimatorControllerParameterType.Float);
+            var state = sm.AddState("DBT");
+            state.writeDefaultValues = false;
+            var tree = new BlendTree { name = "Root", blendType = BlendTreeType.Direct };
+            state.motion = tree;
+
+            var issues = DirectTreeIssues(controller);
+            Assert.AreEqual(1, issues.Count);
+            Assert.AreEqual(ControllerAnalyzer.Severity.Error, issues[0].severity);
+            Assert.IsNotNull(issues[0].fix);
+
+            issues[0].fix();
+            Assert.IsTrue(state.writeDefaultValues);
+            Assert.AreEqual(0, DirectTreeIssues(controller).Count);
+
+            Object.DestroyImmediate(controller);
+            Object.DestroyImmediate(tree);
+        }
+
+        [Test]
+        public void DirectChildWeights_MissingEmptyAndNonFloat_AreFlagged()
+        {
+            var controller = NewController(out var sm);
+            controller.AddParameter("IntWeight", UnityEngine.AnimatorControllerParameterType.Int);
+            var state = sm.AddState("DBT");
+            state.writeDefaultValues = true;
+            var clip = new AnimationClip();
+            var tree = new BlendTree { name = "Root", blendType = BlendTreeType.Direct };
+            tree.AddChild(clip);
+            tree.AddChild(clip);
+            tree.AddChild(clip);
+            var children = tree.children;
+            children[0].directBlendParameter = "";           // never plays → Warning
+            children[1].directBlendParameter = "Missing";    // no such parameter → Error
+            children[2].directBlendParameter = "IntWeight";  // wrong type → Warning
+            tree.children = children;
+            state.motion = tree;
+
+            var issues = DirectTreeIssues(controller);
+            Assert.AreEqual(3, issues.Count);
+
+            Object.DestroyImmediate(controller);
+            Object.DestroyImmediate(tree);
+            Object.DestroyImmediate(clip);
+        }
+
+        [Test]
+        public void GeneratedDbtGadget_PassesTheDirectTreeChecks()
+        {
+            var controller = NewController(out _);
+            controller.AddParameter("A", UnityEngine.AnimatorControllerParameterType.Float);
+            controller.AddParameter("B", UnityEngine.AnimatorControllerParameterType.Float);
+
+            Assert.IsTrue(AapGadgets.Apply(new AapGadgets.Request
+            {
+                controller = controller,
+                kind = AapGadgets.Kind.AddRanged,
+                inputA = "A",
+                inputB = "B",
+                output = "Out",
+                layerIndex = -1,
+                newLayerName = "DBT",
+            }));
+
+            Assert.AreEqual(0, DirectTreeIssues(controller).Count);
+
+            Object.DestroyImmediate(controller);
+        }
+
         [Test]
         public void TransitionIntoSubStateMachine_CountsAsLeavingViaItsDefaultState()
         {

@@ -28,6 +28,12 @@ namespace Yozolab.DaerD
             DaerDWindow.Open(Selection.activeObject as AnimatorController);
         }
 
+        [MenuItem("YozoLab/DaerD Analyzer")]
+        static void OpenAnalyzerFromMenu()
+        {
+            AnalyzerWindow.Open(Selection.activeObject as AnimatorController);
+        }
+
         [MenuItem(AssetMenuPath, false, 20)]
         static void OpenFromAssetContext()
         {

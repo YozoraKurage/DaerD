@@ -806,6 +806,12 @@ namespace Yozolab.DaerD
                 state = sm.AddState(MakeUniqueName(sm, "New State"), new Vector3(position.x, position.y, 0f));
                 DaerDSettings.ApplyStateDefaultsTo(state);
 
+                // The controller's Empty clip fills the motion slot so a brand-new state never
+                // plays as a WD-OFF "freeze" state; the modes below overwrite it with a real motion.
+                var empty = GraphFrameData.GetEmptyClip(_context.Controller);
+                if (empty != null)
+                    state.motion = empty;
+
                 if (mode == "state-clip" && Selection.activeObject is AnimationClip clip)
                 {
                     state.motion = clip;
@@ -825,21 +831,21 @@ namespace Yozolab.DaerD
         }
 
         /// <summary>
-        /// Creates a state at <paramref name="position"/> using <paramref name="clip"/> as its
-        /// motion. Used when an AnimationClip is dropped onto empty graph space.
+        /// Creates a state at <paramref name="position"/> using <paramref name="motion"/> as its
+        /// motion. Used when an AnimationClip or BlendTree asset is dropped onto empty graph space.
         /// </summary>
-        public AnimatorState CreateStateWithClip(Vector2 position, AnimationClip clip)
+        public AnimatorState CreateStateWithMotion(Vector2 position, Motion motion)
         {
             var sm = _context.CurrentStateMachine;
-            if (sm == null || clip == null) return null;
+            if (sm == null || motion == null) return null;
 
             AnimatorState state;
             using (new UndoScope("Create State"))
             {
                 Undo.RegisterCompleteObjectUndo(sm, "Create State");
-                state = sm.AddState(MakeUniqueName(sm, clip.name), new Vector3(position.x, position.y, 0f));
+                state = sm.AddState(MakeUniqueName(sm, motion.name), new Vector3(position.x, position.y, 0f));
                 DaerDSettings.ApplyStateDefaultsTo(state);
-                state.motion = clip;
+                state.motion = motion;
                 EditorUtility.SetDirty(sm);
             }
             return state;

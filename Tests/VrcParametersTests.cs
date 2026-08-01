@@ -58,5 +58,31 @@ namespace Yozolab.DaerD.Tests
             Assert.AreEqual(VrcParameters.ParamType.Bool, byName["Grounded"]);
             Assert.AreEqual(VrcParameters.ParamType.Float, byName["ScaleFactor"]);
         }
+
+        [Test]
+        public void GestureLabel_MapsTheEightIndices()
+        {
+            Assert.AreEqual("Neutral", VrcParameters.GestureLabel(0f));
+            Assert.AreEqual("Fist", VrcParameters.GestureLabel(1f));
+            Assert.AreEqual("HandOpen", VrcParameters.GestureLabel(2f));
+            Assert.AreEqual("ThumbsUp", VrcParameters.GestureLabel(7f));
+        }
+
+        [Test]
+        public void GestureLabel_RejectsFractionalAndOutOfRangeValues()
+        {
+            Assert.IsNull(VrcParameters.GestureLabel(1.5f));
+            Assert.IsNull(VrcParameters.GestureLabel(-1f));
+            Assert.IsNull(VrcParameters.GestureLabel(8f));
+        }
+
+        [Test]
+        public void IsGestureParameter_MatchesOnlyTheTwoGestureInts()
+        {
+            Assert.IsTrue(VrcParameters.IsGestureParameter("GestureLeft"));
+            Assert.IsTrue(VrcParameters.IsGestureParameter("GestureRight"));
+            Assert.IsFalse(VrcParameters.IsGestureParameter("GestureLeftWeight"));
+            Assert.IsFalse(VrcParameters.IsGestureParameter("gestureleft"));
+        }
     }
 }

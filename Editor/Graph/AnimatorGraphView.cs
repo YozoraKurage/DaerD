@@ -489,11 +489,11 @@ namespace Yozolab.DaerD
             }
         }
 
-        // ---- AnimationClip drag & drop ---------------------------------------
+        // ---- Motion (AnimationClip / BlendTree) drag & drop -------------------
 
         void OnDragUpdated(DragUpdatedEvent evt)
         {
-            if (_context.CurrentStateMachine == null || !DragHasClip())
+            if (_context.CurrentStateMachine == null || !DragHasMotion())
                 return;
             DragAndDrop.visualMode = DragAndDropVisualMode.Copy;
             SetDropHover(ResolveTarget<StateNode>(evt.target as VisualElement));
@@ -506,33 +506,33 @@ namespace Yozolab.DaerD
             if (_context.CurrentStateMachine == null)
                 return;
 
-            var clips = new List<AnimationClip>();
+            var motions = new List<Motion>();
             foreach (var obj in DragAndDrop.objectReferences)
-                if (obj is AnimationClip clip)
-                    clips.Add(clip);
-            if (clips.Count == 0)
+                if (obj is Motion motion)
+                    motions.Add(motion);
+            if (motions.Count == 0)
                 return;
 
             DragAndDrop.AcceptDrag();
             evt.StopPropagation();
 
             var targetNode = ResolveTarget<StateNode>(evt.target as VisualElement);
-            using (new UndoScope(clips.Count > 1 ? "Drop Animation Clips" : "Drop Animation Clip"))
+            using (new UndoScope(motions.Count > 1 ? "Drop Motions" : "Drop Motion"))
             {
                 if (targetNode != null)
                 {
-                    // Dropped onto an existing state: replace its motion with the first clip.
-                    _sync.AssignMotion(targetNode.State, clips[0]);
+                    // Dropped onto an existing state: replace its motion with the first one.
+                    _sync.AssignMotion(targetNode.State, motions[0]);
                     _context.Select(targetNode.State);
                 }
                 else
                 {
-                    // Dropped onto empty space: create one state per clip, stacked downward.
+                    // Dropped onto empty space: create one state per motion, stacked downward.
                     var origin = contentViewContainer.WorldToLocal(evt.mousePosition);
                     AnimatorState firstState = null;
-                    for (int i = 0; i < clips.Count; i++)
+                    for (int i = 0; i < motions.Count; i++)
                     {
-                        var state = _sync.CreateStateWithClip(origin + new Vector2(0f, i * 68f), clips[i]);
+                        var state = _sync.CreateStateWithMotion(origin + new Vector2(0f, i * 68f), motions[i]);
                         if (firstState == null) firstState = state;
                     }
                     if (firstState != null) _context.Select(firstState);
@@ -541,7 +541,7 @@ namespace Yozolab.DaerD
             _sync.RequestRebuild();
         }
 
-        /// <summary>Highlights the state node currently under a clip being dragged.</summary>
+        /// <summary>Highlights the state node currently under a motion being dragged.</summary>
         void SetDropHover(StateNode node)
         {
             if (_dropHoverNode == node) return;
@@ -550,13 +550,13 @@ namespace Yozolab.DaerD
             _dropHoverNode?.SetDropTarget(true);
         }
 
-        /// <summary>True when the active drag carries at least one AnimationClip.</summary>
-        static bool DragHasClip()
+        /// <summary>True when the active drag carries at least one AnimationClip or BlendTree.</summary>
+        static bool DragHasMotion()
         {
             var refs = DragAndDrop.objectReferences;
             if (refs != null)
                 foreach (var obj in refs)
-                    if (obj is AnimationClip)
+                    if (obj is Motion)
                         return true;
             return false;
         }

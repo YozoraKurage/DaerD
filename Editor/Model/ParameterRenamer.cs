@@ -6,7 +6,9 @@ namespace Yozolab.DaerD
 {
     /// <summary>
     /// Renames a parameter and cascades the new name into every condition, blend tree
-    /// and state field that referenced it — something Unity's built-in editor does not do.
+    /// (including Direct child weights and synced-layer override trees), state field and
+    /// VRC Parameter Driver entry that referenced it — something Unity's built-in editor
+    /// does not do.
     /// </summary>
     static class ParameterRenamer
     {
@@ -84,6 +86,11 @@ namespace Yozolab.DaerD
                     if (s.mirrorParameter == oldName) s.mirrorParameter = newName;
                     EditorUtility.SetDirty(s);
                 }
+
+                // StateMachineBehaviours that reference parameters by name — currently the
+                // VRC Parameter Driver (Set/Add/Random/Copy destination and Copy source).
+                foreach (var behaviour in controller.AllBehaviours())
+                    VrcParameterDriver.RenameReferences(behaviour, oldName, newName);
 
                 var parameters = controller.parameters;
                 foreach (var p in parameters)
