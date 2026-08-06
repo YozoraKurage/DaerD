@@ -14,9 +14,17 @@ namespace Yozolab.DaerD
     /// its ~0.3 s cadence, where an Any-State decoder (IsLocal == false, index == i) copies
     /// the channel back into parameter i. The targets themselves stay unsynced.
     ///
-    /// Caveats inherent to the technique: values arrive with up to N × step latency, a
-    /// remote joining mid-cycle fills in over one full cycle, and index/value are separate
-    /// synced parameters so a step can transiently pair a fresh index with a stale value.
+    /// Caveats inherent to the technique: values arrive with up to N × step latency, and a
+    /// remote joining mid-cycle fills in over one full cycle. The index and the value do NOT
+    /// need to be paired defensively — VRChat delivers a sync of the expression parameters
+    /// together, so the index a remote reads belongs to the value it reads with it. The one
+    /// documented exception is a parameter a Radial Puppet is dragging, which streams on its
+    /// own; keep such parameters out of the multiplexed set.
+    ///
+    /// Synced Floats are 8-bit fixed point over -1..1 on the remote side (about 0.008 per
+    /// step) while the local value keeps full precision, so a multiplexed Float reads back
+    /// slightly quantized for everyone but the wearer.
+    /// See https://www.proustite.com/articles/float-expression-parameters/
     /// </summary>
     static class AsyncSyncBuilder
     {
@@ -27,7 +35,7 @@ namespace Yozolab.DaerD
             /// <summary>ceil(log2 N) synced Bools hold the index bits, LSB-first.</summary>
             Bool,
             /// <summary>Pick whichever costs fewer synced bits for the slot count, preferring
-            /// the atomic Int when they tie. See <see cref="ResolveEncoding"/>.</summary>
+            /// the single Int when they tie. See <see cref="ResolveEncoding"/>.</summary>
             Auto,
         }
 
@@ -73,8 +81,9 @@ namespace Yozolab.DaerD
         /// <summary>
         /// The encoding a request actually builds with. Auto weighs the two: the Bool index
         /// costs ceil(log2 N) bits against the Int's flat 8, so it wins for anything under 256
-        /// slots — but the Int is a single synced value, which is worth the tie-break because
-        /// separate Bools can arrive in different packets and decode as a slot nobody sent.
+        /// slots. A tie goes to the Int purely on tidiness — one parameter in the store and one
+        /// condition per decoder route instead of eight. Both are equally safe on the wire:
+        /// expression parameters arrive together, so the index bits can't be read half-updated.
         /// </summary>
         public static IndexEncoding ResolveEncoding(Request r)
         {
@@ -93,6 +102,36 @@ namespace Yozolab.DaerD
             if (r == null || !r.assignEmptyClip) return null;
             var clip = r.emptyClip != null ? r.emptyClip : GraphFrameData.GetEmptyClip(r.controller);
             return clip != null && clip.length > 0f ? clip : null;
+        }
+
+        /// <summary>
+        /// Targets a puppet control (radial / two-axis / four-axis) in the controller's
+        /// expressions menu drives. Those are the parameters that don't fit the technique: a
+        /// puppet drag is a continuous stream, and a slot only gets one sample per pass.
+        /// </summary>
+        public static List<string> PuppetDrivenTargets(Request r)
+        {
+            var driven = new List<string>();
+            if (r?.targets == null || r.controller == null) return driven;
+
+            // Only the menu explicitly associated with this controller — this runs on every
+            // repaint of the wizard, and DaerD never goes looking through the scene on its own.
+            var menu = GraphFrameData.GetExpressionsMenu(r.controller);
+            if (menu == null) return driven;
+
+            var puppeted = new HashSet<string>();
+            foreach (var control in VrcMenuAccess.Read(menu))
+            {
+                if (control.type != VrcMenuAccess.ControlType.RadialPuppet
+                    && control.type != VrcMenuAccess.ControlType.TwoAxisPuppet
+                    && control.type != VrcMenuAccess.ControlType.FourAxisPuppet)
+                    continue;
+                foreach (var name in control.subParameters)
+                    if (!string.IsNullOrEmpty(name)) puppeted.Add(name);
+            }
+            foreach (var name in r.targets)
+                if (puppeted.Contains(name)) driven.Add("'" + name + "'");
+            return driven;
         }
 
         /// <summary>Seconds for one full pass over the slots — the worst-case age of a value.</summary>
@@ -218,10 +257,15 @@ namespace Yozolab.DaerD
                     "One full pass takes {0:0.#} s ({1} slots × {2:0.##} s), so a remote can be that far behind on any one value.",
                     cycle, r.targets.Count, r.stepSeconds));
 
-            if (ResolveEncoding(r) == IndexEncoding.Bool)
+            // Expression parameters reach remotes together, so a multiplexed value is only ever
+            // as stale as the cycle. Puppet controls are the documented exception: dragging one
+            // streams its parameter continuously, and the round-robin samples it once per pass —
+            // remotes would see the drag as a staircase.
+            var puppeted = PuppetDrivenTargets(r);
+            if (puppeted.Count > 0)
                 warnings.Add(L.Tr(
-                    "The Bool index is split across {0} synced parameters; if they arrive in different packets a remote can briefly decode a slot nobody sent. Int keeps the index atomic for 8 bits.",
-                    NetworkSyncBuilder.BitsRequired(Mathf.Max(2, r.targets.Count))));
+                    "Puppet controls drive {0}. A puppet drag streams continuously, so multiplexing it makes remotes see the drag one step per pass — those are better left synced directly.",
+                    string.Join(", ", puppeted)));
 
             if (r.assignEmptyClip)
             {
@@ -241,7 +285,7 @@ namespace Yozolab.DaerD
             foreach (var type in ChannelTypes(r))
                 if (type == AnimatorControllerParameterType.Float)
                 {
-                    warnings.Add(L.Tr("The synced Float channel carries -1..1 at 8-bit precision — values outside that range won't survive the trip."));
+                    warnings.Add(L.Tr("Remote Floats are 8-bit fixed point over -1..1 (about 0.008 per step), so multiplexed Floats read back quantized for everyone but the wearer, and values outside -1..1 don't survive the trip at all."));
                     break;
                 }
             if (r.store != null && r.addToStore)

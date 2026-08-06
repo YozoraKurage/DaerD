@@ -284,8 +284,8 @@ namespace Yozolab.DaerD.Tests
             Assert.AreEqual(AsyncSyncBuilder.IndexEncoding.Bool, AsyncSyncBuilder.ResolveEncoding(few),
                 "2 index bits beat a flat 8");
 
-            // At 8 index bits the Bool index costs the same as the Int one, and the Int arrives
-            // as a single synced value — so the tie goes to Int.
+            // At 8 index bits the Bool index costs the same as the Int one; the tie goes to Int
+            // because it is one parameter and one condition per route instead of eight.
             var many = NewRequest(controller);
             many.encoding = AsyncSyncBuilder.IndexEncoding.Auto;
             for (int i = 0; i < 200; i++) many.targets.Add("P" + i);
