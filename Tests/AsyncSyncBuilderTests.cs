@@ -8,6 +8,20 @@ namespace Yozolab.DaerD.Tests
 {
     public class AsyncSyncBuilderTests
     {
+        DaerDLanguage _savedLanguage;
+
+        // Warning assertions match English substrings; pin the language so the tests pass
+        // on a Japanese editor too.
+        [OneTimeSetUp]
+        public void ForceEnglish()
+        {
+            _savedLanguage = L.Language;
+            L.Language = DaerDLanguage.English;
+        }
+
+        [OneTimeTearDown]
+        public void RestoreLanguage() => L.Language = _savedLanguage;
+
         static AnimatorController NewController()
         {
             var controller = new AnimatorController();
@@ -18,6 +32,8 @@ namespace Yozolab.DaerD.Tests
             return controller;
         }
 
+        /// <summary>Explicit Int encoding: the Request default is Auto, and these tests
+        /// assert exact structure, so they pin the encoding they mean.</summary>
         static AsyncSyncBuilder.Request NewRequest(AnimatorController controller,
             params string[] targets)
         {
@@ -25,6 +41,7 @@ namespace Yozolab.DaerD.Tests
             {
                 controller = controller,
                 baseName = "Async",
+                encoding = AsyncSyncBuilder.IndexEncoding.Int,
                 skipDrivers = true,
             };
             request.targets.AddRange(targets);
@@ -285,10 +302,15 @@ namespace Yozolab.DaerD.Tests
                 "2 index bits beat a flat 8");
 
             // At 8 index bits the Bool index costs the same as the Int one; the tie goes to Int
-            // because it is one parameter and one condition per route instead of eight.
+            // because it is one parameter and one condition per route instead of eight. The
+            // parameters must exist: slots are built from the controller, not from the list.
             var many = NewRequest(controller);
             many.encoding = AsyncSyncBuilder.IndexEncoding.Auto;
-            for (int i = 0; i < 200; i++) many.targets.Add("P" + i);
+            for (int i = 0; i < 200; i++)
+            {
+                controller.AddParameter("P" + i, AnimatorControllerParameterType.Bool);
+                many.targets.Add("P" + i);
+            }
             Assert.AreEqual(AsyncSyncBuilder.IndexEncoding.Int, AsyncSyncBuilder.ResolveEncoding(many));
 
             var explicitInt = NewRequest(controller, "F", "B");
@@ -341,6 +363,159 @@ namespace Yozolab.DaerD.Tests
             controller.AddParameter("F3", AnimatorControllerParameterType.Float);
             var worthwhile = NewRequest(controller, "F1", "F2", "F3");
             Assert.IsFalse(AsyncSyncBuilder.Warnings(worthwhile).Exists(w => w.Contains("saves nothing")));
+        }
+
+        // ---- float channels ---------------------------------------------------
+
+        [Test]
+        public void RequestDefaults_AutoEncoding_OneFloatChannel()
+        {
+            var request = new AsyncSyncBuilder.Request();
+            Assert.AreEqual(AsyncSyncBuilder.IndexEncoding.Auto, request.encoding);
+            Assert.AreEqual(1, request.floatChannels);
+        }
+
+        [Test]
+        public void FloatChannels_BatchFloatsIntoSharedSlots()
+        {
+            var controller = NewController();
+            controller.AddParameter("F2", AnimatorControllerParameterType.Float);
+            controller.AddParameter("F3", AnimatorControllerParameterType.Float);
+            controller.AddParameter("F4", AnimatorControllerParameterType.Float);
+
+            var request = NewRequest(controller, "F", "F2", "F3", "F4");
+            request.floatChannels = 2;
+
+            var slots = AsyncSyncBuilder.BuildSlots(request);
+            Assert.AreEqual(2, slots.Count, "4 floats over 2 channels = 2 slots");
+            CollectionAssert.AreEqual(new[] { "F", "F2" }, slots[0].targets);
+            CollectionAssert.AreEqual(new[] { "F3", "F4" }, slots[1].targets);
+
+            // 8 index + 2 × 8 float channels = 24; direct would be 32.
+            Assert.AreEqual(24, AsyncSyncBuilder.CompressedBits(request));
+            Assert.AreEqual(2, AsyncSyncBuilder.FloatChannelsUsed(request));
+
+            var generated = AsyncSyncBuilder.GeneratedParameters(request);
+            Assert.IsTrue(generated.Exists(g => g.name == "Async/Float"));
+            Assert.IsTrue(generated.Exists(g => g.name == "Async/Float2"));
+
+            // The cycle shortens with the slot count: 2 steps instead of 4.
+            Assert.AreEqual(2f * request.stepSeconds, AsyncSyncBuilder.CycleSeconds(request), 0.0001f);
+        }
+
+        [Test]
+        public void FloatChannels_UnusedChannelsAreNotCreated()
+        {
+            var controller = NewController();
+            // One Float and one Bool: no batch ever carries 2 floats, so channel 2 of 4
+            // requested would be dead weight — it must be neither generated nor billed.
+            var request = NewRequest(controller, "F", "B");
+            request.floatChannels = 4;
+
+            Assert.AreEqual(1, AsyncSyncBuilder.FloatChannelsUsed(request));
+            Assert.IsFalse(AsyncSyncBuilder.GeneratedParameters(request)
+                .Exists(g => g.name == "Async/Float2"));
+        }
+
+        [Test]
+        public void Apply_WithFloatChannels_SendsAndDecodesTheBatch()
+        {
+            var controller = NewController();
+            controller.AddParameter("F2", AnimatorControllerParameterType.Float);
+            var request = NewRequest(controller, "F", "F2", "B");
+            request.floatChannels = 2;
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var sm = controller.layers[1].stateMachine;
+            // 2 slots ({F,F2}, {B}) -> 2 send + idle + 2 recv.
+            Assert.AreEqual(5, sm.states.Length);
+            Assert.IsNotNull(FindState(sm, "Send F +1"));
+            Assert.IsNotNull(FindState(sm, "Recv F +1"));
+            Assert.AreEqual(2, sm.anyStateTransitions.Length);
+
+            Assert.AreEqual(AnimatorControllerParameterType.Float,
+                DbtBuilder.FindParameter(controller, "Async/Float2").type);
+        }
+
+        // ---- priority scheduling ---------------------------------------------
+
+        [Test]
+        public void BuildSchedule_InterleavesPrioritySlotsEveryOtherStep()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.priorities.Add("F");
+
+            var slots = AsyncSyncBuilder.BuildSlots(request);
+            var schedule = AsyncSyncBuilder.BuildSchedule(slots);
+
+            // P = [F], N = [B, I]  →  F B F I.
+            CollectionAssert.AreEqual(new[] { 0, 1, 0, 2 }, schedule);
+            for (int i = 0; i < schedule.Count; i++)
+                Assert.AreNotEqual(schedule[i], schedule[(i + 1) % schedule.Count],
+                    "no slot may occupy adjacent steps — the decoder would not re-trigger");
+
+            Assert.AreEqual(2f * request.stepSeconds,
+                AsyncSyncBuilder.PriorityIntervalSeconds(request), 0.0001f);
+            Assert.AreEqual(4f * request.stepSeconds, AsyncSyncBuilder.CycleSeconds(request), 0.0001f);
+        }
+
+        [Test]
+        public void BuildSchedule_AllOrNoPriority_IsThePlainCycle()
+        {
+            var controller = NewController();
+            var plain = NewRequest(controller, "F", "B", "I");
+            CollectionAssert.AreEqual(new[] { 0, 1, 2 },
+                AsyncSyncBuilder.BuildSchedule(AsyncSyncBuilder.BuildSlots(plain)));
+            Assert.AreEqual(0f, AsyncSyncBuilder.PriorityIntervalSeconds(plain));
+
+            var all = NewRequest(controller, "F", "B", "I");
+            all.priorities.AddRange(new[] { "F", "B", "I" });
+            CollectionAssert.AreEqual(new[] { 0, 1, 2 },
+                AsyncSyncBuilder.BuildSchedule(AsyncSyncBuilder.BuildSlots(all)));
+            Assert.IsTrue(AsyncSyncBuilder.Warnings(all)
+                .Exists(w => w.Contains("priority")), "priority-on-everything is called out");
+        }
+
+        [Test]
+        public void Apply_WithPriority_BuildsOneSendStatePerScheduleStep()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.priorities.Add("F");
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var sm = controller.layers[1].stateMachine;
+            // Schedule F B F I -> 4 send states (F twice, uniquely named) + idle + 3 recv.
+            Assert.AreEqual(8, sm.states.Length);
+            var first = FindState(sm, "Send F");
+            var second = FindState(sm, "Send F (2)");
+            Assert.AreEqual(3, sm.anyStateTransitions.Length, "the decoder stays one state per slot");
+
+            // The ring: Send F → Send B → Send F (2) → Send I → Send F.
+            Assert.AreEqual("Send B", first.transitions[0].destinationState.name);
+            Assert.AreEqual("Send I", second.transitions[0].destinationState.name);
+        }
+
+        // ---- reserved parameters ---------------------------------------------
+
+        [Test]
+        public void Validate_RejectsMachineryParametersAsTargets()
+        {
+            var controller = NewController();
+            controller.AddParameter("IsLocal", AnimatorControllerParameterType.Bool);
+            Assert.IsNotNull(AsyncSyncBuilder.Validate(NewRequest(controller, "IsLocal", "F")),
+                "IsLocal belongs to the machinery");
+
+            controller.AddParameter("Async/Value", AnimatorControllerParameterType.Float);
+            Assert.IsNotNull(AsyncSyncBuilder.Validate(NewRequest(controller, "Async/Value", "F")),
+                "the request's own namespace is reserved");
+
+            var badChannels = NewRequest(controller, "F", "B");
+            badChannels.floatChannels = 0;
+            Assert.IsNotNull(AsyncSyncBuilder.Validate(badChannels));
+            badChannels.floatChannels = 9;
+            Assert.IsNotNull(AsyncSyncBuilder.Validate(badChannels));
         }
 
         // ---- Empty clip -----------------------------------------------------

@@ -71,7 +71,14 @@ namespace Yozolab.DaerD
             public string baseName = "Async";
             public int encoding;
             public float stepSeconds = 0.3f;
+            /// <summary>Synced Float channels. 0 in data saved before the field existed —
+            /// read it through <see cref="FloatChannelsOrDefault"/>.</summary>
+            public int floatChannels = 1;
             public List<string> targets = new List<string>();
+            /// <summary>Targets refreshed every other step of the cycle.</summary>
+            public List<string> priorities = new List<string>();
+
+            public int FloatChannelsOrDefault => floatChannels < 1 ? 1 : floatChannels;
         }
 
         public List<AsyncSyncConfig> asyncSyncs = new List<AsyncSyncConfig>();
