@@ -546,6 +546,30 @@ namespace Yozolab.DaerD.Tests
             Assert.AreEqual("Send I", second.transitions[0].destinationState.name);
         }
 
+        /// <summary>Regression: ticking the FIRST parameter in the wizard used to freeze
+        /// Unity — Warnings runs on every repaint and EffectiveWeights spun forever on a
+        /// single slot ("1 > 0 others" capped to 1, a no-op flagged as a change).</summary>
+        [Test]
+        public void SingleTarget_WarningsAndWeights_Terminate()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F");
+
+            Assert.DoesNotThrow(() => AsyncSyncBuilder.Warnings(request));
+
+            var slots = AsyncSyncBuilder.BuildSlots(request);
+            CollectionAssert.AreEqual(new[] { 1 }, AsyncSyncBuilder.EffectiveWeights(slots));
+            CollectionAssert.AreEqual(new[] { 0 }, AsyncSyncBuilder.BuildSchedule(slots));
+
+            // Same degenerate shape with a rate on the lone slot.
+            request.rates["F"] = 4;
+            CollectionAssert.AreEqual(new[] { 1 },
+                AsyncSyncBuilder.EffectiveWeights(AsyncSyncBuilder.BuildSlots(request)));
+
+            // And with no targets at all (the wizard's initial state).
+            Assert.DoesNotThrow(() => AsyncSyncBuilder.Warnings(NewRequest(controller)));
+        }
+
         [Test]
         public void Validate_RejectsOutOfRangeRates_AndSingleSlotSetups()
         {

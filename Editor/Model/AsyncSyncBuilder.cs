@@ -210,6 +210,14 @@ namespace Yozolab.DaerD
             var weights = new int[slots.Count];
             for (int i = 0; i < slots.Count; i++)
                 weights[i] = Mathf.Clamp(slots[i].rate, 1, MaxRate);
+            // A lone slot has nothing to be spaced against — its weight is 1 by definition.
+            // Bailing out also matters for termination: the cap condition below is always
+            // "true" for a single slot (w > 0 others), which used to spin forever.
+            if (weights.Length < 2)
+            {
+                for (int i = 0; i < weights.Length; i++) weights[i] = 1;
+                return weights;
+            }
 
             int gcd = 0;
             foreach (var weight in weights) gcd = Gcd(gcd, weight);
@@ -217,18 +225,24 @@ namespace Yozolab.DaerD
                 for (int i = 0; i < weights.Length; i++) weights[i] /= gcd;
 
             // Capping one weight can change the balance for another; loop to a fixed point.
+            // `changed` is set only when a weight actually shrinks — flagging a no-op write
+            // (cap already at the floor) would loop forever.
             for (bool changed = true; changed;)
             {
                 changed = false;
                 int total = 0;
                 foreach (var weight in weights) total += weight;
                 for (int i = 0; i < weights.Length; i++)
-                    if (weights[i] > total - weights[i])
+                {
+                    int others = total - weights[i];
+                    int capped = Mathf.Max(1, others);
+                    if (weights[i] > others && weights[i] != capped)
                     {
-                        weights[i] = Mathf.Max(1, total - weights[i]);
+                        weights[i] = capped;
                         changed = true;
                         break;
                     }
+                }
             }
             return weights;
         }
