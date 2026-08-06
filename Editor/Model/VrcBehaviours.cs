@@ -106,6 +106,20 @@ namespace Yozolab.DaerD
             return Clipboard.Count;
         }
 
+        /// <summary>
+        /// Restores the hide flags Unity gives a behaviour it adds to a controller.
+        /// Every copy path has to call this: <see cref="EditorUtility.CopySerialized"/> carries
+        /// the source object's flags across, and a clipboard source is HideAndDontSave — which
+        /// would keep the behaviour out of the saved file. Clearing the flags to None instead
+        /// leaves the behaviour visible in the Project window as a loose sub-asset under the
+        /// controller: harmless, but confusing, and the leftover scan can't remove it because
+        /// the behaviour is genuinely in use.
+        /// </summary>
+        public static void MarkAsSubAsset(StateMachineBehaviour behaviour)
+        {
+            if (behaviour != null) behaviour.hideFlags = HideFlags.HideInHierarchy;
+        }
+
         /// <summary>Pastes the clipboard onto a state. Replace destroys the state's existing
         /// behaviours first; append keeps them and adds the copies after.</summary>
         public static void Paste(AnimatorState state, bool replace)
@@ -123,7 +137,7 @@ namespace Yozolab.DaerD
                 string name = copy.name;
                 EditorUtility.CopySerialized(copy, added);
                 added.name = name;
-                added.hideFlags = HideFlags.None;
+                MarkAsSubAsset(added);
             }
             EditorUtility.SetDirty(state);
         }

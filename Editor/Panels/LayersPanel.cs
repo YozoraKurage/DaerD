@@ -138,6 +138,22 @@ namespace Yozolab.DaerD
                 Context.NotifyLayersChanged();
         }
 
+        /// <summary>
+        /// Pastes the graph's state clipboard into another layer's root state machine, keeping
+        /// the states where they were copied from, then opens that layer so the result is visible.
+        /// </summary>
+        internal void PasteStatesIntoLayer(int index)
+        {
+            var controller = Context.Controller;
+            if (controller == null || index < 0 || index >= controller.layers.Length) return;
+            var stateMachine = controller.layers[index].stateMachine;
+            if (stateMachine == null || !StateClipboard.HasData) return;
+
+            var created = StateClipboard.Paste(stateMachine, StateClipboard.Anchor, controller);
+            if (created.Count == 0) return;
+            OnLayerStructureChanged(index);
+        }
+
         internal void SaveLayerTemplate(int index)
         {
             var controller = Context.Controller;
@@ -227,6 +243,17 @@ namespace Yozolab.DaerD
                         GUIUtility.ExitGUI();
                     }
                 EditorGUILayout.EndHorizontal();
+                // States copied in the graph go into whichever layer is on screen when Ctrl+V is
+                // pressed; this drops them into another layer without switching to it first.
+                using (new EditorGUI.DisabledScope(!StateClipboard.HasData))
+                    if (GUILayout.Button(new GUIContent(
+                            L.Tr("Paste States ({0})", StateClipboard.Count),
+                            L.Tr("Paste the states copied in the graph into this layer, at the positions they were copied from."))))
+                    {
+                        _panel.PasteStatesIntoLayer(_index);
+                        editorWindow.Close();
+                        GUIUtility.ExitGUI();
+                    }
                 if (GUILayout.Button(new GUIContent(L.Tr("Save as Template"),
                         L.Tr("Save this layer (with its parameters) as a reusable template asset."))))
                 {

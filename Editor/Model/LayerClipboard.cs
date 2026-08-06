@@ -177,7 +177,7 @@ namespace Yozolab.DaerD
                     if (copy == null) continue;
                     EditorUtility.CopySerialized(behaviour, copy);
                     copy.name = behaviour.name;
-                    copy.hideFlags = HideFlags.None;
+                    VrcBehaviours.MarkAsSubAsset(copy);
                 }
                 EditorUtility.SetDirty(pair.Value);
             }
@@ -281,6 +281,32 @@ namespace Yozolab.DaerD
                     if (child.stateMachine != null)
                         foreach (var transition in sm.GetStateMachineTransitions(child.stateMachine))
                             AddConditions(transition, names);
+            }
+            return names;
+        }
+
+        /// <summary>
+        /// Same as the state-machine overload but for a loose set of states — what the state
+        /// clipboard needs, since only the transitions between copied states travel with them.
+        /// </summary>
+        public static HashSet<string> CollectParameterNames(IEnumerable<AnimatorState> states)
+        {
+            var names = new HashSet<string>();
+            if (states == null) return names;
+            foreach (var state in states)
+            {
+                if (state == null) continue;
+                foreach (var transition in state.transitions)
+                    AddConditions(transition, names);
+                if (state.speedParameterActive) AddName(names, state.speedParameter);
+                if (state.mirrorParameterActive) AddName(names, state.mirrorParameter);
+                if (state.cycleOffsetParameterActive) AddName(names, state.cycleOffsetParameter);
+                if (state.timeParameterActive) AddName(names, state.timeParameter);
+                if (state.motion is BlendTree tree)
+                    AddBlendTreeParameters(tree, names, new HashSet<BlendTree>());
+                foreach (var behaviour in state.behaviours)
+                    if (behaviour != null)
+                        VrcParameterDriver.CollectReferencedParameters(behaviour, names);
             }
             return names;
         }

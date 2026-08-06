@@ -327,6 +327,82 @@ namespace Yozolab.DaerD
                     AddMotion(child.motion, reachable, visited);
         }
 
+        // ---- exposed sub-assets ----------------------------------------------
+
+        /// <summary>
+        /// Sub-assets that Unity keeps hidden but which are showing up in the Project window
+        /// under the .controller. These are usually StateMachineBehaviours (a VRC Parameter
+        /// Driver and friends) whose hide flags were cleared by a copy/paste at some point:
+        /// they are in use, so the leftover scan won't touch them, yet they clutter the file's
+        /// contents and can't be selected for anything useful.
+        /// </summary>
+        public static List<Object> FindExposedSubAssets(AnimatorController controller)
+        {
+            if (controller == null) return new List<Object>();
+            string path = AssetDatabase.GetAssetPath(controller);
+            if (string.IsNullOrEmpty(path)) return new List<Object>();
+            return FindExposed(AssetDatabase.LoadAllAssetsAtPath(path));
+        }
+
+        /// <summary>
+        /// Core of the scan, split from the AssetDatabase for testing. Only the object kinds
+        /// Unity itself stores hidden are considered — an AnimationClip authored into the
+        /// controller is meant to be visible, and so is the controller itself.
+        /// </summary>
+        public static List<Object> FindExposed(Object[] allAssets)
+        {
+            var exposed = new List<Object>();
+            if (allAssets == null) return exposed;
+            foreach (var asset in allAssets)
+            {
+                if (asset == null) continue;
+                if (!IsHiddenByUnity(asset)) continue;
+                if ((asset.hideFlags & HideFlags.HideInHierarchy) != 0) continue;
+                exposed.Add(asset);
+            }
+            return exposed;
+        }
+
+        static bool IsHiddenByUnity(Object asset) =>
+            asset is StateMachineBehaviour
+            || asset is AnimatorState
+            || asset is AnimatorStateMachine
+            || asset is AnimatorTransitionBase
+            || asset is BlendTree;
+
+        /// <summary>
+        /// Re-hides the given sub-assets. Nothing is deleted and no reference changes — the
+        /// objects stay exactly where they are, they just stop being listed under the asset.
+        /// </summary>
+        public static int HideSubAssets(AnimatorController controller, IEnumerable<Object> assets)
+        {
+            if (controller == null || assets == null) return 0;
+            int hidden = 0;
+            using (new UndoScope("Hide Sub-Assets"))
+            {
+                foreach (var asset in assets)
+                {
+                    if (asset == null) continue;
+                    Undo.RegisterCompleteObjectUndo(asset, "Hide Sub-Assets");
+                    asset.hideFlags |= HideFlags.HideInHierarchy;
+                    EditorUtility.SetDirty(asset);
+                    hidden++;
+                }
+            }
+            if (hidden > 0)
+            {
+                EditorUtility.SetDirty(controller);
+                AssetDatabase.SaveAssets();
+                // The Project window lists sub-assets from the imported artifact, not from the
+                // objects in memory — without a forced reimport the rows stay on screen even
+                // though the file on disk is already correct.
+                string path = AssetDatabase.GetAssetPath(controller);
+                if (!string.IsNullOrEmpty(path))
+                    AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate);
+            }
+            return hidden;
+        }
+
         /// <summary>Deletes the given sub-assets as one undoable step and saves so the file shrinks.</summary>
         public static int DeleteSubAssets(AnimatorController controller, IEnumerable<Object> assets)
         {

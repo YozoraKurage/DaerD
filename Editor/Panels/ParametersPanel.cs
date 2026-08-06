@@ -49,6 +49,22 @@ namespace Yozolab.DaerD
             _store = null;
         }
 
+        /// <summary>
+        /// Toolbar row: Add plus the filter box. Lives outside the scroll view so a long
+        /// parameter list can't push it off screen. Add is pinned to the LEFT so a narrow
+        /// panel clips the search field, not the button.
+        /// </summary>
+        protected override void DrawPinnedHeader()
+        {
+            if (Context?.Controller == null) return;
+            EditorGUILayout.BeginHorizontal();
+            if (GUILayout.Button(L.Tr("Add"), EditorStyles.toolbarButton, GUILayout.Width(40)))
+                ShowAddMenu();
+            _search = EditorGUILayout.TextField(_search, EditorStyles.toolbarSearchField,
+                GUILayout.MinWidth(0), GUILayout.ExpandWidth(true));
+            EditorGUILayout.EndHorizontal();
+        }
+
         protected override void DrawContent()
         {
             var controller = Context.Controller;
@@ -68,15 +84,6 @@ namespace Yozolab.DaerD
                 foreach (var entry in _store.Read())
                     _exprEntries[entry.name] = entry;
             }
-
-            // Add is pinned to the LEFT so a narrow panel clips the search field, not the
-            // button.
-            EditorGUILayout.BeginHorizontal();
-            if (GUILayout.Button("Add", EditorStyles.toolbarButton, GUILayout.Width(40)))
-                ShowAddMenu();
-            _search = EditorGUILayout.TextField(_search, EditorStyles.toolbarSearchField,
-                GUILayout.MinWidth(0), GUILayout.ExpandWidth(true));
-            EditorGUILayout.EndHorizontal();
 
             DrawVrcBudget();
             EditorGUILayout.Space(2);
