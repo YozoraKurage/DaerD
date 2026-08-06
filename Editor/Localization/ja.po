@@ -1,0 +1,1521 @@
+# Japanese translation for DaerD.
+# msgid is the English source string as it appears in the code (L.Tr("...")).
+# An empty or missing msgstr falls back to the English text.
+msgid ""
+msgstr ""
+"Project-Id-Version: DaerD\n"
+"Language: ja\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+# ---- toolbar ----
+
+msgid "Select Sync"
+msgstr "選択同期"
+
+msgid "Sync the Animation window's clip to the selected State's AnimationClip"
+msgstr "選択した State の AnimationClip を Animation ウィンドウに同期します"
+
+msgid "Preview"
+msgstr "プレビュー"
+
+msgid "Auto-toggle the Animation window's Preview on clip change. Implies Select Sync. Requires a scene GameObject with an Animator running this controller to be selected — Unity's preview can't run without a target."
+msgstr "クリップ切り替え時に Animation ウィンドウの Preview を自動で入れ直します。選択同期も同時に ON になります。このコントローラーを実行する Animator を持つシーン上の GameObject を選択している必要があります。"
+
+msgid "Frame All"
+msgstr "全体表示"
+
+msgid "Analyze"
+msgstr "解析"
+
+msgid "Settings"
+msgstr "設定"
+
+msgid "Search states (name or motion)"
+msgstr "State 検索（名前 / モーション名）"
+
+msgid "No matches."
+msgstr "一致するものがありません。"
+
+msgid "Close tab"
+msgstr "タブを閉じる"
+
+# ---- analyzer categories ----
+
+msgid "Unused Parameter"
+msgstr "未使用パラメーター"
+
+msgid "Invalid Condition"
+msgstr "無効な条件"
+
+msgid "Dead Transition"
+msgstr "発火しない遷移"
+
+msgid "Unreachable State"
+msgstr "到達不能 State"
+
+msgid "Duplicate Name"
+msgstr "名前の重複"
+
+msgid "Terminal States"
+msgstr "行き止まり State"
+
+msgid "WriteDefaults"
+msgstr "Write Defaults 混在"
+
+msgid "Missing Motion"
+msgstr "モーション未設定"
+
+msgid "Empty Layer"
+msgstr "空のレイヤー"
+
+msgid "Layer Weight"
+msgstr "レイヤーウェイト"
+
+msgid "Missing Behaviour"
+msgstr "Behaviour 参照切れ"
+
+msgid "Duplicate Condition"
+msgstr "条件の重複"
+
+msgid "Direct Blend Tree"
+msgstr "Direct Blend Tree"
+
+# ---- analyzer messages ----
+
+msgid "Parameter '{0}' is never referenced."
+msgstr "パラメーター '{0}' はどこからも参照されていません。"
+
+msgid "Condition references missing parameter '{0}'."
+msgstr "条件が存在しないパラメーター '{0}' を参照しています。"
+
+msgid "Mode '{0}' is invalid for {1} parameter '{2}'."
+msgstr "モード '{0}' は {1} 型パラメーター '{2}' に対して無効です。"
+
+msgid "Transition {0} has no conditions and no exit time; it can never fire."
+msgstr "遷移 {0} には条件も Exit Time もないため、発火することがありません。"
+
+msgid "State '{0}' has no incoming transition and is not a default state."
+msgstr "State '{0}' には入ってくる遷移がなく、Default State でもありません。"
+
+msgid "State name '{0}' is used more than once in '{1}'."
+msgstr "State 名 '{0}' が '{1}' 内で複数回使われています。"
+
+msgid "Layer '{0}': once entered, '{1}' can never be left (no outgoing transition or exit)."
+msgstr "レイヤー '{0}': 一度 '{1}' に入ると抜け出せません（外向きの遷移も Exit もありません）。"
+
+msgid "Layer '{0}' mixes Write Defaults ON and OFF across its states."
+msgstr "レイヤー '{0}' の State で Write Defaults の ON と OFF が混在しています。"
+
+msgid "State '{0}' has no motion assigned."
+msgstr "State '{0}' にモーションが設定されていません。"
+
+msgid "State '{0}' has Write Defaults OFF and no motion; animated properties freeze at their last value while it plays."
+msgstr "State '{0}' は Write Defaults が OFF なのにモーションが未設定です。再生中、アニメーション対象のプロパティが直前の値のまま固まります。"
+
+msgid "Blend tree '{0}' in state '{1}' has a child slot with no motion."
+msgstr "State '{1}' の Blend Tree '{0}' にモーション未設定の子スロットがあります。"
+
+msgid "Layer '{0}' contains no states."
+msgstr "レイヤー '{0}' に State がありません。"
+
+msgid "Layer '{0}' has default weight 0; it has no effect until its weight is raised at runtime."
+msgstr "レイヤー '{0}' のデフォルトウェイトが 0 のため、実行時にウェイトを上げるまで効果がありません。"
+
+msgid "State '{0}' has a missing (null) behaviour script."
+msgstr "State '{0}' に参照が壊れた（null の）Behaviour があります。"
+
+msgid "State machine '{0}' has a missing (null) behaviour script."
+msgstr "State Machine '{0}' に参照が壊れた（null の）Behaviour があります。"
+
+msgid "Transition {0} has duplicate conditions."
+msgstr "遷移 {0} に同じ内容の条件が重複しています。"
+
+msgid "State '{0}' plays a Direct blend tree but has Write Defaults OFF."
+msgstr "State '{0}' は Direct Blend Tree を再生しますが、Write Defaults が OFF です。"
+
+msgid "Direct blend tree '{0}' has a child with no weight parameter; that child never plays."
+msgstr "Direct Blend Tree '{0}' にウェイトパラメーター未設定の子があります。その子は再生されません。"
+
+msgid "Direct blend tree '{0}' weights a child with missing parameter '{1}'."
+msgstr "Direct Blend Tree '{0}' の子が、存在しないパラメーター '{1}' をウェイトに使用しています。"
+
+msgid "Weight parameter '{1}' of Direct blend tree '{0}' is not a Float."
+msgstr "Direct Blend Tree '{0}' のウェイトパラメーター '{1}' が Float ではありません。"
+
+# ---- analyzer fixes ----
+
+msgid "Delete"
+msgstr "削除"
+
+msgid "Fix"
+msgstr "修正"
+
+msgid "Fill"
+msgstr "穴埋め"
+
+msgid "Delete this unused parameter"
+msgstr "この未使用パラメーターを削除します"
+
+msgid "Delete this transition"
+msgstr "この遷移を削除します"
+
+msgid "Remove the duplicate conditions"
+msgstr "重複している条件を取り除きます"
+
+msgid "Remove the missing behaviour entries"
+msgstr "参照が壊れた Behaviour エントリを取り除きます"
+
+msgid "Turn Write Defaults ON for this state"
+msgstr "この State の Write Defaults を ON にします"
+
+msgid "Assign this controller's Empty clip"
+msgstr "このコントローラーの Empty クリップを割り当てます"
+
+msgid "Fill the empty child slots with this controller's Empty clip"
+msgstr "モーション未設定の子スロットにこのコントローラーの Empty クリップを割り当てます"
+
+# ---- overview / analysis UI ----
+
+msgid "Controller"
+msgstr "コントローラー"
+
+msgid "Name"
+msgstr "名前"
+
+msgid "Layers"
+msgstr "レイヤー数"
+
+msgid "Parameters"
+msgstr "パラメーター数"
+
+msgid "Write Defaults"
+msgstr "Write Defaults"
+
+msgid "Bulk-set every state. Layers containing only Direct blend trees stay ON."
+msgstr "全 State を一括設定します。Direct Blend Tree のみのレイヤーは ON のまま維持されます。"
+
+msgid "Set All ON"
+msgstr "すべて ON"
+
+msgid "Set All OFF"
+msgstr "すべて OFF"
+
+msgid "Set Write Defaults ON for every state in this controller?"
+msgstr "このコントローラーの全 State の Write Defaults を ON にしますか？"
+
+msgid ""
+"Set Write Defaults OFF for every state?\n"
+"\n"
+"Layers that contain only Direct blend trees are kept ON."
+msgstr ""
+"全 State の Write Defaults を OFF にしますか？\n"
+"\n"
+"Direct Blend Tree のみのレイヤーは ON のまま維持されます。"
+
+msgid "Set ON"
+msgstr "ON にする"
+
+msgid "Set OFF"
+msgstr "OFF にする"
+
+msgid "Cancel"
+msgstr "キャンセル"
+
+msgid "Analyze Controller"
+msgstr "コントローラーを解析"
+
+msgid "Audit this controller for unused parameters, broken conditions, unreachable states and more."
+msgstr "未使用パラメーター・壊れた条件・到達不能 State などをまとめて診断します。"
+
+msgid "No issues found."
+msgstr "問題は見つかりませんでした。"
+
+msgid "DaerD Analyzer"
+msgstr "DaerD 解析"
+
+msgid "Assign an Animator Controller to analyze."
+msgstr "解析する Animator Controller を指定してください。"
+
+msgid "{0} error(s)"
+msgstr "エラー {0} 件"
+
+msgid "{0} warning(s)"
+msgstr "警告 {0} 件"
+
+msgid "{0} info"
+msgstr "情報 {0} 件"
+
+msgid "All {0} issue(s) are hidden by the filter above."
+msgstr "{0} 件すべてが上のフィルターで非表示になっています。"
+
+msgid "Ping"
+msgstr "表示"
+
+msgid "Copy"
+msgstr "コピー"
+
+msgid "Copy the full report to the clipboard"
+msgstr "レポート全文をクリップボードにコピーします"
+
+msgid "Highlight this object in the Project / graph"
+msgstr "対象のオブジェクトを Project / グラフ上でハイライトします"
+
+# ---- clip index / cleanup ----
+
+msgid "Empty Clip"
+msgstr "Empty クリップ"
+
+msgid "Stored with this controller. New states are created with it, and the analyzer's Fill fix assigns it to states with no motion."
+msgstr "このコントローラーと一緒に保存されます。新規 State 作成時に自動で設定され、解析の「穴埋め」修正でモーション未設定の State や Blend Tree の空スロットにも割り当てられます。"
+
+msgid "List Clips"
+msgstr "クリップ一覧"
+
+msgid "DaerD Clips"
+msgstr "DaerD クリップ一覧"
+
+msgid "Assign an Animator Controller to list its animation clips."
+msgstr "クリップを一覧表示する Animator Controller を指定してください。"
+
+msgid "Refresh"
+msgstr "更新"
+
+msgid "List every AnimationClip this controller references and the states that use it."
+msgstr "このコントローラーが参照しているすべての AnimationClip と、それを使っている State を一覧表示します。"
+
+msgid "No clips are referenced by this controller."
+msgstr "このコントローラーが参照しているクリップはありません。"
+
+msgid "{0} clip(s) referenced."
+msgstr "参照クリップ {0} 件。"
+
+msgid "(embedded)"
+msgstr "（内包アセット）"
+
+msgid "Jump"
+msgstr "移動"
+
+msgid "Open the layer and select the state that uses this clip"
+msgstr "このクリップを使っている State を開いて選択します"
+
+msgid "Replace With"
+msgstr "差し替え先"
+
+msgid "Swap every use of this clip in this controller for the picked clip (undoable)"
+msgstr "このコントローラー内でこのクリップを使っている箇所を、指定したクリップにすべて差し替えます（Undo 可）"
+
+msgid "Cleanup"
+msgstr "クリーンアップ"
+
+msgid "Find sub-assets stored in the .controller file that nothing references any more."
+msgstr "もうどこからも参照されていないのに .controller ファイル内に残っているサブアセット（ゴミ）を検出します。"
+
+msgid "Scan For Leftovers"
+msgstr "ゴミを検索"
+
+msgid "Blend trees, clips and states deleted from the graph can survive as invisible sub-assets; find them."
+msgstr "グラフから削除した Blend Tree・クリップ・State は、見えないサブアセットとしてファイル内に残ることがあります。それらを検索します。"
+
+msgid "(unsaved controller — nothing to scan)"
+msgstr "（未保存のコントローラーのため、スキャンできません）"
+
+msgid "No leftover sub-assets found."
+msgstr "未使用のサブアセットは見つかりませんでした。"
+
+msgid "{0} leftover sub-asset(s) in this .controller file."
+msgstr "この .controller ファイルに未使用のサブアセットが {0} 件残っています。"
+
+msgid "Delete All"
+msgstr "すべて削除"
+
+msgid "Delete this leftover sub-asset from the .controller file"
+msgstr "この未使用サブアセットを .controller ファイルから削除します"
+
+msgid ""
+"Delete {0} leftover sub-asset(s) from '{1}'?\n"
+"\n"
+"Nothing in this file references them. This can be undone."
+msgstr ""
+"'{1}' から未使用のサブアセット {0} 件を削除しますか？\n"
+"\n"
+"このファイル内のどこからも参照されていません。この操作は Undo で取り消せます。"
+
+msgid "{0} sub-asset(s) are showing up under this .controller in the Project window. They are in use — hiding them just restores how Unity normally stores them."
+msgstr "この .controller の下に、Project ウィンドウから見えているサブアセットが {0} 件あります。これらは実際に使用中のため削除できませんが、Unity 本来の保存形式（非表示）に戻して隠せます。"
+
+msgid "Hide In Project ({0})"
+msgstr "Project から隠す ({0})"
+
+msgid "Restore the hidden flag on these sub-assets. Nothing is deleted and no reference changes."
+msgstr "これらのサブアセットに非表示フラグを戻します。削除も参照の変更も行いません。"
+
+# ---- AAP smoothing / DBT ----
+
+msgid "This controller has no Float parameters to smooth."
+msgstr "このコントローラーにはスムーズ化できる Float パラメーターがありません。"
+
+msgid "Output Parameter"
+msgstr "出力パラメーター"
+
+msgid "Smoothing Parameter"
+msgstr "スムージング量パラメーター"
+
+msgid "Default Smoothing"
+msgstr "スムージング量の初期値"
+
+msgid "0 = follow instantly; closer to 1 = smoother and slower. Stored as the smoothing parameter's default value."
+msgstr "0 で即追従、1 に近いほど滑らかで遅くなります。スムージング量パラメーターの初期値として保存されます。"
+
+msgid "Range Min"
+msgstr "最小値"
+
+msgid "Range Max"
+msgstr "最大値"
+
+msgid "Target Layer"
+msgstr "追加先レイヤー"
+
+msgid "Create new layer"
+msgstr "新規レイヤーを作成"
+
+msgid "New Layer Name"
+msgstr "新規レイヤー名"
+
+msgid "Create"
+msgstr "作成"
+
+msgid "No controller."
+msgstr "コントローラーがありません。"
+
+msgid "The source must be an existing Float parameter."
+msgstr "元パラメーターには既存の Float パラメーターを指定してください。"
+
+msgid "The output parameter needs a name different from the source."
+msgstr "出力パラメーターには元パラメーターと異なる名前が必要です。"
+
+msgid "A parameter named '{0}' already exists."
+msgstr "パラメーター '{0}' は既に存在します。"
+
+msgid "The smoothing parameter needs its own name."
+msgstr "スムージング量パラメーターには他と重複しない名前が必要です。"
+
+msgid "Parameter '{0}' exists but is not a Float."
+msgstr "パラメーター '{0}' は存在しますが Float ではありません。"
+
+msgid "Range Min must be smaller than Range Max."
+msgstr "最小値は最大値より小さくしてください。"
+
+msgid "The target layer no longer exists."
+msgstr "追加先レイヤーが存在しません。"
+
+msgid "The target layer must be empty or contain only Direct blend tree states."
+msgstr "追加先レイヤーは空か、Direct Blend Tree の State のみで構成されている必要があります。"
+
+msgid "The new layer needs a name."
+msgstr "新規レイヤーの名前を入力してください。"
+
+msgid "Every state in this layer is a Direct blend tree"
+msgstr "このレイヤーの State はすべて Direct Blend Tree です"
+
+msgid "DBT Gadget"
+msgstr "DBT ガジェット"
+
+msgid "Adds a Direct blend tree gadget that computes the picked operation every frame. The generated clips and trees are stored as sub-assets of this controller."
+msgstr "選択した演算を毎フレーム計算する Direct Blend Tree の仕掛けを追加します。生成されるクリップとツリーはこのコントローラーのサブアセットとして保存されます。"
+
+msgid "Operation"
+msgstr "演算"
+
+msgid "Input A"
+msgstr "入力 A"
+
+msgid "Input B"
+msgstr "入力 B"
+
+msgid "Output Min"
+msgstr "出力の最小値"
+
+msgid "Output Max"
+msgstr "出力の最大値"
+
+msgid "Input Min"
+msgstr "入力の最小値"
+
+msgid "Input Max"
+msgstr "入力の最大値"
+
+msgid "Threshold"
+msgstr "しきい値"
+
+msgid "The second input must be an existing Float parameter."
+msgstr "入力 B には既存の Float パラメーターを指定してください。"
+
+msgid "The output parameter needs a name different from the inputs."
+msgstr "出力パラメーターには入力と異なる名前が必要です。"
+
+msgid "Input Min must be smaller than Input Max."
+msgstr "入力の最小値は最大値より小さくしてください。"
+
+msgid "output = lerp(input, output, smoothing) — exponential smoothing recalculated every frame."
+msgstr "output = lerp(入力, 出力, スムージング量)。毎フレーム再計算される指数スムージングです。"
+
+msgid "output = A + B. Positive values only (Direct weights clamp at 0); use Add (Ranged) for signed inputs."
+msgstr "output = A + B。正の値専用です（Direct のウェイトは 0 未満にならないため）。負の値を扱う場合は Add (Ranged) を使用してください。"
+
+msgid "output = A + B over the given range; works with negative values."
+msgstr "指定した範囲で output = A + B を計算します。負の値にも対応します。"
+
+msgid "output = A - B. Positive values only; use Sub (Ranged) for signed inputs."
+msgstr "output = A - B。正の値専用です。負の値を扱う場合は Sub (Ranged) を使用してください。"
+
+msgid "output = A - B over the given range; use a symmetric range (Min = -Max)."
+msgstr "指定した範囲で output = A - B を計算します。範囲は対称（最小値 = -最大値）にしてください。"
+
+msgid "output = A × B via nested Direct trees. Positive values only."
+msgstr "Direct ツリーのネストで output = A × B を計算します。正の値専用です。"
+
+msgid "output = A AND B, for 0/1 inputs."
+msgstr "output = A AND B（0/1 の入力用）。"
+
+msgid "output = A OR B, for 0/1 inputs."
+msgstr "output = A OR B（0/1 の入力用）。"
+
+msgid "output = 1 - input, for 0/1 inputs."
+msgstr "output = 1 - 入力（0/1 の入力用）。"
+
+msgid "output = 1 when the input is at or above the threshold, else 0."
+msgstr "入力がしきい値以上のとき output = 1、未満のとき 0 になります。"
+
+msgid "Linearly remaps the input range to the output range (reversed output ranges invert the slope)."
+msgstr "入力範囲を出力範囲へ線形にリマップします（出力範囲を逆順にすると傾きが反転します）。"
+
+# ---- object toggle wizard ----
+
+msgid "Object Toggle"
+msgstr "オブジェクトトグル"
+
+msgid "Generate ON/OFF clips for picked GameObjects and the layer or Direct blend tree machinery that plays them."
+msgstr "選択した GameObject の ON/OFF クリップと、それを再生するレイヤーまたは Direct Blend Tree の仕掛けを生成します。"
+
+msgid "Creates ON/OFF clips that toggle the listed GameObjects and wires them to a parameter. The clips are saved next to the controller asset."
+msgstr "リストした GameObject を切り替える ON/OFF クリップを作成し、パラメーターに配線します。クリップはコントローラーアセットと同じフォルダに保存されます。"
+
+msgid "Toggle Name"
+msgstr "トグル名"
+
+msgid "Wiring"
+msgstr "配線方式"
+
+msgid "Adds a layer with OFF/ON states and instant transitions driven by a Bool parameter."
+msgstr "OFF/ON の 2 State と Bool パラメーターによる即時遷移を持つレイヤーを追加します。"
+
+msgid "Adds a 1D tree (0 = OFF, 1 = ON) driven by a Float parameter to a Direct blend tree layer — many toggles can share one layer."
+msgstr "Float パラメーターで駆動する 1D ツリー（0 = OFF、1 = ON）を Direct Blend Tree レイヤーに追加します。複数のトグルで 1 レイヤーを共有できます。"
+
+msgid "Parameter"
+msgstr "パラメーター"
+
+msgid "Default ON"
+msgstr "初期状態 ON"
+
+msgid "Stored as the parameter's default value; the layer also starts on the ON state."
+msgstr "パラメーターの初期値として保存されます。レイヤー方式では ON State から開始します。"
+
+msgid "Uses the existing '{0}' parameter."
+msgstr "既存のパラメーター '{0}' を使用します。"
+
+msgid "Parameter '{0}' exists but is a {1} — pick another name or wiring."
+msgstr "パラメーター '{0}' は {1} 型として既に存在します。別の名前か配線方式を選んでください。"
+
+msgid "Target Objects"
+msgstr "対象オブジェクト"
+
+msgid "Path Root"
+msgstr "パスのルート"
+
+msgid "The GameObject holding the Animator; dropped objects get their path relative to it."
+msgstr "Animator を持つ GameObject です。ドロップしたオブジェクトのパスはここからの相対で計算されます。"
+
+msgid "Add Object"
+msgstr "オブジェクト追加"
+
+msgid "Drop a scene GameObject to add it as a target."
+msgstr "シーン上の GameObject をドロップすると対象に追加されます。"
+
+msgid "Add Selection"
+msgstr "選択中を追加"
+
+msgid "Add every GameObject selected in the Hierarchy."
+msgstr "Hierarchy で選択中のすべての GameObject を追加します。"
+
+msgid "Active"
+msgstr "ON で表示"
+
+msgid "Checked: the object is active while the toggle is ON. Unchecked inverts it."
+msgstr "チェック時はトグル ON でオブジェクトが有効になります。外すと反転します。"
+
+msgid "No targets yet. Drop GameObjects above or type hierarchy paths (relative to the Animator root)."
+msgstr "対象がまだありません。上の欄に GameObject をドロップするか、階層パス（Animator ルートからの相対）を入力してください。"
+
+msgid "'{0}' is not a child of the path root '{1}'."
+msgstr "'{0}' はパスのルート '{1}' の子ではありません。"
+
+msgid "The path root itself can't be toggled — animations can't re-enable the object that hosts the Animator."
+msgstr "パスのルート自体はトグルできません。Animator を持つオブジェクトを無効にすると、アニメーションで再有効化できなくなります。"
+
+msgid "Animate GameObject.m_IsActive"
+msgstr "GameObject の有効状態 (m_IsActive) をアニメーションします"
+
+msgid "Animate the Renderer's enabled flag"
+msgstr "Renderer の enabled をアニメーションします"
+
+msgid "Animate the ParticleSystem's enabled flag"
+msgstr "ParticleSystem の enabled をアニメーションします"
+
+msgid "Animate the AudioSource's enabled flag"
+msgstr "AudioSource の enabled をアニメーションします"
+
+msgid "Animate the Light's enabled flag"
+msgstr "Light の enabled をアニメーションします"
+
+msgid "Animate the VRCPhysBone's enabled flag"
+msgstr "VRCPhysBone の enabled をアニメーションします"
+
+msgid "Animate blendshape weights (OFF/ON values per shape)"
+msgstr "ブレンドシェイプのウェイトをアニメーションします（シェイプごとに OFF/ON 値を指定）"
+
+msgid "Off"
+msgstr "Off"
+
+msgid "On"
+msgstr "On"
+
+msgid "No blendshapes"
+msgstr "ブレンドシェイプがありません"
+
+msgid "Target '{0}' has nothing to animate — enable Object or add a component binding."
+msgstr "対象 '{0}' にアニメーションする項目がありません。Object を有効にするか、コンポーネントを追加してください。"
+
+msgid "Target '{0}' has an invalid component binding."
+msgstr "対象 '{0}' のコンポーネント指定が不正です。"
+
+msgid "The toggle needs a name."
+msgstr "トグルの名前を入力してください。"
+
+msgid "The parameter needs a name."
+msgstr "パラメーターの名前を入力してください。"
+
+msgid "Parameter '{0}' exists but is not a Bool."
+msgstr "パラメーター '{0}' は存在しますが Bool ではありません。"
+
+msgid "Add at least one target object."
+msgstr "対象オブジェクトを 1 つ以上追加してください。"
+
+msgid "Every target needs a hierarchy path."
+msgstr "すべての対象に階層パスが必要です。"
+
+msgid "Target path '{0}' is listed more than once."
+msgstr "対象パス '{0}' が重複しています。"
+
+# ---- round-robin sync ----
+
+msgid "Async Sync"
+msgstr "巡回同期"
+
+msgid "Time-multiplex several parameters over a few synced ones (index + value channels) — parameter compression."
+msgstr "少数の同期パラメーター（インデックス + 値チャンネル）に複数のパラメーターを時分割多重します（パラメーター圧縮）。"
+
+msgid "Time-multiplexes the ticked parameters over a few synced parameters (an index plus one value channel per type): a local cycle copies each parameter into its channel in turn, and remote clients decode it back. The targets themselves stay unsynced — values update round-robin, one slot per step."
+msgstr "チェックしたパラメーターを、インデックス + 型ごとの値チャンネルという少数の同期パラメーターに時分割多重します。ローカル側の巡回 State が各パラメーターを順番にチャンネルへコピーし、リモート側がデコードして書き戻します。対象パラメーター自体は非同期のままで、値は 1 ステップにつき 1 スロットずつ巡回更新されます。"
+
+msgid "Applying regenerates the selected layer in place (its states are rebuilt)."
+msgstr "適用すると選択したレイヤーをその場で再生成します（State は作り直されます）。"
+
+msgid "Base Name"
+msgstr "ベース名"
+
+msgid "Index Encoding"
+msgstr "インデックスのエンコード"
+
+msgid "Step Interval (s)"
+msgstr "ステップ間隔（秒）"
+
+msgid "Dwell per slot. VRChat syncs roughly every 0.3 s — shorter steps risk remotes skipping slots."
+msgstr "1 スロットあたりの滞在時間です。VRChat の同期はおおよそ 0.3 秒間隔のため、それより短くするとリモートがスロットを取りこぼす可能性があります。"
+
+msgid "Add Synced Params To Store"
+msgstr "同期パラメーターをストアに追加"
+
+msgid "Add the generated index and channel parameters to the associated parameter store as synced."
+msgstr "生成されるインデックスとチャンネルのパラメーターを、関連付けたパラメーターストアに synced として追加します。"
+
+msgid "Parameters To Multiplex"
+msgstr "多重化するパラメーター"
+
+msgid "This controller has no Float / Int / Bool parameters."
+msgstr "このコントローラーに Float / Int / Bool のパラメーターがありません。"
+
+msgid "Synced cost: {0} bit (direct sync would be {1} bit)"
+msgstr "同期コスト: {0} bit（個別に同期すると {1} bit）"
+
+msgid "Pick at least two parameters to multiplex."
+msgstr "多重化するパラメーターを 2 つ以上選んでください。"
+
+msgid "The step interval must be greater than zero."
+msgstr "ステップ間隔は 0 より大きくしてください。"
+
+msgid "Parameter '{0}' is listed more than once."
+msgstr "パラメーター '{0}' が重複しています。"
+
+msgid "Parameter '{0}' does not exist."
+msgstr "パラメーター '{0}' が存在しません。"
+
+msgid "Triggers can't be multiplexed ('{0}')."
+msgstr "Trigger は多重化できません（'{0}'）。"
+
+msgid "Generated parameter '{0}' collides with a target."
+msgstr "生成されるパラメーター '{0}' が対象パラメーターと衝突します。"
+
+msgid "Parameter '{0}' exists with a different type."
+msgstr "パラメーター '{0}' は別の型で既に存在します。"
+
+msgid "Steps shorter than VRChat's ~0.3 s sync cadence risk remotes skipping slots."
+msgstr "VRChat の同期間隔（約 0.3 秒）より短いステップは、リモートがスロットを取りこぼす可能性があります。"
+
+msgid "The synced Float channel carries -1..1 at 8-bit precision — values outside that range won't survive the trip."
+msgstr "同期 Float チャンネルは -1〜1 を 8bit 精度で運びます。この範囲外の値は正しく伝わりません。"
+
+msgid "Some targets are still synced in the parameter store — unsync them there to actually save bits."
+msgstr "対象パラメーターのいくつかがパラメーターストアで synced のままです。ビットを節約するにはストア側で同期を外してください。"
+
+# ---- network sync ----
+
+msgid "Network Sync"
+msgstr "ネットワーク同期"
+
+msgid "The target layer needs at least two states to sync."
+msgstr "同期するにはレイヤーに 2 つ以上の State が必要です。"
+
+msgid "The sync parameter needs a name."
+msgstr "同期パラメーターの名前を入力してください。"
+
+msgid "The remote state prefix must not be empty."
+msgstr "リモート State の接頭辞を入力してください。"
+
+msgid "Int encoding supports up to 255 states."
+msgstr "Int エンコードは最大 255 State まで対応します。"
+
+msgid "Bool encoding supports up to 8 bits (256 states)."
+msgstr "Bool エンコードは最大 8 bit（256 State）まで対応します。"
+
+msgid "Parameter '{0}' exists but is not an Int."
+msgstr "パラメーター '{0}' は存在しますが Int ではありません。"
+
+msgid "VRChat SDK not found — the Parameter Driver behaviour is required."
+msgstr "VRChat SDK が見つかりません。Parameter Driver ビヘイビアが必要です。"
+
+msgid "Some states already carry the remote prefix — this layer may already be synced."
+msgstr "リモート接頭辞の付いた State が既にあります。このレイヤーは同期済みかもしれません。"
+
+msgid "Sub-state machines are not mirrored; only root-level states are synced."
+msgstr "Sub-State Machine はミラーされません。同期対象はルート直下の State のみです。"
+
+msgid "The existing parameter '{0}' will be reused."
+msgstr "既存のパラメーター '{0}' を再利用します。"
+
+# ---- VRC expression parameters ----
+
+msgid "VRC Parameters"
+msgstr "VRC パラメーター"
+
+msgid "Sync"
+msgstr "同期"
+
+msgid "Network synced (costs bits)"
+msgstr "ネットワーク同期（bit を消費）"
+
+msgid "Saved between worlds"
+msgstr "ワールド間で保存"
+
+msgid "Add to the VRC expression parameters asset"
+msgstr "VRC Expression Parameters アセットに追加します"
+
+msgid "Rename Parameter Family"
+msgstr "パラメーターファミリーのリネーム"
+
+msgid "{0} sibling parameter(s) share this PhysBone/Contact prefix. Rename them to match?"
+msgstr "同じ PhysBone/Contact プレフィックスを持つパラメーターが {0} 件あります。まとめてリネームしますか？"
+
+msgid "Rename All"
+msgstr "すべてリネーム"
+
+msgid "Only This One"
+msgstr "これだけ"
+
+msgid "Add ({0})"
+msgstr "追加 ({0})"
+
+msgid "Remove ({0})"
+msgstr "削除 ({0})"
+
+msgid "Already in sync — applying only reorders entries."
+msgstr "既に同期済みです。適用すると並び順のみ整列されます。"
+
+msgid "Apply"
+msgstr "適用"
+
+msgid "Expression parameters use {0} of {1} synced bits."
+msgstr "Expression Parameters が同期ビットを {0} / {1} 使用しています。"
+
+msgid "Expression parameter '{0}' has no matching controller parameter."
+msgstr "Expression パラメーター '{0}' に対応するコントローラーのパラメーターがありません。"
+
+msgid "Expression parameter '{0}' is {1} while the controller parameter is {2} — VRChat converts between them (parameter mismatching); make sure it's intentional."
+msgstr "Expression パラメーター '{0}' は {1} 型、コントローラー側は {2} 型です。VRChat が相互変換するため動作します（パラメーターミスマッチング）。意図した組み合わせか確認してください。"
+
+# ---- VRC behaviours ----
+
+msgid "Paste"
+msgstr "貼り付け"
+
+msgid "Copy every behaviour on this state; paste from a state's right-click menu or here."
+msgstr "この State の全 Behaviour をコピーします。State の右クリックメニューかここから貼り付けできます。"
+
+msgid "Copy the selected behaviours; paste from a state's right-click menu or here."
+msgstr "選択中の Behaviour をコピーします。State の右クリックメニューかここから貼り付けできます。"
+
+msgid "Append the copied behaviours to this state."
+msgstr "コピーした Behaviour をこの State に追加します。"
+
+msgid "Click a title to select (Ctrl / Shift for multi-select); Ctrl+C / Ctrl+V copies and pastes the selected behaviours."
+msgstr "タイトルをクリックで選択（Ctrl / Shift で複数選択）。選択中は Ctrl+C / Ctrl+V で Behaviour をコピー / 貼り付けします。"
+
+msgid "Copy one instance of every behaviour found on the selected states."
+msgstr "選択中の State にある Behaviour を種類ごとに 1 つコピーします。"
+
+msgid "Append the copied behaviours to every selected state."
+msgstr "コピーした Behaviour を選択中の全 State に追加します。"
+
+msgid "None of the selected states have behaviours."
+msgstr "選択中の State に Behaviour はありません。"
+
+msgid "Edits apply to every selected state that has the behaviour. Click a title to select (Ctrl / Shift for multi-select); Ctrl+C / Ctrl+V copies and pastes."
+msgstr "編集内容は、その Behaviour を持つ選択中の全 State に適用されます。タイトルをクリックで選択（Ctrl / Shift で複数選択）、Ctrl+C / Ctrl+V でコピー / 貼り付け。"
+
+msgid "Copy this behaviour onto the selected states that don't have it."
+msgstr "この Behaviour を、持っていない選択中の State にコピーします。"
+
+msgid "Remove All"
+msgstr "全削除"
+
+msgid "Remove this behaviour from every selected state that has it."
+msgstr "この Behaviour を、持っている選択中の全 State から削除します。"
+
+msgid "Values differ between states — the first state's values are shown, and editing applies them to all."
+msgstr "State 間で値が異なります。表示は最初の State の値で、編集すると全 State に適用されます。"
+
+msgid "Enable"
+msgstr "有効"
+
+msgid "Disable"
+msgstr "無効"
+
+msgid "Enter"
+msgstr "Enter"
+
+msgid "Exit"
+msgstr "Exit"
+
+msgid "Fixed Delay"
+msgstr "固定遅延"
+
+msgid "On: the delay is in seconds. Off: normalized time of the state."
+msgstr "ON: 遅延を秒で解釈します。OFF: State の正規化時間で解釈します。"
+
+msgid "Goal Weight"
+msgstr "目標ウェイト"
+
+msgid "Resolve From AudioSource"
+msgstr "AudioSource から解決"
+
+msgid "Drop the avatar's AudioSource to fill the source path."
+msgstr "アバターの AudioSource をドロップするとソースパスが入力されます。"
+
+# ---- VRC expressions menu ----
+
+msgid "DaerD Menu"
+msgstr "DaerD メニュー"
+
+msgid "Expressions Menu"
+msgstr "Expressions メニュー"
+
+msgid "Edit the avatar's VRC Expressions Menu (auto-detected from the scene)."
+msgstr "アバターの VRC Expressions Menu を編集します（シーンから自動検出）。"
+
+msgid "Assign a VRC Expressions Menu asset (auto-detected from the scene avatar when possible)."
+msgstr "VRC Expressions Menu アセットを指定してください（可能な場合はシーンのアバターから自動検出されます）。"
+
+msgid "That asset is not a VRC Expressions Menu."
+msgstr "そのアセットは VRC Expressions Menu ではありません。"
+
+msgid "Open"
+msgstr "開く"
+
+msgid "Edit this submenu"
+msgstr "このサブメニューを編集します"
+
+msgid "Icon"
+msgstr "アイコン"
+
+msgid "Type"
+msgstr "種類"
+
+msgid "Sub Menu"
+msgstr "サブメニュー"
+
+msgid "Value"
+msgstr "値"
+
+msgid "Rotation"
+msgstr "回転"
+
+msgid "Horizontal"
+msgstr "水平"
+
+msgid "Vertical"
+msgstr "垂直"
+
+msgid "Label {0}"
+msgstr "ラベル {0}"
+
+msgid "No matching parameters"
+msgstr "該当するパラメーターがありません"
+
+msgid "Parameter '{0}' is not in the controller."
+msgstr "パラメーター '{0}' はコントローラーに存在しません。"
+
+msgid "Puppet parameters must be Float; '{0}' is {1}."
+msgstr "Puppet のパラメーターは Float である必要があります。'{0}' は {1} 型です。"
+
+# ---- layer clipboard / templates ----
+
+msgid "With templates saved (or a copied layer), this opens a menu. Use '.' in a template's asset name to nest it into submenus."
+msgstr "テンプレートを保存済み（またはレイヤーをコピー済み）の場合はメニューが開きます。テンプレートのアセット名に '.' を入れるとサブメニューに整理されます。"
+
+msgid "New Layer"
+msgstr "新規レイヤー"
+
+msgid "Paste Layer '{0}'"
+msgstr "レイヤー '{0}' を貼り付け"
+
+msgid "Delete Template"
+msgstr "テンプレートを削除"
+
+msgid ""
+"Delete layer template '{0}'?\n"
+"\n"
+"{1}"
+msgstr ""
+"レイヤーテンプレート '{0}' を削除しますか？\n"
+"\n"
+"{1}"
+
+msgid "Copy Layer"
+msgstr "レイヤーをコピー"
+
+msgid "Copy this layer (states, behaviours, frames) — paste it into any open controller from '+ Add Layer'."
+msgstr "このレイヤー（State・Behaviour・Frame）をコピーします。開いている任意のコントローラーの「+ Add Layer」から貼り付けできます。"
+
+msgid "Paste Settings"
+msgstr "設定を貼り付け"
+
+msgid "Apply only the copied layer's settings (weight, blending, mask, IK) to this layer."
+msgstr "コピーしたレイヤーの設定（ウェイト・ブレンド・マスク・IK）のみをこのレイヤーに適用します。"
+
+msgid "Save as Template"
+msgstr "テンプレートとして保存"
+
+msgid "Save this layer (with its parameters) as a reusable template asset."
+msgstr "このレイヤーを（使用パラメーター込みで）再利用可能なテンプレートアセットとして保存します。"
+
+msgid "Save Layer Template"
+msgstr "レイヤーテンプレートを保存"
+
+msgid "Use '.' in the file name to nest the template into submenus."
+msgstr "ファイル名に '.' を入れるとサブメニューに整理されます。"
+
+msgid "Import Template"
+msgstr "テンプレートをインポート"
+
+msgid "Wire each template parameter to an existing parameter or create it under a new name."
+msgstr "テンプレートの各パラメーターを既存パラメーターに割り当てるか、新しい名前で作成します。"
+
+msgid "Create new"
+msgstr "新規作成"
+
+msgid "Import"
+msgstr "インポート"
+
+msgid "Paste States ({0})"
+msgstr "State を貼り付け ({0})"
+
+msgid "Paste the states copied in the graph into this layer, at the positions they were copied from."
+msgstr "グラフでコピーした State を、コピー元と同じ位置でこのレイヤーに貼り付けます。"
+
+# ---- transitions ----
+
+msgid "Transition"
+msgstr "Transition"
+
+msgid "Transitions"
+msgstr "Transition"
+
+msgid "No transitions to edit."
+msgstr "編集する Transition がありません。"
+
+msgid "Default-state link. Set a different default state from a state's context menu."
+msgstr "Default State への接続です。別の State を既定にするには、その State の右クリックメニューから設定してください。"
+
+msgid "Solo"
+msgstr "Solo"
+
+msgid "Mute"
+msgstr "Mute"
+
+msgid "+ Add Transition"
+msgstr "+ Transition を追加"
+
+msgid "Select All"
+msgstr "全選択"
+
+msgid "(Entry / state-machine transition — no timing settings.)"
+msgstr "（Entry / State Machine 遷移のためタイミング設定はありません）"
+
+msgid "Has Exit Time"
+msgstr "Exit Time あり"
+
+msgid "Exit Time"
+msgstr "Exit Time"
+
+msgid "Fixed Duration"
+msgstr "固定時間"
+
+msgid "Duration"
+msgstr "遷移時間"
+
+msgid "Offset"
+msgstr "オフセット"
+
+msgid "Interruption"
+msgstr "割り込み"
+
+msgid "Ordered Interruption"
+msgstr "順序付き割り込み"
+
+msgid "Can Transition To Self"
+msgstr "自身への遷移を許可"
+
+msgid "Conditions"
+msgstr "条件"
+
+msgid "+ Add Condition"
+msgstr "+ 条件を追加"
+
+msgid "Add parameters before building conditions."
+msgstr "条件を作る前にパラメーターを追加してください。"
+
+msgid "Add parameters before editing conditions."
+msgstr "条件を編集する前にパラメーターを追加してください。"
+
+msgid "(set)"
+msgstr "(セット)"
+
+msgid "Greater"
+msgstr "より大"
+
+msgid "Less"
+msgstr "より小"
+
+msgid "Equals"
+msgstr "＝"
+
+msgid "NotEqual"
+msgstr "≠"
+
+msgid "{0} transitions selected"
+msgstr "{0} 件の Transition を選択中"
+
+msgid "Paste Copied Transition Onto All {0} Selected"
+msgstr "コピーした Transition を選択中の {0} 件すべてに貼り付け"
+
+msgid "Common Settings (applied to all selected)"
+msgstr "共通設定（選択中のすべてに適用）"
+
+msgid "Shared Conditions"
+msgstr "共通の条件"
+
+msgid "(the selected transitions have no conditions)"
+msgstr "（選択中の Transition に条件はありません）"
+
+msgid "Add The Same Condition To Every Selected Transition"
+msgstr "選択中の全 Transition に同じ条件を追加"
+
+msgid "Add"
+msgstr "追加"
+
+# ---- transition menus (graph) ----
+
+msgid "Select Transitions"
+msgstr "Transition を選択"
+
+msgid "Incoming"
+msgstr "入力"
+
+msgid "Outgoing"
+msgstr "出力"
+
+msgid "All Connected"
+msgstr "接続すべて"
+
+msgid "Paste Transition"
+msgstr "Transition を貼り付け"
+
+msgid "This State → Original Destinations"
+msgstr "この State → コピー元の遷移先"
+
+msgid "Original Sources → This State"
+msgstr "コピー元の遷移元 → この State"
+
+msgid "Disconnect All"
+msgstr "接続をすべて解除"
+
+msgid "Connect States"
+msgstr "State を接続"
+
+
+
+
+
+
+
+
+
+msgid "Reverse Transition"
+msgstr "Transition を反転"
+
+msgid "Redirect Transition"
+msgstr "遷移先を変更"
+
+msgid "Replicate Transition"
+msgstr "Transition を複製"
+
+msgid "Copy Transition"
+msgstr "Transition をコピー"
+
+# ---- clip remapper ----
+
+msgid "Clip Bindings"
+msgstr "クリップバインディング"
+
+msgid "Clip '{0}' has {1} binding(s) whose path no longer exists under '{2}'."
+msgstr "クリップ '{0}' に、'{2}' 配下に存在しないパスのバインディングが {1} 件あります。"
+
+msgid "DaerD Remap"
+msgstr "DaerD リパス"
+
+msgid "Remap"
+msgstr "リパス"
+
+msgid "Fix clip bindings whose hierarchy paths broke (renames / moves)."
+msgstr "リネームや移動で壊れたクリップのバインディングパスを修復します。"
+
+msgid "Assign the controller and the avatar (the GameObject with the Animator) to scan for broken animation paths."
+msgstr "コントローラーとアバター（Animator の付いた GameObject）を指定すると、壊れたアニメーションパスをスキャンできます。"
+
+msgid "Scan For Broken Paths"
+msgstr "壊れたパスをスキャン"
+
+msgid "Auto-Repath"
+msgstr "自動リパス"
+
+msgid "While this window is open, follow renames and moves under the avatar and rewrite the bindings that were valid when this was enabled."
+msgstr "このウィンドウを開いている間、アバター配下のリネーム・移動を追跡し、有効化時点で正しかったバインディングを自動で書き換えます。"
+
+msgid "From"
+msgstr "変更前"
+
+msgid "To"
+msgstr "変更後"
+
+msgid "Only clips selected in the Project window"
+msgstr "Project ウィンドウで選択中のクリップのみ"
+
+msgid "Off: every clip this controller references."
+msgstr "OFF: このコントローラーが参照するすべてのクリップが対象です。"
+
+msgid "Rewrite Paths"
+msgstr "パスを書き換え"
+
+msgid "{0} binding(s) rewritten."
+msgstr "{0} 件のバインディングを書き換えました。"
+
+msgid "No broken bindings found."
+msgstr "壊れたバインディングは見つかりませんでした。"
+
+msgid "{0} broken binding(s) — click a path to fill From:"
+msgstr "壊れたバインディング {0} 件。パスをクリックすると「変更前」に入力されます:"
+
+msgid "Auto-Repath rewrote {0} binding(s)."
+msgstr "自動リパスが {0} 件のバインディングを書き換えました。"
+
+# ---- blend tree templates / remap ----
+
+msgid "Remap Parameters"
+msgstr "パラメーターをリマップ"
+
+msgid "This subtree references no parameters."
+msgstr "このサブツリーはパラメーターを参照していません。"
+
+msgid "Pick a replacement for each parameter this subtree uses. 'Keep' leaves it unchanged."
+msgstr "このサブツリーが使用する各パラメーターの置き換え先を選びます。「維持」はそのまま残します。"
+
+msgid "Keep"
+msgstr "維持"
+
+msgid "Save Blend Tree Template"
+msgstr "Blend Tree テンプレートを保存"
+
+msgid ""
+"Delete blend tree template '{0}'?\n"
+"\n"
+"{1}"
+msgstr ""
+"Blend Tree テンプレート '{0}' を削除しますか？\n"
+"\n"
+"{1}"
+
+# ---- parameter QoL ----
+
+msgid "Driven by an animation clip (Animator-Animated Parameter)"
+msgstr "アニメーションクリップから書き込まれています（AAP）"
+
+msgid "Delete and Clean"
+msgstr "削除してクリーン"
+
+msgid "Delete '{0}' and remove every condition and driver entry that references it?"
+msgstr "'{0}' を削除し、これを参照するすべての条件と Driver エントリを取り除きますか？"
+
+# ---- parameter store (VRC / MA) ----
+
+msgid "Params"
+msgstr "パラメーター"
+
+msgid "The parameter store this controller belongs to: a VRC Expression Parameters asset, or a GameObject carrying an MA Parameters component. Assigned explicitly — DaerD never guesses it from the scene."
+msgstr "このコントローラーが属するパラメーターストアです。VRC Expression Parameters アセット、または MA Parameters コンポーネントの付いた GameObject を指定します。明示的な割り当てのみで、DaerD がシーンから勝手に推測することはありません。"
+
+msgid "Parameter Store"
+msgstr "パラメーターストア"
+
+msgid "Assign a VRC Expression Parameters asset or an object with an MA Parameters component."
+msgstr "VRC Expression Parameters アセット、または MA Parameters コンポーネントを持つオブジェクトを指定してください。"
+
+msgid "Detect"
+msgstr "検出"
+
+msgid "Search the scene for an exact match: an avatar running this controller, or an MA Merge Animator referencing it. Nothing is picked up automatically without this button."
+msgstr "シーンから完全一致のみを検索します。このコントローラーを実行するアバター、またはこれを参照する MA Merge Animator が対象です。このボタンを押さない限り自動検出は行われません。"
+
+msgid "No exact match in the scene — no avatar or MA Merge Animator references this controller."
+msgstr "シーンに完全一致がありません。このコントローラーを参照するアバターや MA Merge Animator が見つかりませんでした。"
+
+msgid "{0}: {1} / {2} bit"
+msgstr "{0}: {1} / {2} bit"
+
+msgid "{0}: {1} bit"
+msgstr "{0}: {1} bit"
+
+msgid "Synced bits used by this store (Bool = 1, Int / Float = 8). MA components contribute to the avatar's total, so no capacity is shown."
+msgstr "このストアが使用中の同期ビット数です（Bool = 1、Int / Float = 8）。MA コンポーネントはアバター全体の予算に合算されるため、上限は表示されません。"
+
+msgid "Align the parameter store to this controller's parameter list (with a diff preview)."
+msgstr "パラメーターストアをこのコントローラーのパラメーター一覧に合わせます（差分プレビュー付き）。"
+
+msgid "Sync Parameters"
+msgstr "パラメーター同期"
+
+msgid "Aligns the parameter store to this controller's parameter list. Unchecked rows are left untouched."
+msgstr "パラメーターストアをコントローラーのパラメーター一覧に整列します。チェックを外した行は変更されません。"
+
+msgid "Search the scene for an avatar whose playable layers run this controller (exact match only)."
+msgstr "このコントローラーを Playable レイヤーで実行しているアバターをシーンから検索します（完全一致のみ）。"
+
+msgid "No exact match in the scene — no avatar runs this controller."
+msgstr "シーンに完全一致がありません。このコントローラーを実行しているアバターが見つかりませんでした。"
+
+# ---- settings ----
+
+msgid "Language"
+msgstr "言語 (Language)"
+
+msgid "Auto (System Language)"
+msgstr "自動（システム言語）"
+
+msgid "Display language for daerD windows and analysis results."
+msgstr "daerD のウィンドウと解析結果の表示言語です。"
+
+msgid "New Transition Defaults"
+msgstr "新規 Transition のデフォルト値"
+
+msgid "Apply To New Transitions"
+msgstr "新規 Transition に適用"
+
+msgid "New State Defaults"
+msgstr "新規 State のデフォルト値"
+
+msgid "Apply To New States"
+msgstr "新規 State に適用"
+
+msgid "Graph Display"
+msgstr "グラフ表示"
+
+msgid "Condition Labels On Edges"
+msgstr "エッジ上の条件ラベル"
+
+msgid "Show a one-line condition summary on transition edges. Takes effect on the next graph rebuild."
+msgstr "遷移エッジに条件の要約を 1 行で表示します。次のグラフ再構築時に反映されます。"
+
+msgid "State Badges (WD / B)"
+msgstr "State バッジ (WD / B)"
+
+msgid "Mark states with Write Defaults ON and states carrying StateMachineBehaviours."
+msgstr "Write Defaults が ON の State と StateMachineBehaviour を持つ State に印を付けます。"
+
+msgid "Behavior"
+msgstr "動作"
+
+msgid "Intercept .controller Double-Click"
+msgstr ".controller のダブルクリックを引き継ぐ"
+
+msgid "When on, double-clicking an Animator Controller opens this editor instead of Unity's window."
+msgstr "ON にすると、Animator Controller のダブルクリックで Unity 標準の代わりにこのエディタが開きます。"
+
+msgid "Reset To Defaults"
+msgstr "デフォルトに戻す"
+
+# ---- graph menus ----
+
+msgid "Create Node"
+msgstr "ノードを作成"
+
+msgid "State"
+msgstr "State"
+
+msgid "State With Selected Clip"
+msgstr "選択中のクリップで State を作成"
+
+msgid "Blend Tree State"
+msgstr "Blend Tree State"
+
+msgid "Sub-State Machine"
+msgstr "Sub-State Machine"
+
+msgid "Create State"
+msgstr "State を作成"
+
+msgid "Create Blend Tree State"
+msgstr "Blend Tree State を作成"
+
+msgid "Create Sub-State Machine"
+msgstr "Sub-State Machine を作成"
+
+msgid "Copy State(s)"
+msgstr "State をコピー"
+
+msgid "Paste State(s)"
+msgstr "State を貼り付け"
+
+msgid "Duplicate State(s)"
+msgstr "State を複製"
+
+msgid "Create Frame"
+msgstr "Frame を作成"
+
+msgid "Create Frame Around Selection"
+msgstr "選択範囲を囲む Frame を作成"
+
+msgid "Create Note"
+msgstr "Note を作成"
+
+msgid "Paste Frames and Notes"
+msgstr "Frame と Note を貼り付け"
+
+msgid "Paste Frames"
+msgstr "Frame を貼り付け"
+
+msgid "Paste Notes"
+msgstr "Note を貼り付け"
+
+msgid "Paste Frame or Note"
+msgstr "Frame・Note を貼り付け"
+
+
+
+msgid "Set as Default State"
+msgstr "Default State に設定"
+
+msgid "Clip Loop Time"
+msgstr "クリップの Loop Time"
+
+msgid "Align horizontal"
+msgstr "水平に整列"
+
+msgid "Align vertical"
+msgstr "垂直に整列"
+
+msgid "Distribute horizontal"
+msgstr "水平に等間隔"
+
+msgid "Distribute vertical"
+msgstr "垂直に等間隔"
+
+msgid "Behaviours"
+msgstr "Behaviour"
+
+msgid "Copy From This State"
+msgstr "この State からコピー"
+
+msgid "Paste (Append)"
+msgstr "貼り付け（追加）"
+
+msgid "Paste (Replace)"
+msgstr "貼り付け（置換）"
+
+msgid "Rename Frame"
+msgstr "Frame 名を変更"
+
+msgid "Duplicate Frame"
+msgstr "Frame を複製"
+
+msgid "Copy Frame"
+msgstr "Frame をコピー"
+
+msgid "Lock Frame"
+msgstr "Frame をロック"
+
+msgid "Move Nodes With Frame"
+msgstr "Frame と一緒にノードを移動"
+
+msgid "Select Contents"
+msgstr "内容を選択"
+
+msgid "Select States Inside"
+msgstr "内側の State を選択"
+
+msgid "Fit To Contents"
+msgstr "内容に合わせる"
+
+msgid "Frame Color"
+msgstr "Frame の色"
+
+msgid "Delete Frame"
+msgstr "Frame を削除"
+
+msgid "Edit Note"
+msgstr "Note を編集"
+
+msgid "Copy Note"
+msgstr "Note をコピー"
+
+msgid "Note Color"
+msgstr "Note の色"
+
+msgid "Opacity"
+msgstr "不透明度"
+
+msgid "Font Size"
+msgstr "文字サイズ"
+
+msgid "Delete Note"
+msgstr "Note を削除"
+
+msgid "Blue"
+msgstr "青"
+
+msgid "Green"
+msgstr "緑"
+
+msgid "Orange"
+msgstr "オレンジ"
+
+msgid "Purple"
+msgstr "紫"
+
+msgid "Red"
+msgstr "赤"
+
+msgid "Gray"
+msgstr "グレー"
+
+msgid "Yellow"
+msgstr "黄"
+
+msgid "Pink"
+msgstr "ピンク"
+
+msgid "Small"
+msgstr "小"
+
+msgid "Medium"
+msgstr "中"
+
+msgid "Large"
+msgstr "大"
+
+msgid "Copy this frame's box. Open another layer and paste to reuse it there."
+msgstr "この Frame の枠をコピーします。別のレイヤーを開いて貼り付ければ再利用できます。"
+
+msgid "Copy this note. Open another layer and paste to reuse it there."
+msgstr "この Note をコピーします。別のレイヤーを開いて貼り付ければ再利用できます。"
+
+msgid "Paste Into This Layer"
+msgstr "このレイヤーに貼り付け"
+
+msgid "Paste the copied frames / notes into the layer currently open in the graph."
+msgstr "コピーした Frame / Note を、グラフで開いているレイヤーに貼り付けます。"
+
+# ---- connect / grouping menus ----
+
+msgid "Frame & Note"
+msgstr "Frame・Note"
+
+msgid "Layout"
+msgstr "レイアウト"
+
+msgid "Pack Selected States"
+msgstr "選択中の State をまとめる"
+
+msgid "Unpack Into Parent"
+msgstr "親に展開する"
+
+msgid "Chain in click order ({0})"
+msgstr "クリック順に連結 ({0})"
+
+msgid "Using the copied Transition as a template"
+msgstr "コピーした Transition を雛形にする"
+
+msgid "'{0}' → the other {1} selected"
+msgstr "'{0}' → 選択中の他 {1} 個"
+
+msgid "The other {1} selected → '{0}'"
+msgstr "選択中の他 {1} 個 → '{0}'"
+
+msgid "Step 1: mark the selected {0} as sources"
+msgstr "手順1: 選択中の {0} 個を遷移元としてマーク"
+
+msgid "Step 2: marked ({0}) → selected ({1})"
+msgstr "手順2: マーク済み {0} 個 → 選択中 {1} 個"
+
+msgid "Clear the source marks ({0})"
+msgstr "遷移元のマークを解除 ({0})"
