@@ -16,9 +16,11 @@ namespace Yozolab.DaerD
     ///
     /// A slot carries one Bool or Int target, or up to <see cref="Request.floatChannels"/>
     /// Float targets at once — more Float channels mean fewer slots and a shorter cycle,
-    /// at 8 synced bits per extra channel. Targets marked priority are interleaved into
-    /// the cycle every other step, so they refresh fast while the rest share the steps
-    /// in between.
+    /// at 8 synced bits per extra channel. Each target has a sync rate: a ×N slot is
+    /// placed N times per pass, spread as evenly as the other slots allow, so it
+    /// refreshes N times as often as a ×1 slot. Rates sharing a common factor are
+    /// normalized away (all-×2 is the same cycle as all-×1), and a rate the other slots
+    /// can't separate is lowered to what they can.
     ///
     /// Caveats inherent to the technique: values arrive with up to a full pass of latency,
     /// and a remote joining mid-cycle fills in over one pass. The index and the values do
@@ -59,10 +61,14 @@ namespace Yozolab.DaerD
             /// <summary>Synced Float channels (1–8). Each slot carries up to this many Float
             /// targets at once: fewer slots and a shorter cycle, 8 more synced bits each.</summary>
             public int floatChannels = 1;
-            /// <summary>Targets refreshed every other step; the rest share the steps between.
-            /// Names not present in <see cref="targets"/> are ignored, so a stale saved setup
-            /// doesn't block regeneration.</summary>
-            public List<string> priorities = new List<string>();
+            /// <summary>Per-target sync rate (times per pass), 1 when absent. Entries for
+            /// names not present in <see cref="targets"/> are ignored, so a stale saved
+            /// setup doesn't block regeneration.</summary>
+            public Dictionary<string, int> rates = new Dictionary<string, int>();
+
+            public int RateOf(string name) =>
+                rates != null && rates.TryGetValue(name, out int rate)
+                    ? Mathf.Clamp(rate, 1, MaxRate) : 1;
             /// <summary>Layer to create; defaults to the base name.</summary>
             public string layerName;
             /// <summary>Existing async-sync layer to REGENERATE in place (its states are
@@ -83,12 +89,16 @@ namespace Yozolab.DaerD
             internal bool skipDrivers;
         }
 
+        /// <summary>The largest allowed sync rate. Higher never helps: a slot can't be
+        /// separated by fewer other steps than it occupies.</summary>
+        public const int MaxRate = 8;
+
         /// <summary>One step's payload: a single Bool / Int target, or a batch of Floats
         /// sent through the Float channels together.</summary>
         public class Slot
         {
             public readonly List<string> targets = new List<string>();
-            public bool priority;
+            public int rate = 1;
         }
 
         public static string IndexParameter(string baseName) => baseName + "/Index";
@@ -108,9 +118,10 @@ namespace Yozolab.DaerD
         // ---- slots and schedule ----------------------------------------------
 
         /// <summary>
-        /// Groups the targets into slots, in listed order: Bool / Int targets one per slot,
-        /// Float targets batched up to <see cref="Request.floatChannels"/> per slot. Priority
-        /// and regular Floats never share a batch — a batch is revisited as a whole or not
+        /// Groups the targets into slots, in listed order — the order IS the cycle order,
+        /// which is why the wizard lets it be arranged by hand. Bool / Int targets get one
+        /// slot each; Float targets batch up to <see cref="Request.floatChannels"/> per slot,
+        /// but only with Floats of the same rate — a batch is revisited as a whole or not
         /// at all.
         /// </summary>
         public static List<Slot> BuildSlots(Request r)
@@ -119,30 +130,28 @@ namespace Yozolab.DaerD
             if (r?.targets == null || r.controller == null) return slots;
 
             int channels = Mathf.Clamp(r.floatChannels, 1, 8);
-            var priorities = new HashSet<string>(r.priorities ?? new List<string>());
-            Slot openFloats = null, openPriorityFloats = null;
+            var openFloats = new Dictionary<int, Slot>();
 
             foreach (var name in r.targets)
             {
                 var parameter = DbtBuilder.FindParameter(r.controller, name);
                 if (parameter == null) continue;
-                bool priority = priorities.Contains(name);
+                int rate = r.RateOf(name);
 
                 if (parameter.type != AnimatorControllerParameterType.Float)
                 {
-                    var slot = new Slot { priority = priority };
+                    var slot = new Slot { rate = rate };
                     slot.targets.Add(name);
                     slots.Add(slot);
                     continue;
                 }
 
-                var open = priority ? openPriorityFloats : openFloats;
-                if (open == null || open.targets.Count >= channels)
+                if (!openFloats.TryGetValue(rate, out var open)
+                    || open.targets.Count >= channels)
                 {
-                    open = new Slot { priority = priority };
+                    open = new Slot { rate = rate };
                     slots.Add(open);
-                    if (priority) openPriorityFloats = open;
-                    else openFloats = open;
+                    openFloats[rate] = open;
                 }
                 open.targets.Add(name);
             }
@@ -151,37 +160,112 @@ namespace Yozolab.DaerD
 
         /// <summary>
         /// The order the cycle visits the slots, as indices into <see cref="BuildSlots"/>.
-        /// Without priorities (or with nothing BUT priorities) it is the plain round-robin.
-        /// Otherwise priority and regular slots alternate — even steps cycle the priority
-        /// set, odd steps cycle the rest — until both sets are fully covered, so a single
-        /// priority slot refreshes every 2 × (number of priority slots) steps.
+        /// A slot of effective weight w appears w times per pass, at positions spread as
+        /// evenly as rounding allows, so a ×2 slot sits near the opposite ends of the cycle
+        /// rather than twice in a row. Weights are the slot rates after two corrections
+        /// (see <see cref="EffectiveWeights"/>), and the result never places one slot in
+        /// adjacent steps — including across the wrap — because the decoder's Any-State
+        /// transitions have canTransitionToSelf off and would not re-trigger.
         /// </summary>
         public static List<int> BuildSchedule(List<Slot> slots)
         {
             var schedule = new List<int>();
-            if (slots == null) return schedule;
+            if (slots == null || slots.Count == 0) return schedule;
+            if (slots.Count == 1) { schedule.Add(0); return schedule; }
 
-            var priority = new List<int>();
-            var regular = new List<int>();
-            for (int i = 0; i < slots.Count; i++)
-                (slots[i].priority ? priority : regular).Add(i);
+            var weights = EffectiveWeights(slots);
+            int total = 0;
+            foreach (var weight in weights) total += weight;
 
-            if (priority.Count == 0 || regular.Count == 0)
-            {
-                for (int i = 0; i < slots.Count; i++) schedule.Add(i);
-                return schedule;
-            }
+            // Heaviest slots claim their ideal (evenly spaced) positions first; lighter
+            // ones probe forward from theirs. Stable: equal weights keep list order.
+            var order = new List<int>();
+            for (int i = 0; i < slots.Count; i++) order.Add(i);
+            order.Sort((a, b) => weights[b] != weights[a] ? weights[b] - weights[a] : a - b);
 
-            // Alternating two disjoint sets never puts one slot in adjacent steps (including
-            // the wrap) — which the decoder needs: its Any-State transitions have
-            // canTransitionToSelf off, so a repeated index would not re-trigger.
-            int pairs = Mathf.Max(priority.Count, regular.Count);
-            for (int k = 0; k < pairs; k++)
-            {
-                schedule.Add(priority[k % priority.Count]);
-                schedule.Add(regular[k % regular.Count]);
-            }
+            var cells = new int[total];
+            for (int c = 0; c < total; c++) cells[c] = -1;
+            foreach (int slot in order)
+                for (int k = 0; k < weights[slot]; k++)
+                {
+                    int cell = Mathf.RoundToInt(k * total / (float)weights[slot]) % total;
+                    while (cells[cell] >= 0) cell = (cell + 1) % total;
+                    cells[cell] = slot;
+                }
+            schedule.AddRange(cells);
+
+            RepairAdjacency(schedule);
             return schedule;
+        }
+
+        /// <summary>
+        /// Slot rates turned into schedulable weights: divided by their common factor
+        /// (all-×2 is the same cycle as all-×1, just twice the states), then any weight
+        /// larger than the sum of the others is lowered to that sum — with fewer separating
+        /// steps than occurrences, adjacency is unavoidable and the decoder would miss
+        /// the repeats anyway.
+        /// </summary>
+        public static int[] EffectiveWeights(List<Slot> slots)
+        {
+            var weights = new int[slots.Count];
+            for (int i = 0; i < slots.Count; i++)
+                weights[i] = Mathf.Clamp(slots[i].rate, 1, MaxRate);
+
+            int gcd = 0;
+            foreach (var weight in weights) gcd = Gcd(gcd, weight);
+            if (gcd > 1)
+                for (int i = 0; i < weights.Length; i++) weights[i] /= gcd;
+
+            // Capping one weight can change the balance for another; loop to a fixed point.
+            for (bool changed = true; changed;)
+            {
+                changed = false;
+                int total = 0;
+                foreach (var weight in weights) total += weight;
+                for (int i = 0; i < weights.Length; i++)
+                    if (weights[i] > total - weights[i])
+                    {
+                        weights[i] = Mathf.Max(1, total - weights[i]);
+                        changed = true;
+                        break;
+                    }
+            }
+            return weights;
+        }
+
+        static int Gcd(int a, int b) => b == 0 ? a : Gcd(b, a % b);
+
+        /// <summary>Fixes the rare rounding artefact where one slot landed in adjacent cells
+        /// (cyclically): swap the duplicate with any cell that resolves it, or drop it.</summary>
+        static void RepairAdjacency(List<int> schedule)
+        {
+            for (int guard = 0; guard < schedule.Count; guard++)
+            {
+                int bad = -1;
+                for (int i = 0; i < schedule.Count && bad < 0; i++)
+                    if (schedule.Count > 1 && schedule[i] == schedule[(i + 1) % schedule.Count])
+                        bad = (i + 1) % schedule.Count;
+                if (bad < 0) return;
+
+                bool swapped = false;
+                for (int j = 0; j < schedule.Count && !swapped; j++)
+                {
+                    if (schedule[j] == schedule[bad]) continue;
+                    // The swap must fix `bad` without breaking j's own neighbourhood.
+                    int before = (j - 1 + schedule.Count) % schedule.Count;
+                    int after = (j + 1) % schedule.Count;
+                    if (schedule[before] == schedule[bad] || schedule[after] == schedule[bad])
+                        continue;
+                    int badBefore = (bad - 1 + schedule.Count) % schedule.Count;
+                    int badAfter = (bad + 1) % schedule.Count;
+                    if (badBefore != j && schedule[badBefore] == schedule[j]) continue;
+                    if (badAfter != j && schedule[badAfter] == schedule[j]) continue;
+
+                    (schedule[bad], schedule[j]) = (schedule[j], schedule[bad]);
+                    swapped = true;
+                }
+                if (!swapped) schedule.RemoveAt(bad);   // last resort: lose one occurrence
+            }
         }
 
         // ---- resolution and cost ---------------------------------------------
@@ -232,19 +316,29 @@ namespace Yozolab.DaerD
         public static float CycleSeconds(Request r) =>
             r == null ? 0f : BuildSchedule(BuildSlots(r)).Count * r.stepSeconds;
 
-        /// <summary>Seconds between two visits of one priority slot, or 0 when the schedule
-        /// has no priority/regular split.</summary>
-        public static float PriorityIntervalSeconds(Request r)
+        /// <summary>
+        /// Seconds between two syncs of each target, from the actual schedule: pass length ×
+        /// step ÷ occurrences of the target's slot. This is what the wizard shows per row —
+        /// the honest number, after weight normalization and capping.
+        /// </summary>
+        public static Dictionary<string, float> RefreshIntervals(Request r)
         {
-            if (r == null) return 0f;
-            int priority = 0, regular = 0;
-            foreach (var slot in BuildSlots(r))
+            var intervals = new Dictionary<string, float>();
+            if (r == null) return intervals;
+            var slots = BuildSlots(r);
+            var schedule = BuildSchedule(slots);
+            if (schedule.Count == 0) return intervals;
+
+            var occurrences = new int[slots.Count];
+            foreach (var step in schedule) occurrences[step]++;
+            for (int i = 0; i < slots.Count; i++)
             {
-                if (slot.priority) priority++;
-                else regular++;
+                if (occurrences[i] == 0) continue;
+                float interval = schedule.Count * r.stepSeconds / occurrences[i];
+                foreach (var name in slots[i].targets)
+                    intervals[name] = interval;
             }
-            if (priority == 0 || regular == 0) return 0f;
-            return 2f * priority * r.stepSeconds;
+            return intervals;
         }
 
         /// <summary>
@@ -380,8 +474,18 @@ namespace Yozolab.DaerD
                     return L.Tr("'{0}' belongs to the sync machinery and can't be multiplexed.", name);
             }
 
-            if (BuildSlots(r).Count > 255)
+            if (r.rates != null)
+                foreach (var rate in r.rates)
+                    if (rate.Value < 1 || rate.Value > MaxRate)
+                        return L.Tr("Sync rates must be between 1 and {0} ('{1}').", MaxRate, rate.Key);
+
+            int slotCount = BuildSlots(r).Count;
+            if (slotCount > 255)
                 return L.Tr("Int encoding supports up to 255 states.");
+            // With one slot the index never changes, and the decoder — which fires on the
+            // index changing — would copy exactly once and then go deaf.
+            if (slotCount < 2)
+                return L.Tr("Everything fits into a single slot, so the index would never change and remotes would stop decoding. Lower Float Channels or add parameters.");
 
             var isLocal = DbtBuilder.FindParameter(controller, NetworkSyncBuilder.IsLocalParameter);
             if (isLocal != null && isLocal.type != AnimatorControllerParameterType.Bool)
@@ -425,15 +529,28 @@ namespace Yozolab.DaerD
                     "One full pass takes {0:0.#} s ({1} steps × {2:0.##} s), so a remote can be that far behind on any one value.",
                     cycle, BuildSchedule(BuildSlots(r)).Count, r.stepSeconds));
 
-            // Priority on everything degenerates to the plain cycle — the flag only means
-            // something relative to parameters that go without it.
-            if (r.priorities != null && r.priorities.Count > 0)
+            // Say when a rate could not be honored: normalization (common factor) is
+            // intentional and invisible, but a cap changes what the user asked for.
             {
-                bool anyRegular = false;
-                foreach (var name in r.targets)
-                    if (!r.priorities.Contains(name)) { anyRegular = true; break; }
-                if (!anyRegular)
-                    warnings.Add(L.Tr("Every parameter is marked priority, which is the same as no priority at all — the plain cycle is generated."));
+                var slots = BuildSlots(r);
+                var weights = EffectiveWeights(slots);
+                var schedule = BuildSchedule(slots);
+                var occurrences = new int[slots.Count];
+                foreach (var step in schedule) occurrences[step]++;
+
+                int rateGcd = 0;
+                foreach (var slot in slots) rateGcd = Gcd(rateGcd, Mathf.Clamp(slot.rate, 1, MaxRate));
+                for (int i = 0; i < slots.Count; i++)
+                {
+                    int asked = Mathf.Clamp(slots[i].rate, 1, MaxRate) / Mathf.Max(1, rateGcd);
+                    if (occurrences[i] < asked)
+                    {
+                        warnings.Add(L.Tr(
+                            "The ×{0} rate on '{1}' can't be separated by the other slots; it effectively runs at ×{2}. Add parameters or lower the rate.",
+                            slots[i].rate, slots[i].targets[0], Mathf.Max(1, occurrences[i])));
+                        break;
+                    }
+                }
             }
 
             // Expression parameters reach remotes together, so a multiplexed value is only ever
@@ -680,7 +797,7 @@ namespace Yozolab.DaerD
                     stepSeconds = r.stepSeconds,
                     floatChannels = r.floatChannels,
                     targets = new List<string>(r.targets),
-                    priorities = new List<string>(r.priorities ?? new List<string>()),
+                    rates = GraphFrameData.AsyncSyncConfig.ToRateEntries(r.rates),
                 });
 
                 EditorUtility.SetDirty(stateMachine);

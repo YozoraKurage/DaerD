@@ -437,52 +437,101 @@ namespace Yozolab.DaerD.Tests
                 DbtBuilder.FindParameter(controller, "Async/Float2").type);
         }
 
-        // ---- priority scheduling ---------------------------------------------
+        // ---- rate scheduling --------------------------------------------------
 
         [Test]
-        public void BuildSchedule_InterleavesPrioritySlotsEveryOtherStep()
+        public void BuildSchedule_SpreadsARateTwoSlotToOppositeEndsOfThePass()
         {
             var controller = NewController();
             var request = NewRequest(controller, "F", "B", "I");
-            request.priorities.Add("F");
+            request.rates["F"] = 2;
 
             var slots = AsyncSyncBuilder.BuildSlots(request);
             var schedule = AsyncSyncBuilder.BuildSchedule(slots);
 
-            // P = [F], N = [B, I]  →  F B F I.
+            // Weights (2,1,1) over 4 steps: F claims 0 and 2 → F B F I.
             CollectionAssert.AreEqual(new[] { 0, 1, 0, 2 }, schedule);
             for (int i = 0; i < schedule.Count; i++)
                 Assert.AreNotEqual(schedule[i], schedule[(i + 1) % schedule.Count],
                     "no slot may occupy adjacent steps — the decoder would not re-trigger");
 
-            Assert.AreEqual(2f * request.stepSeconds,
-                AsyncSyncBuilder.PriorityIntervalSeconds(request), 0.0001f);
+            var intervals = AsyncSyncBuilder.RefreshIntervals(request);
+            Assert.AreEqual(2f * request.stepSeconds, intervals["F"], 0.0001f);
+            Assert.AreEqual(4f * request.stepSeconds, intervals["B"], 0.0001f);
             Assert.AreEqual(4f * request.stepSeconds, AsyncSyncBuilder.CycleSeconds(request), 0.0001f);
         }
 
         [Test]
-        public void BuildSchedule_AllOrNoPriority_IsThePlainCycle()
+        public void BuildSchedule_HonorsTheTargetOrder_AsTheCycleOrder()
         {
             var controller = NewController();
-            var plain = NewRequest(controller, "F", "B", "I");
-            CollectionAssert.AreEqual(new[] { 0, 1, 2 },
-                AsyncSyncBuilder.BuildSchedule(AsyncSyncBuilder.BuildSlots(plain)));
-            Assert.AreEqual(0f, AsyncSyncBuilder.PriorityIntervalSeconds(plain));
-
-            var all = NewRequest(controller, "F", "B", "I");
-            all.priorities.AddRange(new[] { "F", "B", "I" });
-            CollectionAssert.AreEqual(new[] { 0, 1, 2 },
-                AsyncSyncBuilder.BuildSchedule(AsyncSyncBuilder.BuildSlots(all)));
-            Assert.IsTrue(AsyncSyncBuilder.Warnings(all)
-                .Exists(w => w.Contains("priority")), "priority-on-everything is called out");
+            // Same parameters, different listed order — the cycle follows the list.
+            var schedule = AsyncSyncBuilder.BuildSchedule(
+                AsyncSyncBuilder.BuildSlots(NewRequest(controller, "I", "F", "B")));
+            CollectionAssert.AreEqual(new[] { 0, 1, 2 }, schedule);
+            var slots = AsyncSyncBuilder.BuildSlots(NewRequest(controller, "I", "F", "B"));
+            Assert.AreEqual("I", slots[0].targets[0]);
+            Assert.AreEqual("F", slots[1].targets[0]);
+            Assert.AreEqual("B", slots[2].targets[0]);
         }
 
         [Test]
-        public void Apply_WithPriority_BuildsOneSendStatePerScheduleStep()
+        public void BuildSchedule_NormalizesSharedFactors_AndCapsUnseparableRates()
+        {
+            var controller = NewController();
+            // All ×2 is the same cycle as all ×1 — the common factor drops out.
+            var all = NewRequest(controller, "F", "B", "I");
+            all.rates["F"] = 2; all.rates["B"] = 2; all.rates["I"] = 2;
+            CollectionAssert.AreEqual(new[] { 0, 1, 2 },
+                AsyncSyncBuilder.BuildSchedule(AsyncSyncBuilder.BuildSlots(all)));
+            Assert.IsFalse(AsyncSyncBuilder.Warnings(all)
+                .Exists(w => w.Contains("effectively runs")), "normalization is not a cap");
+
+            // ×4 against a single other slot can never be separated: capped to alternation.
+            var capped = NewRequest(controller, "F", "B");
+            capped.rates["F"] = 4;
+            CollectionAssert.AreEqual(new[] { 0, 1 },
+                AsyncSyncBuilder.BuildSchedule(AsyncSyncBuilder.BuildSlots(capped)));
+            Assert.IsTrue(AsyncSyncBuilder.Warnings(capped)
+                .Exists(w => w.Contains("effectively runs")), "the cap is called out");
+        }
+
+        [Test]
+        public void BuildSchedule_HeavierMixes_StayAdjacencyFree()
+        {
+            var controller = NewController();
+            controller.AddParameter("G", AnimatorControllerParameterType.Float);
+            controller.AddParameter("H", AnimatorControllerParameterType.Bool);
+            var request = NewRequest(controller, "F", "G", "B", "H");
+            request.rates["F"] = 4;   // weights (4,2,1,1): F every other step, G twice
+            request.rates["G"] = 2;
+
+            var slots = AsyncSyncBuilder.BuildSlots(request);
+            var schedule = AsyncSyncBuilder.BuildSchedule(slots);
+
+            Assert.AreEqual(8, schedule.Count);
+            int f = 0, g = 0;
+            for (int i = 0; i < schedule.Count; i++)
+            {
+                Assert.AreNotEqual(schedule[i], schedule[(i + 1) % schedule.Count]);
+                if (schedule[i] == 0) f++;
+                if (schedule[i] == 1) g++;
+            }
+            Assert.AreEqual(4, f);
+            Assert.AreEqual(2, g);
+
+            var intervals = AsyncSyncBuilder.RefreshIntervals(request);
+            Assert.AreEqual(2f * request.stepSeconds, intervals["F"], 0.0001f);
+            Assert.AreEqual(4f * request.stepSeconds, intervals["G"], 0.0001f);
+            Assert.AreEqual(8f * request.stepSeconds, intervals["B"], 0.0001f);
+        }
+
+        [Test]
+        public void Apply_WithARate_BuildsOneSendStatePerScheduleStep()
         {
             var controller = NewController();
             var request = NewRequest(controller, "F", "B", "I");
-            request.priorities.Add("F");
+            request.rates["F"] = 2;
             Assert.IsTrue(AsyncSyncBuilder.Apply(request));
 
             var sm = controller.layers[1].stateMachine;
@@ -495,6 +544,26 @@ namespace Yozolab.DaerD.Tests
             // The ring: Send F → Send B → Send F (2) → Send I → Send F.
             Assert.AreEqual("Send B", first.transitions[0].destinationState.name);
             Assert.AreEqual("Send I", second.transitions[0].destinationState.name);
+        }
+
+        [Test]
+        public void Validate_RejectsOutOfRangeRates_AndSingleSlotSetups()
+        {
+            var controller = NewController();
+            var zero = NewRequest(controller, "F", "B");
+            zero.rates["F"] = 0;
+            Assert.IsNotNull(AsyncSyncBuilder.Validate(zero));
+            zero.rates["F"] = AsyncSyncBuilder.MaxRate + 1;
+            Assert.IsNotNull(AsyncSyncBuilder.Validate(zero));
+
+            // Two floats over two channels collapse into one slot: the index would never
+            // change and remotes would decode exactly once.
+            controller.AddParameter("F2", AnimatorControllerParameterType.Float);
+            var oneSlot = NewRequest(controller, "F", "F2");
+            oneSlot.floatChannels = 2;
+            Assert.IsNotNull(AsyncSyncBuilder.Validate(oneSlot));
+            oneSlot.floatChannels = 1;
+            Assert.IsNull(AsyncSyncBuilder.Validate(oneSlot));
         }
 
         // ---- reserved parameters ---------------------------------------------

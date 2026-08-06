@@ -1585,17 +1585,11 @@ msgstr "Float チャンネル数"
 msgid "Synced Float channels. Each step carries up to this many Float parameters at once — fewer slots and a faster cycle, at 8 synced bits per extra channel."
 msgstr "同期する Float チャンネルの数です。1 ステップで最大この数の Float パラメーターを同時に運びます。スロット数が減って 1 周が速くなる代わりに、チャンネル 1 本ごとに同期 8 bit を消費します。"
 
-msgid "Priority"
-msgstr "優先"
 
-msgid "Refresh this parameter every other step; the parameters without the mark share the steps in between."
-msgstr "このパラメーターを 1 ステップおきに更新します。マークのないパラメーターは、その合間のステップを分け合います。"
 
 msgid "No parameter matches the search."
 msgstr "検索に一致するパラメーターがありません。"
 
-msgid "Priority parameters refresh every {0:0.#} s; the rest wait for the full pass."
-msgstr "優先パラメーターは {0:0.#} 秒ごとに更新されます。残りは 1 周を待ちます。"
 
 msgid "Float channels must be between 1 and 8."
 msgstr "Float チャンネル数は 1〜8 の範囲で指定してください。"
@@ -1603,5 +1597,28 @@ msgstr "Float チャンネル数は 1〜8 の範囲で指定してください�
 msgid "'{0}' belongs to the sync machinery and can't be multiplexed."
 msgstr "'{0}' は同期の仕組み側のパラメーターのため、多重化の対象にできません。"
 
-msgid "Every parameter is marked priority, which is the same as no priority at all — the plain cycle is generated."
-msgstr "すべてのパラメーターが優先指定されています。これは優先なしと同じ意味になり、通常の巡回が生成されます。"
+# ---- async sync (order & rates) ----
+
+msgid "Sync Order & Rates"
+msgstr "同期の順序とレート"
+
+msgid "Tick parameters above — drag them here into the order the cycle should visit them."
+msgstr "上の一覧でパラメーターにチェックを入れると、ここに並びます。巡回する順にドラッグで並べ替えてください。"
+
+msgid "Top to bottom is the cycle order. ×N syncs a parameter N times per pass; everything else shares the steps in between."
+msgstr "上から下が巡回の順序です。×N を指定すると 1 周に N 回同期され、残りのパラメーターはその合間のステップを分け合います。"
+
+msgid "every {0:0.##} s"
+msgstr "{0:0.##} 秒ごと"
+
+msgid "Cycle:"
+msgstr "巡回:"
+
+msgid "Sync rates must be between 1 and {0} ('{1}')."
+msgstr "同期レートは 1〜{0} の範囲で指定してください（'{1}'）。"
+
+msgid "Everything fits into a single slot, so the index would never change and remotes would stop decoding. Lower Float Channels or add parameters."
+msgstr "すべてが 1 スロットに収まってしまうため、インデックスが変化せず、リモート側が最初の 1 回しかデコードしません。Float チャンネル数を下げるか、パラメーターを追加してください。"
+
+msgid "The ×{0} rate on '{1}' can't be separated by the other slots; it effectively runs at ×{2}. Add parameters or lower the rate."
+msgstr "'{1}' の ×{0} レートは他のスロットでは間隔を空けきれず、実効 ×{2} で動作します。パラメーターを追加するか、レートを下げてください。"

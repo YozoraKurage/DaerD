@@ -75,10 +75,46 @@ namespace Yozolab.DaerD
             /// read it through <see cref="FloatChannelsOrDefault"/>.</summary>
             public int floatChannels = 1;
             public List<string> targets = new List<string>();
-            /// <summary>Targets refreshed every other step of the cycle.</summary>
+            /// <summary>Legacy boolean priority marks (data saved before rates existed);
+            /// superseded by <see cref="rates"/>, kept so old setups still load.</summary>
             public List<string> priorities = new List<string>();
+            /// <summary>Per-target sync rates (×1 entries are simply not stored).</summary>
+            public List<SyncRate> rates = new List<SyncRate>();
+
+            [Serializable]
+            public class SyncRate
+            {
+                public string name;
+                public int rate = 1;
+            }
 
             public int FloatChannelsOrDefault => floatChannels < 1 ? 1 : floatChannels;
+
+            /// <summary>Rates as a lookup. Old configs carry boolean priority marks
+            /// instead; those map to ×2 — the closest match to what they used to do.</summary>
+            public Dictionary<string, int> RateMap()
+            {
+                var map = new Dictionary<string, int>();
+                if (rates != null)
+                    foreach (var entry in rates)
+                        if (entry != null && !string.IsNullOrEmpty(entry.name) && entry.rate > 1)
+                            map[entry.name] = entry.rate;
+                if (map.Count == 0 && priorities != null)
+                    foreach (var name in priorities)
+                        if (!string.IsNullOrEmpty(name))
+                            map[name] = 2;
+                return map;
+            }
+
+            public static List<SyncRate> ToRateEntries(Dictionary<string, int> map)
+            {
+                var entries = new List<SyncRate>();
+                if (map != null)
+                    foreach (var pair in map)
+                        if (pair.Value > 1)
+                            entries.Add(new SyncRate { name = pair.Key, rate = pair.Value });
+                return entries;
+            }
         }
 
         public List<AsyncSyncConfig> asyncSyncs = new List<AsyncSyncConfig>();

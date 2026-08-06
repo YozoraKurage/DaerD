@@ -8,10 +8,12 @@ namespace Yozolab.DaerD
 {
     /// <summary>
     /// Wizard for <see cref="AsyncSyncBuilder"/>: tick the parameters to multiplex (with a
-    /// search filter and an optional priority mark per row), pick the Float channel count and
-    /// step interval, and generate the send-cycle / decoder layer. Shows the synced-bit cost
-    /// against syncing each parameter directly. Parameters that belong to sync machinery
-    /// (IsLocal, another setup's generated parameters) are kept out of the list entirely.
+    /// search filter), then arrange them in the Sync Order section — drag rows to set the
+    /// cycle order, give a row a ×N rate to sync it N times per pass, and read the resulting
+    /// refresh interval next to each row, with the whole cycle previewed underneath. Shows
+    /// the synced-bit cost against syncing each parameter directly. Parameters that belong
+    /// to sync machinery (IsLocal, another setup's generated parameters) are kept out of
+    /// the list entirely.
     /// </summary>
     class AsyncSyncWindow : EditorWindow
     {
@@ -20,13 +22,17 @@ namespace Yozolab.DaerD
             public string name;
             public AnimatorControllerParameterType type;
             public bool selected;
-            public bool priority;
+            public int rate = 1;
         }
 
         AnimatorController _controller;
         Action<int> _onApplied;
 
         readonly List<Row> _rows = new List<Row>();
+        /// <summary>Selected rows in multiplex order — this list IS the cycle order.
+        /// Ticking appends, unticking removes, dragging rearranges.</summary>
+        readonly List<Row> _order = new List<Row>();
+        readonly ListReorder _reorder = new ListReorder();
         // Saved setups (persisted in GraphFrameData): picking one prefills the wizard and
         // regenerates that layer in place — same idea as the DBT gadget's layer choice.
         readonly List<GraphFrameData.AsyncSyncConfig> _configs =
@@ -40,7 +46,12 @@ namespace Yozolab.DaerD
         bool _addToStore = true;
         bool _assignEmptyClip = true;
         string _search = string.Empty;
-        Vector2 _scroll;
+        Vector2 _windowScroll;
+        Vector2 _pickScroll;
+
+        // ×1 is "no rate" — the popup only offers meaningful multipliers beyond it.
+        static readonly int[] RateValues = { 1, 2, 3, 4 };
+        static readonly string[] RateLabels = { "×1", "×2", "×3", "×4" };
 
         // Rebuilt per draw so a language switch is picked up. Order matches the enum.
         static string[] EncodingLabels() => new[]
@@ -55,7 +66,7 @@ namespace Yozolab.DaerD
         {
             var window = CreateInstance<AsyncSyncWindow>();
             window.titleContent = new GUIContent(L.Tr("Async Sync"));
-            window.minSize = new Vector2(480, 480);
+            window.minSize = new Vector2(500, 560);
             window._controller = controller;
             window._onApplied = onApplied;
             window._configs.AddRange(GraphFrameData.GetAsyncSyncs(controller));
@@ -71,6 +82,7 @@ namespace Yozolab.DaerD
         void BuildRows()
         {
             _rows.Clear();
+            _order.Clear();
             foreach (var parameter in _controller.parameters)
             {
                 if (parameter.type == AnimatorControllerParameterType.Trigger) continue;
@@ -89,6 +101,8 @@ namespace Yozolab.DaerD
                 Close();
                 return;
             }
+
+            _windowScroll = EditorGUILayout.BeginScrollView(_windowScroll);
 
             EditorGUILayout.LabelField(L.Tr("Async Sync"), EditorStyles.boldLabel);
             EditorGUILayout.HelpBox(
@@ -131,9 +145,12 @@ namespace Yozolab.DaerD
                     _addToStore);
 
             EditorGUILayout.Space(4);
-            DrawTargetList();
+            DrawPickList();
 
             var request = BuildRequest(store);
+            EditorGUILayout.Space(4);
+            DrawOrderSection(request);
+
             DrawPreview(request);
             foreach (var warning in AsyncSyncBuilder.Warnings(request))
                 EditorGUILayout.HelpBox(warning, MessageType.Warning);
@@ -146,24 +163,24 @@ namespace Yozolab.DaerD
             if (GUILayout.Button(L.Tr("Create"), GUILayout.Width(100)))
                 TryApply(request);
             EditorGUILayout.EndHorizontal();
+
+            EditorGUILayout.EndScrollView();
         }
 
-        /// <summary>The tick list with its search filter and the per-row priority mark.</summary>
-        void DrawTargetList()
+        /// <summary>The tick list with its search filter. Ticking appends the parameter to
+        /// the cycle order below; unticking removes it.</summary>
+        void DrawPickList()
         {
-            int selectedCount = 0;
-            foreach (var row in _rows)
-                if (row.selected) selectedCount++;
-
             EditorGUILayout.BeginHorizontal();
             EditorGUILayout.LabelField(
-                L.Tr("Parameters To Multiplex") + " (" + selectedCount + "/" + _rows.Count + ")",
+                L.Tr("Parameters To Multiplex") + " (" + _order.Count + "/" + _rows.Count + ")",
                 EditorStyles.boldLabel);
             _search = EditorGUILayout.TextField(_search, EditorStyles.toolbarSearchField,
                 GUILayout.MinWidth(80), GUILayout.MaxWidth(180));
             EditorGUILayout.EndHorizontal();
 
-            _scroll = EditorGUILayout.BeginScrollView(_scroll, GUILayout.MinHeight(140));
+            _pickScroll = EditorGUILayout.BeginScrollView(_pickScroll, GUILayout.MinHeight(110),
+                GUILayout.MaxHeight(160));
             int visible = 0;
             foreach (var row in _rows)
             {
@@ -171,18 +188,10 @@ namespace Yozolab.DaerD
                     && row.name.IndexOf(_search, StringComparison.OrdinalIgnoreCase) < 0)
                     continue;
                 visible++;
-
-                EditorGUILayout.BeginHorizontal();
-                row.selected = EditorGUILayout.ToggleLeft(
+                bool selected = EditorGUILayout.ToggleLeft(
                     row.name + "  (" + row.type + ")", row.selected);
-                if (row.selected)
-                    row.priority = GUILayout.Toggle(row.priority,
-                        new GUIContent(L.Tr("Priority"),
-                            L.Tr("Refresh this parameter every other step; the parameters without the mark share the steps in between.")),
-                        EditorStyles.miniButton, GUILayout.Width(64));
-                else
-                    row.priority = false;
-                EditorGUILayout.EndHorizontal();
+                if (selected != row.selected)
+                    SetSelected(row, selected);
             }
             if (_rows.Count == 0)
                 EditorGUILayout.HelpBox(L.Tr("This controller has no Float / Int / Bool parameters."),
@@ -191,6 +200,95 @@ namespace Yozolab.DaerD
                 EditorGUILayout.LabelField(L.Tr("No parameter matches the search."),
                     EditorStyles.centeredGreyMiniLabel);
             EditorGUILayout.EndScrollView();
+        }
+
+        void SetSelected(Row row, bool selected)
+        {
+            row.selected = selected;
+            if (selected)
+            {
+                if (!_order.Contains(row)) _order.Add(row);
+            }
+            else
+            {
+                _order.Remove(row);
+                row.rate = 1;
+            }
+        }
+
+        /// <summary>
+        /// The cycle editor: selected parameters in multiplex order. Drag the handle to
+        /// reorder; the ×N popup syncs a row N times per pass; the label on the right is
+        /// the refresh interval the current schedule actually delivers.
+        /// </summary>
+        void DrawOrderSection(AsyncSyncBuilder.Request request)
+        {
+            EditorGUILayout.LabelField(L.Tr("Sync Order & Rates"), EditorStyles.boldLabel);
+            if (_order.Count == 0)
+            {
+                EditorGUILayout.LabelField(
+                    L.Tr("Tick parameters above — drag them here into the order the cycle should visit them."),
+                    EditorStyles.miniLabel);
+                return;
+            }
+            EditorGUILayout.LabelField(
+                L.Tr("Top to bottom is the cycle order. ×N syncs a parameter N times per pass; everything else shares the steps in between."),
+                EditorStyles.miniLabel);
+
+            var intervals = AsyncSyncBuilder.RefreshIntervals(request);
+
+            _reorder.Begin();
+            foreach (var row in _order)
+            {
+                var rowRect = EditorGUILayout.BeginHorizontal();
+                _reorder.DrawHandle();
+
+                EditorGUILayout.LabelField(row.name + "  (" + row.type + ")");
+
+                int rateIndex = Mathf.Max(0, Array.IndexOf(RateValues, row.rate));
+                rateIndex = EditorGUILayout.Popup(rateIndex, RateLabels, GUILayout.Width(48));
+                row.rate = RateValues[rateIndex];
+
+                string interval = intervals.TryGetValue(row.name, out float seconds)
+                    ? L.Tr("every {0:0.##} s", seconds)
+                    : "—";
+                EditorGUILayout.LabelField(interval, EditorStyles.miniLabel, GUILayout.Width(90));
+
+                EditorGUILayout.EndHorizontal();
+                _reorder.Row(rowRect);
+            }
+            _reorder.End((from, to) =>
+            {
+                var moved = _order[from];
+                _order.RemoveAt(from);
+                _order.Insert(to, moved);
+            });
+
+            DrawCyclePreview(request);
+        }
+
+        /// <summary>One line spelling out the pass: "F → B → F → I". Long cycles truncate —
+        /// the point is to see the interleaving, not to read all 60 steps.</summary>
+        void DrawCyclePreview(AsyncSyncBuilder.Request request)
+        {
+            var slots = AsyncSyncBuilder.BuildSlots(request);
+            var schedule = AsyncSyncBuilder.BuildSchedule(slots);
+            if (schedule.Count < 2) return;
+
+            const int maxShown = 24;
+            var labels = new List<string>();
+            for (int i = 0; i < schedule.Count && i < maxShown; i++)
+            {
+                var slot = slots[schedule[i]];
+                labels.Add(slot.targets.Count > 1
+                    ? slot.targets[0] + "+" + (slot.targets.Count - 1)
+                    : slot.targets[0]);
+            }
+            string text = string.Join(" → ", labels);
+            if (schedule.Count > maxShown)
+                text += " → …(" + schedule.Count + ")";
+            var style = new GUIStyle(EditorStyles.miniLabel) { wordWrap = true };
+            EditorGUILayout.LabelField(L.Tr("Cycle:") + "  " + text + "  ⟳", style);
         }
 
         void DrawPreview(AsyncSyncBuilder.Request request)
@@ -223,13 +321,6 @@ namespace Yozolab.DaerD
                 L.Tr("One full pass: {0:0.#} s ({1} steps × {2:0.##} s)",
                     AsyncSyncBuilder.CycleSeconds(request), steps, _stepSeconds),
                 EditorStyles.miniLabel);
-
-            float priorityInterval = AsyncSyncBuilder.PriorityIntervalSeconds(request);
-            if (priorityInterval > 0f)
-                EditorGUILayout.LabelField(
-                    L.Tr("Priority parameters refresh every {0:0.#} s; the rest wait for the full pass.",
-                        priorityInterval),
-                    EditorStyles.miniLabel);
         }
 
         /// <summary>Saved setups double as the layer choice: "create new" or regenerate an
@@ -278,12 +369,25 @@ namespace Yozolab.DaerD
             _encoding = (AsyncSyncBuilder.IndexEncoding)config.encoding;
             _stepSeconds = config.stepSeconds;
             _floatChannels = Mathf.Clamp(config.FloatChannelsOrDefault, 1, 8);
+
+            var rates = config.RateMap();
             foreach (var row in _rows)
             {
-                row.selected = config.targets.Contains(row.name);
-                row.priority = row.selected && config.priorities != null
-                    && config.priorities.Contains(row.name);
+                row.selected = false;
+                row.rate = 1;
             }
+            _order.Clear();
+            // The saved target list is ordered — restoring it restores the cycle order.
+            foreach (var name in config.targets)
+                foreach (var row in _rows)
+                    if (row.name == name)
+                    {
+                        row.selected = true;
+                        if (rates.TryGetValue(name, out int rate))
+                            row.rate = Mathf.Clamp(rate, 1, RateValues[RateValues.Length - 1]);
+                        _order.Add(row);
+                        break;
+                    }
         }
 
         AsyncSyncBuilder.Request BuildRequest(ParameterStore store)
@@ -302,11 +406,10 @@ namespace Yozolab.DaerD
                 layerIndex = _layerChoice > 0 && _layerChoice - 1 < _configs.Count
                     ? LayerIndexOf(_configs[_layerChoice - 1]) : -1,
             };
-            foreach (var row in _rows)
+            foreach (var row in _order)
             {
-                if (!row.selected) continue;
                 request.targets.Add(row.name);
-                if (row.priority) request.priorities.Add(row.name);
+                if (row.rate > 1) request.rates[row.name] = row.rate;
             }
             return request;
         }
