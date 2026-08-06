@@ -26,6 +26,9 @@ namespace Yozolab.DaerD
             Int,
             /// <summary>ceil(log2 N) synced Bools hold the index bits, LSB-first.</summary>
             Bool,
+            /// <summary>Pick whichever costs fewer synced bits for the slot count, preferring
+            /// the atomic Int when they tie. See <see cref="ResolveEncoding"/>.</summary>
+            Auto,
         }
 
         public class Request
@@ -47,6 +50,14 @@ namespace Yozolab.DaerD
             /// <summary>When set, the generated synced parameters are added to this store.</summary>
             public ParameterStore store;
             public bool addToStore = true;
+            /// <summary>Fill the generated states with an Empty clip. Motion-less states work,
+            /// but the analyzer (rightly) flags every one of them and this layer creates 2N+1 of
+            /// them. Ignored when no clip resolves, or when it has zero length — normalized exit
+            /// times need a length to divide by.</summary>
+            public bool assignEmptyClip = true;
+            /// <summary>Clip used by <see cref="assignEmptyClip"/>; defaults to the controller's
+            /// designated Empty clip when left null.</summary>
+            public AnimationClip emptyClip;
             /// <summary>Tests only: build the structure without VRCAvatarParameterDriver.</summary>
             internal bool skipDrivers;
         }
@@ -59,10 +70,52 @@ namespace Yozolab.DaerD
         public static string ChannelParameter(string baseName, AnimatorControllerParameterType type) =>
             baseName + "/" + type;
 
+        /// <summary>
+        /// The encoding a request actually builds with. Auto weighs the two: the Bool index
+        /// costs ceil(log2 N) bits against the Int's flat 8, so it wins for anything under 256
+        /// slots — but the Int is a single synced value, which is worth the tie-break because
+        /// separate Bools can arrive in different packets and decode as a slot nobody sent.
+        /// </summary>
+        public static IndexEncoding ResolveEncoding(Request r)
+        {
+            if (r == null || r.encoding != IndexEncoding.Auto) return r?.encoding ?? IndexEncoding.Int;
+            int slots = Mathf.Max(2, r.targets != null ? r.targets.Count : 0);
+            return NetworkSyncBuilder.BitsRequired(slots) < 8 ? IndexEncoding.Bool : IndexEncoding.Int;
+        }
+
+        /// <summary>
+        /// The clip the generated states will play, or null when they stay motion-less. A
+        /// zero-length clip is refused: exit times are normalized to the motion, so there would
+        /// be nothing to divide the step interval by.
+        /// </summary>
+        public static AnimationClip ResolveEmptyClip(Request r)
+        {
+            if (r == null || !r.assignEmptyClip) return null;
+            var clip = r.emptyClip != null ? r.emptyClip : GraphFrameData.GetEmptyClip(r.controller);
+            return clip != null && clip.length > 0f ? clip : null;
+        }
+
+        /// <summary>Seconds for one full pass over the slots — the worst-case age of a value.</summary>
+        public static float CycleSeconds(Request r) =>
+            r?.targets == null ? 0f : r.targets.Count * r.stepSeconds;
+
+        /// <summary>
+        /// Slots that can still be added without spending another synced bit. The Bool index
+        /// only grows at powers of two, so the tail of each range is free; an Int index has room
+        /// for 255 slots from the start.
+        /// </summary>
+        public static int FreeSlots(Request r)
+        {
+            if (r?.targets == null || ResolveEncoding(r) != IndexEncoding.Bool) return 0;
+            int count = Mathf.Max(2, r.targets.Count);
+            int capacity = 1 << NetworkSyncBuilder.BitsRequired(count);
+            return Mathf.Max(0, capacity - count);
+        }
+
         /// <summary>Synced bits the generated parameters will occupy.</summary>
         public static int CompressedBits(Request r)
         {
-            int bits = r.encoding == IndexEncoding.Int
+            int bits = ResolveEncoding(r) == IndexEncoding.Int
                 ? 8
                 : NetworkSyncBuilder.BitsRequired(Mathf.Max(2, r.targets.Count));
             foreach (var type in ChannelTypes(r))
@@ -147,6 +200,42 @@ namespace Yozolab.DaerD
             var warnings = new List<string>();
             if (r.controller == null || r.targets == null) return warnings;
 
+            // The whole point is spending fewer synced bits; at small counts the index and the
+            // channels can cost as much as the parameters they replace.
+            if (r.targets.Count >= 2)
+            {
+                int compressed = CompressedBits(r);
+                int direct = DirectBits(r);
+                if (compressed >= direct)
+                    warnings.Add(L.Tr(
+                        "At {0} parameters this saves nothing: {1} synced bit(s) compressed against {2} direct. Multiplex more parameters, or leave them synced directly.",
+                        r.targets.Count, compressed, direct));
+            }
+
+            float cycle = CycleSeconds(r);
+            if (cycle > 3f)
+                warnings.Add(L.Tr(
+                    "One full pass takes {0:0.#} s ({1} slots × {2:0.##} s), so a remote can be that far behind on any one value.",
+                    cycle, r.targets.Count, r.stepSeconds));
+
+            if (ResolveEncoding(r) == IndexEncoding.Bool)
+                warnings.Add(L.Tr(
+                    "The Bool index is split across {0} synced parameters; if they arrive in different packets a remote can briefly decode a slot nobody sent. Int keeps the index atomic for 8 bits.",
+                    NetworkSyncBuilder.BitsRequired(Mathf.Max(2, r.targets.Count))));
+
+            if (r.assignEmptyClip)
+            {
+                var clip = r.emptyClip != null ? r.emptyClip : GraphFrameData.GetEmptyClip(r.controller);
+                if (clip == null)
+                    warnings.Add(L.Tr("No Empty clip is set for this controller, so the generated states stay motion-less — the analyzer flags every one of them. Set one in the controller overview to have them filled in."));
+                else if (clip.length <= 0f)
+                    warnings.Add(L.Tr("The Empty clip '{0}' has zero length, so it can't carry the step timing; the generated states stay motion-less.", clip.name));
+            }
+
+            if (r.layerIndex >= 0 && r.layerIndex < r.controller.layers.Length
+                && r.controller.layers[r.layerIndex].defaultWeight <= 0f && r.layerIndex != 0)
+                warnings.Add(L.Tr("The target layer's weight is 0 — the send cycle won't run until it is raised."));
+
             if (r.stepSeconds < 0.3f)
                 warnings.Add(L.Tr("Steps shorter than VRChat's ~0.3 s sync cadence risk remotes skipping slots."));
             foreach (var type in ChannelTypes(r))
@@ -172,7 +261,7 @@ namespace Yozolab.DaerD
         public static List<(string name, AnimatorControllerParameterType type)> GeneratedParameters(Request r)
         {
             var generated = new List<(string, AnimatorControllerParameterType)>();
-            if (r.encoding == IndexEncoding.Int)
+            if (ResolveEncoding(r) == IndexEncoding.Int)
                 generated.Add((IndexParameter(r.baseName), AnimatorControllerParameterType.Int));
             else
             {
@@ -221,8 +310,13 @@ namespace Yozolab.DaerD
                 }
 
                 int count = r.targets.Count;
+                var encoding = ResolveEncoding(r);
+                // Motion for the generated states. Zero-length clips are refused: exit times are
+                // normalized to the motion, so a length of 0 would make them meaningless.
+                var empty = ResolveEmptyClip(r);
+
                 string[] indexBits = null;
-                if (r.encoding == IndexEncoding.Bool)
+                if (encoding == IndexEncoding.Bool)
                 {
                     int bits = NetworkSyncBuilder.BitsRequired(count);
                     indexBits = new string[bits];
@@ -230,9 +324,11 @@ namespace Yozolab.DaerD
                         indexBits[i] = BitParameter(r.baseName, i);
                 }
 
-                // Local side: the cycle. States carry no motion ON PURPOSE — a motion-less
-                // state advances normalized time at one unit per second, which makes the
-                // exit time below read directly as seconds.
+                // Local side: the cycle. A motion-less state advances normalized time at one
+                // unit per second, so its exit time reads directly as seconds; with the Empty
+                // clip filled in, the same dwell has to be expressed in units of that clip.
+                float exitTime = empty != null ? r.stepSeconds / empty.length : r.stepSeconds;
+
                 var sendStates = new List<AnimatorState>(count);
                 for (int i = 0; i < count; i++)
                 {
@@ -240,6 +336,7 @@ namespace Yozolab.DaerD
                         "Send " + DbtBuilder.Sanitize(r.targets[i]),
                         new Vector3(260f, 60f + i * 70f, 0f));
                     state.writeDefaultValues = true;
+                    state.motion = empty;
                     sendStates.Add(state);
 
                     if (r.skipDrivers) continue;
@@ -251,7 +348,7 @@ namespace Yozolab.DaerD
                     // Value first, then the index — remotes react to the index change.
                     VrcParameterDriver.AddCopyEntry(driver, r.targets[i],
                         ChannelParameter(r.baseName, type));
-                    if (r.encoding == IndexEncoding.Int)
+                    if (encoding == IndexEncoding.Int)
                         VrcParameterDriver.AddSetEntry(driver, IndexParameter(r.baseName), i);
                     else
                         for (int bit = 0; bit < indexBits.Length; bit++)
@@ -262,7 +359,7 @@ namespace Yozolab.DaerD
                 {
                     var transition = sendStates[i].AddTransition(sendStates[(i + 1) % count]);
                     transition.hasExitTime = true;
-                    transition.exitTime = r.stepSeconds;   // seconds — the states have no motion
+                    transition.exitTime = exitTime;
                     transition.hasFixedDuration = true;
                     transition.duration = 0f;
                     EditorUtility.SetDirty(transition);
@@ -271,12 +368,14 @@ namespace Yozolab.DaerD
                 // Remote side: Any-State decoder.
                 var idle = stateMachine.AddState("Remote Idle", new Vector3(620f, 60f, 0f));
                 idle.writeDefaultValues = true;
+                idle.motion = empty;
                 for (int i = 0; i < count; i++)
                 {
                     var state = stateMachine.AddState(
                         "Recv " + DbtBuilder.Sanitize(r.targets[i]),
                         new Vector3(620f, 130f + i * 70f, 0f));
                     state.writeDefaultValues = true;
+                    state.motion = empty;
 
                     if (!r.skipDrivers)
                     {
@@ -298,7 +397,7 @@ namespace Yozolab.DaerD
                     transition.duration = 0f;
                     transition.AddCondition(AnimatorConditionMode.IfNot, 0f,
                         NetworkSyncBuilder.IsLocalParameter);
-                    if (r.encoding == IndexEncoding.Int)
+                    if (encoding == IndexEncoding.Int)
                         transition.AddCondition(AnimatorConditionMode.Equals, i, IndexParameter(r.baseName));
                     else
                         for (int bit = 0; bit < indexBits.Length; bit++)

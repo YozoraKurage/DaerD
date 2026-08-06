@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using NUnit.Framework;
+using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
 
@@ -270,6 +271,148 @@ namespace Yozolab.DaerD.Tests
             var bits = NewRequest(controller, "F", "F2", "F3", "F4");
             bits.encoding = AsyncSyncBuilder.IndexEncoding.Bool;
             Assert.AreEqual(10, AsyncSyncBuilder.CompressedBits(bits));   // 2 bits + 8
+        }
+
+        // ---- sizing the setup to the parameter count ------------------------
+
+        [Test]
+        public void ResolveEncoding_Auto_TakesTheCheaperIndex_AndTiesGoToInt()
+        {
+            var controller = NewController();
+            var few = NewRequest(controller, "F", "B", "I");
+            few.encoding = AsyncSyncBuilder.IndexEncoding.Auto;
+            Assert.AreEqual(AsyncSyncBuilder.IndexEncoding.Bool, AsyncSyncBuilder.ResolveEncoding(few),
+                "2 index bits beat a flat 8");
+
+            // At 8 index bits the Bool index costs the same as the Int one, and the Int arrives
+            // as a single synced value — so the tie goes to Int.
+            var many = NewRequest(controller);
+            many.encoding = AsyncSyncBuilder.IndexEncoding.Auto;
+            for (int i = 0; i < 200; i++) many.targets.Add("P" + i);
+            Assert.AreEqual(AsyncSyncBuilder.IndexEncoding.Int, AsyncSyncBuilder.ResolveEncoding(many));
+
+            var explicitInt = NewRequest(controller, "F", "B");
+            Assert.AreEqual(AsyncSyncBuilder.IndexEncoding.Int, AsyncSyncBuilder.ResolveEncoding(explicitInt),
+                "an explicit choice is never overridden");
+        }
+
+        [Test]
+        public void FreeSlots_ReportsTheTailOfTheBoolIndexRange()
+        {
+            var controller = NewController();
+            var three = NewRequest(controller, "F", "B", "I");
+            three.encoding = AsyncSyncBuilder.IndexEncoding.Bool;
+            Assert.AreEqual(1, AsyncSyncBuilder.FreeSlots(three), "2 bits hold 4 slots");
+
+            controller.AddParameter("F2", AnimatorControllerParameterType.Float);
+            var four = NewRequest(controller, "F", "B", "I", "F2");
+            four.encoding = AsyncSyncBuilder.IndexEncoding.Bool;
+            Assert.AreEqual(0, AsyncSyncBuilder.FreeSlots(four), "the next slot needs another bit");
+
+            var asInt = NewRequest(controller, "F", "B", "I");
+            Assert.AreEqual(0, AsyncSyncBuilder.FreeSlots(asInt), "an Int index has room either way");
+        }
+
+        [Test]
+        public void CycleSeconds_IsTheWorstCaseAgeOfAValue()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.stepSeconds = 0.4f;
+            Assert.AreEqual(1.2f, AsyncSyncBuilder.CycleSeconds(request), 0.0001f);
+        }
+
+        [Test]
+        public void Warnings_CallOutASetupThatSavesNothing()
+        {
+            var controller = new AnimatorController();
+            controller.AddLayer("Base");
+            controller.AddParameter("B1", AnimatorControllerParameterType.Bool);
+            controller.AddParameter("B2", AnimatorControllerParameterType.Bool);
+
+            // 2 Bools direct = 2 bits; compressed = 1 index bit + 1 Bool channel = 2.
+            var pointless = NewRequest(controller, "B1", "B2");
+            pointless.encoding = AsyncSyncBuilder.IndexEncoding.Bool;
+            Assert.AreEqual(AsyncSyncBuilder.DirectBits(pointless), AsyncSyncBuilder.CompressedBits(pointless));
+            Assert.IsTrue(AsyncSyncBuilder.Warnings(pointless).Exists(w => w.Contains("saves nothing")));
+
+            controller.AddParameter("F1", AnimatorControllerParameterType.Float);
+            controller.AddParameter("F2", AnimatorControllerParameterType.Float);
+            controller.AddParameter("F3", AnimatorControllerParameterType.Float);
+            var worthwhile = NewRequest(controller, "F1", "F2", "F3");
+            Assert.IsFalse(AsyncSyncBuilder.Warnings(worthwhile).Exists(w => w.Contains("saves nothing")));
+        }
+
+        // ---- Empty clip -----------------------------------------------------
+
+        /// <summary>A clip with an actual length — normalized exit times need one.</summary>
+        static AnimationClip NewEmptyClip(float length)
+        {
+            var clip = new AnimationClip { name = "Empty" };
+            AnimationUtility.SetEditorCurve(clip,
+                EditorCurveBinding.FloatCurve(string.Empty, typeof(GameObject), "m_IsActive"),
+                AnimationCurve.Constant(0f, length, 1f));
+            return clip;
+        }
+
+        [Test]
+        public void Apply_FillsGeneratedStatesWithTheEmptyClip_AndKeepsTheStepInSeconds()
+        {
+            var controller = NewController();
+            var clip = NewEmptyClip(0.5f);
+            var request = NewRequest(controller, "F", "B", "I");
+            request.emptyClip = clip;
+            request.stepSeconds = 0.3f;
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var sm = controller.layers[controller.layers.Length - 1].stateMachine;
+            int filled = 0;
+            foreach (var child in sm.states)
+            {
+                Assert.AreSame(clip, child.state.motion, "state '" + child.state.name + "' has no motion");
+                filled++;
+            }
+            Assert.AreEqual(7, filled, "3 send + 3 recv + idle");
+
+            // Exit time is normalized to the motion, so the dwell has to be divided by its length.
+            var send = FindState(sm, "Send F");
+            Assert.AreEqual(0.3f / 0.5f, send.transitions[0].exitTime, 0.0001f);
+
+            Object.DestroyImmediate(clip);
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void Apply_WithoutAnEmptyClip_LeavesStatesMotionless_SoExitTimeReadsAsSeconds()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.stepSeconds = 0.45f;
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var sm = controller.layers[controller.layers.Length - 1].stateMachine;
+            var send = FindState(sm, "Send F");
+            Assert.IsNull(send.motion);
+            Assert.AreEqual(0.45f, send.transitions[0].exitTime, 0.0001f);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void Apply_IgnoresAZeroLengthEmptyClip()
+        {
+            var controller = NewController();
+            var clip = new AnimationClip { name = "Zero" };
+            var request = NewRequest(controller, "F", "B");
+            request.emptyClip = clip;
+            Assert.IsNull(AsyncSyncBuilder.ResolveEmptyClip(request));
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var sm = controller.layers[controller.layers.Length - 1].stateMachine;
+            Assert.IsNull(FindState(sm, "Send F").motion);
+
+            Object.DestroyImmediate(clip);
+            Object.DestroyImmediate(controller);
         }
     }
 }

@@ -31,12 +31,19 @@ namespace Yozolab.DaerD
         /// <summary>0 = create a new layer; 1.. = _configs[index - 1].</summary>
         int _layerChoice;
         string _baseName = "Async";
-        AsyncSyncBuilder.IndexEncoding _encoding = AsyncSyncBuilder.IndexEncoding.Int;
+        AsyncSyncBuilder.IndexEncoding _encoding = AsyncSyncBuilder.IndexEncoding.Auto;
         float _stepSeconds = 0.3f;
         bool _addToStore = true;
+        bool _assignEmptyClip = true;
         Vector2 _scroll;
 
-        static readonly string[] EncodingLabels = { "Int (8 bit)", "Bool × n (1 bit each)" };
+        // Rebuilt per draw so a language switch is picked up. Order matches the enum.
+        static string[] EncodingLabels() => new[]
+        {
+            L.Tr("Int (8 bit)"),
+            L.Tr("Bool × n (1 bit each)"),
+            L.Tr("Auto (fewest synced bits)"),
+        };
 
         /// <summary>onApplied receives the index of the generated layer.</summary>
         public static void Open(AnimatorController controller, Action<int> onApplied)
@@ -81,11 +88,23 @@ namespace Yozolab.DaerD
             DrawLayerChoice();
             _baseName = EditorGUILayout.TextField(L.Tr("Base Name"), _baseName);
             _encoding = (AsyncSyncBuilder.IndexEncoding)EditorGUILayout.Popup(
-                L.Tr("Index Encoding"), (int)_encoding, EncodingLabels);
+                L.Tr("Index Encoding"), (int)_encoding, EncodingLabels());
             _stepSeconds = EditorGUILayout.FloatField(
                 new GUIContent(L.Tr("Step Interval (s)"),
                     L.Tr("Dwell per slot. VRChat syncs roughly every 0.3 s — shorter steps risk remotes skipping slots.")),
                 _stepSeconds);
+
+            // The generated states are machinery, but Unity (and the analyzer) still want a
+            // motion on them; the controller's Empty clip is exactly what that is for.
+            var emptyClip = GraphFrameData.GetEmptyClip(_controller);
+            using (new EditorGUI.DisabledScope(emptyClip == null))
+                _assignEmptyClip = EditorGUILayout.Toggle(
+                    new GUIContent(
+                        emptyClip != null
+                            ? L.Tr("Fill States With '{0}'", emptyClip.name)
+                            : L.Tr("Fill States With The Empty Clip"),
+                        L.Tr("Assign this controller's Empty clip to the generated states, so they aren't motion-less. Set the clip in the controller overview.")),
+                    emptyClip != null && _assignEmptyClip);
 
             var store = ParameterStore.Of(_controller);
             if (store != null)
@@ -112,6 +131,25 @@ namespace Yozolab.DaerD
                 int compressed = AsyncSyncBuilder.CompressedBits(request);
                 EditorGUILayout.LabelField(
                     L.Tr("Synced cost: {0} bit (direct sync would be {1} bit)", compressed, direct),
+                    EditorStyles.miniLabel);
+
+                if (_encoding == AsyncSyncBuilder.IndexEncoding.Auto)
+                    EditorGUILayout.LabelField(
+                        L.Tr("Auto picked the {0} index for {1} slots.",
+                            AsyncSyncBuilder.ResolveEncoding(request), request.targets.Count),
+                        EditorStyles.miniLabel);
+
+                // The Bool index only grows at powers of two, so the tail of a range is free —
+                // worth saying out loud, since it changes how many parameters to put in.
+                int free = AsyncSyncBuilder.FreeSlots(request);
+                if (free > 0)
+                    EditorGUILayout.LabelField(
+                        L.Tr("{0} more parameter(s) fit in the current index at no extra synced cost.", free),
+                        EditorStyles.miniLabel);
+
+                EditorGUILayout.LabelField(
+                    L.Tr("One full pass: {0:0.#} s ({1} slots × {2:0.##} s)",
+                        AsyncSyncBuilder.CycleSeconds(request), request.targets.Count, _stepSeconds),
                     EditorStyles.miniLabel);
             }
             foreach (var warning in AsyncSyncBuilder.Warnings(request))
@@ -186,6 +224,8 @@ namespace Yozolab.DaerD
                 stepSeconds = _stepSeconds,
                 store = store,
                 addToStore = _addToStore,
+                assignEmptyClip = _assignEmptyClip,
+                emptyClip = GraphFrameData.GetEmptyClip(_controller),
                 layerIndex = _layerChoice > 0 && _layerChoice - 1 < _configs.Count
                     ? LayerIndexOf(_configs[_layerChoice - 1]) : -1,
             };
