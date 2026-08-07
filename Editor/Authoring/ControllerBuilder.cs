@@ -38,7 +38,7 @@ namespace Yozolab.DaerD.Authoring
             { name = name, type = AnimatorControllerParameterType.Float, defaultFloat = defaultValue });
             Script?.Call(this, defaultValue == 0f
                 ? $"Float({RecipeScript.S(name)})"
-                : $"Float({RecipeScript.S(name)}, {RecipeScript.F(defaultValue)})");
+                : $"Float({RecipeScript.S(name)}, {RecipeScript.F(defaultValue)})", chain: false);
             return this;
         }
 
@@ -48,7 +48,7 @@ namespace Yozolab.DaerD.Authoring
             { name = name, type = AnimatorControllerParameterType.Int, defaultInt = defaultValue });
             Script?.Call(this, defaultValue == 0
                 ? $"Int({RecipeScript.S(name)})"
-                : $"Int({RecipeScript.S(name)}, {defaultValue})");
+                : $"Int({RecipeScript.S(name)}, {defaultValue})", chain: false);
             return this;
         }
 
@@ -58,7 +58,7 @@ namespace Yozolab.DaerD.Authoring
             { name = name, type = AnimatorControllerParameterType.Bool, defaultBool = defaultValue });
             Script?.Call(this, defaultValue
                 ? $"Bool({RecipeScript.S(name)}, true)"
-                : $"Bool({RecipeScript.S(name)})");
+                : $"Bool({RecipeScript.S(name)})", chain: false);
             return this;
         }
 
@@ -66,7 +66,7 @@ namespace Yozolab.DaerD.Authoring
         {
             IR.parameters.Add(new ControllerIR.Param
             { name = name, type = AnimatorControllerParameterType.Trigger });
-            Script?.Call(this, $"Trigger({RecipeScript.S(name)})");
+            Script?.Call(this, $"Trigger({RecipeScript.S(name)})", chain: false);
             return this;
         }
 
@@ -229,28 +229,32 @@ namespace Yozolab.DaerD.Authoring
             return transition;
         }
 
-        public void EntryAt(float x, float y)
+        public MachineScope EntryAt(float x, float y)
         {
             Machine.entryPosition = new Vector3(x, y, 0f);
-            Root.Script?.Call(this, $"EntryAt({RecipeScript.F(x)}, {RecipeScript.F(y)})", chain: false);
+            Root.Script?.Call(this, $"EntryAt({RecipeScript.F(x)}, {RecipeScript.F(y)})");
+            return this;
         }
 
-        public void ExitAt(float x, float y)
+        public MachineScope ExitAt(float x, float y)
         {
             Machine.exitPosition = new Vector3(x, y, 0f);
-            Root.Script?.Call(this, $"ExitAt({RecipeScript.F(x)}, {RecipeScript.F(y)})", chain: false);
+            Root.Script?.Call(this, $"ExitAt({RecipeScript.F(x)}, {RecipeScript.F(y)})");
+            return this;
         }
 
-        public void AnyStateAt(float x, float y)
+        public MachineScope AnyStateAt(float x, float y)
         {
             Machine.anyStatePosition = new Vector3(x, y, 0f);
-            Root.Script?.Call(this, $"AnyStateAt({RecipeScript.F(x)}, {RecipeScript.F(y)})", chain: false);
+            Root.Script?.Call(this, $"AnyStateAt({RecipeScript.F(x)}, {RecipeScript.F(y)})");
+            return this;
         }
 
-        public void ParentAt(float x, float y)
+        public MachineScope ParentAt(float x, float y)
         {
             Machine.parentPosition = new Vector3(x, y, 0f);
-            Root.Script?.Call(this, $"ParentAt({RecipeScript.F(x)}, {RecipeScript.F(y)})", chain: false);
+            Root.Script?.Call(this, $"ParentAt({RecipeScript.F(x)}, {RecipeScript.F(y)})");
+            return this;
         }
     }
 

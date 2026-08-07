@@ -1,7 +1,6 @@
 using System.Collections.Generic;
 using System.Text;
 using System.Text.RegularExpressions;
-using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
 
@@ -142,6 +141,10 @@ namespace Yozolab.DaerD.Authoring
 
         static void Drive(ControllerBuilder c, ControllerIR ir, List<string> warnings)
         {
+            // Parameters first, whatever the layer layout — they're the controller-wide
+            // vocabulary, and one per line so a long list stays scannable.
+            if (ir.parameters.Count > 0)
+                c.Script.Comment(Header("Parameters"));
             foreach (var p in ir.parameters)
                 switch (p.type)
                 {
@@ -156,9 +159,14 @@ namespace Yozolab.DaerD.Authoring
                 c.Script.Blank();
                 if (layer.machine == null)
                 {
+                    string source = layer.syncedLayerIndex >= 0
+                        && layer.syncedLayerIndex < ir.layers.Count
+                        ? ir.layers[layer.syncedLayerIndex].name : "?";
+                    c.Script.Comment(Header("Synced Layer: " + layer.name + " (mirrors " + source + ")"));
                     DriveSyncedLayer(c, ir, layer, warnings);
                     continue;
                 }
+                c.Script.Comment(Header("Layer: " + layer.name));
 
                 var lb = c.Layer(layer.name);
                 if (layer.defaultWeight != 1f) lb.Weight(layer.defaultWeight);
@@ -169,8 +177,18 @@ namespace Yozolab.DaerD.Authoring
                 var states = new Dictionary<string, StateBuilder>();
                 var machines = new Dictionary<string, MachineBuilder>();
                 CreateScope(lb, layer.machine, states, machines);
+                // States above, wiring below — the gap is what makes a layer readable.
+                c.Script.Blank();
                 WireScope(lb, layer.machine, states, machines, warnings);
             }
+        }
+
+        /// <summary>"---- text ----…" divider padded to a steady width.</summary>
+        static string Header(string text)
+        {
+            const int width = 72;
+            string lead = "---- " + text + " ";
+            return lead.Length >= width ? lead.TrimEnd() : lead + new string('-', width - lead.Length);
         }
 
         static void DriveSyncedLayer(ControllerBuilder c, ControllerIR ir,
@@ -194,12 +212,6 @@ namespace Yozolab.DaerD.Authoring
         static void CreateScope(MachineScope scope, ControllerIR.Machine machine,
             Dictionary<string, StateBuilder> states, Dictionary<string, MachineBuilder> machines)
         {
-            scope.EntryAt(machine.entryPosition.x, machine.entryPosition.y);
-            scope.ExitAt(machine.exitPosition.x, machine.exitPosition.y);
-            scope.AnyStateAt(machine.anyStatePosition.x, machine.anyStatePosition.y);
-            if (machine.parentPosition != Vector3.zero)
-                scope.ParentAt(machine.parentPosition.x, machine.parentPosition.y);
-
             foreach (var state in machine.states)
             {
                 var sb = scope.State(state.name, state.motionAsset);
@@ -222,6 +234,13 @@ namespace Yozolab.DaerD.Authoring
                 foreach (var behaviour in state.behaviours)
                     DriveBehaviour(sb, behaviour);
             }
+
+            // Node positions last — bookkeeping, not structure; they chain onto one line.
+            scope.EntryAt(machine.entryPosition.x, machine.entryPosition.y);
+            scope.ExitAt(machine.exitPosition.x, machine.exitPosition.y);
+            scope.AnyStateAt(machine.anyStatePosition.x, machine.anyStatePosition.y);
+            if (machine.parentPosition != Vector3.zero)
+                scope.ParentAt(machine.parentPosition.x, machine.parentPosition.y);
 
             foreach (var child in machine.machines)
             {
@@ -462,17 +481,16 @@ namespace Yozolab.DaerD.Authoring
             sb.AppendLine(indent + "public class " + className + " : ControllerRecipe");
             sb.AppendLine(indent + "{");
             foreach (var field in result.fields)
-            {
-                string path = AssetDatabase.GetAssetPath(field.asset);
                 sb.AppendLine(indent + "    [SerializeField] " + field.fieldType + " "
-                    + field.fieldName + ";"
-                    + (string.IsNullOrEmpty(path) ? string.Empty : "   // " + path));
-            }
+                    + field.fieldName + ";");
             if (result.fields.Count > 0) sb.AppendLine();
 
             sb.AppendLine(indent + "    protected override void Build(ControllerBuilder c)");
             sb.AppendLine(indent + "    {");
-            foreach (var line in StripUnusedVariables(script.Lines))
+            var body = StripUnusedVariables(script.Lines);
+            while (body.Count > 0 && body[0].Length == 0) body.RemoveAt(0);
+            while (body.Count > 0 && body[body.Count - 1].Length == 0) body.RemoveAt(body.Count - 1);
+            foreach (var line in body)
                 sb.AppendLine(line.Length == 0 ? string.Empty : indent + "        " + line);
             sb.AppendLine(indent + "    }");
             sb.AppendLine(indent + "}");

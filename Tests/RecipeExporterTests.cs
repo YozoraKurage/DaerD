@@ -98,8 +98,18 @@ namespace Yozolab.DaerD.Tests
             StringAssert.Contains("[SerializeField] AnimationClip clipA;", code);
             StringAssert.Contains("protected override void Build(ControllerBuilder c)", code);
 
+            // Parameters: headed section at the very top, one per line.
+            StringAssert.Contains("// ---- Parameters", code);
             StringAssert.Contains("c.Float(\"Blend\", 0.5f);", code);
+            StringAssert.Contains("c.Bool(\"Go\");", code);
+            StringAssert.Contains("c.Int(\"Unused\");", code);
+
+            // Every layer opens with its own divider.
+            StringAssert.Contains("// ---- Layer: Main ", code);
+            StringAssert.Contains("// ---- Layer: Second ", code);
             StringAssert.Contains("var main = c.Layer(\"Main\");", code);
+            // Node positions collapse to one chained line at the end of the layer's build.
+            StringAssert.Contains(").ExitAt(", code);
             StringAssert.Contains("var a = main.State(\"A\", clipA).At(100f, 50f).Speed(2f).WriteDefaults(false);", code);
             StringAssert.Contains("var second = c.Layer(\"Second\").Weight(0.25f);", code);
 
