@@ -66,9 +66,49 @@ namespace Yozolab.DaerD.Authoring
                     return;
                 }
             }
-            _lines.Add(NameOf(target) + "." + call + ";");
+            string statement = NameOf(target) + "." + call + ";";
+            if (_packing && _lines.Count > 0)
+            {
+                string last = _lines[_lines.Count - 1];
+                if (last.EndsWith(";") && last.Length + statement.Length + 2 <= ChainLineLimit)
+                {
+                    _lines[_lines.Count - 1] = last + "  " + statement;
+                    _chainTarget = chain ? target : null;
+                    return;
+                }
+            }
+            _lines.Add(statement);
             _chainTarget = chain ? target : null;
         }
+
+        bool _packing;
+
+        /// <summary>Between Begin and End, short statements share lines ("a.At(100, 50);
+        /// b.At(100, 150);") — for tabular sections like layout, where one line per
+        /// coordinate would drown the code.</summary>
+        public void BeginPack()
+        {
+            _chainTarget = null;
+            _packing = true;
+        }
+
+        public void EndPack()
+        {
+            _packing = false;
+            _chainTarget = null;
+        }
+
+        /// <summary>Appends a raw statement line — used for the folded foreach emissions,
+        /// where one written line stands for calls that were driven without recording.</summary>
+        public void Statement(string line)
+        {
+            _lines.Add(line);
+            _chainTarget = null;
+        }
+
+        /// <summary>Reserves an identifier (e.g. a loop variable) so later declarations
+        /// can't collide with it.</summary>
+        public string Reserve(string hint) => Unique(Identifier(hint, lowerFirst: true));
 
         public string Declare(object created, string hint, object owner, string call)
         {

@@ -105,16 +105,20 @@ namespace Yozolab.DaerD.Tests
             StringAssert.Contains("var go = c.BoolParameter(\"Go\");", code);
             StringAssert.Contains("c.IntParameter(\"Unused\");", code);
 
-            // Every layer opens with its own divider.
+            // Every layer opens with its own divider and reads in blocks:
+            // states, then "// transitions", then "// layout".
             StringAssert.Contains("// ---- Layer: Main ", code);
             StringAssert.Contains("// ---- Layer: Second ", code);
             StringAssert.Contains("var main = c.Layer(\"Main\");", code);
-            // Node positions collapse to one chained line at the end of the layer's build.
+            StringAssert.Contains("// transitions", code);
+            StringAssert.Contains("// layout", code);
+            // AAC shape, whole numbers as plain ints; positions live in the layout block,
+            // packed several to a line, with the machine nodes chained after them.
+            StringAssert.Contains(
+                "var a = main.NewState(\"A\").WithAnimation(clipA).WithSpeedSetTo(2).WithWriteDefaultsSetTo(false);",
+                code);
+            StringAssert.Contains("a.At(100, 50);  b.At(100, 150);", code);
             StringAssert.Contains(").ExitAt(", code);
-            // AAC shape: NewState + WithAnimation + At, whole numbers as plain ints.
-            StringAssert.Contains("var a = main.NewState(\"A\").WithAnimation(clipA).At(100, 50)", code);
-            StringAssert.Contains(".WithSpeedSetTo(2)", code);
-            StringAssert.Contains(".WithWriteDefaultsSetTo(false)", code);
             StringAssert.Contains("var second = c.Layer(\"Second\").WithWeight(0.25f);", code);
 
             // One-shot transitions collapse to plain fluent statements — no dangling vars.
@@ -131,6 +135,37 @@ namespace Yozolab.DaerD.Tests
             StringAssert.Contains("BehaviourJson(\"IRTestBehaviour\"", code);
             // No GUIDs anywhere — assets are fields.
             StringAssert.DoesNotContain("guid", code.ToLowerInvariant());
+        }
+
+        [Test]
+        public void Export_FoldsUniformStateSettings_IntoForeach()
+        {
+            var controller = new AnimatorController();
+            _cleanup.Add(controller);
+            var clip = new AnimationClip { name = "Empty" };
+            _cleanup.Add(clip);
+            controller.AddLayer("Fold");
+            var sm = controller.layers[0].stateMachine;
+            for (int i = 1; i <= 3; i++)
+            {
+                var s = sm.AddState("S" + i, new Vector3(0f, i * 100f, 0f));
+                s.motion = clip;
+                s.writeDefaultValues = false;
+            }
+
+            var result = RecipeExporter.Export(controller, null, "FoldRecipe", null);
+            string code = result.code;
+            StringAssert.Contains(
+                "foreach (var s in new[] { s1, s2, s3 }) s.WithAnimation(empty);", code);
+            StringAssert.Contains(
+                "foreach (var s in new[] { s1, s2, s3 }) s.WithWriteDefaultsSetTo(false);", code);
+            // Positions pack into the layout block instead of one line per state.
+            StringAssert.Contains("s1.At(0, 100);  s2.At(0, 200);  s3.At(0, 300);", code);
+
+            // Folded calls still drove the real builders — the replay proves it.
+            result.replayed.Bake();
+            var diffs = ControllerIRDiff.Compare(ControllerIR.Parse(controller), result.replayed.IR);
+            Assert.IsEmpty(diffs, string.Join("\n", diffs));
         }
 
         [Test]

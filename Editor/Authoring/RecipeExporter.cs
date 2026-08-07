@@ -192,12 +192,41 @@ namespace Yozolab.DaerD.Authoring
                     if (layer.ikPass) lb.WithIkPass();
                     if (layer.mask != null) lb.WithAvatarMask(layer.mask);
 
+                    // A layer reads in blocks: state definitions, folded uniform settings,
+                    // transitions, then layout — positions are the least-edited data, so
+                    // they live at the bottom instead of noising up every state line.
                     var states = new Dictionary<string, StateBuilder>();
                     var machines = new Dictionary<string, MachineBuilder>();
-                    CreateScope(lb, layer.machine, states, machines);
-                    // States above, wiring below — the gap is what makes a layer readable.
-                    _c.Script.Blank();
+                    var order = new List<(StateBuilder builder, ControllerIR.State state)>();
+                    var machineOrder = new List<(MachineBuilder builder, ControllerIR.ChildMachine child)>();
+                    var scopes = new List<(MachineScope scope, ControllerIR.Machine machine)>();
+                    var plan = PlanFolds(layer.machine);
+                    CreateScope(lb, layer.machine, states, machines, order, machineOrder, scopes, plan);
+                    EmitFolds(plan, order);
+
+                    if (HasWiring(layer.machine, string.Empty))
+                    {
+                        _c.Script.Blank();
+                        _c.Script.Comment("transitions");
+                    }
                     WireScope(lb, layer.machine, states, machines);
+
+                    _c.Script.Blank();
+                    _c.Script.Comment("layout");
+                    _c.Script.BeginPack();
+                    foreach (var (sb, state) in order)
+                        sb.At(state.position.x, state.position.y);
+                    foreach (var (mb, child) in machineOrder)
+                        mb.At(child.position.x, child.position.y);
+                    foreach (var (scope, machine) in scopes)
+                    {
+                        scope.EntryAt(machine.entryPosition.x, machine.entryPosition.y);
+                        scope.ExitAt(machine.exitPosition.x, machine.exitPosition.y);
+                        scope.AnyStateAt(machine.anyStatePosition.x, machine.anyStatePosition.y);
+                        if (machine.parentPosition != Vector3.zero)
+                            scope.ParentAt(machine.parentPosition.x, machine.parentPosition.y);
+                    }
+                    _c.Script.EndPack();
                 }
             }
 
@@ -280,8 +309,12 @@ namespace Yozolab.DaerD.Authoring
             }
 
             void CreateScope(MachineScope scope, ControllerIR.Machine machine,
-                Dictionary<string, StateBuilder> states, Dictionary<string, MachineBuilder> machines)
+                Dictionary<string, StateBuilder> states, Dictionary<string, MachineBuilder> machines,
+                List<(StateBuilder builder, ControllerIR.State state)> order,
+                List<(MachineBuilder builder, ControllerIR.ChildMachine child)> machineOrder,
+                List<(MachineScope scope, ControllerIR.Machine machine)> scopes, FoldPlan plan)
             {
+                scopes.Add((scope, machine));
                 foreach (var state in machine.states)
                 {
                     // A blend tree must exist as a variable before the state can reference it.
@@ -289,15 +322,17 @@ namespace Yozolab.DaerD.Authoring
 
                     var sb = scope.NewState(state.name);
                     states[sb.Path] = sb;
+                    order.Add((sb, state));
                     if (tree != null) sb.WithAnimation(tree);
-                    else if (state.motionAsset != null) sb.WithAnimation(state.motionAsset);
-                    sb.At(state.position.x, state.position.y);
+                    else if (state.motionAsset != null && !plan.animDeferred.Contains(state))
+                        sb.WithAnimation(state.motionAsset);
 
                     if (state.speed != 1f) sb.WithSpeedSetTo(state.speed);
                     if (state.cycleOffset != 0f) sb.WithCycleOffsetSetTo(state.cycleOffset);
                     if (state.mirror) sb.WithMirrorSetTo(true);
                     if (state.ikOnFeet) sb.WithFootIkSetTo(true);
-                    if (!state.writeDefaultValues) sb.WithWriteDefaultsSetTo(false);
+                    if (!state.writeDefaultValues && !plan.wdDeferred.Contains(state))
+                        sb.WithWriteDefaultsSetTo(false);
                     if (!string.IsNullOrEmpty(state.tag)) sb.WithTag(state.tag);
                     if (state.speedParameterActive) sb.WithSpeed(FloatOf(state.speedParameter));
                     if (state.mirrorParameterActive) sb.WithMirror(BoolOf(state.mirrorParameter));
@@ -309,20 +344,144 @@ namespace Yozolab.DaerD.Authoring
                         EmitBehaviour(sb, behaviour);
                 }
 
-                // Node positions last — bookkeeping, not structure; they chain onto one line.
-                scope.EntryAt(machine.entryPosition.x, machine.entryPosition.y);
-                scope.ExitAt(machine.exitPosition.x, machine.exitPosition.y);
-                scope.AnyStateAt(machine.anyStatePosition.x, machine.anyStatePosition.y);
-                if (machine.parentPosition != Vector3.zero)
-                    scope.ParentAt(machine.parentPosition.x, machine.parentPosition.y);
-
                 foreach (var child in machine.machines)
                 {
-                    var mb = scope.NewSubStateMachine(child.machine.name)
-                        .At(child.position.x, child.position.y);
+                    var mb = scope.NewSubStateMachine(child.machine.name);
                     machines[mb.Prefix] = mb;
-                    CreateScope(mb, child.machine, states, machines);
+                    machineOrder.Add((mb, child));
+                    CreateScope(mb, child.machine, states, machines, order, machineOrder, scopes, plan);
                 }
+            }
+
+            // ---- folded uniform settings ---------------------------------------------
+
+            const int FoldThreshold = 3;
+
+            /// <summary>States a layer configures identically — the same shared clip, Write
+            /// Defaults off. Repeating the call per state buries the signal; one foreach
+            /// states it once.</summary>
+            class FoldPlan
+            {
+                public readonly List<List<ControllerIR.State>> animGroups =
+                    new List<List<ControllerIR.State>>();
+                public readonly HashSet<ControllerIR.State> animDeferred =
+                    new HashSet<ControllerIR.State>();
+                public List<ControllerIR.State> wdGroup;
+                public readonly HashSet<ControllerIR.State> wdDeferred =
+                    new HashSet<ControllerIR.State>();
+            }
+
+            static FoldPlan PlanFolds(ControllerIR.Machine root)
+            {
+                var all = new List<ControllerIR.State>();
+                void Collect(ControllerIR.Machine machine)
+                {
+                    all.AddRange(machine.states);
+                    foreach (var child in machine.machines) Collect(child.machine);
+                }
+                Collect(root);
+
+                var plan = new FoldPlan();
+                var byMotion = new Dictionary<Motion, List<ControllerIR.State>>();
+                foreach (var state in all)
+                    if (state.tree == null && state.motionAsset != null)
+                    {
+                        if (!byMotion.TryGetValue(state.motionAsset, out var group))
+                            byMotion[state.motionAsset] = group = new List<ControllerIR.State>();
+                        group.Add(state);
+                    }
+                foreach (var state in all)   // groups in first-appearance order
+                    if (state.tree == null && state.motionAsset != null
+                        && byMotion.TryGetValue(state.motionAsset, out var group)
+                        && group.Count >= FoldThreshold && group[0] == state)
+                    {
+                        plan.animGroups.Add(group);
+                        foreach (var member in group) plan.animDeferred.Add(member);
+                    }
+
+                var wd = all.FindAll(state => !state.writeDefaultValues);
+                if (wd.Count >= FoldThreshold)
+                {
+                    plan.wdGroup = wd;
+                    foreach (var state in wd) plan.wdDeferred.Add(state);
+                }
+                return plan;
+            }
+
+            void EmitFolds(FoldPlan plan,
+                List<(StateBuilder builder, ControllerIR.State state)> order)
+            {
+                if (plan.animGroups.Count == 0 && plan.wdGroup == null) return;
+                var builderOf = new Dictionary<ControllerIR.State, StateBuilder>();
+                foreach (var (sb, state) in order) builderOf[state] = sb;
+
+                foreach (var group in plan.animGroups)
+                {
+                    var motion = group[0].motionAsset;
+                    Fold(group, builderOf, "WithAnimation(" + _c.Script.AssetRef(motion) + ")",
+                        sb => sb.WithAnimation(motion));
+                }
+                if (plan.wdGroup != null)
+                    Fold(plan.wdGroup, builderOf, "WithWriteDefaultsSetTo(false)",
+                        sb => sb.WithWriteDefaultsSetTo(false));
+            }
+
+            /// <summary>One foreach standing for N identical calls. The builders are still
+            /// driven for real (recording off), so the replayed IR keeps its guarantee —
+            /// the written loop and the proven calls are generated from the same list.</summary>
+            void Fold(List<ControllerIR.State> group,
+                Dictionary<ControllerIR.State, StateBuilder> builderOf, string call,
+                System.Action<StateBuilder> apply)
+            {
+                var script = _c.Script;
+                _c.Script = null;
+                foreach (var state in group) apply(builderOf[state]);
+                _c.Script = script;
+
+                string loop = LoopVar();
+                var names = new List<string>();
+                foreach (var state in group) names.Add(script.NameArg(builderOf[state]));
+                string single = "foreach (var " + loop + " in new[] { " + string.Join(", ", names)
+                    + " }) " + loop + "." + call + ";";
+                if (single.Length <= 100)
+                {
+                    script.Statement(single);
+                    return;
+                }
+                script.Statement("foreach (var " + loop + " in new[] {");
+                var line = new StringBuilder("        ");
+                foreach (var name in names)
+                {
+                    if (line.Length > 8 && line.Length + name.Length + 2 > 96)
+                    {
+                        script.Statement(line.ToString());
+                        line = new StringBuilder("        ");
+                    }
+                    line.Append(name).Append(',').Append(' ');
+                }
+                script.Statement(line.ToString().TrimEnd());
+                script.Statement("    }) " + loop + "." + call + ";");
+            }
+
+            string _loopVar;
+
+            string LoopVar() => _loopVar ?? (_loopVar = _c.Script.Reserve("s"));
+
+            /// <summary>Whether the transitions block will say anything at all.</summary>
+            static bool HasWiring(ControllerIR.Machine machine, string prefix)
+            {
+                if (machine.anyStateTransitions.Count > 0 || machine.entryTransitions.Count > 0)
+                    return true;
+                if (machine.states.Count > 0 && machine.defaultState != null
+                    && machine.defaultState != ControllerIR.Join(prefix, machine.states[0].name))
+                    return true;
+                foreach (var state in machine.states)
+                    if (state.transitions.Count > 0) return true;
+                foreach (var child in machine.machines)
+                    if (child.transitions.Count > 0
+                        || HasWiring(child.machine, ControllerIR.Join(prefix, child.machine.name)))
+                        return true;
+                return false;
             }
 
             // ---- blend trees ------------------------------------------------------
