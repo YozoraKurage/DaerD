@@ -2561,6 +2561,12 @@ namespace Yozolab.DaerD
                 VrcMenuWindow.Open(controller);
                 GUIUtility.ExitGUI();   // the focus moved to another window under this layout pass
             }
+            if (GUILayout.Button(new GUIContent(L.Tr("Export C# Recipe"),
+                    L.Tr("Convert this controller (or chosen layers) into editable C# that rebuilds it — clips stay assignable by drag & drop on the recipe asset."))))
+            {
+                RecipeExportWindow.Open(controller);
+                GUIUtility.ExitGUI();   // the focus moved to another window under this layout pass
+            }
             DrawCleanupSection(controller);
         }
 
