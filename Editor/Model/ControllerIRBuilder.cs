@@ -41,6 +41,14 @@ namespace Yozolab.DaerD
                 Undo.RegisterCompleteObjectUndo(controller, UndoName);
                 ApplyParameters(ir, controller, exclusive, warnings);
 
+                // Records in GraphFrameData (async-sync setups, badges, frames, notes) hang
+                // off the OLD state machines about to be destroyed; remember who was who so
+                // the rebuilt layers can inherit them.
+                var oldMachineIds = new Dictionary<string, int>();
+                foreach (var layer in controller.layers)
+                    if (layer.stateMachine != null && !oldMachineIds.ContainsKey(layer.name))
+                        oldMachineIds[layer.name] = layer.stateMachine.GetInstanceID();
+
                 if (exclusive)
                     for (int i = controller.layers.Length - 1; i >= 0; i--)
                         controller.RemoveLayer(i);
@@ -51,7 +59,7 @@ namespace Yozolab.DaerD
                 // cross-layer anything need the final list), then wire the synced overrides.
                 var built = new List<int>();
                 foreach (var layer in ir.layers)
-                    built.Add(BuildLayer(layer, controller, exclusive, warnings));
+                    built.Add(BuildLayer(layer, controller, exclusive, oldMachineIds, warnings));
 
                 for (int i = 0; i < ir.layers.Count; i++)
                     if (ir.layers[i].syncedLayerIndex >= 0)
@@ -129,7 +137,7 @@ namespace Yozolab.DaerD
 
         /// <summary>Builds one layer; returns its index in the controller.</summary>
         static int BuildLayer(ControllerIR.Layer ir, AnimatorController controller,
-            bool exclusive, List<string> warnings)
+            bool exclusive, Dictionary<string, int> oldMachineIds, List<string> warnings)
         {
             int existing = exclusive ? -1 : FindLayerIndex(controller, ir.name);
             if (existing >= 0)
@@ -172,6 +180,13 @@ namespace Yozolab.DaerD
             int index = controller.layers.Length - 1;
             if (existing >= 0)
                 index = MoveLayer(controller, index, existing);
+
+            // The rebuilt machine inherits the records of the one it replaced (same name):
+            // async-sync setups keep their SYNC badge and wizard entry, frames and notes
+            // stay on the layer, recipe ownership marks survive.
+            if (layer.stateMachine != null
+                && oldMachineIds.TryGetValue(ir.name, out int oldMachineId))
+                GraphFrameData.RemapStateMachine(controller, oldMachineId, layer.stateMachine);
 
             warnings.AddRange(context.warnings);
             return index;

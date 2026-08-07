@@ -146,6 +146,63 @@ namespace Yozolab.DaerD
             EditorUtility.SetDirty(data);
         }
 
+        /// <summary>
+        /// Re-points every record keyed by a layer's state machine — async-sync setups,
+        /// code-owned marks, frames, notes — from a replaced machine to its successor.
+        /// A recipe regenerates a layer by destroy-and-recreate; without this, the SYNC
+        /// badge, the wizard's saved setup and the layer's annotations all die with the
+        /// old machine. Matched by instance ID captured before the destroy: destroyed
+        /// wrappers still answer GetInstanceID, while Unity's == would lump every dead
+        /// object together.
+        /// </summary>
+        public static void RemapStateMachine(AnimatorController controller, int oldMachineId,
+            AnimatorStateMachine newMachine)
+        {
+            var data = Find(controller);
+            if (data == null || newMachine == null) return;
+            if (data.RemapMachineReferences(oldMachineId, newMachine))
+            {
+                Undo.RegisterCompleteObjectUndo(data, "Remap Layer Records");
+                EditorUtility.SetDirty(data);
+            }
+        }
+
+        /// <summary>Instance-level core of <see cref="RemapStateMachine"/> (testable without
+        /// a persisted controller). Returns whether anything was re-pointed.</summary>
+        public bool RemapMachineReferences(int oldMachineId, AnimatorStateMachine newMachine)
+        {
+            bool changed = false;
+            foreach (var config in asyncSyncs)
+                if (config != null && !ReferenceEquals(config.layer, null)
+                    && config.layer.GetInstanceID() == oldMachineId)
+                {
+                    config.layer = newMachine;
+                    changed = true;
+                }
+            foreach (var entry in codeOwned)
+                if (entry != null && !ReferenceEquals(entry.layer, null)
+                    && entry.layer.GetInstanceID() == oldMachineId)
+                {
+                    entry.layer = newMachine;
+                    changed = true;
+                }
+            foreach (var frame in frames)
+                if (frame != null && !ReferenceEquals(frame.stateMachine, null)
+                    && frame.stateMachine.GetInstanceID() == oldMachineId)
+                {
+                    frame.stateMachine = newMachine;
+                    changed = true;
+                }
+            foreach (var note in notes)
+                if (note != null && !ReferenceEquals(note.stateMachine, null)
+                    && note.stateMachine.GetInstanceID() == oldMachineId)
+                {
+                    note.stateMachine = newMachine;
+                    changed = true;
+                }
+            return changed;
+        }
+
         /// <summary>Live machine → recipe map (stale entries pruned on read).</summary>
         public static Dictionary<AnimatorStateMachine, UnityEngine.Object> GetCodeOwned(
             AnimatorController controller)
