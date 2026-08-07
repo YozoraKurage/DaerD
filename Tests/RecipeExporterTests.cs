@@ -151,6 +151,9 @@ namespace Yozolab.DaerD.Tests
                 var s = sm.AddState("S" + i, new Vector3(0f, i * 100f, 0f));
                 s.motion = clip;
                 s.writeDefaultValues = false;
+                // Identical behaviour on every state: the whole sequence folds too.
+                var behaviour = (IRTestBehaviour)s.AddStateMachineBehaviour(typeof(IRTestBehaviour));
+                behaviour.payload = "same";
             }
 
             var result = RecipeExporter.Export(controller, null, "FoldRecipe", null);
@@ -159,6 +162,8 @@ namespace Yozolab.DaerD.Tests
                 "foreach (var s in new[] { s1, s2, s3 }) s.WithAnimation(empty);", code);
             StringAssert.Contains(
                 "foreach (var s in new[] { s1, s2, s3 }) s.WithWriteDefaultsSetTo(false);", code);
+            StringAssert.Contains("foreach (var s in new[] { s1, s2, s3 })", code);
+            StringAssert.Contains("s.BehaviourJson(\"IRTestBehaviour\"", code);
             // Positions pack into the layout block instead of one line per state.
             StringAssert.Contains("s1.At(0, 100);  s2.At(0, 200);  s3.At(0, 300);", code);
 
@@ -166,6 +171,28 @@ namespace Yozolab.DaerD.Tests
             result.replayed.Bake();
             var diffs = ControllerIRDiff.Compare(ControllerIR.Parse(controller), result.replayed.IR);
             Assert.IsEmpty(diffs, string.Join("\n", diffs));
+        }
+
+        /// <summary>A statement that outgrows the line limit wraps onto indented
+        /// continuation lines — it must not split into separate statements, so transition
+        /// and state definitions each stay one readable statement.</summary>
+        [Test]
+        public void ChainOverflow_WrapsWithContinuationLines_KeepingOneStatement()
+        {
+            var script = new RecipeScript();
+            var root = new object();
+            script.RegisterRoot(root);
+            var t = new object();
+            script.Declare(t, "t", root, "TransitionsTo(x)");
+            for (int i = 0; i < 3; i++)
+                script.Call(t, "And(someParameterName.IsGreaterThan(0.123456f))");
+
+            var lines = new List<string>(script.Lines);
+            Assert.AreEqual(3, lines.Count, string.Join("\n", lines));
+            Assert.IsTrue(lines[0].StartsWith("var t = c.TransitionsTo(x)"), lines[0]);
+            Assert.IsFalse(lines[0].EndsWith(";"), "the statement continues on the next line");
+            Assert.IsTrue(lines[1].StartsWith("    .And("), lines[1]);
+            Assert.IsTrue(lines[2].EndsWith(";"), "only the final line closes the statement");
         }
 
         [Test]

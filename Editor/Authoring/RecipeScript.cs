@@ -57,12 +57,25 @@ namespace Yozolab.DaerD.Authoring
         /// </summary>
         public void Call(object target, string call, bool chain = true)
         {
+            if (_capture != null)
+            {
+                _capture.Add(call);
+                return;
+            }
             if (chain && target == _chainTarget && _lines.Count > 0)
             {
                 string last = _lines[_lines.Count - 1];
-                if (last.EndsWith(";") && last.Length + call.Length + 1 <= ChainLineLimit)
+                if (last.EndsWith(";"))
                 {
-                    _lines[_lines.Count - 1] = last.Substring(0, last.Length - 1) + "." + call + ";";
+                    if (last.Length + call.Length + 1 <= ChainLineLimit)
+                    {
+                        _lines[_lines.Count - 1] = last.Substring(0, last.Length - 1) + "." + call + ";";
+                        return;
+                    }
+                    // A full line doesn't end the thought — the statement continues on an
+                    // indented line, so one state or transition stays one statement.
+                    _lines[_lines.Count - 1] = last.Substring(0, last.Length - 1);
+                    _lines.Add("    ." + call + ";");
                     return;
                 }
             }
@@ -79,6 +92,25 @@ namespace Yozolab.DaerD.Authoring
             }
             _lines.Add(statement);
             _chainTarget = chain ? target : null;
+        }
+
+        List<string> _capture;
+
+        /// <summary>Between Begin and End, calls record their text into a side list instead
+        /// of the output (one entry per call, unmerged) — the exporter captures a
+        /// representative call sequence to write it once as a foreach.</summary>
+        public void BeginCapture()
+        {
+            _capture = new List<string>();
+            _chainTarget = null;
+        }
+
+        public List<string> EndCapture()
+        {
+            var captured = _capture;
+            _capture = null;
+            _chainTarget = null;
+            return captured;
         }
 
         bool _packing;
@@ -171,7 +203,17 @@ namespace Yozolab.DaerD.Authoring
             }
             if (builder.Length == 0) builder.Append("item");
             if (char.IsDigit(builder[0])) builder.Insert(0, '_');
-            if (lowerFirst) builder[0] = char.ToLowerInvariant(builder[0]);
+            if (lowerFirst)
+            {
+                // Acronym-aware camelCase: "MMDMode" → "mmdMode", not "mMDMode". A leading
+                // uppercase run is lowered wholesale, keeping its last letter as the head
+                // of the following word when one follows.
+                int run = 0;
+                while (run < builder.Length && char.IsUpper(builder[run])) run++;
+                if (run > 1 && run < builder.Length) run--;
+                for (int i = 0; i < (run > 1 ? run : 1); i++)
+                    builder[i] = char.ToLowerInvariant(builder[i]);
+            }
             string result = builder.ToString();
             return Keywords.Contains(result) ? result + "_" : result;
         }
