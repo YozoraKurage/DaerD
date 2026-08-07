@@ -37,10 +37,17 @@ namespace Yozolab.DaerD
                 EditorGUILayout.LabelField("No controller loaded.", EditorStyles.centeredGreyMiniLabel);
                 return;
             }
+            DrawPinnedHeader();
             _scroll = EditorGUILayout.BeginScrollView(_scroll);
             DrawContent();
             EditorGUILayout.EndScrollView();
         }
+
+        /// <summary>
+        /// Drawn above the scroll view, so it stays put however far the body is scrolled.
+        /// Panels with a toolbar (search field, Add button) put it here.
+        /// </summary>
+        protected virtual void DrawPinnedHeader() { }
 
         protected abstract void DrawContent();
     }

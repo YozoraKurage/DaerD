@@ -1198,7 +1198,7 @@ namespace Yozolab.DaerD
 
         // ---- chain / fan transitions --------------------------------------------
 
-        public void ChainNodes(IList<GraphNodeBase> nodes)
+        public void ChainNodes(IList<GraphNodeBase> nodes, bool seeded = false)
         {
             if (nodes == null || nodes.Count < 2) return;
             var sm = _context.CurrentStateMachine;
@@ -1208,13 +1208,14 @@ namespace Yozolab.DaerD
             {
                 for (int i = 0; i < nodes.Count - 1; i++)
                     AddBatchTransition(nodes[i], nodes[i + 1], sm, created);
+                if (seeded) SeedCreated(created);
             }
             if (created.Count == 0) return;
             Rebuild();
             _context.Select(created[0]);
         }
 
-        public void FanOutNodes(GraphNodeBase source, IEnumerable<GraphNodeBase> targets)
+        public void FanOutNodes(GraphNodeBase source, IEnumerable<GraphNodeBase> targets, bool seeded = false)
         {
             if (source == null || targets == null) return;
             var sm = _context.CurrentStateMachine;
@@ -1224,13 +1225,14 @@ namespace Yozolab.DaerD
             {
                 foreach (var target in targets)
                     AddBatchTransition(source, target, sm, created);
+                if (seeded) SeedCreated(created);
             }
             if (created.Count == 0) return;
             Rebuild();
             _context.Select(created[0]);
         }
 
-        public void FanInNodes(IEnumerable<GraphNodeBase> sources, GraphNodeBase target)
+        public void FanInNodes(IEnumerable<GraphNodeBase> sources, GraphNodeBase target, bool seeded = false)
         {
             if (sources == null || target == null) return;
             var sm = _context.CurrentStateMachine;
@@ -1240,13 +1242,14 @@ namespace Yozolab.DaerD
             {
                 foreach (var source in sources)
                     AddBatchTransition(source, target, sm, created);
+                if (seeded) SeedCreated(created);
             }
             if (created.Count == 0) return;
             Rebuild();
             _context.Select(created[0]);
         }
 
-        public void CrossProductNodes(IList<GraphNodeBase> sources, IList<GraphNodeBase> targets)
+        public void CrossProductNodes(IList<GraphNodeBase> sources, IList<GraphNodeBase> targets, bool seeded = false)
         {
             if (sources == null || targets == null || sources.Count == 0 || targets.Count == 0) return;
             var sm = _context.CurrentStateMachine;
@@ -1257,10 +1260,21 @@ namespace Yozolab.DaerD
                 foreach (var source in sources)
                     foreach (var target in targets)
                         AddBatchTransition(source, target, sm, created);
+                if (seeded) SeedCreated(created);
             }
             if (created.Count == 0) return;
             Rebuild();
             _context.Select(created[0]);
+        }
+
+        /// <summary>Seeded batch creation: the first copied transition's settings and
+        /// conditions stamp every created transition.</summary>
+        static void SeedCreated(List<AnimatorTransitionBase> created)
+        {
+            if (!TransitionClipboard.HasData) return;
+            var snapshot = TransitionClipboard.Snapshots[0];
+            foreach (var transition in created)
+                TransitionClipboard.Apply(transition, snapshot);
         }
 
         /// <summary>
@@ -1286,17 +1300,113 @@ namespace Yozolab.DaerD
                 if (selectable is StateNode sn && sn.State != null)
                     states.Add(sn.State);
             if (states.Count == 0) return;
-            StateClipboard.Copy(states, s => _stateNodes.TryGetValue(s, out var node)
-                ? node.GetPosition().position
-                : Vector2.zero);
+            StateClipboard.Copy(states, StateNodePosition, null, _context.Controller, _context.CurrentStateMachine);
+            // States and frames/notes paste together, so a fresh copy of one kind has to drop the
+            // other — otherwise the next paste would also drop whatever was copied before it.
+            FrameNoteClipboard.Clear();
         }
 
+        /// <summary>
+        /// Pastes into the state machine currently on screen, so switching layers between the
+        /// copy and the paste is what moves states from one layer to another. Parameters the
+        /// states reference are recreated when the destination controller lacks them.
+        /// </summary>
         public void PasteStates(Vector2 position)
         {
             if (!StateClipboard.HasData) return;
-            StateClipboard.Paste(_context.CurrentStateMachine, position);
+            var controller = _context.Controller;
+            int parametersBefore = controller != null ? controller.parameters.Length : 0;
+            StateClipboard.Paste(_context.CurrentStateMachine, position, controller);
+            if (controller != null && controller.parameters.Length != parametersBefore)
+                _context.NotifyParametersChanged();
             RequestRebuild();
         }
+
+        Vector2 StateNodePosition(AnimatorState state) =>
+            state != null && _stateNodes.TryGetValue(state, out var node)
+                ? node.GetPosition().position
+                : Vector2.zero;
+
+        // ---- frame / note copy / paste ---------------------------------------
+
+        /// <summary>
+        /// Ctrl+C over the canvas: the states, frames and notes in the selection all go to their
+        /// clipboards in one gesture, sharing a single anchor so a mixed selection keeps its
+        /// relative layout when it is pasted — including into a different layer.
+        /// </summary>
+        public void CopySelectedElements()
+        {
+            var states = new List<AnimatorState>();
+            var frames = new List<GraphFrameData.Frame>();
+            var notes = new List<GraphFrameData.Note>();
+            int subStateMachines = 0;
+            foreach (var selectable in _graphView.selection)
+            {
+                switch (selectable)
+                {
+                    case StateNode sn when sn.State != null: states.Add(sn.State); break;
+                    case FrameNode fn when fn.Frame != null: frames.Add(fn.Frame); break;
+                    case NoteNode nn when nn.Note != null: notes.Add(nn.Note); break;
+                    case SubStateMachineNode ssm when ssm.StateMachine != null: subStateMachines++; break;
+                }
+            }
+            // Sub-state machines aren't part of the state clipboard. Say so instead of copying a
+            // silently incomplete selection — "select all" in a layer that has them looks like it
+            // worked until the paste comes up short.
+            if (subStateMachines > 0)
+                Debug.Log("DaerD: " + subStateMachines + " sub-state machine(s) were left out of the copy"
+                    + " — copy the whole layer (layer settings > Copy Layer) to move those too.");
+
+            if (states.Count == 0 && frames.Count == 0 && notes.Count == 0) return;
+
+            var anchor = new Vector2(float.MaxValue, float.MaxValue);
+            foreach (var state in states) anchor = Vector2.Min(anchor, StateNodePosition(state));
+            foreach (var frame in frames) anchor = Vector2.Min(anchor, frame.bounds.position);
+            foreach (var note in notes) anchor = Vector2.Min(anchor, note.bounds.position);
+
+            StateClipboard.Copy(states, StateNodePosition, anchor, _context.Controller, _context.CurrentStateMachine);
+            FrameNoteClipboard.Copy(frames, notes, anchor);
+        }
+
+        /// <summary>Copies one frame (from its context menu), dropping any copied states.</summary>
+        public void CopyFrame(GraphFrameData.Frame frame)
+        {
+            if (frame == null) return;
+            StateClipboard.Clear();
+            FrameNoteClipboard.Copy(new List<GraphFrameData.Frame> { frame }, null);
+        }
+
+        /// <summary>Copies one note (from its context menu), dropping any copied states.</summary>
+        public void CopyNote(GraphFrameData.Note note)
+        {
+            if (note == null) return;
+            StateClipboard.Clear();
+            FrameNoteClipboard.Copy(null, new List<GraphFrameData.Note> { note });
+        }
+
+        /// <summary>
+        /// Pastes the copied frames and notes into the state machine currently on screen — the
+        /// clipboard holds no state machine reference, so this is what makes the copy land in
+        /// whichever layer the user has open.
+        /// </summary>
+        public void PasteFramesAndNotes(Vector2 position)
+        {
+            if (!FrameNoteClipboard.HasData || _context.Controller == null) return;
+            var sm = _context.CurrentStateMachine;
+            if (sm == null) return;
+
+            _frameData = GraphFrameData.GetOrCreate(_context.Controller);
+            var created = FrameNoteClipboard.Paste(_frameData, sm, position);
+            if (created.Count == 0) return;
+
+            RequestRebuild();
+            _context.Select(created[0]);
+        }
+
+        /// <summary>Pastes at the position the copy was taken from. Used where there is no mouse
+        /// position to paste at (the inspector buttons), and it lands the copy in the same spot
+        /// of the layer now on screen.</summary>
+        public void PasteFramesAndNotesAtOrigin() => PasteFramesAndNotes(FrameNoteClipboard.Anchor);
 
         // ---- transition copy / paste -----------------------------------------
 

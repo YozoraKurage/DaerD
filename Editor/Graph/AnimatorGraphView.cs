@@ -59,6 +59,11 @@ namespace Yozolab.DaerD
 
             context.ControllerChanged += _sync.RequestRebuild;
             context.LayerChanged += _sync.RequestRebuild;
+            // Switching layers happens in the (IMGUI) layers panel, which takes keyboard focus
+            // with it — the next Ctrl+V would then never reach the graph. Take focus back so
+            // "copy here, switch layer, paste there" works as one gesture.
+            context.LayerChanged += TakeKeyboardFocus;
+            context.StateMachinePathChanged += TakeKeyboardFocus;
             // Cross-product source marks only make sense within one layer: a transition cannot
             // point at a state of another layer or controller.
             context.ControllerChanged += ClearMarkedSources;
@@ -68,6 +73,20 @@ namespace Yozolab.DaerD
             context.GraphStructureChanged += _sync.RequestRebuild;
             context.SelectionChanged += OnContextSelectionChanged;
             context.FrameRequested += FrameOn;
+        }
+
+        /// <summary>
+        /// Hands keyboard focus back to the graph, deferred so it lands after the panel that
+        /// triggered the change has finished its own event. Skipped while a text field is being
+        /// edited (an inline rename must keep the keyboard) or while the view is detached.
+        /// </summary>
+        void TakeKeyboardFocus()
+        {
+            schedule.Execute(() =>
+            {
+                if (panel == null || IsEditingText()) return;
+                Focus();
+            }).ExecuteLater(1);
         }
 
         /// <summary>Centers the view on the node representing <paramref name="model"/>.</summary>
@@ -335,7 +354,18 @@ namespace Yozolab.DaerD
                 return;
             }
 
-            if (!(evt.ctrlKey || evt.commandKey)) return;
+            if (!(evt.ctrlKey || evt.commandKey))
+            {
+                // I / O / P select the incoming / outgoing / all transitions of the selected
+                // state nodes — quick keyboard access to the context-menu selections.
+                if (evt.keyCode == KeyCode.I && SelectTransitionsOfSelection(incoming: true, outgoing: false))
+                    evt.StopPropagation();
+                else if (evt.keyCode == KeyCode.O && SelectTransitionsOfSelection(incoming: false, outgoing: true))
+                    evt.StopPropagation();
+                else if (evt.keyCode == KeyCode.P && SelectTransitionsOfSelection(incoming: true, outgoing: true))
+                    evt.StopPropagation();
+                return;
+            }
             if (evt.keyCode == KeyCode.C)
             {
                 CopySelection();
@@ -352,6 +382,55 @@ namespace Yozolab.DaerD
                 DuplicateSelectedStates();
                 evt.StopPropagation();
             }
+            else if (evt.keyCode == KeyCode.A)
+            {
+                if (evt.shiftKey) SelectAllTransitions();
+                else SelectAllNodes();
+                evt.StopPropagation();
+            }
+        }
+
+        /// <summary>Ctrl+A: every node (states, sub-state machines, special nodes).</summary>
+        void SelectAllNodes()
+        {
+            ClearSelection();
+            nodes.ForEach(node =>
+            {
+                if (node is StateNode || node is SubStateMachineNode || node is SpecialNode)
+                    AddToSelection(node);
+            });
+        }
+
+        /// <summary>Ctrl+Shift+A: every transition edge (the default-state link is not one).</summary>
+        void SelectAllTransitions()
+        {
+            ClearSelection();
+            edges.ForEach(edge =>
+            {
+                if (edge is TransitionEdge transitionEdge && !transitionEdge.IsDefaultEdge)
+                    AddToSelection(transitionEdge);
+            });
+        }
+
+        /// <summary>Selects the transitions touching any selected state node; false when no
+        /// state is selected (so the key can fall through).</summary>
+        bool SelectTransitionsOfSelection(bool incoming, bool outgoing)
+        {
+            var stateNodes = new HashSet<StateNode>();
+            foreach (var selected in selection)
+                if (selected is StateNode stateNode)
+                    stateNodes.Add(stateNode);
+            if (stateNodes.Count == 0) return false;
+
+            ClearSelection();
+            edges.ForEach(edge =>
+            {
+                if (!(edge is TransitionEdge transitionEdge) || transitionEdge.IsDefaultEdge) return;
+                if ((incoming && transitionEdge.input?.node is StateNode into && stateNodes.Contains(into))
+                    || (outgoing && transitionEdge.output?.node is StateNode from && stateNodes.Contains(from)))
+                    AddToSelection(transitionEdge);
+            });
+            return true;
         }
 
         /// <summary>Duplicates the selected states in place (Ctrl+D), keeping their internal transitions.</summary>
@@ -375,30 +454,56 @@ namespace Yozolab.DaerD
             return result;
         }
 
-        // Ctrl+C / Ctrl+V act on transitions when transition edges are selected, otherwise on states.
-        // The two clipboards are separate and paste is chosen by what's selected, so state and
-        // transition copy/paste never clobber or shadow each other.
+        // Ctrl+C / Ctrl+V act on transitions when transition edges are selected, otherwise on the
+        // canvas contents: states, frames and notes. The transition clipboard is separate and
+        // paste is chosen by what's selected, so the two never clobber or shadow each other.
+        // Frames and notes carry no state machine reference, so a copy taken here pastes into
+        // whichever layer is open when Ctrl+V is pressed.
+
+        /// <summary>
+        /// True when the selection is nothing but transition edges. Ctrl+C/V take the transition
+        /// branch only then: a rubber-band select (or "select all" followed by a drag over the
+        /// canvas) picks up the edges *and* the nodes, and there the user means "copy what's on
+        /// the canvas" — treating that as a transition copy silently loses the states.
+        /// </summary>
+        bool HasOnlyTransitionSelection()
+        {
+            bool anyEdge = false;
+            foreach (var selected in selection)
+            {
+                switch (selected)
+                {
+                    case StateNode _:
+                    case FrameNode _:
+                    case NoteNode _:
+                    case SubStateMachineNode _:
+                        return false;
+                    case TransitionEdge te when !te.IsDefaultEdge && te.Transitions.Count > 0:
+                        anyEdge = true;
+                        break;
+                }
+            }
+            return anyEdge;
+        }
 
         void CopySelection()
         {
-            var edges = GetSelectedTransitionEdges();
-            if (edges.Count > 0) _sync.CopyTransitionsFromEdges(edges);
-            else _sync.CopySelectedStates();
+            if (HasOnlyTransitionSelection()) _sync.CopyTransitionsFromEdges(GetSelectedTransitionEdges());
+            else _sync.CopySelectedElements();
         }
 
         void PasteSelection()
         {
-            var edges = GetSelectedTransitionEdges();
-            if (edges.Count > 0)
+            if (HasOnlyTransitionSelection())
             {
-                // A transition is selected: Ctrl+V pastes the copied transition's settings onto it.
-                // Don't fall back to pasting states over a selected transition.
-                if (TransitionClipboard.HasData) _sync.PasteTransitionSettingsOntoEdges(edges);
+                // Only transitions are selected: Ctrl+V pastes the copied transition's settings
+                // onto them. Don't fall back to pasting states over a selected transition.
+                if (TransitionClipboard.HasData)
+                    _sync.PasteTransitionSettingsOntoEdges(GetSelectedTransitionEdges());
+                return;
             }
-            else
-            {
-                _sync.PasteStates(_lastMouseGraphPosition);
-            }
+            _sync.PasteStates(_lastMouseGraphPosition);
+            _sync.PasteFramesAndNotes(_lastMouseGraphPosition);
         }
 
         void PasteTransitionsAsNew()
@@ -595,9 +700,9 @@ namespace Yozolab.DaerD
 
             var graphPosition = _lastMouseGraphPosition;
 
-            evt.menu.AppendAction("Create State", _ => CreateStateAt(graphPosition, "state"));
-            evt.menu.AppendAction("Create Blend Tree State", _ => CreateStateAt(graphPosition, "state-blendtree"));
-            evt.menu.AppendAction("Create Sub-State Machine", _ =>
+            evt.menu.AppendAction(L.Tr("Create State"), _ => CreateStateAt(graphPosition, "state"));
+            evt.menu.AppendAction(L.Tr("Create Blend Tree State"), _ => CreateStateAt(graphPosition, "state-blendtree"));
+            evt.menu.AppendAction(L.Tr("Create Sub-State Machine"), _ =>
             {
                 _sync.CreateSubStateMachine(graphPosition);
                 _sync.RequestRebuild();
@@ -606,60 +711,45 @@ namespace Yozolab.DaerD
             evt.menu.AppendSeparator();
 
             int stateCount = CountSelected<StateNode>();
-            evt.menu.AppendAction("Copy State(s)", _ => _sync.CopySelectedStates(),
+            evt.menu.AppendAction(L.Tr("Copy State(s)"), _ => _sync.CopySelectedStates(),
                 stateCount > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
-            evt.menu.AppendAction("Paste State(s)", _ => _sync.PasteStates(graphPosition),
+            evt.menu.AppendAction(L.Tr("Paste State(s)"), _ => _sync.PasteStates(graphPosition),
                 StateClipboard.HasData ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
-            evt.menu.AppendAction("Duplicate State(s)", _ => DuplicateSelectedStates(),
+            evt.menu.AppendAction(L.Tr("Duplicate State(s)"), _ => DuplicateSelectedStates(),
                 stateCount > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
-            evt.menu.AppendAction("Delete", _ => DeleteCurrentSelection(),
+            BuildBehaviourClipboardEntries(evt, stateCount);
+            evt.menu.AppendAction(L.Tr("Delete"), _ => DeleteCurrentSelection(),
                 HasDeletableSelection() ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
 
             evt.menu.AppendSeparator();
             BuildConnectMenu(evt);
 
-            int selectedNodeCount = CountSelected<StateNode>() + CountSelected<SubStateMachineNode>();
-            evt.menu.AppendAction("Create Frame", _ => _sync.CreateFrameAt(graphPosition));
-            evt.menu.AppendAction("Create Frame Around Selection", _ => CreateFrameAroundSelection(),
-                selectedNodeCount > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
-            evt.menu.AppendAction("Create Note", _ => _sync.CreateNoteAt(graphPosition));
-            evt.menu.AppendAction("Pack Into Sub-State Machine" + (stateCount > 1 ? " (" + stateCount + ")" : string.Empty),
-                _ => _sync.PackSelectedStates(GetSelectedStates()),
-                stateCount > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
-            if (CountSelected<SubStateMachineNode>() == 1 && stateCount == 0)
-            {
-                var ssmNode = FirstSelected<SubStateMachineNode>();
-                evt.menu.AppendAction("Unpack Sub-State Machine",
-                    _ => _sync.UnpackSubStateMachine(ssmNode.StateMachine));
-            }
-
             if (stateCount == 1)
             {
-                evt.menu.AppendSeparator();
                 var stateNode = FirstSelected<StateNode>();
-                evt.menu.AppendAction("Set as Default State", _ => _sync.SetDefaultState(stateNode.State));
+                evt.menu.AppendAction(L.Tr("Set as Default State"), _ => _sync.SetDefaultState(stateNode.State));
 
                 CountConnectedTransitions(stateNode, out int incoming, out int outgoing, out int connected);
-                evt.menu.AppendAction("Select Transitions/Incoming (" + incoming + ")",
+                evt.menu.AppendAction(MenuPath(L.Tr("Select Transitions"), L.Tr("Incoming")) + " (" + incoming + ")",
                     _ => SelectTransitions(stateNode, incoming: true, outgoing: false),
                     incoming > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
-                evt.menu.AppendAction("Select Transitions/Outgoing (" + outgoing + ")",
+                evt.menu.AppendAction(MenuPath(L.Tr("Select Transitions"), L.Tr("Outgoing")) + " (" + outgoing + ")",
                     _ => SelectTransitions(stateNode, incoming: false, outgoing: true),
                     outgoing > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
-                evt.menu.AppendAction("Select Transitions/All Connected (" + connected + ")",
+                evt.menu.AppendAction(MenuPath(L.Tr("Select Transitions"), L.Tr("All Connected")) + " (" + connected + ")",
                     _ => SelectTransitions(stateNode, incoming: true, outgoing: true),
                     connected > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
 
                 int pasted = TransitionClipboard.Count;
                 string pasteSuffix = pasted > 1 ? " (" + pasted + ")" : string.Empty;
                 evt.menu.AppendAction(
-                    "Paste Transition/This State → Original Destinations" + pasteSuffix,
+                    MenuPath(L.Tr("Paste Transition"), L.Tr("This State → Original Destinations")) + pasteSuffix,
                     _ => _sync.PasteTransitionsWithStateAsSource(stateNode.State),
                     TransitionClipboard.HasDestinationContext
                         ? DropdownMenuAction.Status.Normal
                         : DropdownMenuAction.Status.Disabled);
                 evt.menu.AppendAction(
-                    "Paste Transition/Original Sources → This State" + pasteSuffix,
+                    MenuPath(L.Tr("Paste Transition"), L.Tr("Original Sources → This State")) + pasteSuffix,
                     _ => _sync.PasteTransitionsWithStateAsDestination(stateNode.State),
                     TransitionClipboard.HasSourceContext
                         ? DropdownMenuAction.Status.Normal
@@ -667,12 +757,10 @@ namespace Yozolab.DaerD
             }
 
             evt.menu.AppendSeparator();
-            // Align acts on the current multi-selection, so it grays out until ≥2 states are selected.
-            evt.menu.AppendAction("Align horizontal",
-                _ => AlignSelectedStates(GraphLayout.AlignAxis.Row), AlignStatus);
-            evt.menu.AppendAction("Align vertical",
-                _ => AlignSelectedStates(GraphLayout.AlignAxis.Column), AlignStatus);
-            evt.menu.AppendAction("Frame All", _ => FrameAll());
+            BuildFrameNoteMenu(evt, graphPosition);
+            BuildSubStateMachineMenu(evt, stateCount);
+            BuildLayoutMenu(evt);
+            BuildClipMenu(evt);
 
             if (stateCount == 1)
             {
@@ -681,9 +769,112 @@ namespace Yozolab.DaerD
                 var stateNode = FirstSelected<StateNode>();
                 CountConnectedTransitions(stateNode, out _, out _, out int connected);
                 evt.menu.AppendSeparator();
-                evt.menu.AppendAction("Disconnect All", _ => DisconnectStateNode(stateNode),
+                evt.menu.AppendAction(L.Tr("Disconnect All"), _ => DisconnectStateNode(stateNode),
                     connected > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
             }
+        }
+
+        // The canvas menu is long, so everything that isn't a per-state action lives in its own
+        // submenu: annotations, grouping, layout and clip settings each get one line in the root
+        // menu instead of four loose entries competing with the state commands.
+
+        /// <summary>Frame / Note creation and pasting.</summary>
+        void BuildFrameNoteMenu(ContextualMenuPopulateEvent evt, Vector2 graphPosition)
+        {
+            string group = L.Tr("Frame & Note");
+            int selectedNodeCount = CountSelected<StateNode>() + CountSelected<SubStateMachineNode>();
+
+            evt.menu.AppendAction(MenuPath(group, L.Tr("Create Frame")), _ => _sync.CreateFrameAt(graphPosition));
+            evt.menu.AppendAction(MenuPath(group, L.Tr("Create Frame Around Selection")), _ => CreateFrameAroundSelection(),
+                selectedNodeCount > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+            evt.menu.AppendAction(MenuPath(group, L.Tr("Create Note")), _ => _sync.CreateNoteAt(graphPosition));
+            // The frame/note clipboard is layer-agnostic: this pastes into the layer on screen.
+            evt.menu.AppendAction(MenuPath(group, PasteFramesAndNotesLabel()), _ => _sync.PasteFramesAndNotes(graphPosition),
+                FrameNoteClipboard.HasData ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+        }
+
+        /// <summary>Pack the selection into a sub-state machine / unpack one back out.</summary>
+        void BuildSubStateMachineMenu(ContextualMenuPopulateEvent evt, int stateCount)
+        {
+            string group = L.Tr("Sub-State Machine");
+
+            evt.menu.AppendAction(
+                MenuPath(group, L.Tr("Pack Selected States")) + (stateCount > 1 ? " (" + stateCount + ")" : string.Empty),
+                _ => _sync.PackSelectedStates(GetSelectedStates()),
+                stateCount > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+
+            bool unpackable = CountSelected<SubStateMachineNode>() == 1 && stateCount == 0;
+            var ssmNode = unpackable ? FirstSelected<SubStateMachineNode>() : null;
+            evt.menu.AppendAction(MenuPath(group, L.Tr("Unpack Into Parent")),
+                _ => _sync.UnpackSubStateMachine(ssmNode.StateMachine),
+                unpackable ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+        }
+
+        /// <summary>Align / distribute the selection and frame the whole graph.</summary>
+        void BuildLayoutMenu(ContextualMenuPopulateEvent evt)
+        {
+            string group = L.Tr("Layout");
+            // Align acts on the current multi-selection, so it grays out until ≥2 states are selected.
+            evt.menu.AppendAction(MenuPath(group, L.Tr("Align horizontal")),
+                _ => AlignSelectedStates(GraphLayout.AlignAxis.Row), AlignStatus);
+            evt.menu.AppendAction(MenuPath(group, L.Tr("Align vertical")),
+                _ => AlignSelectedStates(GraphLayout.AlignAxis.Column), AlignStatus);
+            var distributeStatus = GetSelectedStates().Count >= 3
+                ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled;
+            evt.menu.AppendAction(MenuPath(group, L.Tr("Distribute horizontal")),
+                _ => DistributeSelectedStates(GraphLayout.AlignAxis.Row), distributeStatus);
+            evt.menu.AppendAction(MenuPath(group, L.Tr("Distribute vertical")),
+                _ => DistributeSelectedStates(GraphLayout.AlignAxis.Column), distributeStatus);
+            evt.menu.AppendAction(MenuPath(group, L.Tr("Frame All")), _ => FrameAll());
+        }
+
+        /// <summary>Loop-time toggle for the clips of the selected states (skips blend trees).</summary>
+        void BuildClipMenu(ContextualMenuPopulateEvent evt)
+        {
+            int clipStates = CountSelectedClipStates();
+            var loopStatus = clipStates > 0
+                ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled;
+            string group = L.Tr("Clip Loop Time");
+            evt.menu.AppendAction(MenuPath(group, L.Tr("On")) + " (" + clipStates + ")",
+                _ => SetSelectedClipLoopTime(true), loopStatus);
+            evt.menu.AppendAction(MenuPath(group, L.Tr("Off")) + " (" + clipStates + ")",
+                _ => SetSelectedClipLoopTime(false), loopStatus);
+        }
+
+        /// <summary>Copy Behaviours from one state / paste onto every selected state. Paste
+        /// offers Replace (clear targets first) and Append.</summary>
+        void BuildBehaviourClipboardEntries(ContextualMenuPopulateEvent evt, int stateCount)
+        {
+            var states = GetSelectedStates();
+            bool anyBehaviours = false;
+            foreach (var state in states)
+                if (state.behaviours != null && state.behaviours.Length > 0)
+                { anyBehaviours = true; break; }
+
+            evt.menu.AppendAction(MenuPath(L.Tr("Behaviours"), L.Tr("Copy From This State")),
+                _ => VrcBehaviours.Copy(FirstSelected<StateNode>().State.behaviours),
+                stateCount == 1 && anyBehaviours
+                    ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+
+            int copied = VrcBehaviours.ClipboardCount;
+            string suffix = copied > 0 ? " (" + copied + ")" : string.Empty;
+            var pasteStatus = stateCount > 0 && copied > 0
+                ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled;
+            evt.menu.AppendAction(MenuPath(L.Tr("Behaviours"), L.Tr("Paste (Append)")) + suffix,
+                _ => PasteBehavioursOnSelection(replace: false), pasteStatus);
+            evt.menu.AppendAction(MenuPath(L.Tr("Behaviours"), L.Tr("Paste (Replace)")) + suffix,
+                _ => PasteBehavioursOnSelection(replace: true), pasteStatus);
+        }
+
+        void PasteBehavioursOnSelection(bool replace)
+        {
+            var states = GetSelectedStates();
+            using (new UndoScope("Paste Behaviours"))
+                foreach (var state in states)
+                {
+                    VrcBehaviours.Paste(state, replace);
+                    _sync.RefreshStateNode(state);   // B badge updates immediately
+                }
         }
 
         // Source set marked for the two-step cross-product flow. Static so it survives the menu
@@ -694,36 +885,89 @@ namespace Yozolab.DaerD
 
         static void ClearMarkedSources() => s_markedSources = null;
 
-        /// <summary>Chain / fan / cross-product transition creation between the selected nodes.</summary>
+        /// <summary>
+        /// Chain / fan / cross-product transition creation between the selected nodes. Every entry
+        /// spells out its direction with the actual node name and the number of nodes involved,
+        /// because "this → other selected" reads as a riddle when you are looking at a graph.
+        /// Entries that stamp the copied transition's settings onto what they create are grouped
+        /// under one sub-item instead of doubling the list.
+        /// </summary>
         void BuildConnectMenu(ContextualMenuPopulateEvent evt)
         {
             var selected = GetSelectedConnectables();
-            evt.menu.AppendAction(
-                "Connect States/Chain In Click Order (" + selected.Count + ")",
-                _ => _sync.ChainNodes(GetSelectedConnectables()),
-                selected.Count >= 2 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+            string group = L.Tr("Connect States");
+            var chainStatus = selected.Count >= 2
+                ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled;
 
-            BuildFanEntries(evt, selected);
-            BuildCrossProductEntries(evt, selected);
+            evt.menu.AppendAction(
+                MenuPath(group, L.Tr("Chain in click order ({0})", selected.Count)),
+                _ => _sync.ChainNodes(GetSelectedConnectables()), chainStatus);
+
+            BuildFanEntries(evt, selected, group);
+            BuildCrossProductEntries(evt, selected, group);
+
+            if (!TransitionClipboard.HasData) return;
+
+            // "Seeded" = every created transition gets the copied transition's settings and
+            // conditions. One sub-group keeps the main list readable.
+            string seeded = L.Tr("Using the copied Transition as a template");
+            evt.menu.AppendAction(
+                MenuPath(group, seeded, L.Tr("Chain in click order ({0})", selected.Count)),
+                _ => _sync.ChainNodes(GetSelectedConnectables(), seeded: true), chainStatus);
+
+            var target = ConnectTarget(evt, selected);
+            if (target != null)
+            {
+                var others = OthersThan(target, selected);
+                string name = MenuEscape(GraphSync.NodeLabel(target));
+                evt.menu.AppendAction(
+                    MenuPath(group, seeded, L.Tr("'{0}' → the other {1} selected", name, others.Count)),
+                    _ => _sync.FanOutNodes(target, others, seeded: true));
+                evt.menu.AppendAction(
+                    MenuPath(group, seeded, L.Tr("The other {1} selected → '{0}'", name, others.Count)),
+                    _ => _sync.FanInNodes(others, target, seeded: true));
+            }
+
+            int marked = s_markedSources?.Count ?? 0;
+            if (marked > 0 && selected.Count > 0)
+                evt.menu.AppendAction(
+                    MenuPath(group, seeded, L.Tr("Step 2: marked ({0}) → selected ({1})", marked, selected.Count)),
+                    _ =>
+                    {
+                        _sync.CrossProductNodes(ResolveMarkedSources(), GetSelectedConnectables(), seeded: true);
+                        s_markedSources = null;
+                    });
         }
 
-        void BuildFanEntries(ContextualMenuPopulateEvent evt, List<GraphNodeBase> selected)
+        /// <summary>The right-clicked node, when it is part of a multi-node selection.</summary>
+        GraphNodeBase ConnectTarget(ContextualMenuPopulateEvent evt, List<GraphNodeBase> selected)
         {
             var target = ResolveTarget<GraphNodeBase>(evt.target as VisualElement);
-            if (target == null || selected.Count < 2 || !selected.Contains(target))
-                return;
+            return target != null && selected.Count >= 2 && selected.Contains(target) ? target : null;
+        }
+
+        static List<GraphNodeBase> OthersThan(GraphNodeBase target, List<GraphNodeBase> selected)
+        {
+            var others = new List<GraphNodeBase>();
+            foreach (var node in selected)
+                if (node != target) others.Add(node);
+            return others;
+        }
+
+        void BuildFanEntries(ContextualMenuPopulateEvent evt, List<GraphNodeBase> selected, string group)
+        {
+            var target = ConnectTarget(evt, selected);
+            if (target == null) return;
             // Entry/Exit/AnyState aren't context targets — they have no contextual menu of their
             // own. So the "this" target will always be a state or sub-state machine. We still
             // pass it through TransitionConnect.CanConnect at use time so any nonsense pair
             // (e.g. AnyState → AnyState in `others`) silently drops.
+            var others = OthersThan(target, selected);
+            string name = MenuEscape(GraphSync.NodeLabel(target));
 
-            var others = new List<GraphNodeBase>();
-            foreach (var s in selected)
-                if (s != target) others.Add(s);
-
-            evt.menu.AppendAction("Connect States/This → Other Selected (" + others.Count + ")",
+            evt.menu.AppendAction(MenuPath(group, L.Tr("'{0}' → the other {1} selected", name, others.Count)),
                 _ => _sync.FanOutNodes(target, others));
-            evt.menu.AppendAction("Connect States/Other Selected (" + others.Count + ") → This",
+            evt.menu.AppendAction(MenuPath(group, L.Tr("The other {1} selected → '{0}'", name, others.Count)),
                 _ => _sync.FanInNodes(others, target));
         }
 
@@ -731,19 +975,21 @@ namespace Yozolab.DaerD
         /// Two-step cross product: mark the current selection as the source set, change the
         /// selection, then connect every marked source to every now-selected node.
         /// </summary>
-        void BuildCrossProductEntries(ContextualMenuPopulateEvent evt, List<GraphNodeBase> selected)
+        void BuildCrossProductEntries(ContextualMenuPopulateEvent evt, List<GraphNodeBase> selected, string group)
         {
             // Marked items whose model was destroyed (or never resolved on this rebuild) drop out.
             s_markedSources?.RemoveAll(IsMarkedSourceStale);
             int marked = s_markedSources?.Count ?? 0;
 
-            evt.menu.AppendSeparator("Connect States/");
+            evt.menu.AppendSeparator(MenuEscape(group) + "/");
+            // Numbered, because this is the one flow in the menu that takes two passes: mark a set,
+            // change the selection, then connect. Without the numbers nobody guesses the order.
             evt.menu.AppendAction(
-                "Connect States/Mark Selected As Sources (" + selected.Count + ")",
+                MenuPath(group, L.Tr("Step 1: mark the selected {0} as sources", selected.Count)),
                 _ => s_markedSources = ToModels(GetSelectedConnectables()),
                 selected.Count > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
             evt.menu.AppendAction(
-                "Connect States/Marked Sources (" + marked + ") → Selected (" + selected.Count + ")",
+                MenuPath(group, L.Tr("Step 2: marked ({0}) → selected ({1})", marked, selected.Count)),
                 _ =>
                 {
                     _sync.CrossProductNodes(ResolveMarkedSources(), GetSelectedConnectables());
@@ -753,7 +999,7 @@ namespace Yozolab.DaerD
                     ? DropdownMenuAction.Status.Normal
                     : DropdownMenuAction.Status.Disabled);
             if (marked > 0)
-                evt.menu.AppendAction("Connect States/Clear Marked Sources",
+                evt.menu.AppendAction(MenuPath(group, L.Tr("Clear the source marks ({0})", marked)),
                     _ => s_markedSources = null);
         }
 
@@ -820,60 +1066,85 @@ namespace Yozolab.DaerD
             ("Large", 16),
         };
 
+        /// <summary>Names the paste entry after what is actually on the clipboard, so the menu
+        /// says what will land on the canvas.</summary>
+        static string PasteFramesAndNotesLabel()
+        {
+            int frames = FrameNoteClipboard.FrameCount;
+            int notes = FrameNoteClipboard.NoteCount;
+            if (frames > 0 && notes > 0) return L.Tr("Paste Frames and Notes") + " (" + (frames + notes) + ")";
+            if (notes > 0) return L.Tr("Paste Notes") + " (" + notes + ")";
+            if (frames > 0) return L.Tr("Paste Frames") + " (" + frames + ")";
+            return L.Tr("Paste Frame or Note");
+        }
+
         void BuildFrameMenu(ContextualMenuPopulateEvent evt, FrameNode frameNode)
         {
             var frame = frameNode.Frame;
             var unlessLocked = frame.locked ? DropdownMenuAction.Status.Disabled : DropdownMenuAction.Status.Normal;
+            // Snapshot the position now: the pointer is over the menu by the time an entry runs.
+            var graphPosition = _lastMouseGraphPosition;
 
-            evt.menu.AppendAction("Rename Frame", _ => frameNode.BeginRename(), unlessLocked);
+            evt.menu.AppendAction(L.Tr("Rename Frame"), _ => frameNode.BeginRename(), unlessLocked);
             // Duplicates the frame, the states inside, and the transitions among those states —
             // available even on a locked frame, since the copy is independent of the original.
-            evt.menu.AppendAction("Duplicate Frame", _ => _sync.DuplicateFrame(frame));
-            evt.menu.AppendAction("Lock Frame", _ => _sync.ToggleFrameLock(frame),
+            evt.menu.AppendAction(L.Tr("Duplicate Frame"), _ => _sync.DuplicateFrame(frame));
+            // Copy takes the box alone (title, size, color) and survives a layer switch — use
+            // Duplicate for a same-layer copy that brings the contents along.
+            evt.menu.AppendAction(L.Tr("Copy Frame"), _ => _sync.CopyFrame(frame));
+            evt.menu.AppendAction(PasteFramesAndNotesLabel(), _ => _sync.PasteFramesAndNotes(graphPosition),
+                FrameNoteClipboard.HasData ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+            evt.menu.AppendAction(L.Tr("Lock Frame"), _ => _sync.ToggleFrameLock(frame),
                 frame.locked ? DropdownMenuAction.Status.Checked : DropdownMenuAction.Status.Normal);
-            evt.menu.AppendAction("Move Nodes With Frame",
+            evt.menu.AppendAction(L.Tr("Move Nodes With Frame"),
                 _ => _sync.ToggleFrameMoveNodes(frame),
                 frame.moveNodesWithFrame ? DropdownMenuAction.Status.Checked : DropdownMenuAction.Status.Normal);
 
             evt.menu.AppendSeparator();
             int contents = _sync.NodesFullyInside(frame.bounds).Count;
             int stateCount = CountFrameStates(frame);
-            evt.menu.AppendAction("Select Contents (" + contents + ")",
+            evt.menu.AppendAction(L.Tr("Select Contents") + " (" + contents + ")",
                 _ => _sync.SelectFrameContents(frame),
                 contents > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
             // States-only variant: drops the frame from the selection so the next action
             // (Ctrl+D, the multi-state inspector, alignment) operates purely on the states.
-            evt.menu.AppendAction("Select States Inside (" + stateCount + ")",
+            evt.menu.AppendAction(L.Tr("Select States Inside") + " (" + stateCount + ")",
                 _ => _sync.SelectFrameInternalStates(frame),
                 stateCount > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
-            evt.menu.AppendAction("Fit To Contents", _ => _sync.FitFrameToContents(frame),
+            evt.menu.AppendAction(L.Tr("Fit To Contents"), _ => _sync.FitFrameToContents(frame),
                 !frame.locked && contents > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
 
             foreach (var preset in FramePalette)
             {
                 var captured = preset.color;
-                evt.menu.AppendAction("Frame Color/" + preset.name, _ => _sync.SetFrameColor(frame, captured));
+                evt.menu.AppendAction(MenuPath(L.Tr("Frame Color"), L.Tr(preset.name)), _ => _sync.SetFrameColor(frame, captured));
             }
 
             evt.menu.AppendSeparator();
-            evt.menu.AppendAction("Delete Frame", _ => _sync.DeleteFrame(frame), unlessLocked);
+            evt.menu.AppendAction(L.Tr("Delete Frame"), _ => _sync.DeleteFrame(frame), unlessLocked);
         }
 
         void BuildNoteMenu(ContextualMenuPopulateEvent evt, NoteNode noteNode)
         {
             var note = noteNode.Note;
-            evt.menu.AppendAction("Edit Note", _ => noteNode.BeginEdit());
+            var graphPosition = _lastMouseGraphPosition;
+            evt.menu.AppendAction(L.Tr("Edit Note"), _ => noteNode.BeginEdit());
+            // Notes carry no layer reference once copied, so this is the way to reuse a memo in
+            // another layer (or another controller).
+            evt.menu.AppendAction(L.Tr("Copy Note"), _ => _sync.CopyNote(note));
+            evt.menu.AppendAction(PasteFramesAndNotesLabel(), _ => _sync.PasteFramesAndNotes(graphPosition),
+                FrameNoteClipboard.HasData ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
 
             foreach (var preset in NotePalette)
             {
                 var captured = preset.color;
-                evt.menu.AppendAction("Note Color/" + preset.name, _ =>
+                evt.menu.AppendAction(MenuPath(L.Tr("Note Color"), L.Tr(preset.name)), _ =>
                     _sync.SetNoteColor(note, new Color(captured.r, captured.g, captured.b, note.color.a)));
             }
             foreach (var percent in new[] { 100, 80, 60, 40 })
             {
                 float alpha = percent / 100f;
-                evt.menu.AppendAction("Opacity/" + percent + "%", _ =>
+                evt.menu.AppendAction(MenuPath(L.Tr("Opacity"), percent + "%"), _ =>
                     _sync.SetNoteColor(note, new Color(note.color.r, note.color.g, note.color.b, alpha)),
                     Mathf.Abs(note.color.a - alpha) < 0.01f
                         ? DropdownMenuAction.Status.Checked
@@ -882,18 +1153,50 @@ namespace Yozolab.DaerD
             foreach (var option in NoteFontSizes)
             {
                 var captured = option.size;
-                evt.menu.AppendAction("Font Size/" + option.name, _ => _sync.SetNoteFontSize(note, captured),
+                evt.menu.AppendAction(MenuPath(L.Tr("Font Size"), L.Tr(option.name)), _ => _sync.SetNoteFontSize(note, captured),
                     note.fontSize == captured ? DropdownMenuAction.Status.Checked : DropdownMenuAction.Status.Normal);
             }
 
             evt.menu.AppendSeparator();
-            evt.menu.AppendAction("Delete Note", _ => _sync.DeleteNote(note));
+            evt.menu.AppendAction(L.Tr("Delete Note"), _ => _sync.DeleteNote(note));
         }
 
         void AlignSelectedStates(GraphLayout.AlignAxis axis)
         {
             GraphLayout.Align(_context.CurrentStateMachine, GetSelectedStates(), axis);
             _sync.RequestRebuild();
+        }
+
+        void DistributeSelectedStates(GraphLayout.AlignAxis axis)
+        {
+            GraphLayout.Distribute(_context.CurrentStateMachine, GetSelectedStates(), axis);
+            _sync.RequestRebuild();
+        }
+
+        int CountSelectedClipStates()
+        {
+            int count = 0;
+            foreach (var state in GetSelectedStates())
+                if (state.motion is AnimationClip) count++;
+            return count;
+        }
+
+        /// <summary>Toggles loop time on the clips assigned to the selected states. Edits the
+        /// clip assets themselves — every other state using the same clip is affected too.</summary>
+        void SetSelectedClipLoopTime(bool loop)
+        {
+            var seen = new HashSet<AnimationClip>();
+            using (new UndoScope("Set Clip Loop Time"))
+                foreach (var state in GetSelectedStates())
+                {
+                    if (!(state.motion is AnimationClip clip) || !seen.Add(clip)) continue;
+                    var settings = AnimationUtility.GetAnimationClipSettings(clip);
+                    if (settings.loopTime == loop) continue;
+                    Undo.RegisterCompleteObjectUndo(clip, "Set Clip Loop Time");
+                    settings.loopTime = loop;
+                    AnimationUtility.SetAnimationClipSettings(clip, settings);
+                    EditorUtility.SetDirty(clip);
+                }
         }
 
         DropdownMenuAction.Status AlignStatus(DropdownMenuAction _) =>
@@ -970,14 +1273,14 @@ namespace Yozolab.DaerD
             int count = edge.Transitions.Count;
             string suffix = count > 1 ? " (" + count + ")" : string.Empty;
 
-            evt.menu.AppendAction("Reverse Transition" + suffix,
+            evt.menu.AppendAction(L.Tr("Reverse Transition") + suffix,
                 _ => _sync.ReverseEdge(edge),
                 _sync.CanReverseEdge(edge) ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
 
             var targets = _sync.RedirectTargets(edge);
             if (targets.Count == 0)
             {
-                evt.menu.AppendAction("Redirect Transition" + suffix, _ => { }, DropdownMenuAction.Status.Disabled);
+                evt.menu.AppendAction(L.Tr("Redirect Transition") + suffix, _ => { }, DropdownMenuAction.Status.Disabled);
             }
             else
             {
@@ -985,18 +1288,18 @@ namespace Yozolab.DaerD
                 {
                     var destination = target;
                     evt.menu.AppendAction(
-                        "Redirect Transition" + suffix + "/" + MenuEscape(GraphSync.NodeLabel(destination)),
+                        MenuEscape(L.Tr("Redirect Transition") + suffix) + "/" + MenuEscape(GraphSync.NodeLabel(destination)),
                         _ => _sync.RedirectEdge(edge, destination));
                 }
             }
 
-            evt.menu.AppendAction("Replicate Transition" + suffix, _ => _sync.ReplicateEdge(edge));
+            evt.menu.AppendAction(L.Tr("Replicate Transition") + suffix, _ => _sync.ReplicateEdge(edge));
 
             int copyCount = 0;
             foreach (var e in selectedEdges)
                 if (!e.IsDefaultEdge) copyCount += e.Transitions.Count;
             string copySuffix = copyCount > 1 ? " (" + copyCount + ")" : string.Empty;
-            evt.menu.AppendAction("Copy Transition" + copySuffix,
+            evt.menu.AppendAction(L.Tr("Copy Transition") + copySuffix,
                 _ => _sync.CopyTransitionsFromEdges(selectedEdges),
                 copyCount > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
         }
@@ -1004,6 +1307,17 @@ namespace Yozolab.DaerD
         /// <summary>Neutralises '/' in node names so they don't spawn unintended submenus.</summary>
         static string MenuEscape(string name) =>
             string.IsNullOrEmpty(name) ? "?" : name.Replace('/', '\u2215');
+
+        /// <summary>
+        /// One "Group/Item" menu path. Every segment is escaped, so a '/' inside a label — or
+        /// inside somebody's translation of one — adds no extra submenu level. ("Frame / Note"
+        /// as a group name used to bury its items two levels deep.)
+        /// </summary>
+        static string MenuPath(string group, string item) =>
+            MenuEscape(group) + "/" + MenuEscape(item);
+
+        static string MenuPath(string group, string sub, string item) =>
+            MenuEscape(group) + "/" + MenuEscape(sub) + "/" + MenuEscape(item);
 
         int CountFrameStates(GraphFrameData.Frame frame)
         {

@@ -24,12 +24,41 @@ namespace Yozolab.DaerD
             DirectBlendTree,
         }
 
+        /// <summary>One extra animated property besides GameObject.m_IsActive: a component's
+        /// m_Enabled flag, or a blendshape weight with explicit OFF/ON values.</summary>
+        public class Binding
+        {
+            /// <summary>Component type the curve binds to (concrete type, e.g. SkinnedMeshRenderer).</summary>
+            public System.Type type;
+            /// <summary>"m_Enabled" or "blendShape.&lt;name&gt;".</summary>
+            public string property;
+            public float offValue;
+            public float onValue = 1f;
+
+            public static Binding Enabled(System.Type componentType) => new Binding
+            {
+                type = componentType,
+                property = "m_Enabled",
+            };
+
+            public static Binding BlendShape(string shapeName, float off, float on) => new Binding
+            {
+                type = typeof(SkinnedMeshRenderer),
+                property = "blendShape." + shapeName,
+                offValue = off,
+                onValue = on,
+            };
+        }
+
         public class Target
         {
             /// <summary>Hierarchy path relative to the Animator root ("" is the root itself).</summary>
             public string path;
-            /// <summary>Unchecked inverts the toggle: the object turns OFF when the toggle is ON.</summary>
+            /// <summary>Unchecked inverts the toggle: every binding swaps its ON and OFF values.</summary>
             public bool activeWhenOn = true;
+            /// <summary>Key GameObject.m_IsActive itself. Can be off when only components toggle.</summary>
+            public bool toggleActive = true;
+            public List<Binding> bindings = new List<Binding>();
         }
 
         public class Request
@@ -47,6 +76,16 @@ namespace Yozolab.DaerD
             /// <summary>DirectBlendTree mode: existing DBT (or empty) layer, or -1 to create one.</summary>
             public int layerIndex = -1;
             public string newLayerName = "DBT";
+        }
+
+        /// <summary>Resolves a component type by short name (e.g. "VRCPhysBone") without an
+        /// SDK assembly reference; null when no loaded type matches.</summary>
+        public static System.Type FindComponentType(string shortName)
+        {
+            foreach (var type in TypeCache.GetTypesDerivedFrom<Component>())
+                if (!type.IsAbstract && type.Name == shortName)
+                    return type;
+            return null;
         }
 
         /// <summary>Human-readable reason the request can't run, or null when it can.</summary>
@@ -77,6 +116,12 @@ namespace Yozolab.DaerD
                     return L.Tr("Every target needs a hierarchy path.");
                 if (!seen.Add(target.path.Trim()))
                     return L.Tr("Target path '{0}' is listed more than once.", target.path.Trim());
+                if (!target.toggleActive && (target.bindings == null || target.bindings.Count == 0))
+                    return L.Tr("Target '{0}' has nothing to animate — enable Object or add a component binding.", target.path.Trim());
+                if (target.bindings != null)
+                    foreach (var binding in target.bindings)
+                        if (binding == null || binding.type == null || string.IsNullOrEmpty(binding.property))
+                            return L.Tr("Target '{0}' has an invalid component binding.", target.path.Trim());
             }
 
             if (r.mode == Mode.DirectBlendTree)
@@ -114,11 +159,23 @@ namespace Yozolab.DaerD
             var clip = new AnimationClip { name = r.toggleName + (on ? " ON" : " OFF") };
             foreach (var target in r.targets)
             {
-                bool active = on == target.activeWhenOn;
-                var binding = EditorCurveBinding.FloatCurve(
-                    target.path.Trim(), typeof(GameObject), "m_IsActive");
-                AnimationUtility.SetEditorCurve(clip, binding,
-                    new AnimationCurve(new Keyframe(0f, active ? 1f : 0f)));
+                // activeWhenOn == false inverts the whole target: its bindings take their
+                // ON values in the OFF clip and vice versa.
+                bool takeOn = on == target.activeWhenOn;
+                string path = target.path.Trim();
+                if (target.toggleActive)
+                {
+                    var binding = EditorCurveBinding.FloatCurve(path, typeof(GameObject), "m_IsActive");
+                    AnimationUtility.SetEditorCurve(clip, binding,
+                        new AnimationCurve(new Keyframe(0f, takeOn ? 1f : 0f)));
+                }
+                if (target.bindings == null) continue;
+                foreach (var extra in target.bindings)
+                {
+                    var binding = EditorCurveBinding.FloatCurve(path, extra.type, extra.property);
+                    AnimationUtility.SetEditorCurve(clip, binding,
+                        new AnimationCurve(new Keyframe(0f, takeOn ? extra.onValue : extra.offValue)));
+                }
             }
             SaveClipBesideController(r.controller, clip);
             return clip;

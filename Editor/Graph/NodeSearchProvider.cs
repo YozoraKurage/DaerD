@@ -24,12 +24,12 @@ namespace Yozolab.DaerD
 
             return new List<SearchTreeEntry>
             {
-                new SearchTreeGroupEntry(new GUIContent("Create Node"), 0),
-                new SearchTreeEntry(new GUIContent("State", _blankIcon)) { level = 1, userData = "state" },
-                new SearchTreeEntry(new GUIContent("State With Selected Clip", _blankIcon)) { level = 1, userData = "state-clip" },
-                new SearchTreeEntry(new GUIContent("Blend Tree State", _blankIcon)) { level = 1, userData = "state-blendtree" },
-                new SearchTreeEntry(new GUIContent("Sub-State Machine", _blankIcon)) { level = 1, userData = "ssm" },
-                new SearchTreeEntry(new GUIContent("Paste State(s)", _blankIcon)) { level = 1, userData = "paste" },
+                new SearchTreeGroupEntry(new GUIContent(L.Tr("Create Node")), 0),
+                new SearchTreeEntry(new GUIContent(L.Tr("State"), _blankIcon)) { level = 1, userData = "state" },
+                new SearchTreeEntry(new GUIContent(L.Tr("State With Selected Clip"), _blankIcon)) { level = 1, userData = "state-clip" },
+                new SearchTreeEntry(new GUIContent(L.Tr("Blend Tree State"), _blankIcon)) { level = 1, userData = "state-blendtree" },
+                new SearchTreeEntry(new GUIContent(L.Tr("Sub-State Machine"), _blankIcon)) { level = 1, userData = "ssm" },
+                new SearchTreeEntry(new GUIContent(L.Tr("Paste State(s)"), _blankIcon)) { level = 1, userData = "paste" },
             };
         }
 

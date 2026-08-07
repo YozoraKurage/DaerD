@@ -26,6 +26,8 @@ namespace Yozolab.DaerD
             MissingBehaviour,
             DuplicateCondition,
             DirectBlendTree,
+            VrcParameters,
+            ClipBindings,
         }
 
         public class Issue
@@ -62,6 +64,8 @@ namespace Yozolab.DaerD
                 case Kind.MissingBehaviour: return L.Tr("Missing Behaviour");
                 case Kind.DuplicateCondition: return L.Tr("Duplicate Condition");
                 case Kind.DirectBlendTree: return L.Tr("Direct Blend Tree");
+                case Kind.VrcParameters: return L.Tr("VRC Parameters");
+                case Kind.ClipBindings: return L.Tr("Clip Bindings");
             }
             return kind.ToString();
         }
@@ -129,6 +133,14 @@ namespace Yozolab.DaerD
             AddLayerIssues(controller, issues);
             AddMissingBehaviourIssues(controller, issues);
             AddDirectBlendTreeIssues(controller, issues);
+
+            // Parameter-store checks only run against the store the user explicitly
+            // associated with this controller (never a scene guess — DaerD is also used on
+            // NDMF gimmick controllers that belong to no avatar).
+            var store = ParameterStore.Of(controller);
+            if (store != null)
+                store.Analyze(controller, issues);
+            ClipRepather.Analyze(controller, issues);
 
             return issues;
         }
