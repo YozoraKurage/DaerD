@@ -44,14 +44,37 @@ namespace Yozolab.DaerD.Authoring
             : _assets.TryGetValue(asset, out var name) ? name
             : RegisterAsset(asset, asset.name);
 
-        public void Call(object target, string call) =>
+        /// <summary>The builder whose last recorded line can still be extended into a
+        /// fluent chain (null right after anything unchainable).</summary>
+        object _chainTarget;
+        const int ChainLineLimit = 100;
+
+        /// <summary>
+        /// Records target.Method(...). Consecutive chainable calls on the same builder merge
+        /// into one fluent chain ("a.To(b).If(\u0022Go\u0022);") while the line stays readable;
+        /// <paramref name="chain"/> is false for void methods, which must stay statements.
+        /// </summary>
+        public void Call(object target, string call, bool chain = true)
+        {
+            if (chain && target == _chainTarget && _lines.Count > 0)
+            {
+                string last = _lines[_lines.Count - 1];
+                if (last.EndsWith(";") && last.Length + call.Length + 1 <= ChainLineLimit)
+                {
+                    _lines[_lines.Count - 1] = last.Substring(0, last.Length - 1) + "." + call + ";";
+                    return;
+                }
+            }
             _lines.Add(NameOf(target) + "." + call + ";");
+            _chainTarget = chain ? target : null;
+        }
 
         public string Declare(object created, string hint, object owner, string call)
         {
             string name = Unique(Identifier(hint, lowerFirst: true));
             _builders[created] = name;
             _lines.Add("var " + name + " = " + NameOf(owner) + "." + call + ";");
+            _chainTarget = created;
             return name;
         }
 
@@ -59,9 +82,14 @@ namespace Yozolab.DaerD.Authoring
         {
             if (_lines.Count > 0 && _lines[_lines.Count - 1].Length > 0)
                 _lines.Add(string.Empty);
+            _chainTarget = null;
         }
 
-        public void Comment(string text) => _lines.Add("// " + text);
+        public void Comment(string text)
+        {
+            _lines.Add("// " + text);
+            _chainTarget = null;
+        }
 
         string NameOf(object builder) =>
             builder != null && _builders.TryGetValue(builder, out var name) ? name : "c";

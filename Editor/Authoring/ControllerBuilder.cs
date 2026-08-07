@@ -219,25 +219,25 @@ namespace Yozolab.DaerD.Authoring
         public void EntryAt(float x, float y)
         {
             Machine.entryPosition = new Vector3(x, y, 0f);
-            Root.Script?.Call(this, $"EntryAt({RecipeScript.F(x)}, {RecipeScript.F(y)})");
+            Root.Script?.Call(this, $"EntryAt({RecipeScript.F(x)}, {RecipeScript.F(y)})", chain: false);
         }
 
         public void ExitAt(float x, float y)
         {
             Machine.exitPosition = new Vector3(x, y, 0f);
-            Root.Script?.Call(this, $"ExitAt({RecipeScript.F(x)}, {RecipeScript.F(y)})");
+            Root.Script?.Call(this, $"ExitAt({RecipeScript.F(x)}, {RecipeScript.F(y)})", chain: false);
         }
 
         public void AnyStateAt(float x, float y)
         {
             Machine.anyStatePosition = new Vector3(x, y, 0f);
-            Root.Script?.Call(this, $"AnyStateAt({RecipeScript.F(x)}, {RecipeScript.F(y)})");
+            Root.Script?.Call(this, $"AnyStateAt({RecipeScript.F(x)}, {RecipeScript.F(y)})", chain: false);
         }
 
         public void ParentAt(float x, float y)
         {
             Machine.parentPosition = new Vector3(x, y, 0f);
-            Root.Script?.Call(this, $"ParentAt({RecipeScript.F(x)}, {RecipeScript.F(y)})");
+            Root.Script?.Call(this, $"ParentAt({RecipeScript.F(x)}, {RecipeScript.F(y)})", chain: false);
         }
     }
 
@@ -308,6 +308,27 @@ namespace Yozolab.DaerD.Authoring
         {
             _layer.defaultWeight = weight;
             _root.Script?.Call(this, $"Weight({RecipeScript.F(weight)})");
+            return this;
+        }
+
+        public SyncedLayerBuilder Additive()
+        {
+            _layer.blending = AnimatorLayerBlendingMode.Additive;
+            _root.Script?.Call(this, "Additive()");
+            return this;
+        }
+
+        public SyncedLayerBuilder IkPass(bool on = true)
+        {
+            _layer.ikPass = on;
+            _root.Script?.Call(this, on ? "IkPass()" : "IkPass(false)");
+            return this;
+        }
+
+        public SyncedLayerBuilder Mask(AvatarMask mask)
+        {
+            _layer.mask = mask;
+            _root.Script?.Call(this, $"Mask({_root.Script.AssetRef(mask)})");
             return this;
         }
 
