@@ -6,20 +6,18 @@ using UnityEngine;
 namespace Yozolab.DaerD.Authoring
 {
     /// <summary>
-    /// The recipe-facing fluent API for describing an AnimatorController in C#. A recipe's
-    /// Build method declares parameters, layers, states, transitions and blend trees through
-    /// these builders; <see cref="ControllerRecipe.Generate"/> then applies the result to the
-    /// target controller. Everything is data until Apply — nothing here touches a controller
-    /// directly (use <see cref="Raw"/> for that).
+    /// The recipe-facing fluent API, deliberately shaped like AnimatorAsCode V1 — the
+    /// dialect AI models and gimmick authors already know: NewState / WithAnimation /
+    /// TransitionsTo(x).When(param.IsTrue()) / Drives / DrivingRemaps. Parameters are typed
+    /// handles, conditions are objects those handles produce. Everything is data until
+    /// Generate applies it; nothing here touches a controller directly (use <see cref="Raw"/>).
     ///
-    /// Quick reference (also emitted at the top of exported recipes):
-    ///   c.Float("Blend", 0.5f);  c.Bool("Go");  c.Int("Step");  c.Trigger("Fire");
-    ///   var fx = c.Layer("Hand").Weight(1f);
-    ///   var idle = fx.State("Idle", idleClip).At(260, 60).Default();
-    ///   idle.To(other).If("Go").IfGreater("Blend", 0.5f).Duration(0.15f);
-    ///   other.ToExit().IfNot("Go");   fx.AnyTo(idle).IfIntEquals("Step", 2);
-    ///   var tree = walk.Tree("Move").Blend2D("X", "Y");  tree.Add(runClip).Position(0, 1);
-    ///   idle.Driver().LocalOnly().Set("Step", 1f).Copy("A", "B");
+    ///   var go = c.BoolParameter("Go");
+    ///   var fx = c.Layer("Hand");
+    ///   var idle = fx.NewState("Idle").WithAnimation(idleClip).At(260, 60);
+    ///   idle.TransitionsTo(wave).When(go.IsTrue()).WithTransitionDurationSeconds(0.15f);
+    ///   wave.Exits().When(go.IsFalse());
+    ///   idle.Drives(step, 1).DrivingLocally();
     /// </summary>
     public sealed class ControllerBuilder
     {
@@ -30,47 +28,72 @@ namespace Yozolab.DaerD.Authoring
         internal readonly List<Action> PostBakeSyncs = new List<Action>();
         internal RecipeScript Script;
 
-        // ---- parameters --------------------------------------------------------
+        // ---- parameters ----------------------------------------------------------
 
-        public ControllerBuilder Float(string name, float defaultValue = 0f)
+        public FloatParam FloatParameter(string name) =>
+            Handle(new FloatParam(this, name), AnimatorControllerParameterType.Float,
+                false, 0f, 0, false, $"FloatParameter({RecipeScript.S(name)})");
+
+        public FloatParam FloatParameter(string name, float defaultValue) =>
+            Handle(new FloatParam(this, name), AnimatorControllerParameterType.Float,
+                true, defaultValue, 0, false,
+                $"FloatParameter({RecipeScript.S(name)}, {RecipeScript.F(defaultValue)})");
+
+        public IntParam IntParameter(string name) =>
+            Handle(new IntParam(this, name), AnimatorControllerParameterType.Int,
+                false, 0f, 0, false, $"IntParameter({RecipeScript.S(name)})");
+
+        public IntParam IntParameter(string name, int defaultValue) =>
+            Handle(new IntParam(this, name), AnimatorControllerParameterType.Int,
+                true, 0f, defaultValue, false,
+                $"IntParameter({RecipeScript.S(name)}, {defaultValue})");
+
+        public BoolParam BoolParameter(string name) =>
+            Handle(new BoolParam(this, name), AnimatorControllerParameterType.Bool,
+                false, 0f, 0, false, $"BoolParameter({RecipeScript.S(name)})");
+
+        public BoolParam BoolParameter(string name, bool defaultValue) =>
+            Handle(new BoolParam(this, name), AnimatorControllerParameterType.Bool,
+                true, 0f, 0, defaultValue,
+                $"BoolParameter({RecipeScript.S(name)}, {RecipeScript.B(defaultValue)})");
+
+        public TriggerParam TriggerParameter(string name) =>
+            Handle(new TriggerParam(this, name), AnimatorControllerParameterType.Trigger,
+                false, 0f, 0, false, $"TriggerParameter({RecipeScript.S(name)})");
+
+        /// <summary>Registration is idempotent: naming a parameter twice refers to the same
+        /// one; only a call that states a default value overwrites the default.</summary>
+        T Handle<T>(T handle, AnimatorControllerParameterType type, bool hasDefault,
+            float f, int i, bool b, string call) where T : ParamHandle
         {
-            IR.parameters.Add(new ControllerIR.Param
-            { name = name, type = AnimatorControllerParameterType.Float, defaultFloat = defaultValue });
-            Script?.Call(this, defaultValue == 0f
-                ? $"Float({RecipeScript.S(name)})"
-                : $"Float({RecipeScript.S(name)}, {RecipeScript.F(defaultValue)})", chain: false);
-            return this;
+            var existing = IR.parameters.Find(p => p.name == handle.Name);
+            if (existing == null)
+            {
+                IR.parameters.Add(new ControllerIR.Param
+                {
+                    name = handle.Name,
+                    type = type,
+                    hasDefault = hasDefault,
+                    defaultFloat = f,
+                    defaultInt = i,
+                    defaultBool = b,
+                });
+            }
+            else if (existing.type != type)
+                Notes.Add(L.Tr("Parameter '{0}' is declared with conflicting types ({1} and {2}).",
+                    handle.Name, existing.type, type));
+            else if (hasDefault)
+            {
+                existing.hasDefault = true;
+                existing.defaultFloat = f;
+                existing.defaultInt = i;
+                existing.defaultBool = b;
+            }
+            Script?.Declare(handle, handle.Name, this, call);
+            return handle;
         }
 
-        public ControllerBuilder Int(string name, int defaultValue = 0)
-        {
-            IR.parameters.Add(new ControllerIR.Param
-            { name = name, type = AnimatorControllerParameterType.Int, defaultInt = defaultValue });
-            Script?.Call(this, defaultValue == 0
-                ? $"Int({RecipeScript.S(name)})"
-                : $"Int({RecipeScript.S(name)}, {defaultValue})", chain: false);
-            return this;
-        }
-
-        public ControllerBuilder Bool(string name, bool defaultValue = false)
-        {
-            IR.parameters.Add(new ControllerIR.Param
-            { name = name, type = AnimatorControllerParameterType.Bool, defaultBool = defaultValue });
-            Script?.Call(this, defaultValue
-                ? $"Bool({RecipeScript.S(name)}, true)"
-                : $"Bool({RecipeScript.S(name)})", chain: false);
-            return this;
-        }
-
-        public ControllerBuilder Trigger(string name)
-        {
-            IR.parameters.Add(new ControllerIR.Param
-            { name = name, type = AnimatorControllerParameterType.Trigger });
-            Script?.Call(this, $"Trigger({RecipeScript.S(name)})", chain: false);
-            return this;
-        }
-
-        // ---- layers ------------------------------------------------------------
+        // ---- layers ----------------------------------------------------------------
 
         public LayerBuilder Layer(string name)
         {
@@ -90,6 +113,15 @@ namespace Yozolab.DaerD.Authoring
             var builder = new SyncedLayerBuilder(this, layer, sourceLayer);
             Script?.Declare(builder, name, this,
                 $"SyncedLayer({RecipeScript.S(name)}, {RecipeScript.S(sourceLayer)})");
+            return builder;
+        }
+
+        /// <summary>An embedded blend tree; assign it with
+        /// <see cref="StateBuilder.WithAnimation(TreeBuilder)"/> (AAC's aac.NewBlendTree flow).</summary>
+        public TreeBuilder NewBlendTree(string name = "Blend Tree")
+        {
+            var builder = new TreeBuilder(this, new ControllerIR.Tree { name = name });
+            Script?.Declare(builder, name, this, $"NewBlendTree({RecipeScript.S(name)})");
             return builder;
         }
 
@@ -117,7 +149,7 @@ namespace Yozolab.DaerD.Authoring
         public AsyncSyncRecipeBuilder AsyncSync(string baseName = "Async") =>
             new AsyncSyncRecipeBuilder(this, baseName);
 
-        // ---- bake --------------------------------------------------------------
+        // ---- bake ---------------------------------------------------------------
 
         /// <summary>Resolves deferred references (synced source names) and returns problems
         /// worth surfacing before the declaration is applied.</summary>
@@ -130,10 +162,6 @@ namespace Yozolab.DaerD.Authoring
             foreach (var layer in IR.layers)
                 if (!layerNames.Add(layer.name))
                     problems.Add(L.Tr("Layer '{0}' is declared more than once.", layer.name));
-            var parameterNames = new HashSet<string>();
-            foreach (var parameter in IR.parameters)
-                if (!parameterNames.Add(parameter.name))
-                    problems.Add(L.Tr("Parameter '{0}' is declared more than once.", parameter.name));
             return problems;
         }
 
@@ -144,6 +172,91 @@ namespace Yozolab.DaerD.Authoring
             return -1;
         }
     }
+
+    // ---- parameters and conditions -----------------------------------------------
+
+    /// <summary>A declared (or referenced) controller parameter. Handles are how recipes
+    /// name parameters everywhere — conditions, drivers, per-state parameter slots.</summary>
+    public abstract class ParamHandle
+    {
+        internal readonly ControllerBuilder Root;
+        public string Name { get; }
+
+        internal ParamHandle(ControllerBuilder root, string name)
+        {
+            Root = root;
+            Name = name ?? string.Empty;
+        }
+
+        internal Condition Make(AnimatorConditionMode mode, float threshold, string call) =>
+            new Condition
+            {
+                Mode = mode,
+                Parameter = Name,
+                Threshold = threshold,
+                Source = Root.Script != null ? Root.Script.NameArg(this) + "." + call : null,
+            };
+    }
+
+    public sealed class FloatParam : ParamHandle
+    {
+        internal FloatParam(ControllerBuilder root, string name) : base(root, name) { }
+
+        public Condition IsGreaterThan(float value) =>
+            Make(AnimatorConditionMode.Greater, value, $"IsGreaterThan({RecipeScript.F(value)})");
+
+        public Condition IsLessThan(float value) =>
+            Make(AnimatorConditionMode.Less, value, $"IsLessThan({RecipeScript.F(value)})");
+    }
+
+    public sealed class IntParam : ParamHandle
+    {
+        internal IntParam(ControllerBuilder root, string name) : base(root, name) { }
+
+        public Condition IsGreaterThan(int value) =>
+            Make(AnimatorConditionMode.Greater, value, $"IsGreaterThan({value})");
+
+        public Condition IsLessThan(int value) =>
+            Make(AnimatorConditionMode.Less, value, $"IsLessThan({value})");
+
+        public Condition IsEqualTo(int value) =>
+            Make(AnimatorConditionMode.Equals, value, $"IsEqualTo({value})");
+
+        public Condition IsNotEqualTo(int value) =>
+            Make(AnimatorConditionMode.NotEqual, value, $"IsNotEqualTo({value})");
+    }
+
+    public sealed class BoolParam : ParamHandle
+    {
+        internal BoolParam(ControllerBuilder root, string name) : base(root, name) { }
+
+        public Condition IsTrue() => Make(AnimatorConditionMode.If, 0f, "IsTrue()");
+
+        public Condition IsFalse() => Make(AnimatorConditionMode.IfNot, 0f, "IsFalse()");
+
+        public Condition IsEqualTo(bool value) =>
+            Make(value ? AnimatorConditionMode.If : AnimatorConditionMode.IfNot, 0f,
+                $"IsEqualTo({RecipeScript.B(value)})");
+    }
+
+    public sealed class TriggerParam : ParamHandle
+    {
+        internal TriggerParam(ControllerBuilder root, string name) : base(root, name) { }
+
+        public Condition IsSet() => Make(AnimatorConditionMode.If, 0f, "IsSet()");
+    }
+
+    /// <summary>One transition condition, produced by a parameter handle
+    /// (go.IsTrue(), blend.IsGreaterThan(0.5f)) and consumed by When / And.</summary>
+    public sealed class Condition
+    {
+        internal AnimatorConditionMode Mode;
+        internal string Parameter;
+        internal float Threshold;
+        internal string Source;
+    }
+
+    // ---- machines ------------------------------------------------------------------
 
     /// <summary>Shared surface of a layer's root and a sub-state machine.</summary>
     public abstract class MachineScope
@@ -159,44 +272,41 @@ namespace Yozolab.DaerD.Authoring
             Prefix = prefix;
         }
 
-        public StateBuilder State(string name, Motion motion = null)
+        public StateBuilder NewState(string name)
         {
-            var state = new ControllerIR.State { name = name, motionAsset = motion };
+            var state = new ControllerIR.State { name = name };
             Machine.states.Add(state);
             // Mirrors Unity: the first state of a machine is its default until told otherwise.
             string path = ControllerIR.Join(Prefix, name);
             if (Machine.states.Count == 1) Machine.defaultState = path;
             var builder = new StateBuilder(Root, this, state, path);
-            Root.Script?.Declare(builder, name, this, motion == null
-                ? $"State({RecipeScript.S(name)})"
-                : $"State({RecipeScript.S(name)}, {Root.Script.AssetRef(motion)})");
+            Root.Script?.Declare(builder, name, this, $"NewState({RecipeScript.S(name)})");
             return builder;
         }
 
-        /// <summary>A nested sub-state machine.</summary>
-        public MachineBuilder AddMachine(string name)
+        public MachineBuilder NewSubStateMachine(string name)
         {
             var child = new ControllerIR.ChildMachine { machine = new ControllerIR.Machine { name = name } };
             Machine.machines.Add(child);
             var builder = new MachineBuilder(Root, child, ControllerIR.Join(Prefix, name));
-            Root.Script?.Declare(builder, name, this, $"AddMachine({RecipeScript.S(name)})");
+            Root.Script?.Declare(builder, name, this, $"NewSubStateMachine({RecipeScript.S(name)})");
             return builder;
         }
 
-        public TransitionBuilder AnyTo(StateBuilder destination) =>
-            Wire("AnyTo", Machine.anyStateTransitions, destination.Path,
+        public TransitionBuilder AnyTransitionsTo(StateBuilder destination) =>
+            Wire("AnyTransitionsTo", Machine.anyStateTransitions, destination.Path,
                 ControllerIR.Transition.Target.State, isStateTransition: true, destination);
 
-        public TransitionBuilder AnyTo(MachineBuilder destination) =>
-            Wire("AnyTo", Machine.anyStateTransitions, destination.Prefix,
+        public TransitionBuilder AnyTransitionsTo(MachineBuilder destination) =>
+            Wire("AnyTransitionsTo", Machine.anyStateTransitions, destination.Prefix,
                 ControllerIR.Transition.Target.Machine, isStateTransition: true, destination);
 
-        public TransitionBuilder EntryTo(StateBuilder destination) =>
-            Wire("EntryTo", Machine.entryTransitions, destination.Path,
+        public TransitionBuilder EntryTransitionsTo(StateBuilder destination) =>
+            Wire("EntryTransitionsTo", Machine.entryTransitions, destination.Path,
                 ControllerIR.Transition.Target.State, isStateTransition: false, destination);
 
-        public TransitionBuilder EntryTo(MachineBuilder destination) =>
-            Wire("EntryTo", Machine.entryTransitions, destination.Prefix,
+        public TransitionBuilder EntryTransitionsTo(MachineBuilder destination) =>
+            Wire("EntryTransitionsTo", Machine.entryTransitions, destination.Prefix,
                 ControllerIR.Transition.Target.Machine, isStateTransition: false, destination);
 
         TransitionBuilder Wire(string method, List<ControllerIR.Transition> list, string path,
@@ -268,10 +378,10 @@ namespace Yozolab.DaerD.Authoring
             _layer = layer;
         }
 
-        public LayerBuilder Weight(float weight)
+        public LayerBuilder WithWeight(float weight)
         {
             _layer.defaultWeight = weight;
-            Root.Script?.Call(this, $"Weight({RecipeScript.F(weight)})");
+            Root.Script?.Call(this, $"WithWeight({RecipeScript.F(weight)})");
             return this;
         }
 
@@ -282,17 +392,17 @@ namespace Yozolab.DaerD.Authoring
             return this;
         }
 
-        public LayerBuilder IkPass(bool on = true)
+        public LayerBuilder WithIkPass(bool on = true)
         {
             _layer.ikPass = on;
-            Root.Script?.Call(this, on ? "IkPass()" : "IkPass(false)");
+            Root.Script?.Call(this, on ? "WithIkPass()" : "WithIkPass(false)");
             return this;
         }
 
-        public LayerBuilder Mask(AvatarMask mask)
+        public LayerBuilder WithAvatarMask(AvatarMask mask)
         {
             _layer.mask = mask;
-            Root.Script?.Call(this, $"Mask({Root.Script.AssetRef(mask)})");
+            Root.Script?.Call(this, $"WithAvatarMask({Root.Script.AssetRef(mask)})");
             return this;
         }
     }
@@ -302,13 +412,11 @@ namespace Yozolab.DaerD.Authoring
     {
         readonly ControllerBuilder _root;
         readonly ControllerIR.Layer _layer;
-        readonly string _sourceLayer;
 
         internal SyncedLayerBuilder(ControllerBuilder root, ControllerIR.Layer layer, string sourceLayer)
         {
             _root = root;
             _layer = layer;
-            _sourceLayer = sourceLayer;
             // Resolved lazily so declaration order doesn't matter; a bad name surfaces as -1
             // plus a note at bake time.
             root.PostBakeSyncs.Add(() =>
@@ -321,10 +429,10 @@ namespace Yozolab.DaerD.Authoring
             });
         }
 
-        public SyncedLayerBuilder Weight(float weight)
+        public SyncedLayerBuilder WithWeight(float weight)
         {
             _layer.defaultWeight = weight;
-            _root.Script?.Call(this, $"Weight({RecipeScript.F(weight)})");
+            _root.Script?.Call(this, $"WithWeight({RecipeScript.F(weight)})");
             return this;
         }
 
@@ -335,17 +443,17 @@ namespace Yozolab.DaerD.Authoring
             return this;
         }
 
-        public SyncedLayerBuilder IkPass(bool on = true)
+        public SyncedLayerBuilder WithIkPass(bool on = true)
         {
             _layer.ikPass = on;
-            _root.Script?.Call(this, on ? "IkPass()" : "IkPass(false)");
+            _root.Script?.Call(this, on ? "WithIkPass()" : "WithIkPass(false)");
             return this;
         }
 
-        public SyncedLayerBuilder Mask(AvatarMask mask)
+        public SyncedLayerBuilder WithAvatarMask(AvatarMask mask)
         {
             _layer.mask = mask;
-            _root.Script?.Call(this, $"Mask({_root.Script.AssetRef(mask)})");
+            _root.Script?.Call(this, $"WithAvatarMask({_root.Script.AssetRef(mask)})");
             return this;
         }
 
@@ -385,14 +493,14 @@ namespace Yozolab.DaerD.Authoring
         }
 
         /// <summary>Transition drawn from this machine's node in the parent view.</summary>
-        public TransitionBuilder To(StateBuilder destination) =>
-            Source("To", destination.Path, ControllerIR.Transition.Target.State, destination);
+        public TransitionBuilder TransitionsTo(StateBuilder destination) =>
+            Source("TransitionsTo", destination.Path, ControllerIR.Transition.Target.State, destination);
 
-        public TransitionBuilder To(MachineBuilder destination) =>
-            Source("To", destination.Prefix, ControllerIR.Transition.Target.Machine, destination);
+        public TransitionBuilder TransitionsTo(MachineBuilder destination) =>
+            Source("TransitionsTo", destination.Prefix, ControllerIR.Transition.Target.Machine, destination);
 
-        public TransitionBuilder ToExit() =>
-            Source("ToExit", string.Empty, ControllerIR.Transition.Target.Exit, null);
+        public TransitionBuilder Exits() =>
+            Source("Exits", string.Empty, ControllerIR.Transition.Target.Exit, null);
 
         TransitionBuilder Source(string method, string path, ControllerIR.Transition.Target target,
             object destination)
@@ -407,12 +515,15 @@ namespace Yozolab.DaerD.Authoring
         }
     }
 
+    // ---- states -------------------------------------------------------------------
+
     public sealed class StateBuilder
     {
         readonly ControllerBuilder _root;
         readonly MachineScope _scope;
         internal readonly ControllerIR.State State;
         internal readonly string Path;
+        ControllerIR.Behaviour _driver;
 
         internal StateBuilder(ControllerBuilder root, MachineScope scope,
             ControllerIR.State state, string path)
@@ -437,96 +548,106 @@ namespace Yozolab.DaerD.Authoring
             return this;
         }
 
-        public StateBuilder Motion(Motion motion)
+        public StateBuilder WithAnimation(Motion motion)
         {
             State.motionAsset = motion;
             State.tree = null;
-            _root.Script?.Call(this, $"Motion({_root.Script.AssetRef(motion)})");
+            _root.Script?.Call(this, $"WithAnimation({_root.Script.AssetRef(motion)})");
             return this;
         }
 
-        /// <summary>Starts an embedded blend tree as this state's motion.</summary>
-        public TreeBuilder Tree(string name = "Blend Tree")
+        public StateBuilder WithAnimation(TreeBuilder blendTree)
         {
-            var tree = new ControllerIR.Tree { name = name };
-            State.tree = tree;
+            State.tree = blendTree.Tree;
             State.motionAsset = null;
-            var builder = new TreeBuilder(_root, tree, null);
-            _root.Script?.Declare(builder, name, this, $"Tree({RecipeScript.S(name)})");
-            return builder;
+            _root.Script?.Call(this, $"WithAnimation({_root.Script.NameArg(blendTree)})");
+            return this;
         }
 
-        public StateBuilder Speed(float speed)
+        public StateBuilder WithSpeedSetTo(float speed)
         {
             State.speed = speed;
-            _root.Script?.Call(this, $"Speed({RecipeScript.F(speed)})");
+            _root.Script?.Call(this, $"WithSpeedSetTo({RecipeScript.F(speed)})");
             return this;
         }
 
-        public StateBuilder CycleOffset(float offset)
+        public StateBuilder WithSpeed(FloatParam parameter)
+        {
+            State.speedParameterActive = true;
+            State.speedParameter = parameter.Name;
+            _root.Script?.Call(this, $"WithSpeed({_root.Script.NameArg(parameter)})");
+            return this;
+        }
+
+        public StateBuilder WithCycleOffsetSetTo(float offset)
         {
             State.cycleOffset = offset;
-            _root.Script?.Call(this, $"CycleOffset({RecipeScript.F(offset)})");
+            _root.Script?.Call(this, $"WithCycleOffsetSetTo({RecipeScript.F(offset)})");
             return this;
         }
 
-        public StateBuilder Mirror(bool on = true)
+        public StateBuilder WithCycleOffset(FloatParam parameter)
         {
-            State.mirror = on;
-            _root.Script?.Call(this, on ? "Mirror()" : "Mirror(false)");
+            State.cycleOffsetParameterActive = true;
+            State.cycleOffsetParameter = parameter.Name;
+            _root.Script?.Call(this, $"WithCycleOffset({_root.Script.NameArg(parameter)})");
             return this;
         }
 
-        public StateBuilder FootIK(bool on = true)
+        public StateBuilder WithMotionTime(FloatParam parameter)
         {
-            State.ikOnFeet = on;
-            _root.Script?.Call(this, on ? "FootIK()" : "FootIK(false)");
+            State.timeParameterActive = true;
+            State.timeParameter = parameter.Name;
+            _root.Script?.Call(this, $"WithMotionTime({_root.Script.NameArg(parameter)})");
             return this;
         }
 
-        public StateBuilder WriteDefaults(bool on)
+        public StateBuilder WithMirrorSetTo(bool mirror)
         {
-            State.writeDefaultValues = on;
-            _root.Script?.Call(this, $"WriteDefaults({RecipeScript.B(on)})");
+            State.mirror = mirror;
+            _root.Script?.Call(this, $"WithMirrorSetTo({RecipeScript.B(mirror)})");
             return this;
         }
 
-        public StateBuilder Tag(string tag)
+        public StateBuilder WithMirror(BoolParam parameter)
+        {
+            State.mirrorParameterActive = true;
+            State.mirrorParameter = parameter.Name;
+            _root.Script?.Call(this, $"WithMirror({_root.Script.NameArg(parameter)})");
+            return this;
+        }
+
+        public StateBuilder WithWriteDefaultsSetTo(bool writeDefaults)
+        {
+            State.writeDefaultValues = writeDefaults;
+            _root.Script?.Call(this, $"WithWriteDefaultsSetTo({RecipeScript.B(writeDefaults)})");
+            return this;
+        }
+
+        public StateBuilder WithFootIkSetTo(bool footIk)
+        {
+            State.ikOnFeet = footIk;
+            _root.Script?.Call(this, $"WithFootIkSetTo({RecipeScript.B(footIk)})");
+            return this;
+        }
+
+        public StateBuilder WithTag(string tag)
         {
             State.tag = tag ?? string.Empty;
-            _root.Script?.Call(this, $"Tag({RecipeScript.S(tag)})");
+            _root.Script?.Call(this, $"WithTag({RecipeScript.S(tag)})");
             return this;
         }
 
-        public StateBuilder SpeedBy(string parameter) =>
-            Drive(v => { State.speedParameterActive = true; State.speedParameter = v; }, "SpeedBy", parameter);
+        // ---- transitions -----------------------------------------------------------
 
-        public StateBuilder MirrorBy(string parameter) =>
-            Drive(v => { State.mirrorParameterActive = true; State.mirrorParameter = v; }, "MirrorBy", parameter);
+        public TransitionBuilder TransitionsTo(StateBuilder destination) =>
+            Wire("TransitionsTo", destination.Path, ControllerIR.Transition.Target.State, destination);
 
-        public StateBuilder CycleOffsetBy(string parameter) =>
-            Drive(v => { State.cycleOffsetParameterActive = true; State.cycleOffsetParameter = v; }, "CycleOffsetBy", parameter);
+        public TransitionBuilder TransitionsTo(MachineBuilder destination) =>
+            Wire("TransitionsTo", destination.Prefix, ControllerIR.Transition.Target.Machine, destination);
 
-        public StateBuilder TimeBy(string parameter) =>
-            Drive(v => { State.timeParameterActive = true; State.timeParameter = v; }, "TimeBy", parameter);
-
-        StateBuilder Drive(Action<string> apply, string method, string parameter)
-        {
-            apply(parameter ?? string.Empty);
-            _root.Script?.Call(this, $"{method}({RecipeScript.S(parameter)})");
-            return this;
-        }
-
-        // ---- transitions -------------------------------------------------------
-
-        public TransitionBuilder To(StateBuilder destination) =>
-            Wire("To", destination.Path, ControllerIR.Transition.Target.State, destination);
-
-        public TransitionBuilder To(MachineBuilder destination) =>
-            Wire("To", destination.Prefix, ControllerIR.Transition.Target.Machine, destination);
-
-        public TransitionBuilder ToExit() =>
-            Wire("ToExit", string.Empty, ControllerIR.Transition.Target.Exit, null);
+        public TransitionBuilder Exits() =>
+            Wire("Exits", string.Empty, ControllerIR.Transition.Target.Exit, null);
 
         TransitionBuilder Wire(string method, string path, ControllerIR.Transition.Target target,
             object destination)
@@ -540,10 +661,21 @@ namespace Yozolab.DaerD.Authoring
             return builder;
         }
 
-        // ---- behaviours --------------------------------------------------------
+        // ---- VRC Parameter Driver (AAC's Drives family) ------------------------------
 
-        /// <summary>A VRC Avatar Parameter Driver on this state.</summary>
-        public DriverBuilder Driver(string instanceName = null)
+        /// <summary>Starts another driver behaviour on this state; the Driving* calls that
+        /// follow write into it. Only needed for a second driver — the first one appears on
+        /// demand.</summary>
+        public StateBuilder NewDriver(string instanceName = null)
+        {
+            _driver = MakeDriver(instanceName);
+            _root.Script?.Call(this, instanceName == null
+                ? "NewDriver()"
+                : $"NewDriver({RecipeScript.S(instanceName)})");
+            return this;
+        }
+
+        ControllerIR.Behaviour MakeDriver(string instanceName)
         {
             var behaviour = new ControllerIR.Behaviour
             {
@@ -552,12 +684,84 @@ namespace Yozolab.DaerD.Authoring
                 instanceName = instanceName ?? string.Empty,
             };
             State.behaviours.Add(behaviour);
-            var builder = new DriverBuilder(_root, behaviour.driver);
-            _root.Script?.Declare(builder, "d", this, instanceName == null
-                ? "Driver()"
-                : $"Driver({RecipeScript.S(instanceName)})");
-            return builder;
+            return behaviour;
         }
+
+        ControllerIR.DriverSpec Driver()
+        {
+            if (_driver == null) _driver = MakeDriver(null);
+            return _driver.driver;
+        }
+
+        public StateBuilder Drives(ParamHandle parameter, float value) =>
+            Drive(new ControllerIR.DriverEntry { kind = 0, name = parameter.Name, value = value },
+                parameter, $"Drives({{0}}, {RecipeScript.F(value)})");
+
+        public StateBuilder Drives(BoolParam parameter, bool value) =>
+            Drive(new ControllerIR.DriverEntry { kind = 0, name = parameter.Name, value = value ? 1f : 0f },
+                parameter, $"Drives({{0}}, {RecipeScript.B(value)})");
+
+        public StateBuilder DrivingIncreases(ParamHandle parameter, float amount) =>
+            Drive(new ControllerIR.DriverEntry { kind = 1, name = parameter.Name, value = amount },
+                parameter, $"DrivingIncreases({{0}}, {RecipeScript.F(amount)})");
+
+        public StateBuilder DrivingDecreases(ParamHandle parameter, float amount) =>
+            Drive(new ControllerIR.DriverEntry { kind = 1, name = parameter.Name, value = -amount },
+                parameter, $"DrivingDecreases({{0}}, {RecipeScript.F(amount)})");
+
+        public StateBuilder DrivingRandomizes(ParamHandle parameter, float min, float max) =>
+            Drive(new ControllerIR.DriverEntry { kind = 2, name = parameter.Name, min = min, max = max },
+                parameter, $"DrivingRandomizes({{0}}, {RecipeScript.F(min)}, {RecipeScript.F(max)})");
+
+        /// <summary>Bool randomization: the chance of landing true.</summary>
+        public StateBuilder DrivingRandomizes(BoolParam parameter, float chance) =>
+            Drive(new ControllerIR.DriverEntry { kind = 2, name = parameter.Name, chance = chance },
+                parameter, $"DrivingRandomizes({{0}}, {RecipeScript.F(chance)})");
+
+        public StateBuilder DrivingCopies(ParamHandle source, ParamHandle destination)
+        {
+            Driver().entries.Add(new ControllerIR.DriverEntry
+            { kind = 3, name = destination.Name, source = source.Name });
+            _root.Script?.Call(this,
+                $"DrivingCopies({_root.Script.NameArg(source)}, {_root.Script.NameArg(destination)})");
+            return this;
+        }
+
+        public StateBuilder DrivingRemaps(ParamHandle source, float sourceMin, float sourceMax,
+            ParamHandle destination, float destMin, float destMax)
+        {
+            Driver().entries.Add(new ControllerIR.DriverEntry
+            {
+                kind = 3,
+                name = destination.Name,
+                source = source.Name,
+                convertRange = true,
+                sourceMin = sourceMin,
+                sourceMax = sourceMax,
+                destMin = destMin,
+                destMax = destMax,
+            });
+            _root.Script?.Call(this,
+                $"DrivingRemaps({_root.Script.NameArg(source)}, {RecipeScript.F(sourceMin)}, {RecipeScript.F(sourceMax)}, "
+                + $"{_root.Script.NameArg(destination)}, {RecipeScript.F(destMin)}, {RecipeScript.F(destMax)})");
+            return this;
+        }
+
+        public StateBuilder DrivingLocally(bool on = true)
+        {
+            Driver().localOnly = on;
+            _root.Script?.Call(this, on ? "DrivingLocally()" : "DrivingLocally(false)");
+            return this;
+        }
+
+        StateBuilder Drive(ControllerIR.DriverEntry entry, ParamHandle parameter, string callFormat)
+        {
+            Driver().entries.Add(entry);
+            _root.Script?.Call(this, string.Format(callFormat, _root.Script.NameArg(parameter)));
+            return this;
+        }
+
+        // ---- other behaviours --------------------------------------------------------
 
         /// <summary>Any StateMachineBehaviour from an EditorJsonUtility snapshot — the
         /// fallback for SDK types without a typed builder.</summary>
@@ -589,6 +793,8 @@ namespace Yozolab.DaerD.Authoring
         }
     }
 
+    // ---- transitions ----------------------------------------------------------------
+
     public sealed class TransitionBuilder
     {
         readonly ControllerBuilder _root;
@@ -600,85 +806,99 @@ namespace Yozolab.DaerD.Authoring
             Transition = transition;
         }
 
-        public TransitionBuilder If(string parameter) =>
-            Condition(AnimatorConditionMode.If, parameter, 0f, $"If({RecipeScript.S(parameter)})");
+        /// <summary>Adds a condition. Conditions AND together; When and And are synonyms so
+        /// chains read naturally (.When(a.IsTrue()).And(b.IsGreaterThan(0.5f))).</summary>
+        public TransitionBuilder When(Condition condition) => Append(condition, "When");
 
-        public TransitionBuilder IfNot(string parameter) =>
-            Condition(AnimatorConditionMode.IfNot, parameter, 0f, $"IfNot({RecipeScript.S(parameter)})");
+        public TransitionBuilder And(Condition condition) => Append(condition, "And");
 
-        public TransitionBuilder IfGreater(string parameter, float threshold) =>
-            Condition(AnimatorConditionMode.Greater, parameter, threshold,
-                $"IfGreater({RecipeScript.S(parameter)}, {RecipeScript.F(threshold)})");
-
-        public TransitionBuilder IfLess(string parameter, float threshold) =>
-            Condition(AnimatorConditionMode.Less, parameter, threshold,
-                $"IfLess({RecipeScript.S(parameter)}, {RecipeScript.F(threshold)})");
-
-        public TransitionBuilder IfIntEquals(string parameter, int value) =>
-            Condition(AnimatorConditionMode.Equals, parameter, value,
-                $"IfIntEquals({RecipeScript.S(parameter)}, {value})");
-
-        public TransitionBuilder IfIntNotEquals(string parameter, int value) =>
-            Condition(AnimatorConditionMode.NotEqual, parameter, value,
-                $"IfIntNotEquals({RecipeScript.S(parameter)}, {value})");
-
-        TransitionBuilder Condition(AnimatorConditionMode mode, string parameter, float threshold,
-            string call)
+        TransitionBuilder Append(Condition condition, string method)
         {
+            if (condition == null) return this;
             Transition.conditions.Add(new ControllerIR.Condition
-            { mode = mode, parameter = parameter ?? string.Empty, threshold = threshold });
-            _root.Script?.Call(this, call);
+            {
+                mode = condition.Mode,
+                parameter = condition.Parameter,
+                threshold = condition.Threshold,
+            });
+            if (condition.Source != null)
+                _root.Script?.Call(this, $"{method}({condition.Source})");
             return this;
         }
 
-        /// <summary>Leave the current state at this normalized time (enables exit time).</summary>
-        public TransitionBuilder ExitTime(float normalizedTime)
+        /// <summary>Exit time 1: leave when the animation completes a loop.</summary>
+        public TransitionBuilder AfterAnimationFinishes()
         {
             Transition.hasExitTime = true;
-            Transition.exitTime = normalizedTime;
-            _root.Script?.Call(this, $"ExitTime({RecipeScript.F(normalizedTime)})");
+            Transition.exitTime = 1f;
+            _root.Script?.Call(this, "AfterAnimationFinishes()");
             return this;
         }
 
-        /// <summary>Blend duration in seconds (fixed duration).</summary>
-        public TransitionBuilder Duration(float seconds)
+        public TransitionBuilder AfterAnimationIsAtLeastAtNormalized(float exitTimeNormalized)
+        {
+            Transition.hasExitTime = true;
+            Transition.exitTime = exitTimeNormalized;
+            _root.Script?.Call(this,
+                $"AfterAnimationIsAtLeastAtNormalized({RecipeScript.F(exitTimeNormalized)})");
+            return this;
+        }
+
+        public TransitionBuilder WithTransitionDurationSeconds(float seconds)
         {
             Transition.hasFixedDuration = true;
             Transition.duration = seconds;
-            _root.Script?.Call(this, $"Duration({RecipeScript.F(seconds)})");
+            _root.Script?.Call(this, $"WithTransitionDurationSeconds({RecipeScript.F(seconds)})");
             return this;
         }
 
-        /// <summary>Blend duration as a fraction of the source state.</summary>
-        public TransitionBuilder DurationNormalized(float fraction)
+        public TransitionBuilder WithTransitionDurationNormalized(float fraction)
         {
             Transition.hasFixedDuration = false;
             Transition.duration = fraction;
-            _root.Script?.Call(this, $"DurationNormalized({RecipeScript.F(fraction)})");
+            _root.Script?.Call(this, $"WithTransitionDurationNormalized({RecipeScript.F(fraction)})");
             return this;
         }
 
-        public TransitionBuilder Offset(float offset)
+        public TransitionBuilder WithOffset(float offset)
         {
             Transition.offset = offset;
-            _root.Script?.Call(this, $"Offset({RecipeScript.F(offset)})");
+            _root.Script?.Call(this, $"WithOffset({RecipeScript.F(offset)})");
             return this;
         }
 
-        public TransitionBuilder Interruption(TransitionInterruptionSource source, bool ordered = true)
+        public TransitionBuilder WithInterruption(TransitionInterruptionSource source)
         {
             Transition.interruptionSource = source;
-            Transition.orderedInterruption = ordered;
-            _root.Script?.Call(this, ordered
-                ? $"Interruption({RecipeScript.E(source)})"
-                : $"Interruption({RecipeScript.E(source)}, false)");
+            _root.Script?.Call(this, $"WithInterruption({RecipeScript.E(source)})");
             return this;
         }
 
-        public TransitionBuilder CanTransitionToSelf(bool on = true)
+        public TransitionBuilder WithOrderedInterruption()
         {
-            Transition.canTransitionToSelf = on;
-            _root.Script?.Call(this, on ? "CanTransitionToSelf()" : "CanTransitionToSelf(false)");
+            Transition.orderedInterruption = true;
+            _root.Script?.Call(this, "WithOrderedInterruption()");
+            return this;
+        }
+
+        public TransitionBuilder WithNoOrderedInterruption()
+        {
+            Transition.orderedInterruption = false;
+            _root.Script?.Call(this, "WithNoOrderedInterruption()");
+            return this;
+        }
+
+        public TransitionBuilder WithTransitionToSelf()
+        {
+            Transition.canTransitionToSelf = true;
+            _root.Script?.Call(this, "WithTransitionToSelf()");
+            return this;
+        }
+
+        public TransitionBuilder WithNoTransitionToSelf()
+        {
+            Transition.canTransitionToSelf = false;
+            _root.Script?.Call(this, "WithNoTransitionToSelf()");
             return this;
         }
 
@@ -697,39 +917,50 @@ namespace Yozolab.DaerD.Authoring
         }
     }
 
+    // ---- blend trees ------------------------------------------------------------------
+
+    /// <summary>An embedded blend tree (create with <see cref="ControllerBuilder.NewBlendTree"/>,
+    /// attach with WithAnimation) — AAC's NewBlendTree flow, including chained children.</summary>
     public sealed class TreeBuilder
     {
         readonly ControllerBuilder _root;
         internal readonly ControllerIR.Tree Tree;
+        TreeChildBuilder _lastChild;
 
-        /// <summary>The child slot this tree occupies in its parent (null for a state's root
-        /// tree) — thresholds and 2D positions of a nested tree live on the slot.</summary>
-        public TreeChildBuilder Slot { get; }
+        /// <summary>Slot options of the most recently added child (time scale, mirror…),
+        /// for the rare settings the WithAnimation signatures don't carry.</summary>
+        public TreeChildBuilder LastChild => _lastChild;
 
-        internal TreeBuilder(ControllerBuilder root, ControllerIR.Tree tree, TreeChildBuilder slot)
+        internal TreeBuilder(ControllerBuilder root, ControllerIR.Tree tree)
         {
             _root = root;
             Tree = tree;
-            Slot = slot;
         }
 
-        public TreeBuilder Blend1D(string parameter)
+        public TreeBuilder Simple1D(FloatParam parameter)
         {
             Tree.type = BlendTreeType.Simple1D;
-            Tree.blendParameter = parameter;
-            _root.Script?.Call(this, $"Blend1D({RecipeScript.S(parameter)})");
+            Tree.blendParameter = parameter.Name;
+            _root.Script?.Call(this, $"Simple1D({_root.Script.NameArg(parameter)})");
             return this;
         }
 
-        public TreeBuilder Blend2D(string parameterX, string parameterY,
-            BlendTreeType type = BlendTreeType.FreeformDirectional2D)
+        public TreeBuilder SimpleDirectional2D(FloatParam parameterX, FloatParam parameterY) =>
+            TwoD(BlendTreeType.SimpleDirectional2D, "SimpleDirectional2D", parameterX, parameterY);
+
+        public TreeBuilder FreeformDirectional2D(FloatParam parameterX, FloatParam parameterY) =>
+            TwoD(BlendTreeType.FreeformDirectional2D, "FreeformDirectional2D", parameterX, parameterY);
+
+        public TreeBuilder FreeformCartesian2D(FloatParam parameterX, FloatParam parameterY) =>
+            TwoD(BlendTreeType.FreeformCartesian2D, "FreeformCartesian2D", parameterX, parameterY);
+
+        TreeBuilder TwoD(BlendTreeType type, string method, FloatParam x, FloatParam y)
         {
             Tree.type = type;
-            Tree.blendParameter = parameterX;
-            Tree.blendParameterY = parameterY;
-            _root.Script?.Call(this, type == BlendTreeType.FreeformDirectional2D
-                ? $"Blend2D({RecipeScript.S(parameterX)}, {RecipeScript.S(parameterY)})"
-                : $"Blend2D({RecipeScript.S(parameterX)}, {RecipeScript.S(parameterY)}, {RecipeScript.E(type)})");
+            Tree.blendParameter = x.Name;
+            Tree.blendParameterY = y.Name;
+            _root.Script?.Call(this,
+                $"{method}({_root.Script.NameArg(x)}, {_root.Script.NameArg(y)})");
             return this;
         }
 
@@ -762,27 +993,64 @@ namespace Yozolab.DaerD.Authoring
             return this;
         }
 
-        public TreeChildBuilder Add(Motion motion)
-        {
-            var child = new ControllerIR.TreeChild { motionAsset = motion };
-            Tree.children.Add(child);
-            var builder = new TreeChildBuilder(_root, child);
-            _root.Script?.Declare(builder, "slot", this, $"Add({_root.Script.AssetRef(motion)})");
-            return builder;
-        }
+        // ---- children (AAC WithAnimation overloads) -----------------------------------
 
-        /// <summary>A nested blend tree in the next child slot.</summary>
-        public TreeBuilder AddTree(string name)
+        public TreeBuilder WithAnimation(Motion motion) =>
+            Child(motion, null, $"WithAnimation({_root.Script?.AssetRef(motion)})", null);
+
+        /// <summary>1D child at an explicit threshold.</summary>
+        public TreeBuilder WithAnimation(Motion motion, float threshold) =>
+            Child(motion, null,
+                $"WithAnimation({_root.Script?.AssetRef(motion)}, {RecipeScript.F(threshold)})",
+                child => child.threshold = threshold);
+
+        /// <summary>2D child at a blend-space position.</summary>
+        public TreeBuilder WithAnimation(Motion motion, float x, float y) =>
+            Child(motion, null,
+                $"WithAnimation({_root.Script?.AssetRef(motion)}, {RecipeScript.F(x)}, {RecipeScript.F(y)})",
+                child => child.position = new Vector2(x, y));
+
+        /// <summary>Direct child weighted by a Float parameter.</summary>
+        public TreeBuilder WithAnimation(Motion motion, FloatParam directParameter) =>
+            Child(motion, null,
+                $"WithAnimation({_root.Script?.AssetRef(motion)}, {_root.Script?.NameArg(directParameter)})",
+                child => child.directParameter = directParameter.Name);
+
+        public TreeBuilder WithAnimation(TreeBuilder blendTree) =>
+            Child(null, blendTree.Tree, $"WithAnimation({_root.Script?.NameArg(blendTree)})", null);
+
+        public TreeBuilder WithAnimation(TreeBuilder blendTree, float threshold) =>
+            Child(null, blendTree.Tree,
+                $"WithAnimation({_root.Script?.NameArg(blendTree)}, {RecipeScript.F(threshold)})",
+                child => child.threshold = threshold);
+
+        public TreeBuilder WithAnimation(TreeBuilder blendTree, float x, float y) =>
+            Child(null, blendTree.Tree,
+                $"WithAnimation({_root.Script?.NameArg(blendTree)}, {RecipeScript.F(x)}, {RecipeScript.F(y)})",
+                child => child.position = new Vector2(x, y));
+
+        public TreeBuilder WithAnimation(TreeBuilder blendTree, FloatParam directParameter) =>
+            Child(null, blendTree.Tree,
+                $"WithAnimation({_root.Script?.NameArg(blendTree)}, {_root.Script?.NameArg(directParameter)})",
+                child => child.directParameter = directParameter.Name);
+
+        TreeBuilder Child(Motion motion, ControllerIR.Tree nested, string call,
+            Action<ControllerIR.TreeChild> configure)
         {
-            var child = new ControllerIR.TreeChild { tree = new ControllerIR.Tree { name = name } };
+            var child = new ControllerIR.TreeChild { motionAsset = motion, tree = nested };
+            configure?.Invoke(child);
             Tree.children.Add(child);
-            var slot = new TreeChildBuilder(_root, child);
-            var builder = new TreeBuilder(_root, child.tree, slot);
-            _root.Script?.Declare(builder, name, this, $"AddTree({RecipeScript.S(name)})");
-            return builder;
+            _lastChild = new TreeChildBuilder(_root, child);
+            if (_root.Script != null)
+            {
+                _root.Script.Call(this, call);
+                _root.Script.RegisterAlias(_lastChild, _root.Script.NameArg(this) + ".LastChild");
+            }
+            return this;
         }
     }
 
+    /// <summary>Slot options of one blend-tree child.</summary>
     public sealed class TreeChildBuilder
     {
         readonly ControllerBuilder _root;
@@ -826,83 +1094,6 @@ namespace Yozolab.DaerD.Authoring
         {
             Child.mirror = on;
             _root.Script?.Call(this, on ? "Mirror()" : "Mirror(false)");
-            return this;
-        }
-
-        public TreeChildBuilder DirectParameter(string parameter)
-        {
-            Child.directParameter = parameter ?? string.Empty;
-            _root.Script?.Call(this, $"DirectParameter({RecipeScript.S(parameter)})");
-            return this;
-        }
-    }
-
-    /// <summary>VRC Avatar Parameter Driver contents (entries run top to bottom).</summary>
-    public sealed class DriverBuilder
-    {
-        readonly ControllerBuilder _root;
-        readonly ControllerIR.DriverSpec _spec;
-
-        internal DriverBuilder(ControllerBuilder root, ControllerIR.DriverSpec spec)
-        {
-            _root = root;
-            _spec = spec;
-        }
-
-        public DriverBuilder LocalOnly(bool on = true)
-        {
-            _spec.localOnly = on;
-            _root.Script?.Call(this, on ? "LocalOnly()" : "LocalOnly(false)");
-            return this;
-        }
-
-        public DriverBuilder Set(string parameter, float value)
-        {
-            _spec.entries.Add(new ControllerIR.DriverEntry { kind = 0, name = parameter, value = value });
-            _root.Script?.Call(this, $"Set({RecipeScript.S(parameter)}, {RecipeScript.F(value)})");
-            return this;
-        }
-
-        public DriverBuilder Add(string parameter, float value)
-        {
-            _spec.entries.Add(new ControllerIR.DriverEntry { kind = 1, name = parameter, value = value });
-            _root.Script?.Call(this, $"Add({RecipeScript.S(parameter)}, {RecipeScript.F(value)})");
-            return this;
-        }
-
-        public DriverBuilder Random(string parameter, float min, float max, float chance = 1f)
-        {
-            _spec.entries.Add(new ControllerIR.DriverEntry
-            { kind = 2, name = parameter, min = min, max = max, chance = chance });
-            _root.Script?.Call(this, chance == 1f
-                ? $"Random({RecipeScript.S(parameter)}, {RecipeScript.F(min)}, {RecipeScript.F(max)})"
-                : $"Random({RecipeScript.S(parameter)}, {RecipeScript.F(min)}, {RecipeScript.F(max)}, {RecipeScript.F(chance)})");
-            return this;
-        }
-
-        public DriverBuilder Copy(string source, string destination)
-        {
-            _spec.entries.Add(new ControllerIR.DriverEntry { kind = 3, name = destination, source = source });
-            _root.Script?.Call(this, $"Copy({RecipeScript.S(source)}, {RecipeScript.S(destination)})");
-            return this;
-        }
-
-        public DriverBuilder CopyRange(string source, string destination,
-            float sourceMin, float sourceMax, float destMin, float destMax)
-        {
-            _spec.entries.Add(new ControllerIR.DriverEntry
-            {
-                kind = 3,
-                name = destination,
-                source = source,
-                convertRange = true,
-                sourceMin = sourceMin,
-                sourceMax = sourceMax,
-                destMin = destMin,
-                destMax = destMax,
-            });
-            _root.Script?.Call(this,
-                $"CopyRange({RecipeScript.S(source)}, {RecipeScript.S(destination)}, {RecipeScript.F(sourceMin)}, {RecipeScript.F(sourceMax)}, {RecipeScript.F(destMin)}, {RecipeScript.F(destMax)})");
             return this;
         }
     }

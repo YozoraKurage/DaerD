@@ -51,7 +51,8 @@ namespace Yozolab.DaerD.Authoring
 
         /// <summary>
         /// Records target.Method(...). Consecutive chainable calls on the same builder merge
-        /// into one fluent chain ("a.To(b).If(\u0022Go\u0022);") while the line stays readable;
+        /// into one fluent chain ("a.TransitionsTo(b).When(go.IsTrue());") while the line
+        /// stays readable;
         /// <paramref name="chain"/> is false for void methods, which must stay statements.
         /// </summary>
         public void Call(object target, string call, bool chain = true)
@@ -94,8 +95,14 @@ namespace Yozolab.DaerD.Authoring
         string NameOf(object builder) =>
             builder != null && _builders.TryGetValue(builder, out var name) ? name : "c";
 
-        /// <summary>A builder reference used as a call argument ("idle" in "a.To(idle)").</summary>
+        /// <summary>A builder reference used as a call argument ("idle" in
+        /// "a.TransitionsTo(idle)").</summary>
         public string NameArg(object builder) => NameOf(builder);
+
+        /// <summary>Registers a builder under a compound receiver expression
+        /// ("move.LastChild") instead of a fresh variable.</summary>
+        public void RegisterAlias(object builder, string expression) =>
+            _builders[builder] = expression;
 
         string Unique(string name)
         {
@@ -160,9 +167,17 @@ namespace Yozolab.DaerD.Authoring
             return builder.Append('"').ToString();
         }
 
-        /// <summary>Round-trip float literal ("0.25f").</summary>
-        public static string F(float value) =>
-            value.ToString("R", CultureInfo.InvariantCulture) + "f";
+        /// <summary>
+        /// Float literal, kept as light as possible: whole numbers print as plain ints
+        /// ("260" — implicit conversion carries them into float parameters), everything
+        /// else round-trips with the f suffix ("0.25f").
+        /// </summary>
+        public static string F(float value)
+        {
+            if (value == (int)value && System.Math.Abs(value) < 1e7f)
+                return ((int)value).ToString(CultureInfo.InvariantCulture);
+            return value.ToString("R", CultureInfo.InvariantCulture) + "f";
+        }
 
         public static string B(bool value) => value ? "true" : "false";
 

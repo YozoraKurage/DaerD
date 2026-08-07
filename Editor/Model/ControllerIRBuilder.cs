@@ -110,7 +110,9 @@ namespace Yozolab.DaerD
                         declared.name, existing.type, declared.type));
                     continue;
                 }
-                // The recipe is the declared source of truth for defaults it names.
+                // The recipe is the source of truth for defaults it explicitly states; a
+                // reference-only handle leaves the existing default alone.
+                if (!declared.hasDefault) continue;
                 var parameters = controller.parameters;
                 for (int i = 0; i < parameters.Length; i++)
                     if (parameters[i].name == declared.name)

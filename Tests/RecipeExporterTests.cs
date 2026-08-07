@@ -87,7 +87,7 @@ namespace Yozolab.DaerD.Tests
         }
 
         [Test]
-        public void Export_CodeShape_FieldsChainsAndCollapsedTransitions()
+        public void Export_CodeShape_HandlesChainsAndCollapsedTransitions()
         {
             var controller = BuildSample(out _);
             var result = RecipeExporter.Export(controller, null, "SampleRecipe", "My.Space");
@@ -98,11 +98,12 @@ namespace Yozolab.DaerD.Tests
             StringAssert.Contains("[SerializeField] AnimationClip clipA;", code);
             StringAssert.Contains("protected override void Build(ControllerBuilder c)", code);
 
-            // Parameters: headed section at the very top, one per line.
+            // Parameters: headed section at the very top, one typed handle per line.
+            // A default of zero stays unstated; an unreferenced handle keeps no variable.
             StringAssert.Contains("// ---- Parameters", code);
-            StringAssert.Contains("c.Float(\"Blend\", 0.5f);", code);
-            StringAssert.Contains("c.Bool(\"Go\");", code);
-            StringAssert.Contains("c.Int(\"Unused\");", code);
+            StringAssert.Contains("var blend = c.FloatParameter(\"Blend\", 0.5f);", code);
+            StringAssert.Contains("var go = c.BoolParameter(\"Go\");", code);
+            StringAssert.Contains("c.IntParameter(\"Unused\");", code);
 
             // Every layer opens with its own divider.
             StringAssert.Contains("// ---- Layer: Main ", code);
@@ -110,17 +111,23 @@ namespace Yozolab.DaerD.Tests
             StringAssert.Contains("var main = c.Layer(\"Main\");", code);
             // Node positions collapse to one chained line at the end of the layer's build.
             StringAssert.Contains(").ExitAt(", code);
-            StringAssert.Contains("var a = main.State(\"A\", clipA).At(100f, 50f).Speed(2f).WriteDefaults(false);", code);
-            StringAssert.Contains("var second = c.Layer(\"Second\").Weight(0.25f);", code);
+            // AAC shape: NewState + WithAnimation + At, whole numbers as plain ints.
+            StringAssert.Contains("var a = main.NewState(\"A\").WithAnimation(clipA).At(100, 50)", code);
+            StringAssert.Contains(".WithSpeedSetTo(2)", code);
+            StringAssert.Contains(".WithWriteDefaultsSetTo(false)", code);
+            StringAssert.Contains("var second = c.Layer(\"Second\").WithWeight(0.25f);", code);
 
             // One-shot transitions collapse to plain fluent statements — no dangling vars.
-            StringAssert.Contains("a.To(b).If(\"Go\").Duration(0.1f);", code);
-            StringAssert.Contains("b.ToExit().IfNot(\"Go\")", code);
-            StringAssert.Contains("main.AnyTo(a).IfGreater(\"Blend\", 0.9f)", code);
+            StringAssert.Contains("a.TransitionsTo(b).When(go.IsTrue()).WithTransitionDurationSeconds(0.1f);", code);
+            StringAssert.Contains("b.Exits().When(go.IsFalse())", code);
+            StringAssert.Contains("main.AnyTransitionsTo(a).When(blend.IsGreaterThan(0.9f))", code);
             StringAssert.DoesNotContain("var t = ", code);
 
-            // The blend tree and the JSON-fallback behaviour both made it in.
-            StringAssert.Contains(".Blend1D(\"Blend\").AutoThresholds(false)", code);
+            // The blend tree (a NewBlendTree variable the state references) and the
+            // JSON-fallback behaviour both made it in.
+            StringAssert.Contains("var move = c.NewBlendTree(\"Move\").Simple1D(blend).AutoThresholds(false)", code);
+            StringAssert.Contains(".WithAnimation(clipA, 0.25f)", code);
+            StringAssert.Contains(".WithAnimation(move)", code);
             StringAssert.Contains("BehaviourJson(\"IRTestBehaviour\"", code);
             // No GUIDs anywhere — assets are fields.
             StringAssert.DoesNotContain("guid", code.ToLowerInvariant());
@@ -136,8 +143,8 @@ namespace Yozolab.DaerD.Tests
             StringAssert.Contains("c.Layer(\"Second\")", code);
             StringAssert.DoesNotContain("c.Layer(\"Main\")", code);
             // "Second" references no parameters at all: none are exported.
-            StringAssert.DoesNotContain("c.Float(", code);
-            StringAssert.DoesNotContain("c.Bool(", code);
+            StringAssert.DoesNotContain("c.FloatParameter(", code);
+            StringAssert.DoesNotContain("c.BoolParameter(", code);
             StringAssert.DoesNotContain("\"Unused\"", code);
 
             result.replayed.Bake();
@@ -175,12 +182,13 @@ namespace Yozolab.DaerD.Tests
             var lines = new List<string>
             {
                 "var a = c.Layer(\"L\");",
-                "var t = a.To(b).If(\"Go\");",
-                "a.AnyTo(x);",
+                "var t = a.TransitionsTo(b).When(go.IsTrue());",
+                "a.AnyTransitionsTo(x);",
             };
             var stripped = RecipeExporter.StripUnusedVariables(lines);
             Assert.AreEqual("var a = c.Layer(\"L\");", stripped[0], "a is referenced below");
-            Assert.AreEqual("a.To(b).If(\"Go\");", stripped[1], "t is never used again");
+            Assert.AreEqual("a.TransitionsTo(b).When(go.IsTrue());", stripped[1],
+                "t is never used again");
         }
     }
 }

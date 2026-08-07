@@ -35,9 +35,13 @@ namespace Yozolab.DaerD
                 string where = "Parameter '" + pa.name + "'";
                 Field(where, "name", pa.name, pb.name, diffs);
                 Field(where, "type", pa.type, pb.type, diffs);
-                Field(where, "default float", pa.defaultFloat, pb.defaultFloat, diffs);
-                Field(where, "default int", pa.defaultInt, pb.defaultInt, diffs);
-                Field(where, "default bool", pa.defaultBool, pb.defaultBool, diffs);
+                // Reference-only declarations make no claim about the default value.
+                if (pa.hasDefault && pb.hasDefault)
+                {
+                    Field(where, "default float", pa.defaultFloat, pb.defaultFloat, diffs);
+                    Field(where, "default int", pa.defaultInt, pb.defaultInt, diffs);
+                    Field(where, "default bool", pa.defaultBool, pb.defaultBool, diffs);
+                }
             }
         }
 

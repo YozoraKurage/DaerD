@@ -68,7 +68,10 @@ GraphView ベースの AnimatorController エディタ。パラメーターの�
   PhysBone 系パラメーターファミリーの一括リネーム。
   すべて VRChat SDK 不在でもコンパイル・動作可能（該当機能のみ非表示）
 - **C# Recipe（AnimatorController ⇄ C# 変換）** — コントローラー全体または選択レイヤーを、
-  それを再構築する編集可能な C#（DaerD Authoring API）へエクスポート。生成コードは
+  それを再構築する編集可能な C#（DaerD Authoring API）へエクスポート。API は
+  [AnimatorAsCode](https://github.com/hai-vr/av3-animator-as-code) V1 準拠の方言
+  （`NewState` / `WithAnimation` / `TransitionsTo(x).When(go.IsTrue())` /
+  `Drives` / `DrivingRemaps` …、パラメーターは型付きハンドル）。生成コードは
   冒頭に API チートシート付きで、**AI に渡してそのまま編集してもらえる**形式。
   クリップ / マスク参照は Recipe アセット（ScriptableObject）のフィールドに
   自動代入され、インスペクターで D&D 差し替え可能 — **コードに GUID は一切入りません**。

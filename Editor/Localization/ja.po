@@ -1712,6 +1712,9 @@ msgstr "パラメーター '{0}' は既に {1} 型で存在します（Recipe �
 msgid "Parameter '{0}' is declared more than once."
 msgstr "パラメーター '{0}' が複数回宣言されています。"
 
+msgid "Parameter '{0}' is declared with conflicting types ({1} and {2})."
+msgstr "パラメーター '{0}' が矛盾した型（{1} と {2}）で宣言されています。"
+
 msgid "Schedule entry '{0}' is not a multiplexed parameter."
 msgstr "スケジュールの '{0}' は多重化対象のパラメーターではありません。"
 

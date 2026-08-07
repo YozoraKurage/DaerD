@@ -52,22 +52,29 @@ namespace Yozolab.DaerD.Tests
 
             var recipe = NewRecipe(controller, c =>
             {
-                c.Float("Blend", 0.5f).Bool("Go").Int("Step", 2).Trigger("Fire");
+                var blend = c.FloatParameter("Blend", 0.5f);
+                var go = c.BoolParameter("Go");
+                var step = c.IntParameter("Step", 2);
+                c.TriggerParameter("Fire");
 
-                var fx = c.Layer("Hand").Weight(0.8f).Additive().IkPass();
-                var idle = fx.State("Idle", clip).At(260f, 60f).Speed(1.5f).Tag("t")
-                    .WriteDefaults(false).SpeedBy("Blend");
-                var move = fx.State("Move").At(260f, 140f);
-                var tree = move.Tree("Move").Blend2D("Blend", "Blend").NormalizedBlendValues();
-                tree.Add(clip).Position(0f, 1f).TimeScale(2f);
-                var inner = tree.AddTree("Inner").Direct();
-                inner.Add(clip).DirectParameter("Blend");
-                inner.Slot.Position(1f, 0f);
+                var fx = c.Layer("Hand").WithWeight(0.8f).Additive().WithIkPass();
+                var idle = fx.NewState("Idle").WithAnimation(clip).At(260f, 60f)
+                    .WithSpeedSetTo(1.5f).WithTag("t").WithWriteDefaultsSetTo(false)
+                    .WithSpeed(blend);
 
-                idle.To(move).If("Go").IfGreater("Blend", 0.25f).Duration(0.15f);
-                move.ToExit().IfNot("Go").ExitTime(0.9f);
-                fx.AnyTo(idle).IfIntEquals("Step", 3).CanTransitionToSelf(false);
-                fx.EntryTo(move).IfIntNotEquals("Step", 0);
+                var inner = c.NewBlendTree("Inner").Direct().WithAnimation(clip, blend);
+                var tree = c.NewBlendTree("Move").FreeformDirectional2D(blend, blend)
+                    .NormalizedBlendValues()
+                    .WithAnimation(clip, 0f, 1f);
+                tree.LastChild.TimeScale(2f);
+                tree.WithAnimation(inner, 1f, 0f);
+                var move = fx.NewState("Move").WithAnimation(tree).At(260f, 140f);
+
+                idle.TransitionsTo(move).When(go.IsTrue()).And(blend.IsGreaterThan(0.25f))
+                    .WithTransitionDurationSeconds(0.15f);
+                move.Exits().When(go.IsFalse()).AfterAnimationIsAtLeastAtNormalized(0.9f);
+                fx.AnyTransitionsTo(idle).When(step.IsEqualTo(3));
+                fx.EntryTransitionsTo(move).When(step.IsNotEqualTo(0));
                 move.Default();
             });
 
@@ -134,7 +141,7 @@ namespace Yozolab.DaerD.Tests
             controller.AddLayer("Existing");
             controller.AddParameter("Old", AnimatorControllerParameterType.Bool);
 
-            var partial = NewRecipe(controller, c => c.Layer("Mine").State("A"));
+            var partial = NewRecipe(controller, c => c.Layer("Mine").NewState("A"));
             partial.Generate();
             Assert.AreEqual(2, controller.layers.Length);
             Assert.AreEqual("Existing", controller.layers[0].name);
@@ -144,7 +151,7 @@ namespace Yozolab.DaerD.Tests
             partial.Generate();
             Assert.AreEqual(2, controller.layers.Length);
 
-            var exclusive = NewRecipe(controller, c => c.Layer("Only").State("B"), exclusive: true);
+            var exclusive = NewRecipe(controller, c => c.Layer("Only").NewState("B"), exclusive: true);
             exclusive.Generate();
             Assert.AreEqual(1, controller.layers.Length);
             Assert.AreEqual("Only", controller.layers[0].name);
@@ -161,17 +168,17 @@ namespace Yozolab.DaerD.Tests
 
             var recipe = NewRecipe(controller, c =>
             {
+                var x = c.IntParameter("X");
                 var main = c.Layer("Main");
-                var a = main.State("A");
-                var sub = main.AddMachine("Sub").At(500f, 50f);
-                var d = sub.State("D");
-                d.To(a);                      // cross-machine, upward
-                a.To(sub);                    // into the machine
-                sub.To(a).IfIntEquals("X", 1); // from the machine node
-                sub.ToExit();
-                c.Int("X");
+                var a = main.NewState("A");
+                var sub = main.NewSubStateMachine("Sub").At(500f, 50f);
+                var d = sub.NewState("D");
+                d.TransitionsTo(a);                      // cross-machine, upward
+                a.TransitionsTo(sub);                    // into the machine
+                sub.TransitionsTo(a).When(x.IsEqualTo(1)); // from the machine node
+                sub.Exits();
 
-                c.SyncedLayer("MainSync", "Main").Weight(0.7f).AffectsTiming()
+                c.SyncedLayer("MainSync", "Main").WithWeight(0.7f).AffectsTiming()
                     .Override("A", clip);
             }, exclusive: true);
 
@@ -200,11 +207,11 @@ namespace Yozolab.DaerD.Tests
             var controller = Track(new AnimatorController());
             var recipe = NewRecipe(controller, c =>
             {
-                c.Bool("Go");
+                var go = c.BoolParameter("Go");
                 var fx = c.Layer("Mine");
-                var a = fx.State("A").At(100f, 100f);
-                var b = fx.State("B").At(100f, 200f);
-                a.To(b).If("Go");
+                var a = fx.NewState("A").At(100f, 100f);
+                var b = fx.NewState("B").At(100f, 200f);
+                a.TransitionsTo(b).When(go.IsTrue());
             });
 
             recipe.Generate();
@@ -226,7 +233,7 @@ namespace Yozolab.DaerD.Tests
             controller.AddLayer("Foreign");
             controller.layers[0].stateMachine.AddState("Noise", Vector3.zero);
 
-            var recipe = NewRecipe(controller, c => c.Layer("Mine").State("A"));
+            var recipe = NewRecipe(controller, c => c.Layer("Mine").NewState("A"));
             recipe.Generate();
             controller.layers[0].stateMachine.AddState("MoreNoise", Vector3.zero);
 
@@ -240,7 +247,7 @@ namespace Yozolab.DaerD.Tests
             bool ran = false;
             var recipe = NewRecipe(controller, c =>
             {
-                c.Layer("Mine").State("A");
+                c.Layer("Mine").NewState("A");
                 c.Raw(target =>
                 {
                     ran = target.layers.Length > 0;   // declared layer exists already
@@ -261,15 +268,17 @@ namespace Yozolab.DaerD.Tests
             var controller = Track(new AnimatorController());
             var recipe = NewRecipe(controller, c =>
             {
-                c.Float("X").Bool("Go");
+                var x = c.FloatParameter("X");
+                var go = c.BoolParameter("Go");
                 var fx = c.Layer("L1");
-                var a = fx.State("A").At(10f, 20f);
-                var b = fx.State("B").At(10f, 90f);
-                var tree = b.Tree("T").Blend1D("X").AutoThresholds(false);
-                tree.Add(null).Threshold(0.2f);
-                a.To(b).If("Go").Duration(0.1f).Offset(0.05f)
-                    .Interruption(TransitionInterruptionSource.Source, ordered: false).Solo();
-                fx.AnyTo(b).IfLess("X", 0.5f);
+                var a = fx.NewState("A").At(10f, 20f);
+                var tree = c.NewBlendTree("T").Simple1D(x).AutoThresholds(false)
+                    .WithAnimation((Motion)null, 0.2f);
+                var b = fx.NewState("B").WithAnimation(tree).At(10f, 90f);
+                a.TransitionsTo(b).When(go.IsTrue()).WithTransitionDurationSeconds(0.1f)
+                    .WithOffset(0.05f).WithInterruption(TransitionInterruptionSource.Source)
+                    .WithNoOrderedInterruption().Solo();
+                fx.AnyTransitionsTo(b).When(x.IsLessThan(0.5f));
             }, exclusive: true);
 
             recipe.Generate();
@@ -282,13 +291,59 @@ namespace Yozolab.DaerD.Tests
         }
 
         [Test]
+        public void Drivers_DrivesFamily_WritesTypedEntries()
+        {
+            // Declaration-level only: the VRC SDK (and so the driver type itself) is not
+            // available in the test environment — Generate would skip the behaviours.
+            var controller = Track(new AnimatorController());
+            var recipe = NewRecipe(controller, c =>
+            {
+                var n = c.IntParameter("N");
+                var x = c.FloatParameter("X");
+                var tail = c.BoolParameter("Tail");
+                var fx = c.Layer("Mine");
+                var s = fx.NewState("S");
+                s.Drives(n, 2).Drives(tail, true)
+                    .DrivingIncreases(x, 0.25f).DrivingDecreases(n, 1)
+                    .DrivingRandomizes(x, 0f, 1f).DrivingRandomizes(tail, 0.5f)
+                    .DrivingCopies(x, n).DrivingRemaps(x, 0f, 1f, n, 0f, 7f)
+                    .DrivingLocally();
+                s.NewDriver("Second").Drives(x, 3);
+            });
+
+            var declared = recipe.BuildDeclaration();
+            declared.Bake();
+            var state = declared.IR.layers[0].machine.states[0];
+            Assert.AreEqual(2, state.behaviours.Count, "one driver plus the named second one");
+
+            var first = state.behaviours[0].driver;
+            Assert.IsTrue(first.localOnly);
+            Assert.AreEqual(8, first.entries.Count);
+            Assert.AreEqual(0, first.entries[0].kind);
+            Assert.AreEqual(2f, first.entries[0].value);
+            Assert.AreEqual(1f, first.entries[1].value, 0.0001f, "Drives(bool, true) writes 1");
+            Assert.AreEqual(0.25f, first.entries[2].value);
+            Assert.AreEqual(-1f, first.entries[3].value, 0.0001f, "DrivingDecreases negates");
+            Assert.AreEqual(2, first.entries[4].kind);
+            Assert.AreEqual(0.5f, first.entries[5].chance);
+            Assert.AreEqual("X", first.entries[6].source);
+            Assert.IsTrue(first.entries[7].convertRange);
+            Assert.AreEqual(7f, first.entries[7].destMax);
+
+            Assert.AreEqual("Second", state.behaviours[1].instanceName);
+            Assert.AreEqual(3f, state.behaviours[1].driver.entries[0].value);
+        }
+
+        [Test]
         public void AsyncSync_FromARecipe_GeneratesOnce_AndRegeneratesInPlace()
         {
             var controller = Track(new AnimatorController());
             var recipe = NewRecipe(controller, c =>
             {
-                c.Float("Hue").Int("Outfit").Bool("Tail");
-                c.Layer("Base").State("S");
+                c.FloatParameter("Hue");
+                c.IntParameter("Outfit");
+                c.BoolParameter("Tail");
+                c.Layer("Base").NewState("S");
                 c.AsyncSync("Zip")
                     .Targets("Hue", "Outfit", "Tail")
                     .Schedule("Hue", "Outfit", "Hue", "Tail")

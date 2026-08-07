@@ -33,6 +33,9 @@ namespace Yozolab.DaerD
             public float defaultFloat;
             public int defaultInt;
             public bool defaultBool;
+            /// <summary>False for reference-only declarations (a recipe naming a parameter
+            /// it doesn't own): merges and diffs leave the existing default alone.</summary>
+            public bool hasDefault = true;
         }
 
         public class Layer
@@ -434,7 +437,10 @@ namespace Yozolab.DaerD
                     timeScale = child.timeScale,
                     cycleOffset = child.cycleOffset,
                     mirror = child.mirror,
-                    directParameter = child.directBlendParameter ?? string.Empty,
+                    // Only Direct trees give this meaning; other types keep stale editor
+                    // residue ("Blend") there, which would haunt every diff and export.
+                    directParameter = blendTree.blendType == BlendTreeType.Direct
+                        ? child.directBlendParameter ?? string.Empty : string.Empty,
                 };
                 DecomposeMotion(child.motion, controllerPath, visited,
                     out entry.motionAsset, out var childTree);
