@@ -99,6 +99,156 @@ namespace Yozolab.DaerD
             EditorUtility.SetDirty(driver);
         }
 
+        /// <summary>Appends an Add entry (type 1) adding <paramref name="value"/> to the parameter.</summary>
+        public static void AddAddEntry(StateMachineBehaviour driver, string parameter, float value)
+        {
+            AppendEntry(driver, entry =>
+            {
+                SetInt(entry, "type", 1);   // ChangeType.Add
+                SetString(entry, "name", parameter);
+                SetFloat(entry, "value", value);
+            });
+        }
+
+        /// <summary>Appends a Random entry (type 2) rolling between min and max with the given
+        /// chance (Bools use chance alone; the SDK reads the fields it needs per type).</summary>
+        public static void AddRandomEntry(StateMachineBehaviour driver, string parameter,
+            float min, float max, float chance)
+        {
+            AppendEntry(driver, entry =>
+            {
+                SetInt(entry, "type", 2);   // ChangeType.Random
+                SetString(entry, "name", parameter);
+                SetFloat(entry, "valueMin", min);
+                SetFloat(entry, "valueMax", max);
+                SetFloat(entry, "chance", chance);
+            });
+        }
+
+        /// <summary>Copy entry with the full range-conversion block.</summary>
+        public static void AddCopyEntry(StateMachineBehaviour driver, string source, string destination,
+            bool convertRange, float sourceMin, float sourceMax, float destMin, float destMax)
+        {
+            AppendEntry(driver, entry =>
+            {
+                SetInt(entry, "type", 3);   // ChangeType.Copy
+                SetString(entry, "source", source);
+                SetString(entry, "name", destination);
+                var convert = entry.FindPropertyRelative("convertRange");
+                if (convert != null) convert.boolValue = convertRange;
+                SetFloat(entry, "sourceMin", sourceMin);
+                SetFloat(entry, "sourceMax", sourceMax);
+                SetFloat(entry, "destMin", destMin);
+                SetFloat(entry, "destMax", destMax);
+            });
+        }
+
+        /// <summary>Shared append: insert a row, hand it to <paramref name="fill"/>, apply.
+        /// InsertArrayElementAtIndex clones the previous entry, so fill must overwrite every
+        /// field it relies on.</summary>
+        static void AppendEntry(StateMachineBehaviour driver, System.Action<SerializedProperty> fill)
+        {
+            if (!Is(driver)) return;
+            var so = new SerializedObject(driver);
+            var list = so.FindProperty("parameters");
+            if (list == null || !list.isArray) return;
+            int index = list.arraySize;
+            list.InsertArrayElementAtIndex(index);
+            fill(list.GetArrayElementAtIndex(index));
+            so.ApplyModifiedProperties();
+            EditorUtility.SetDirty(driver);
+        }
+
+        static void SetInt(SerializedProperty entry, string name, int value)
+        {
+            var property = entry.FindPropertyRelative(name);
+            if (property != null) property.intValue = value;
+        }
+
+        static void SetFloat(SerializedProperty entry, string name, float value)
+        {
+            var property = entry.FindPropertyRelative(name);
+            if (property != null) property.floatValue = value;
+        }
+
+        static void SetString(SerializedProperty entry, string name, string value)
+        {
+            var property = entry.FindPropertyRelative(name);
+            if (property != null) property.stringValue = value ?? string.Empty;
+        }
+
+        /// <summary>Reads the driver into the IR's typed spec — what the C# exporter emits
+        /// as .Set/.Add/.Random/.Copy calls instead of a JSON blob.</summary>
+        public static ControllerIR.DriverSpec ReadSpec(StateMachineBehaviour driver)
+        {
+            var spec = new ControllerIR.DriverSpec();
+            if (!Is(driver)) return spec;
+            var so = new SerializedObject(driver);
+            var localOnly = so.FindProperty("localOnly");
+            spec.localOnly = localOnly != null && localOnly.boolValue;
+            var list = so.FindProperty("parameters");
+            if (list == null || !list.isArray) return spec;
+
+            for (int i = 0; i < list.arraySize; i++)
+            {
+                var row = list.GetArrayElementAtIndex(i);
+                var entry = new ControllerIR.DriverEntry
+                {
+                    kind = GetInt(row, "type"),
+                    name = GetString(row, "name"),
+                    source = GetString(row, "source"),
+                    value = GetFloat(row, "value"),
+                    min = GetFloat(row, "valueMin"),
+                    max = GetFloat(row, "valueMax"),
+                    chance = GetFloat(row, "chance"),
+                    sourceMin = GetFloat(row, "sourceMin"),
+                    sourceMax = GetFloat(row, "sourceMax"),
+                    destMin = GetFloat(row, "destMin"),
+                    destMax = GetFloat(row, "destMax"),
+                };
+                var convert = row.FindPropertyRelative("convertRange");
+                entry.convertRange = convert != null && convert.boolValue;
+                spec.entries.Add(entry);
+            }
+            return spec;
+        }
+
+        /// <summary>Writes a typed spec onto a fresh driver instance (authoring path).</summary>
+        public static void ApplySpec(StateMachineBehaviour driver, ControllerIR.DriverSpec spec)
+        {
+            if (!Is(driver) || spec == null) return;
+            SetLocalOnly(driver, spec.localOnly);
+            foreach (var entry in spec.entries)
+                switch (entry.kind)
+                {
+                    case 1: AddAddEntry(driver, entry.name, entry.value); break;
+                    case 2: AddRandomEntry(driver, entry.name, entry.min, entry.max, entry.chance); break;
+                    case 3:
+                        AddCopyEntry(driver, entry.source, entry.name, entry.convertRange,
+                            entry.sourceMin, entry.sourceMax, entry.destMin, entry.destMax);
+                        break;
+                    default: AddSetEntry(driver, entry.name, entry.value); break;
+                }
+        }
+
+        static int GetInt(SerializedProperty entry, string name)
+        {
+            var property = entry.FindPropertyRelative(name);
+            return property != null ? property.intValue : 0;
+        }
+
+        static float GetFloat(SerializedProperty entry, string name)
+        {
+            var property = entry.FindPropertyRelative(name);
+            return property != null ? property.floatValue : 0f;
+        }
+
+        static string GetString(SerializedProperty entry, string name)
+        {
+            var property = entry.FindPropertyRelative(name);
+            return property != null ? property.stringValue ?? string.Empty : string.Empty;
+        }
+
         /// <summary>Removes every entry that writes the parameter (or Copy-reads it as its
         /// source). Used by Delete-and-Clean.</summary>
         public static bool RemoveEntriesReferencing(StateMachineBehaviour behaviour, string parameterName)
