@@ -82,6 +82,11 @@ namespace Yozolab.DaerD
                 EditorGUILayout.HelpBox(
                     L.Tr("The output folder must be inside this project ('Assets/…')."),
                     MessageType.Error);
+            else if (File.Exists(TargetCsPath(projectFolder)))
+                EditorGUILayout.HelpBox(
+                    L.Tr("'{0}' already exists — exporting overwrites the file and updates the existing recipe asset in place (no duplicates).",
+                        TargetCsPath(projectFolder)),
+                    MessageType.None);
             // Recipes reference the (editor-only) DaerD assembly, so outside an Editor folder
             // the player build would try — and fail — to compile them.
             else if (!("/" + projectFolder + "/").Contains("/Editor/"))
@@ -126,6 +131,14 @@ namespace Yozolab.DaerD
             EditorGUILayout.EndHorizontal();
         }
 
+        string TargetCsPath(string projectFolder)
+        {
+            string folder = projectFolder;
+            if (!("/" + folder + "/").Contains("/Editor/"))
+                folder += "/Editor";
+            return folder + "/" + RecipeScript.Identifier(_className ?? string.Empty, lowerFirst: false) + ".cs";
+        }
+
         void DoExport(bool exclusive, string projectFolder)
         {
             EditorPrefs.SetString(NamespacePref, _namespace ?? string.Empty);
@@ -156,7 +169,11 @@ namespace Yozolab.DaerD
                 return;
             }
 
-            string csPath = AssetDatabase.GenerateUniqueAssetPath(folder + "/" + className + ".cs");
+            string csPath = folder + "/" + className + ".cs";
+            if (File.Exists(csPath) && !EditorUtility.DisplayDialog(L.Tr("Export C# Recipe"),
+                    L.Tr("'{0}' already exists. Overwrite it with the freshly exported code? Hand edits in that file will be lost.", csPath),
+                    L.Tr("Overwrite"), L.Tr("Cancel")))
+                return;
             File.WriteAllText(csPath, result.code);
 
             if (_createAsset)

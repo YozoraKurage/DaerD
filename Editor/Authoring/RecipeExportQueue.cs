@@ -56,6 +56,9 @@ namespace Yozolab.DaerD.Authoring
             }
             list.items.Add(pending);
             Save(list);
+            // A re-export with byte-identical code triggers no recompile and thus no domain
+            // reload — process soon after so the record doesn't sit until the next reload.
+            EditorApplication.delayCall += Process;
         }
 
         [InitializeOnLoadMethod]
@@ -88,7 +91,14 @@ namespace Yozolab.DaerD.Authoring
                 }
                 try
                 {
-                    CreateAsset(pending, type);
+                    // The loaded type can lag one compile behind the just-written code (the
+                    // delayCall path); when recorded fields are missing on it, wait for the
+                    // reload instead of half-assigning — force through on the last attempt.
+                    if (!TryCreateOrUpdate(pending, type, force: pending.attempts >= MaxAttempts - 1))
+                    {
+                        pending.attempts++;
+                        remaining.Add(pending);
+                    }
                 }
                 catch (Exception e)
                 {
@@ -109,22 +119,14 @@ namespace Yozolab.DaerD.Authoring
             return null;
         }
 
-        static void CreateAsset(Pending pending, Type type)
+        /// <summary>
+        /// Creates the recipe asset — or, when one of the same class already sits at the
+        /// intended path (a re-export), updates it in place so nothing "(1)"-duplicates.
+        /// Returns false when the loaded type doesn't yet carry every recorded field and
+        /// <paramref name="force"/> is off (stale type; retry after the reload).
+        /// </summary>
+        static bool TryCreateOrUpdate(Pending pending, Type type, bool force)
         {
-            var recipe = (ControllerRecipe)ScriptableObject.CreateInstance(type);
-            recipe.exclusive = pending.exclusive;
-            recipe.targetController = Resolve(pending.controllerId) as AnimatorController;
-
-            var serialized = new SerializedObject(recipe);
-            for (int i = 0; i < pending.fieldNames.Count; i++)
-            {
-                var property = serialized.FindProperty(pending.fieldNames[i]);
-                if (property != null
-                    && property.propertyType == SerializedPropertyType.ObjectReference)
-                    property.objectReferenceValue = Resolve(pending.fieldIds[i]);
-            }
-            serialized.ApplyModifiedPropertiesWithoutUndo();
-
             // GenerateUniqueAssetPath (and CreateAsset) return garbage for folders the
             // AssetDatabase doesn't know — validate and materialize the chain first, and
             // fall back to Assets/ rather than losing the configured instance.
@@ -138,13 +140,44 @@ namespace Yozolab.DaerD.Authoring
                     + "the recipe asset goes to Assets/ instead.");
                 folder = "Assets";
             }
-            AssetDatabase.CreateAsset(recipe,
-                AssetDatabase.GenerateUniqueAssetPath(folder + "/" + file));
+            string intended = folder + "/" + file;
+
+            var existing = AssetDatabase.LoadAssetAtPath<ControllerRecipe>(intended);
+            bool update = existing != null && existing.GetType() == type;
+            var recipe = update ? existing : (ControllerRecipe)ScriptableObject.CreateInstance(type);
+
+            var serialized = new SerializedObject(recipe);
+            if (!force)
+                foreach (var fieldName in pending.fieldNames)
+                    if (serialized.FindProperty(fieldName) == null)
+                    {
+                        if (!update) UnityEngine.Object.DestroyImmediate(recipe);
+                        return false;
+                    }
+
+            recipe.exclusive = pending.exclusive;
+            recipe.targetController = Resolve(pending.controllerId) as AnimatorController;
+            for (int i = 0; i < pending.fieldNames.Count; i++)
+            {
+                var property = serialized.FindProperty(pending.fieldNames[i]);
+                if (property != null
+                    && property.propertyType == SerializedPropertyType.ObjectReference)
+                    property.objectReferenceValue = Resolve(pending.fieldIds[i]);
+            }
+            serialized.ApplyModifiedPropertiesWithoutUndo();
+
+            if (update)
+                EditorUtility.SetDirty(recipe);
+            else
+                AssetDatabase.CreateAsset(recipe,
+                    AssetDatabase.GenerateUniqueAssetPath(intended));
             AssetDatabase.SaveAssets();
             Selection.activeObject = recipe;
             EditorGUIUtility.PingObject(recipe);
-            Debug.Log("DaerD: recipe asset created at '" + AssetDatabase.GetAssetPath(recipe)
+            Debug.Log("DaerD: recipe asset " + (update ? "updated in place at '" : "created at '")
+                + AssetDatabase.GetAssetPath(recipe)
                 + "' — asset references are pre-assigned; press Generate to test the round trip.");
+            return true;
         }
 
         /// <summary>Makes sure a project folder exists AND is imported, creating the chain

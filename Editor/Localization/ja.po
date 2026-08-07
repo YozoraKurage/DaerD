@@ -1756,3 +1756,12 @@ msgstr "出力フォルダはこのプロジェクト内（'Assets/…'）を指
 
 msgid "Could not create the output folder '{0}'."
 msgstr "出力フォルダ '{0}' を作成できませんでした。"
+
+msgid "'{0}' already exists — exporting overwrites the file and updates the existing recipe asset in place (no duplicates)."
+msgstr "'{0}' は既に存在します。エクスポートするとファイルを上書きし、既存の Recipe アセットもその場で更新します（重複は作りません）。"
+
+msgid "'{0}' already exists. Overwrite it with the freshly exported code? Hand edits in that file will be lost."
+msgstr "'{0}' は既に存在します。エクスポートしたコードで上書きしますか？ ファイルへの手編集は失われます。"
+
+msgid "Overwrite"
+msgstr "上書き"
