@@ -33,9 +33,15 @@ namespace Yozolab.DaerD
             new TransitionClipboard.ConditionData { mode = AnimatorConditionMode.If, parameter = string.Empty };
 
         int _rangeAnchor = -1;
+        // Behaviour rows selected in the state inspector. Selecting is what tells Ctrl+C/V to
+        // act on behaviours instead of the state itself (the graph view owns state copy/paste).
+        readonly List<StateMachineBehaviour> _selectedBehaviours = new List<StateMachineBehaviour>();
+        int _behaviourRangeAnchor = -1;
         object _lastSelection;
         bool _showBlendTree = true;
         List<UnityEngine.Object> _leftovers;
+        // In-use sub-assets that are visible in the Project window (see DrawExposedSubAssets).
+        List<UnityEngine.Object> _exposed;
         // VRC Parameter Driver: remembered "selected row" per behaviour so the Add/Up/Down/Delete
         // buttons know which entry they act on. Keyed by StateMachineBehaviour instance ID; stale
         // entries are harmless (Unity domain reload clears them) so we don't bother pruning.
@@ -60,6 +66,8 @@ namespace Yozolab.DaerD
             {
                 _selectedTransitions.Clear();
                 _rangeAnchor = -1;
+                _selectedBehaviours.Clear();
+                _behaviourRangeAnchor = -1;
                 if (Context.Selection is AnimatorTransitionBase transition)
                     _selectedTransitions.Add(transition);
                 _lastSelection = Context.Selection;
@@ -73,6 +81,7 @@ namespace Yozolab.DaerD
         void ClearControllerCaches()
         {
             _leftovers = null;
+            _exposed = null;
             Refresh();
         }
 
@@ -188,6 +197,10 @@ namespace Yozolab.DaerD
             }
 
             EditorGUILayout.Space(6);
+            DrawFrameNoteClipboardRow(L.Tr("Copy Frame"),
+                L.Tr("Copy this frame's box. Open another layer and paste to reuse it there."),
+                () => _graphView.Sync.CopyFrame(frame));
+
             EditorGUILayout.BeginHorizontal();
             // Duplicates this frame, the states inside, and the transitions among them — works
             // even when the frame is locked since the copy is independent.
@@ -256,12 +269,36 @@ namespace Yozolab.DaerD
             }
 
             EditorGUILayout.Space(6);
+            DrawFrameNoteClipboardRow(L.Tr("Copy Note"),
+                L.Tr("Copy this note. Open another layer and paste to reuse it there."),
+                () => _graphView.Sync.CopyNote(note));
+
             if (GUILayout.Button("Delete Note"))
             {
                 _graphView.Sync.DeleteNote(note);
                 Context.Select(null);
                 GUIUtility.ExitGUI();
             }
+        }
+
+        /// <summary>
+        /// Copy / paste row shared by the frame and note inspectors. Paste targets the layer
+        /// currently open in the graph — that's what makes these copies cross-layer — and drops
+        /// the copy at the position it was taken from.
+        /// </summary>
+        void DrawFrameNoteClipboardRow(string copyLabel, string copyTooltip, Action copy)
+        {
+            EditorGUILayout.BeginHorizontal();
+            if (GUILayout.Button(new GUIContent(copyLabel, copyTooltip)))
+                copy();
+            using (new EditorGUI.DisabledScope(!FrameNoteClipboard.HasData))
+                if (GUILayout.Button(new GUIContent(L.Tr("Paste Into This Layer"),
+                        L.Tr("Paste the copied frames / notes into the layer currently open in the graph."))))
+                {
+                    _graphView.Sync.PasteFramesAndNotesAtOrigin();
+                    GUIUtility.ExitGUI();
+                }
+            EditorGUILayout.EndHorizontal();
         }
 
         // ---- multi-state -----------------------------------------------------
@@ -309,6 +346,10 @@ namespace Yozolab.DaerD
 
             EditorGUILayout.Space(4);
             DrawMultiStateParameterOverrides(alive, controller);
+
+            EditorGUILayout.Space(6);
+            HorizontalLine();
+            DrawMultiStateBehaviours(alive);
 
             EditorGUILayout.Space(6);
             HorizontalLine();
@@ -545,16 +586,77 @@ namespace Yozolab.DaerD
         {
             EditorGUILayout.Space(4);
             var behaviours = state.behaviours;
-            EditorGUILayout.LabelField("Behaviours (" + behaviours.Length + ")", EditorStyles.boldLabel);
+            PruneBehaviourSelection(behaviours);
+            HandleBehaviourShortcuts(state, behaviours);
 
-            foreach (var behaviour in behaviours)
+            bool hasSelection = _selectedBehaviours.Count > 0;
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.LabelField(hasSelection
+                    ? "Behaviours (" + _selectedBehaviours.Count + "/" + behaviours.Length + ")"
+                    : "Behaviours (" + behaviours.Length + ")",
+                EditorStyles.boldLabel);
+            using (new EditorGUI.DisabledScope(behaviours.Length == 0))
+                if (GUILayout.Button(new GUIContent(L.Tr("Copy"), hasSelection
+                        ? L.Tr("Copy the selected behaviours; paste from a state's right-click menu or here.")
+                        : L.Tr("Copy every behaviour on this state; paste from a state's right-click menu or here.")),
+                        EditorStyles.miniButton, GUILayout.Width(50)))
+                    CopyBehaviours(behaviours);
+            using (new EditorGUI.DisabledScope(VrcBehaviours.ClipboardCount == 0))
+                if (GUILayout.Button(new GUIContent(L.Tr("Paste"),
+                        L.Tr("Append the copied behaviours to this state.")),
+                        EditorStyles.miniButton, GUILayout.Width(50)))
+                {
+                    PasteBehaviours(state);
+                    GUIUtility.ExitGUI();
+                }
+            EditorGUILayout.EndHorizontal();
+            if (behaviours.Length > 0)
+                EditorGUILayout.LabelField(
+                    L.Tr("Click a title to select (Ctrl / Shift for multi-select); Ctrl+C / Ctrl+V copies and pastes the selected behaviours."),
+                    EditorStyles.miniLabel);
+
+            for (int i = 0; i < behaviours.Length; i++)
             {
+                var behaviour = behaviours[i];
                 if (behaviour == null) continue;
+                bool selected = _selectedBehaviours.Contains(behaviour);
+
+                var boxBackground = GUI.backgroundColor;
+                if (selected) GUI.backgroundColor = SelectionTint;
                 EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+                GUI.backgroundColor = boxBackground;
+
                 EditorGUILayout.BeginHorizontal();
-                EditorGUILayout.LabelField(behaviour.GetType().Name, EditorStyles.boldLabel);
+                var titleBackground = GUI.backgroundColor;
+                if (selected) GUI.backgroundColor = SelectionTint;
+                if (GUILayout.Button(BehaviourTitle(behaviour), BehaviourTitleStyle))
+                    HandleBehaviourRowClick(behaviours, i);
+                GUI.backgroundColor = titleBackground;
+
+                // Repeatable VRC types get a per-instance name so multiple rows stay
+                // distinguishable (drivers named "Network" by the sync generator, etc.).
+                string typeName = behaviour.GetType().Name;
+                if (VrcBehaviours.IsVrcType(typeName) && !VrcBehaviours.IsSingleton(typeName))
+                {
+                    string instanceName = EditorGUILayout.DelayedTextField(behaviour.name, GUILayout.Width(90));
+                    if (instanceName != behaviour.name)
+                    {
+                        Undo.RegisterCompleteObjectUndo(behaviour, "Rename Behaviour");
+                        behaviour.name = instanceName;
+                        EditorUtility.SetDirty(behaviour);
+                    }
+                }
+
+                using (new EditorGUI.DisabledScope(i == 0))
+                    if (GUILayout.Button("↑", EditorStyles.miniButton, GUILayout.Width(22)))
+                    { VrcBehaviours.Move(state, i, -1); GUIUtility.ExitGUI(); }
+                using (new EditorGUI.DisabledScope(i == behaviours.Length - 1))
+                    if (GUILayout.Button("↓", EditorStyles.miniButton, GUILayout.Width(22)))
+                    { VrcBehaviours.Move(state, i, +1); GUIUtility.ExitGUI(); }
                 if (GUILayout.Button("Remove", EditorStyles.miniButton, GUILayout.Width(60)))
                 {
+                    _selectedBehaviours.Remove(behaviour);
+                    _behaviourRangeAnchor = -1;
                     RemoveBehaviour(state, behaviour);
                     _graphView.Sync.RefreshStateNode(state);   // B badge updates immediately
                     GUIUtility.ExitGUI();
@@ -569,6 +671,453 @@ namespace Yozolab.DaerD
                 ShowAddBehaviourMenu(state);
         }
 
+        static string BehaviourTitle(StateMachineBehaviour behaviour)
+        {
+            string typeName = behaviour.GetType().Name;
+            // The VRC prefix is noise inside an already VRC-labeled box; keep titles short.
+            return typeName.StartsWith("VRC") ? typeName.Substring(3) : typeName;
+        }
+
+        // ---- behaviour selection ---------------------------------------------
+
+        static readonly Color SelectionTint = new Color(0.40f, 0.60f, 0.90f);
+
+        static GUIStyle s_behaviourTitleStyle;
+
+        /// <summary>Header of a behaviour box: reads as a title, behaves as a selectable row.</summary>
+        static GUIStyle BehaviourTitleStyle => s_behaviourTitleStyle ??= new GUIStyle(EditorStyles.miniButton)
+        {
+            alignment = TextAnchor.MiddleLeft,
+            fontStyle = FontStyle.Bold,
+        };
+
+        /// <summary>Drops entries the state no longer holds (removed, moved to another state,
+        /// destroyed by an undo) so the selection can't outlive what it points at.</summary>
+        void PruneBehaviourSelection(StateMachineBehaviour[] behaviours)
+        {
+            _selectedBehaviours.RemoveAll(b => b == null || Array.IndexOf(behaviours, b) < 0);
+            if (_selectedBehaviours.Count == 0)
+                _behaviourRangeAnchor = -1;
+        }
+
+        /// <summary>Plain click selects one row; Ctrl/Cmd toggles; Shift extends from the anchor.
+        /// Clicking the already-single-selected row clears the selection, which hands Ctrl+C/V
+        /// back to the state-level copy/paste.</summary>
+        void HandleBehaviourRowClick(StateMachineBehaviour[] behaviours, int index)
+        {
+            var behaviour = behaviours[index];
+            var e = Event.current;
+            bool additive = e != null && (e.control || e.command);
+            bool range = e != null && e.shift;
+
+            if (range && _behaviourRangeAnchor >= 0 && _behaviourRangeAnchor < behaviours.Length)
+            {
+                _selectedBehaviours.Clear();
+                int lo = Mathf.Min(_behaviourRangeAnchor, index);
+                int hi = Mathf.Max(_behaviourRangeAnchor, index);
+                for (int i = lo; i <= hi; i++)
+                    if (behaviours[i] != null)
+                        _selectedBehaviours.Add(behaviours[i]);
+            }
+            else if (additive)
+            {
+                if (_selectedBehaviours.Contains(behaviour)) _selectedBehaviours.Remove(behaviour);
+                else _selectedBehaviours.Add(behaviour);
+                _behaviourRangeAnchor = index;
+            }
+            else if (_selectedBehaviours.Count == 1 && _selectedBehaviours[0] == behaviour)
+            {
+                _selectedBehaviours.Clear();
+                _behaviourRangeAnchor = -1;
+            }
+            else
+            {
+                _selectedBehaviours.Clear();
+                _selectedBehaviours.Add(behaviour);
+                _behaviourRangeAnchor = index;
+            }
+        }
+
+        /// <summary>
+        /// Ctrl+C / Ctrl+V on the behaviour list. Only fires while at least one behaviour row is
+        /// selected — otherwise the keys stay with the graph view's state copy/paste.
+        /// </summary>
+        void HandleBehaviourShortcuts(AnimatorState state, StateMachineBehaviour[] behaviours)
+        {
+            var e = Event.current;
+            if (e == null || e.type != EventType.KeyDown || !(e.control || e.command))
+                return;
+            if (_selectedBehaviours.Count == 0) return;
+            // A behaviour field being typed in (driver parameter name, instance name) owns the
+            // keys — Ctrl+C there means "copy the text", not "copy the behaviour".
+            if (EditorGUIUtility.editingTextField) return;
+
+            if (e.keyCode == KeyCode.C)
+            {
+                CopyBehaviours(behaviours);
+                e.Use();
+            }
+            else if (e.keyCode == KeyCode.V && VrcBehaviours.ClipboardCount > 0)
+            {
+                PasteBehaviours(state);
+                e.Use();
+                GUIUtility.ExitGUI();
+            }
+        }
+
+        /// <summary>Copies the selected behaviours, or every behaviour when nothing is selected.</summary>
+        void CopyBehaviours(StateMachineBehaviour[] behaviours)
+        {
+            VrcBehaviours.Copy(_selectedBehaviours.Count > 0
+                ? (IEnumerable<StateMachineBehaviour>)_selectedBehaviours
+                : behaviours);
+        }
+
+        /// <summary>Appends the clipboard to the state and selects what was pasted, so a
+        /// follow-up Ctrl+C / Remove acts on the new rows.</summary>
+        void PasteBehaviours(AnimatorState state)
+        {
+            int before = state.behaviours.Length;
+            VrcBehaviours.Paste(state, replace: false);
+            var after = state.behaviours;
+            _selectedBehaviours.Clear();
+            for (int i = before; i < after.Length; i++)
+                if (after[i] != null)
+                    _selectedBehaviours.Add(after[i]);
+            _behaviourRangeAnchor = _selectedBehaviours.Count > 0 ? before : -1;
+            _graphView.Sync.RefreshStateNode(state);   // B badge updates immediately
+        }
+
+        // ---- behaviours across several states --------------------------------
+
+        /// <summary>
+        /// One behaviour "slot" shared by the selected states: same type, same instance name and
+        /// same occurrence index within a state (so a state carrying two identically named
+        /// drivers contributes to two slots). The first instance found is the one drawn; editing
+        /// it mirrors onto the rest.
+        /// </summary>
+        class BehaviourSlot
+        {
+            public string typeName;
+            public readonly List<StateMachineBehaviour> instances = new List<StateMachineBehaviour>();
+            public readonly List<AnimatorState> owners = new List<AnimatorState>();
+            public bool valuesDiffer;
+
+            public StateMachineBehaviour Representative => instances[0];
+        }
+
+        /// <summary>
+        /// Bulk editor for the behaviours of every selected state. Behaviours are matched across
+        /// states by type + instance name; a slot present on all of them is editable and every
+        /// edit is mirrored onto its peers.
+        /// </summary>
+        void DrawMultiStateBehaviours(List<AnimatorState> states)
+        {
+            var slots = BuildBehaviourSlots(states);
+            var representatives = new StateMachineBehaviour[slots.Count];
+            for (int i = 0; i < slots.Count; i++)
+                representatives[i] = slots[i].Representative;
+
+            PruneBehaviourSelection(representatives);
+            HandleMultiStateBehaviourShortcuts(states, representatives);
+
+            bool hasSelection = _selectedBehaviours.Count > 0;
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.LabelField(hasSelection
+                    ? "Behaviours (" + _selectedBehaviours.Count + "/" + slots.Count + ")"
+                    : "Behaviours (" + slots.Count + ")",
+                EditorStyles.boldLabel);
+            using (new EditorGUI.DisabledScope(slots.Count == 0))
+                if (GUILayout.Button(new GUIContent(L.Tr("Copy"), hasSelection
+                        ? L.Tr("Copy the selected behaviours; paste from a state's right-click menu or here.")
+                        : L.Tr("Copy one instance of every behaviour found on the selected states.")),
+                        EditorStyles.miniButton, GUILayout.Width(50)))
+                    CopyBehaviours(representatives);
+            using (new EditorGUI.DisabledScope(VrcBehaviours.ClipboardCount == 0))
+                if (GUILayout.Button(new GUIContent(L.Tr("Paste"),
+                        L.Tr("Append the copied behaviours to every selected state.")),
+                        EditorStyles.miniButton, GUILayout.Width(50)))
+                {
+                    PasteBehavioursToAll(states);
+                    GUIUtility.ExitGUI();
+                }
+            EditorGUILayout.EndHorizontal();
+
+            if (slots.Count == 0)
+            {
+                EditorGUILayout.LabelField(L.Tr("None of the selected states have behaviours."),
+                    EditorStyles.miniLabel);
+            }
+            else
+            {
+                EditorGUILayout.LabelField(
+                    L.Tr("Edits apply to every selected state that has the behaviour. Click a title to select (Ctrl / Shift for multi-select); Ctrl+C / Ctrl+V copies and pastes."),
+                    EditorStyles.miniLabel);
+            }
+
+            for (int i = 0; i < slots.Count; i++)
+                DrawBehaviourSlot(slots[i], states, representatives, i);
+
+            if (GUILayout.Button("+ Add Behaviour to All " + states.Count))
+                ShowAddBehaviourMenu(states);
+        }
+
+        void DrawBehaviourSlot(BehaviourSlot slot, List<AnimatorState> states,
+            StateMachineBehaviour[] representatives, int index)
+        {
+            var representative = slot.Representative;
+            if (representative == null) return;
+            bool selected = _selectedBehaviours.Contains(representative);
+            int missing = states.Count - slot.instances.Count;
+
+            var boxBackground = GUI.backgroundColor;
+            if (selected) GUI.backgroundColor = SelectionTint;
+            EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+            GUI.backgroundColor = boxBackground;
+
+            EditorGUILayout.BeginHorizontal();
+            var titleBackground = GUI.backgroundColor;
+            if (selected) GUI.backgroundColor = SelectionTint;
+            if (GUILayout.Button(BehaviourTitle(representative), BehaviourTitleStyle))
+                HandleBehaviourRowClick(representatives, index);
+            GUI.backgroundColor = titleBackground;
+
+            // Repeatable VRC types are matched by instance name, so renaming here has to reach
+            // every peer or the slot would split apart on the next repaint.
+            if (VrcBehaviours.IsVrcType(slot.typeName) && !VrcBehaviours.IsSingleton(slot.typeName))
+            {
+                string instanceName = EditorGUILayout.DelayedTextField(representative.name, GUILayout.Width(90));
+                if (instanceName != representative.name)
+                    RenameSlot(slot, instanceName);
+            }
+
+            EditorGUILayout.LabelField(slot.instances.Count + "/" + states.Count,
+                EditorStyles.miniLabel, GUILayout.Width(38));
+
+            using (new EditorGUI.DisabledScope(missing == 0))
+                if (GUILayout.Button(new GUIContent("+ " + missing,
+                        L.Tr("Copy this behaviour onto the selected states that don't have it.")),
+                        EditorStyles.miniButton, GUILayout.Width(40)))
+                {
+                    AddSlotToMissingStates(slot, states);
+                    GUIUtility.ExitGUI();
+                }
+            if (GUILayout.Button(new GUIContent(L.Tr("Remove All"),
+                    L.Tr("Remove this behaviour from every selected state that has it.")),
+                    EditorStyles.miniButton, GUILayout.Width(76)))
+            {
+                RemoveSlot(slot);
+                GUIUtility.ExitGUI();
+            }
+            EditorGUILayout.EndHorizontal();
+
+            if (slot.valuesDiffer)
+                EditorGUILayout.LabelField(
+                    L.Tr("Values differ between states — the first state's values are shown, and editing applies them to all."),
+                    EditorStyles.miniLabel);
+
+            // Draw the representative with the normal editor, then mirror whatever changed onto
+            // its peers. The drawers write through their own SerializedObject, so an outer change
+            // check is what tells us an edit happened — and since GUI.changed also fires for
+            // things that touch no data (expanding a foldout, for one), the serialized content is
+            // compared before mirroring. Overwriting peers on a foldout click would silently
+            // flatten values that only differ between states.
+            string before = slot.instances.Count > 1 ? EditorJsonUtility.ToJson(representative) : null;
+            EditorGUI.BeginChangeCheck();
+            if (!TryDrawKnownVrcBehaviour(representative))
+                DrawSerializedFields(representative);
+            if (EditorGUI.EndChangeCheck() && before != null && EditorJsonUtility.ToJson(representative) != before)
+                PropagateSlot(slot);
+
+            EditorGUILayout.EndVertical();
+        }
+
+        /// <summary>Groups the selected states' behaviours into slots, in the order the first
+        /// state that owns them lists them.</summary>
+        List<BehaviourSlot> BuildBehaviourSlots(List<AnimatorState> states)
+        {
+            var slots = new List<BehaviourSlot>();
+            var byKey = new Dictionary<string, BehaviourSlot>();
+            var occurrences = new Dictionary<string, int>();
+
+            foreach (var state in states)
+            {
+                if (state == null) continue;
+                occurrences.Clear();
+                foreach (var behaviour in state.behaviours)
+                {
+                    if (behaviour == null) continue;
+                    string typeName = behaviour.GetType().Name;
+                    // Repeatable types are told apart by instance name; singletons and plain
+                    // StateMachineBehaviours only ever have one meaningful identity per type.
+                    string identity = VrcBehaviours.IsVrcType(typeName) && !VrcBehaviours.IsSingleton(typeName)
+                        ? typeName + "\n" + behaviour.name
+                        : typeName;
+                    occurrences.TryGetValue(identity, out int occurrence);
+                    occurrences[identity] = occurrence + 1;
+
+                    string key = identity + "\n#" + occurrence;
+                    if (!byKey.TryGetValue(key, out var slot))
+                    {
+                        slot = new BehaviourSlot { typeName = typeName };
+                        byKey[key] = slot;
+                        slots.Add(slot);
+                    }
+                    slot.instances.Add(behaviour);
+                    slot.owners.Add(state);
+                }
+            }
+
+            foreach (var slot in slots)
+                slot.valuesDiffer = InstancesDiffer(slot.instances);
+            return slots;
+        }
+
+        static bool InstancesDiffer(List<StateMachineBehaviour> instances)
+        {
+            if (instances.Count < 2 || instances[0] == null) return false;
+            var first = new SerializedObject(instances[0]);
+            for (int i = 1; i < instances.Count; i++)
+            {
+                if (instances[i] == null) return true;
+                if (!SameVisibleData(first, new SerializedObject(instances[i]))) return true;
+            }
+            return false;
+        }
+
+        /// <summary>Compares the properties the inspector actually draws. The object name and
+        /// hide flags are deliberately out of scope — they aren't what a bulk edit is about, and
+        /// a differing name would otherwise make every slot look mixed.</summary>
+        static bool SameVisibleData(SerializedObject a, SerializedObject b)
+        {
+            var left = a.GetIterator();
+            var right = b.GetIterator();
+            bool enterChildren = true;
+            while (true)
+            {
+                bool hasLeft = left.NextVisible(enterChildren);
+                bool hasRight = right.NextVisible(enterChildren);
+                enterChildren = false;   // DataEquals already covers the children of each row
+                if (hasLeft != hasRight) return false;
+                if (!hasLeft) return true;
+                if (left.propertyPath == "m_Script") continue;
+                if (left.propertyPath != right.propertyPath) return false;
+                if (!SerializedProperty.DataEquals(left, right)) return false;
+            }
+        }
+
+        /// <summary>Copies the representative's contents onto every other instance of the slot.</summary>
+        void PropagateSlot(BehaviourSlot slot)
+        {
+            var representative = slot.Representative;
+            if (representative == null) return;
+            // No UndoScope here: the drawer already recorded the representative's edit into the
+            // current undo group, and starting a new one would split a single edit into two
+            // Ctrl+Z steps. Joining that group also keeps slider drags collapsing as usual.
+            Undo.SetCurrentGroupName("Edit Behaviours");
+            for (int i = 1; i < slot.instances.Count; i++)
+            {
+                var peer = slot.instances[i];
+                if (peer == null || ReferenceEquals(peer, representative)) continue;
+                Undo.RegisterCompleteObjectUndo(peer, "Edit Behaviours");
+                EditorUtility.CopySerialized(representative, peer);
+                peer.name = representative.name;
+                VrcBehaviours.MarkAsSubAsset(peer);
+                EditorUtility.SetDirty(peer);
+            }
+        }
+
+        void RenameSlot(BehaviourSlot slot, string instanceName)
+        {
+            using (new UndoScope("Rename Behaviour"))
+                foreach (var instance in slot.instances)
+                {
+                    if (instance == null) continue;
+                    Undo.RegisterCompleteObjectUndo(instance, "Rename Behaviour");
+                    instance.name = instanceName;
+                    EditorUtility.SetDirty(instance);
+                }
+        }
+
+        /// <summary>Gives the states missing this slot a copy of the representative.</summary>
+        void AddSlotToMissingStates(BehaviourSlot slot, List<AnimatorState> states)
+        {
+            var representative = slot.Representative;
+            if (representative == null) return;
+            var type = representative.GetType();
+
+            using (new UndoScope("Add Behaviour"))
+                foreach (var state in states)
+                {
+                    if (state == null || slot.owners.Contains(state)) continue;
+                    // A singleton the state already carries under another name stays untouched —
+                    // a second instance would be invalid.
+                    if (VrcBehaviours.IsSingleton(slot.typeName) && VrcBehaviours.Has(state, slot.typeName))
+                        continue;
+                    Undo.RegisterCompleteObjectUndo(state, "Add Behaviour");
+                    var added = state.AddStateMachineBehaviour(type);
+                    if (added == null) continue;
+                    EditorUtility.CopySerialized(representative, added);
+                    added.name = representative.name;
+                    VrcBehaviours.MarkAsSubAsset(added);
+                    EditorUtility.SetDirty(state);
+                    _graphView.Sync.RefreshStateNode(state);   // B badge updates immediately
+                }
+        }
+
+        void RemoveSlot(BehaviourSlot slot)
+        {
+            _selectedBehaviours.Remove(slot.Representative);
+            _behaviourRangeAnchor = -1;
+            using (new UndoScope("Remove Behaviours"))
+                for (int i = 0; i < slot.instances.Count; i++)
+                {
+                    var instance = slot.instances[i];
+                    var owner = slot.owners[i];
+                    if (instance == null || owner == null) continue;
+                    VrcBehaviours.RemoveFrom(owner, instance);
+                    _graphView.Sync.RefreshStateNode(owner);   // B badge updates immediately
+                }
+        }
+
+        /// <summary>Ctrl+C / Ctrl+V over the multi-state behaviour list: copy takes the drawn
+        /// (first-state) instances, paste appends to every selected state.</summary>
+        void HandleMultiStateBehaviourShortcuts(List<AnimatorState> states, StateMachineBehaviour[] representatives)
+        {
+            var e = Event.current;
+            if (e == null || e.type != EventType.KeyDown || !(e.control || e.command))
+                return;
+            if (_selectedBehaviours.Count == 0) return;
+            if (EditorGUIUtility.editingTextField) return;
+
+            if (e.keyCode == KeyCode.C)
+            {
+                CopyBehaviours(representatives);
+                e.Use();
+            }
+            else if (e.keyCode == KeyCode.V && VrcBehaviours.ClipboardCount > 0)
+            {
+                PasteBehavioursToAll(states);
+                e.Use();
+                GUIUtility.ExitGUI();
+            }
+        }
+
+        void PasteBehavioursToAll(List<AnimatorState> states)
+        {
+            using (new UndoScope("Paste Behaviours"))
+                foreach (var state in states)
+                {
+                    if (state == null) continue;
+                    VrcBehaviours.Paste(state, replace: false);
+                    _graphView.Sync.RefreshStateNode(state);   // B badge updates immediately
+                }
+            // The pasted rows regroup into new slots on the next repaint; the old selection
+            // would point at whatever happened to sit at those indices.
+            _selectedBehaviours.Clear();
+            _behaviourRangeAnchor = -1;
+        }
+
         /// <summary>
         /// Render VRC SDK behaviours (Tracking Control, Parameter Driver) with a UI matching
         /// their native inspector. Detected by type name, so we don't need to reference VRCSDK.
@@ -580,8 +1129,121 @@ namespace Yozolab.DaerD
             {
                 case "VRCAnimatorTrackingControl": DrawVrcTrackingControl(behaviour); return true;
                 case "VRCAvatarParameterDriver": DrawVrcParameterDriver(behaviour); return true;
+                case "VRCAnimatorPlayAudio": DrawVrcPlayAudio(behaviour); return true;
+                case "VRCAnimatorLocomotionControl": DrawVrcLocomotionControl(behaviour); return true;
+                case "VRCAnimatorLayerControl": DrawVrcLayerControl(behaviour); return true;
+                case "VRCPlayableLayerControl": DrawVrcPlayableLayerControl(behaviour); return true;
+                case "VRCAnimatorTemporaryPoseSpace": DrawVrcPoseSpace(behaviour); return true;
                 default: return false;
             }
+        }
+
+        /// <summary>Two-button exclusive toggle; returns the (possibly new) value.</summary>
+        static bool DrawTwoWayToggle(bool value, string whenTrue, string whenFalse)
+        {
+            EditorGUILayout.BeginHorizontal();
+            var prev = GUI.backgroundColor;
+            GUI.backgroundColor = value ? new Color(0.55f, 0.85f, 0.55f) : prev;
+            if (GUILayout.Button(whenTrue, EditorStyles.miniButtonLeft) && !value) value = true;
+            GUI.backgroundColor = !value ? new Color(0.55f, 0.85f, 0.55f) : prev;
+            if (GUILayout.Button(whenFalse, EditorStyles.miniButtonRight) && value) value = false;
+            GUI.backgroundColor = prev;
+            EditorGUILayout.EndHorizontal();
+            return value;
+        }
+
+        /// <summary>PropertyField for a named property when it exists (SDK layouts vary).</summary>
+        static void PropertyRow(SerializedObject so, string property, string label)
+        {
+            var prop = so.FindProperty(property);
+            if (prop != null)
+                EditorGUILayout.PropertyField(prop, new GUIContent(label), true);
+        }
+
+        void DrawVrcLocomotionControl(StateMachineBehaviour behaviour)
+        {
+            var so = new SerializedObject(behaviour);
+            so.Update();
+            var disable = so.FindProperty("disableLocomotion");
+            if (disable != null)
+                disable.boolValue = !DrawTwoWayToggle(!disable.boolValue, L.Tr("Enable"), L.Tr("Disable"));
+            PropertyRow(so, "debugString", "Debug String");
+            so.ApplyModifiedProperties();
+        }
+
+        void DrawVrcPoseSpace(StateMachineBehaviour behaviour)
+        {
+            var so = new SerializedObject(behaviour);
+            so.Update();
+            var enter = so.FindProperty("enterPoseSpace");
+            if (enter != null)
+                enter.boolValue = DrawTwoWayToggle(enter.boolValue, L.Tr("Enter"), L.Tr("Exit"));
+            var fixedDelay = so.FindProperty("fixedDelay");
+            if (fixedDelay != null)
+                EditorGUILayout.PropertyField(fixedDelay,
+                    new GUIContent(L.Tr("Fixed Delay"),
+                        L.Tr("On: the delay is in seconds. Off: normalized time of the state.")));
+            PropertyRow(so, "delayTime", "Delay Time");
+            PropertyRow(so, "debugString", "Debug String");
+            so.ApplyModifiedProperties();
+        }
+
+        void DrawVrcLayerControl(StateMachineBehaviour behaviour)
+        {
+            var so = new SerializedObject(behaviour);
+            so.Update();
+            PropertyRow(so, "playable", "Playable");
+            PropertyRow(so, "layer", "Layer");
+            var goal = so.FindProperty("goalWeight");
+            if (goal != null)
+                goal.floatValue = EditorGUILayout.Slider(L.Tr("Goal Weight"), goal.floatValue, 0f, 1f);
+            PropertyRow(so, "blendDuration", "Blend Duration");
+            PropertyRow(so, "debugString", "Debug String");
+            so.ApplyModifiedProperties();
+        }
+
+        void DrawVrcPlayableLayerControl(StateMachineBehaviour behaviour)
+        {
+            var so = new SerializedObject(behaviour);
+            so.Update();
+            PropertyRow(so, "layer", "Layer");
+            var goal = so.FindProperty("goalWeight");
+            if (goal != null)
+                goal.floatValue = EditorGUILayout.Slider(L.Tr("Goal Weight"), goal.floatValue, 0f, 1f);
+            PropertyRow(so, "blendDuration", "Blend Duration");
+            PropertyRow(so, "debugString", "Debug String");
+            so.ApplyModifiedProperties();
+        }
+
+        /// <summary>Play Audio has a large, SDK-version-dependent field set: a drag slot
+        /// resolves the source path, everything else renders generically.</summary>
+        void DrawVrcPlayAudio(StateMachineBehaviour behaviour)
+        {
+            var so = new SerializedObject(behaviour);
+            so.Update();
+            var sourcePath = so.FindProperty("SourcePath");
+            if (sourcePath != null)
+            {
+                EditorGUILayout.PropertyField(sourcePath, new GUIContent("Source Path"));
+                // Action slot: dropping an AudioSource fills the path (relative to its root).
+                var dropped = (AudioSource)EditorGUILayout.ObjectField(
+                    new GUIContent(L.Tr("Resolve From AudioSource"),
+                        L.Tr("Drop the avatar's AudioSource to fill the source path.")),
+                    null, typeof(AudioSource), true);
+                if (dropped != null)
+                    sourcePath.stringValue = AnimationUtility.CalculateTransformPath(
+                        dropped.transform, dropped.transform.root);
+            }
+            var iterator = so.GetIterator();
+            bool enterChildren = true;
+            while (iterator.NextVisible(enterChildren))
+            {
+                enterChildren = false;
+                if (iterator.propertyPath == "m_Script" || iterator.propertyPath == "SourcePath")
+                    continue;
+                EditorGUILayout.PropertyField(iterator, true);
+            }
+            so.ApplyModifiedProperties();
         }
 
         // Body part rows in the order the VRCSDK inspector shows them: display label + the
@@ -909,25 +1571,83 @@ namespace Yozolab.DaerD
             EditorGUILayout.EndHorizontal();
         }
 
-        void ShowAddBehaviourMenu(AnimatorState state)
+        void ShowAddBehaviourMenu(AnimatorState state) =>
+            ShowAddBehaviourMenu(new List<AnimatorState> { state });
+
+        /// <summary>Add menu for one or many states; picking a type adds it to every target
+        /// in a single undo step.</summary>
+        void ShowAddBehaviourMenu(List<AnimatorState> states)
         {
+            // The menu callback runs long after this frame — snapshot the targets so a
+            // rebuilt selection list can't change what gets added.
+            var targets = new List<AnimatorState>();
+            foreach (var s in states)
+                if (s != null) targets.Add(s);
+            if (targets.Count == 0) return;
+
             var menu = new GenericMenu();
+
+            // VRC types first (the common case on this kind of controller). Singletons gray
+            // out once present; repeatable types always add another instance.
+            bool anyVrc = false;
+            foreach (var typeName in VrcBehaviours.All)
+            {
+                if (VrcBehaviours.Find(typeName) == null) continue;
+                anyVrc = true;
+                var captured = typeName;
+                var label = new GUIContent(typeName);
+                // Grayed out only when there is nothing left to add — a singleton missing from
+                // even one target is still worth offering (it lands on that target alone).
+                if (VrcBehaviours.IsSingleton(typeName) && AllStatesHave(targets, typeName))
+                    menu.AddDisabledItem(label);
+                else
+                    menu.AddItem(label, false, () =>
+                    {
+                        using (new UndoScope("Add Behaviour"))
+                            foreach (var s in targets)
+                            {
+                                if (s == null) continue;
+                                if (VrcBehaviours.IsSingleton(captured) && VrcBehaviours.Has(s, captured))
+                                    continue;
+                                VrcBehaviours.Add(s, captured);
+                                _graphView.Sync.RefreshStateNode(s);   // B badge updates immediately
+                            }
+                        Refresh();
+                    });
+            }
+            if (anyVrc)
+                menu.AddSeparator(string.Empty);
+
             foreach (var type in TypeCache.GetTypesDerivedFrom<StateMachineBehaviour>())
             {
                 if (type.IsAbstract) continue;
+                if (anyVrc && VrcBehaviours.IsVrcType(type.Name)) continue;   // already listed above
                 var captured = type;
-                menu.AddItem(new GUIContent(type.Name), false, () =>
+                var label = anyVrc ? "Other/" + type.Name : type.Name;
+                menu.AddItem(new GUIContent(label), false, () =>
                 {
-                    Undo.RegisterCompleteObjectUndo(state, "Add Behaviour");
-                    state.AddStateMachineBehaviour(captured);
-                    EditorUtility.SetDirty(state);
-                    _graphView.Sync.RefreshStateNode(state);   // B badge updates immediately
+                    using (new UndoScope("Add Behaviour"))
+                        foreach (var s in targets)
+                        {
+                            if (s == null) continue;
+                            Undo.RegisterCompleteObjectUndo(s, "Add Behaviour");
+                            s.AddStateMachineBehaviour(captured);
+                            EditorUtility.SetDirty(s);
+                            _graphView.Sync.RefreshStateNode(s);   // B badge updates immediately
+                        }
                     Refresh();
                 });
             }
             if (menu.GetItemCount() == 0)
                 menu.AddDisabledItem(new GUIContent("No StateMachineBehaviour types found"));
             menu.ShowAsContext();
+        }
+
+        static bool AllStatesHave(List<AnimatorState> states, string typeName)
+        {
+            foreach (var s in states)
+                if (s != null && !VrcBehaviours.Has(s, typeName)) return false;
+            return true;
         }
 
         static void RemoveBehaviour(AnimatorState state, StateMachineBehaviour behaviour)
@@ -973,10 +1693,10 @@ namespace Yozolab.DaerD
             if (pool.Count == 0)
             {
                 if (Context.Selection is TransitionEdge edge && edge.IsDefaultEdge)
-                    EditorGUILayout.HelpBox("Default-state link. Set a different default state from a state's context menu.",
+                    EditorGUILayout.HelpBox(L.Tr("Default-state link. Set a different default state from a state's context menu."),
                         MessageType.Info);
                 else
-                    EditorGUILayout.LabelField("No transitions to edit.");
+                    EditorGUILayout.LabelField(L.Tr("No transitions to edit."));
                 return;
             }
 
@@ -1021,12 +1741,12 @@ namespace Yozolab.DaerD
         /// <summary>Unity-style vertical transition list with Solo / Mute columns and multi-select.</summary>
         void DrawTransitionList(List<AnimatorTransitionBase> pool)
         {
-            EditorGUILayout.LabelField("Transitions (" + pool.Count + ")", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField(L.Tr("Transitions") + " (" + pool.Count + ")", EditorStyles.boldLabel);
 
             EditorGUILayout.BeginHorizontal();
-            EditorGUILayout.LabelField("Solo", EditorStyles.miniLabel, GUILayout.Width(34));
-            EditorGUILayout.LabelField("Mute", EditorStyles.miniLabel, GUILayout.Width(36));
-            EditorGUILayout.LabelField("Transition", EditorStyles.miniLabel);
+            EditorGUILayout.LabelField(L.Tr("Solo"), EditorStyles.miniLabel, GUILayout.Width(34));
+            EditorGUILayout.LabelField(L.Tr("Mute"), EditorStyles.miniLabel, GUILayout.Width(36));
+            EditorGUILayout.LabelField(L.Tr("Transition"), EditorStyles.miniLabel);
             EditorGUILayout.EndHorizontal();
 
             for (int i = 0; i < pool.Count; i++)
@@ -1063,12 +1783,12 @@ namespace Yozolab.DaerD
             }
 
             EditorGUILayout.BeginHorizontal();
-            if (GUILayout.Button("+ Add Transition"))
+            if (GUILayout.Button(L.Tr("+ Add Transition")))
             {
                 AddTransitionToAnchorEdge(pool);
                 GUIUtility.ExitGUI();
             }
-            if (pool.Count > 1 && GUILayout.Button("Select All", GUILayout.Width(80)))
+            if (pool.Count > 1 && GUILayout.Button(L.Tr("Select All"), GUILayout.Width(80)))
             {
                 _selectedTransitions.Clear();
                 _selectedTransitions.AddRange(pool);
@@ -1198,7 +1918,7 @@ namespace Yozolab.DaerD
 
         void DrawSingleTransition(AnimatorTransitionBase transition, AnimatorController controller)
         {
-            EditorGUILayout.LabelField("Transition  " + ParameterConverter.DescribeTransition(transition),
+            EditorGUILayout.LabelField(L.Tr("Transition") + "  " + ParameterConverter.DescribeTransition(transition),
                 EditorStyles.boldLabel);
             DrawTransitionSettings(transition);
 
@@ -1211,22 +1931,22 @@ namespace Yozolab.DaerD
             var stateTransition = transition as AnimatorStateTransition;
             if (stateTransition == null)
             {
-                EditorGUILayout.LabelField("(Entry / state-machine transition — no timing settings.)",
+                EditorGUILayout.LabelField(L.Tr("(Entry / state-machine transition — no timing settings.)"),
                     EditorStyles.miniLabel);
                 return;
             }
 
             EditorGUI.BeginChangeCheck();
-            bool hasExitTime = EditorGUILayout.Toggle("Has Exit Time", stateTransition.hasExitTime);
+            bool hasExitTime = EditorGUILayout.Toggle(L.Tr("Has Exit Time"), stateTransition.hasExitTime);
             float exitTime;
             using (new EditorGUI.DisabledScope(!hasExitTime))
-                exitTime = EditorGUILayout.FloatField("Exit Time", stateTransition.exitTime);
-            bool fixedDuration = EditorGUILayout.Toggle("Fixed Duration", stateTransition.hasFixedDuration);
-            float duration = EditorGUILayout.FloatField("Duration", stateTransition.duration);
-            float offset = EditorGUILayout.FloatField("Offset", stateTransition.offset);
-            var interruption = (TransitionInterruptionSource)EditorGUILayout.EnumPopup("Interruption", stateTransition.interruptionSource);
-            bool ordered = EditorGUILayout.Toggle("Ordered Interruption", stateTransition.orderedInterruption);
-            bool toSelf = EditorGUILayout.Toggle("Can Transition To Self", stateTransition.canTransitionToSelf);
+                exitTime = EditorGUILayout.FloatField(L.Tr("Exit Time"), stateTransition.exitTime);
+            bool fixedDuration = EditorGUILayout.Toggle(L.Tr("Fixed Duration"), stateTransition.hasFixedDuration);
+            float duration = EditorGUILayout.FloatField(L.Tr("Duration"), stateTransition.duration);
+            float offset = EditorGUILayout.FloatField(L.Tr("Offset"), stateTransition.offset);
+            var interruption = (TransitionInterruptionSource)EditorGUILayout.EnumPopup(L.Tr("Interruption"), stateTransition.interruptionSource);
+            bool ordered = EditorGUILayout.Toggle(L.Tr("Ordered Interruption"), stateTransition.orderedInterruption);
+            bool toSelf = EditorGUILayout.Toggle(L.Tr("Can Transition To Self"), stateTransition.canTransitionToSelf);
             if (EditorGUI.EndChangeCheck())
             {
                 Undo.RegisterCompleteObjectUndo(stateTransition, "Edit Transition");
@@ -1244,12 +1964,12 @@ namespace Yozolab.DaerD
 
         void DrawConditions(AnimatorTransitionBase transition, AnimatorController controller)
         {
-            EditorGUILayout.LabelField("Conditions", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField(L.Tr("Conditions"), EditorStyles.boldLabel);
 
             var paramNames = AllParameterNames(controller);
             if (paramNames.Length == 0)
             {
-                EditorGUILayout.HelpBox("Add parameters before building conditions.", MessageType.Info);
+                EditorGUILayout.HelpBox(L.Tr("Add parameters before building conditions."), MessageType.Info);
                 return;
             }
             var typeByName = ParameterTypeMap(controller);
@@ -1284,7 +2004,7 @@ namespace Yozolab.DaerD
                 working.RemoveAt(removeIndex);
                 changed = true;
             }
-            if (GUILayout.Button("+ Add Condition"))
+            if (GUILayout.Button(L.Tr("+ Add Condition")))
             {
                 var type = typeByName.TryGetValue(paramNames[0], out var t) ? t : AnimatorControllerParameterType.Float;
                 working.Add(new TransitionClipboard.ConditionData { parameter = paramNames[0], mode = ModesFor(type)[0] });
@@ -1303,11 +2023,11 @@ namespace Yozolab.DaerD
 
         void DrawMultiTransitionEditor(AnimatorController controller)
         {
-            EditorGUILayout.LabelField(_selectedTransitions.Count + " transitions selected", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField(L.Tr("{0} transitions selected", _selectedTransitions.Count), EditorStyles.boldLabel);
 
             using (new EditorGUI.DisabledScope(!TransitionClipboard.HasData))
             {
-                if (GUILayout.Button("Paste Copied Transition Onto All " + _selectedTransitions.Count + " Selected"))
+                if (GUILayout.Button(L.Tr("Paste Copied Transition Onto All {0} Selected", _selectedTransitions.Count)))
                     PasteOntoSelected();
             }
 
@@ -1320,24 +2040,24 @@ namespace Yozolab.DaerD
 
         void DrawMultiSettings()
         {
-            EditorGUILayout.LabelField("Common Settings (applied to all selected)", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField(L.Tr("Common Settings (applied to all selected)"), EditorStyles.boldLabel);
 
-            MultiBool("Mute", _selectedTransitions, x => x.mute, (x, v) => x.mute = v, refreshEdges: true);
-            MultiBool("Solo", _selectedTransitions, x => x.solo, (x, v) => x.solo = v, refreshEdges: true);
+            MultiBool(L.Tr("Mute"), _selectedTransitions, x => x.mute, (x, v) => x.mute = v, refreshEdges: true);
+            MultiBool(L.Tr("Solo"), _selectedTransitions, x => x.solo, (x, v) => x.solo = v, refreshEdges: true);
 
             var stateTransitions = new List<AnimatorStateTransition>();
             foreach (var t in _selectedTransitions)
                 if (t is AnimatorStateTransition st) stateTransitions.Add(st);
             if (stateTransitions.Count == 0) return;
 
-            MultiBool("Has Exit Time", stateTransitions, x => x.hasExitTime, (x, v) => x.hasExitTime = v);
-            MultiFloat("Exit Time", stateTransitions, x => x.exitTime, (x, v) => x.exitTime = v);
-            MultiBool("Fixed Duration", stateTransitions, x => x.hasFixedDuration, (x, v) => x.hasFixedDuration = v);
-            MultiFloat("Duration", stateTransitions, x => x.duration, (x, v) => x.duration = v);
-            MultiFloat("Offset", stateTransitions, x => x.offset, (x, v) => x.offset = v);
+            MultiBool(L.Tr("Has Exit Time"), stateTransitions, x => x.hasExitTime, (x, v) => x.hasExitTime = v);
+            MultiFloat(L.Tr("Exit Time"), stateTransitions, x => x.exitTime, (x, v) => x.exitTime = v);
+            MultiBool(L.Tr("Fixed Duration"), stateTransitions, x => x.hasFixedDuration, (x, v) => x.hasFixedDuration = v);
+            MultiFloat(L.Tr("Duration"), stateTransitions, x => x.duration, (x, v) => x.duration = v);
+            MultiFloat(L.Tr("Offset"), stateTransitions, x => x.offset, (x, v) => x.offset = v);
             MultiInterruption(stateTransitions);
-            MultiBool("Ordered Interruption", stateTransitions, x => x.orderedInterruption, (x, v) => x.orderedInterruption = v);
-            MultiBool("Can Transition To Self", stateTransitions, x => x.canTransitionToSelf, (x, v) => x.canTransitionToSelf = v);
+            MultiBool(L.Tr("Ordered Interruption"), stateTransitions, x => x.orderedInterruption, (x, v) => x.orderedInterruption = v);
+            MultiBool(L.Tr("Can Transition To Self"), stateTransitions, x => x.canTransitionToSelf, (x, v) => x.canTransitionToSelf = v);
         }
 
         void MultiBool<T>(string label, List<T> items, Func<T, bool> getter, Action<T, bool> setter,
@@ -1457,7 +2177,7 @@ namespace Yozolab.DaerD
 
             EditorGUI.showMixedValue = mixed;
             EditorGUI.BeginChangeCheck();
-            var value = (TransitionInterruptionSource)EditorGUILayout.EnumPopup("Interruption", first);
+            var value = (TransitionInterruptionSource)EditorGUILayout.EnumPopup(L.Tr("Interruption"), first);
             EditorGUI.showMixedValue = false;
             if (EditorGUI.EndChangeCheck())
             {
@@ -1473,20 +2193,20 @@ namespace Yozolab.DaerD
 
         void DrawSharedConditions(AnimatorController controller)
         {
-            EditorGUILayout.LabelField("Shared Conditions", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField(L.Tr("Shared Conditions"), EditorStyles.boldLabel);
 
             int total = _selectedTransitions.Count;
             var shared = SharedConditions(_selectedTransitions);
             if (shared.Count == 0)
             {
-                EditorGUILayout.LabelField("(the selected transitions have no conditions)", EditorStyles.miniLabel);
+                EditorGUILayout.LabelField(L.Tr("(the selected transitions have no conditions)"), EditorStyles.miniLabel);
                 return;
             }
 
             var paramNames = AllParameterNames(controller);
             if (paramNames.Length == 0)
             {
-                EditorGUILayout.HelpBox("Add parameters before editing conditions.", MessageType.Info);
+                EditorGUILayout.HelpBox(L.Tr("Add parameters before editing conditions."), MessageType.Info);
                 return;
             }
             var typeByName = ParameterTypeMap(controller);
@@ -1538,12 +2258,12 @@ namespace Yozolab.DaerD
 
         void DrawAddConditionToAll(AnimatorController controller)
         {
-            EditorGUILayout.LabelField("Add The Same Condition To Every Selected Transition", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField(L.Tr("Add The Same Condition To Every Selected Transition"), EditorStyles.boldLabel);
 
             var paramNames = AllParameterNames(controller);
             if (paramNames.Length == 0)
             {
-                EditorGUILayout.HelpBox("Add parameters before building conditions.", MessageType.Info);
+                EditorGUILayout.HelpBox(L.Tr("Add parameters before building conditions."), MessageType.Info);
                 return;
             }
             var typeByName = ParameterTypeMap(controller);
@@ -1554,7 +2274,7 @@ namespace Yozolab.DaerD
             _newCondition.parameter = paramNames[paramIndex];
             var type = typeByName.TryGetValue(_newCondition.parameter, out var ty) ? ty : AnimatorControllerParameterType.Float;
             DrawConditionValue(_newCondition, type);
-            if (GUILayout.Button("Add", EditorStyles.miniButton, GUILayout.Width(46)))
+            if (GUILayout.Button(L.Tr("Add"), EditorStyles.miniButton, GUILayout.Width(46)))
             {
                 AddConditionToAll(_newCondition);
                 GUIUtility.ExitGUI();
@@ -1671,7 +2391,7 @@ namespace Yozolab.DaerD
                 case AnimatorControllerParameterType.Trigger:
                 {
                     condition.mode = AnimatorConditionMode.If;
-                    EditorGUILayout.LabelField("(set)", EditorStyles.miniLabel, GUILayout.Width(80));
+                    EditorGUILayout.LabelField(L.Tr("(set)"), EditorStyles.miniLabel, GUILayout.Width(80));
                     GUILayout.Space(56);
                     break;
                 }
@@ -1823,10 +2543,28 @@ namespace Yozolab.DaerD
                 ClipsWindow.Open(controller);
                 GUIUtility.ExitGUI();   // the focus moved to another window under this layout pass
             }
-            if (GUILayout.Button(new GUIContent(L.Tr("Object Toggle…"),
+            if (GUILayout.Button(new GUIContent(L.Tr("Object Toggle"),
                     L.Tr("Generate ON/OFF clips for picked GameObjects and the layer or Direct blend tree machinery that plays them."))))
             {
                 ToggleBuilderWindow.Open(controller, OnToggleApplied);
+                GUIUtility.ExitGUI();   // the focus moved to another window under this layout pass
+            }
+            if (GUILayout.Button(new GUIContent(L.Tr("Async Sync"),
+                    L.Tr("Time-multiplex several parameters over a few synced ones (index + value channels) — parameter compression."))))
+            {
+                AsyncSyncWindow.Open(controller, OnToggleApplied);
+                GUIUtility.ExitGUI();   // the focus moved to another window under this layout pass
+            }
+            if (GUILayout.Button(new GUIContent(L.Tr("Expressions Menu"),
+                    L.Tr("Edit the avatar's VRC Expressions Menu (auto-detected from the scene)."))))
+            {
+                VrcMenuWindow.Open(controller);
+                GUIUtility.ExitGUI();   // the focus moved to another window under this layout pass
+            }
+            if (GUILayout.Button(new GUIContent(L.Tr("Export C# Recipe"),
+                    L.Tr("Convert this controller (or chosen layers) into editable C# that rebuilds it — clips stay assignable by drag & drop on the recipe asset."))))
+            {
+                RecipeExportWindow.Open(controller);
                 GUIUtility.ExitGUI();   // the focus moved to another window under this layout pass
             }
             DrawCleanupSection(controller);
@@ -1865,9 +2603,14 @@ namespace Yozolab.DaerD
                 if (GUILayout.Button(new GUIContent(L.Tr("Scan For Leftovers"),
                         L.Tr("Find sub-assets stored in the .controller file that nothing references any more.") + "\n"
                         + L.Tr("Blend trees, clips and states deleted from the graph can survive as invisible sub-assets; find them."))))
+                {
                     _leftovers = ControllerCleanup.FindLeftoverSubAssets(controller);
+                    _exposed = ControllerCleanup.FindExposedSubAssets(controller);
+                }
             if (!isAsset)
                 EditorGUILayout.LabelField(L.Tr("(unsaved controller — nothing to scan)"), EditorStyles.miniLabel);
+
+            DrawExposedSubAssets(controller);
             if (_leftovers == null) return;
 
             // Entries deleted (or restored by Undo) since the scan linger as fake nulls.
@@ -1905,6 +2648,31 @@ namespace Yozolab.DaerD
             if (GUILayout.Button(L.Tr("Delete All")))
             {
                 DeleteAllLeftovers(controller, live);
+                GUIUtility.ExitGUI();
+            }
+        }
+
+        /// <summary>
+        /// Sub-assets that are in use but visible in the Project window (behaviours whose hide
+        /// flags an older paste cleared). Not garbage — deleting them would break the states
+        /// that use them — so the offer here is to hide them, not to remove them.
+        /// </summary>
+        void DrawExposedSubAssets(AnimatorController controller)
+        {
+            if (_exposed == null) return;
+            int live = 0;
+            foreach (var asset in _exposed)
+                if (asset != null) live++;
+            if (live == 0) return;
+
+            EditorGUILayout.HelpBox(
+                L.Tr("{0} sub-asset(s) are showing up under this .controller in the Project window. They are in use — hiding them just restores how Unity normally stores them.", live),
+                MessageType.Info);
+            if (GUILayout.Button(new GUIContent(L.Tr("Hide In Project ({0})", live),
+                    L.Tr("Restore the hidden flag on these sub-assets. Nothing is deleted and no reference changes."))))
+            {
+                ControllerCleanup.HideSubAssets(controller, _exposed);
+                _exposed = ControllerCleanup.FindExposedSubAssets(controller);
                 GUIUtility.ExitGUI();
             }
         }
@@ -1948,7 +2716,7 @@ namespace Yozolab.DaerD
         {
             var labels = new string[modes.Length];
             for (int i = 0; i < modes.Length; i++)
-                labels[i] = modes[i].ToString();
+                labels[i] = L.Tr(modes[i].ToString());
             return labels;
         }
 

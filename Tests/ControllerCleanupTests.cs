@@ -4,6 +4,11 @@ using UnityEngine;
 
 namespace Yozolab.DaerD.Tests
 {
+    /// <summary>Stands in for a VRC behaviour (the SDK isn't referenced by the tests).</summary>
+    class CleanupTestBehaviour : StateMachineBehaviour
+    {
+    }
+
     public class ControllerCleanupTests
     {
         static AnimatorController NewController(out AnimatorStateMachine sm)
@@ -264,6 +269,48 @@ namespace Yozolab.DaerD.Tests
             Assert.AreEqual(0, ControllerCleanup.FindLeftovers(controller, all).Count);
 
             DestroyAll(controller, frameData, emptyClip);
+        }
+
+        // ---- exposed sub-assets ----------------------------------------------
+
+        [Test]
+        public void FindExposed_FlagsInUseSubAssetsThatLostTheirHiddenFlag()
+        {
+            var controller = NewController(out var sm);
+            var state = sm.AddState("A");
+            var driver = state.AddStateMachineBehaviour(typeof(CleanupTestBehaviour));
+            driver.hideFlags = HideFlags.None;                     // what an old paste left behind
+            var hiddenState = sm.AddState("B");
+            hiddenState.hideFlags = HideFlags.HideInHierarchy;
+            var clip = new AnimationClip { name = "Visible" };      // clips are meant to be visible
+
+            var exposed = ControllerCleanup.FindExposed(new Object[] { controller, sm, state, hiddenState, driver, clip });
+
+            CollectionAssert.Contains(exposed, driver);
+            CollectionAssert.DoesNotContain(exposed, clip);
+            CollectionAssert.DoesNotContain(exposed, hiddenState);
+            CollectionAssert.DoesNotContain(exposed, controller);
+
+            DestroyAll(controller, clip);
+        }
+
+        [Test]
+        public void HideSubAssets_RestoresTheFlag_WithoutDestroyingAnything()
+        {
+            var controller = NewController(out var sm);
+            var state = sm.AddState("A");
+            var driver = state.AddStateMachineBehaviour(typeof(CleanupTestBehaviour));
+            driver.hideFlags = HideFlags.None;
+
+            int hidden = ControllerCleanup.HideSubAssets(controller, new Object[] { driver, null });
+
+            Assert.AreEqual(1, hidden);
+            Assert.IsFalse(driver == null, "hiding must not destroy the behaviour");
+            Assert.AreNotEqual(HideFlags.None, driver.hideFlags & HideFlags.HideInHierarchy);
+            Assert.AreEqual(1, state.behaviours.Length, "the state still uses it");
+            Assert.AreEqual(0, ControllerCleanup.FindExposed(new Object[] { driver }).Count);
+
+            DestroyAll(controller);
         }
 
         [Test]
