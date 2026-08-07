@@ -119,6 +119,46 @@ namespace Yozolab.DaerD
 
         public List<AsyncSyncConfig> asyncSyncs = new List<AsyncSyncConfig>();
 
+        /// <summary>Layers generated (and regenerated) by a C# recipe — the layer list shows
+        /// them with a "C#" badge so hand-edits there read as "will be overwritten".</summary>
+        [Serializable]
+        public class CodeOwnedLayer
+        {
+            public AnimatorStateMachine layer;
+            public UnityEngine.Object recipe;
+        }
+
+        public List<CodeOwnedLayer> codeOwned = new List<CodeOwnedLayer>();
+
+        /// <summary>Replaces <paramref name="recipe"/>'s claims with the given machines.</summary>
+        public static void SetCodeOwned(AnimatorController controller,
+            List<AnimatorStateMachine> machines, UnityEngine.Object recipe)
+        {
+            if (controller == null || recipe == null) return;
+            var data = GetOrCreate(controller);
+            if (data == null) return;
+            Undo.RegisterCompleteObjectUndo(data, "Record Recipe Layers");
+            data.codeOwned.RemoveAll(entry => entry == null || entry.layer == null
+                || entry.recipe == null || entry.recipe == recipe);
+            foreach (var machine in machines)
+                if (machine != null)
+                    data.codeOwned.Add(new CodeOwnedLayer { layer = machine, recipe = recipe });
+            EditorUtility.SetDirty(data);
+        }
+
+        /// <summary>Live machine → recipe map (stale entries pruned on read).</summary>
+        public static Dictionary<AnimatorStateMachine, UnityEngine.Object> GetCodeOwned(
+            AnimatorController controller)
+        {
+            var map = new Dictionary<AnimatorStateMachine, UnityEngine.Object>();
+            var data = Find(controller);
+            if (data == null) return map;
+            data.codeOwned.RemoveAll(entry => entry == null || entry.layer == null || entry.recipe == null);
+            foreach (var entry in data.codeOwned)
+                map[entry.layer] = entry.recipe;
+            return map;
+        }
+
         /// <summary>Live configs (entries whose layer was deleted are pruned).</summary>
         public List<AsyncSyncConfig> AsyncSyncs()
         {

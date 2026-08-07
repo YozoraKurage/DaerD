@@ -182,7 +182,10 @@ namespace Yozolab.DaerD
             {
                 string child = where + " / Behaviour '" + a[i].typeName + "'";
                 Field(child, "type", a[i].typeName, b[i].typeName, diffs);
-                if (NormalizeBehaviourJson(a[i].json) != NormalizeBehaviourJson(b[i].json))
+                // Recipe-declared behaviours (typed driver spec, configure action) carry no
+                // JSON snapshot; contents can only be compared when both sides have one.
+                if (!string.IsNullOrEmpty(a[i].json) && !string.IsNullOrEmpty(b[i].json)
+                    && NormalizeBehaviourJson(a[i].json) != NormalizeBehaviourJson(b[i].json))
                     diffs.Add(child + ": serialized data differs");
             }
         }
