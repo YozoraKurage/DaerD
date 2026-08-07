@@ -1765,3 +1765,9 @@ msgstr "'{0}' は既に存在します。エクスポートしたコードで上
 
 msgid "Overwrite"
 msgstr "上書き"
+
+msgid "Assembly Definition (faster compiles)"
+msgstr "Assembly Definition（コンパイル高速化）"
+
+msgid "Put the recipe folder in its own small assembly, so an export recompiles only the recipes instead of your whole editor assembly. Skipped when the folder already belongs to an asmdef or contains scripts DaerD didn't generate."
+msgstr "Recipe フォルダを専用の小さなアセンブリに分離し、エクスポート時の再コンパイルをエディタアセンブリ全体ではなく Recipe だけに抑えます。フォルダが既に asmdef 管理下にある場合や、DaerD 以外のスクリプトを含む場合はスキップします。"
