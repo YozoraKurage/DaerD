@@ -1750,3 +1750,9 @@ msgstr "検証"
 
 msgid "{0} finding(s):"
 msgstr "{0} 件の指摘:"
+
+msgid "The output folder must be inside this project ('Assets/…')."
+msgstr "出力フォルダはこのプロジェクト内（'Assets/…'）を指定してください。"
+
+msgid "Could not create the output folder '{0}'."
+msgstr "出力フォルダ '{0}' を作成できませんでした。"

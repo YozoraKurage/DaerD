@@ -147,6 +147,28 @@ namespace Yozolab.DaerD.Tests
             Assert.IsEmpty(diffs, string.Join("\n", diffs));
         }
 
+        /// <summary>Regression: a mangled output path ("chara/Animation/…", no Assets/
+        /// prefix) reached CreateAsset and threw. The normalizer must only accept real
+        /// project folders — and never match "Assets" as a substring inside a name.</summary>
+        [Test]
+        public void NormalizeProjectFolder_AcceptsProjectPaths_RejectsEverythingElse()
+        {
+            Assert.AreEqual("Assets", RecipeExportQueue.NormalizeProjectFolder("Assets"));
+            Assert.AreEqual("Assets/A/B", RecipeExportQueue.NormalizeProjectFolder("Assets/A/B/"));
+            Assert.AreEqual("Assets/A", RecipeExportQueue.NormalizeProjectFolder("Assets\\A"));
+            Assert.AreEqual("Assets/Chara/FX",
+                RecipeExportQueue.NormalizeProjectFolder("/Users/me/Project/Assets/Chara/FX"));
+            Assert.AreEqual("Assets",
+                RecipeExportQueue.NormalizeProjectFolder("/Users/me/Project/Assets"));
+
+            Assert.IsNull(RecipeExportQueue.NormalizeProjectFolder(null));
+            Assert.IsNull(RecipeExportQueue.NormalizeProjectFolder(""));
+            Assert.IsNull(RecipeExportQueue.NormalizeProjectFolder("chara/Animation/FX/Editor"));
+            Assert.IsNull(RecipeExportQueue.NormalizeProjectFolder("/Users/me/MyAssetsPile/Foo"),
+                "'Assets' inside a folder name is not the Assets folder");
+            Assert.IsNull(RecipeExportQueue.NormalizeProjectFolder("AssetsExtra/Foo"));
+        }
+
         [Test]
         public void StripUnusedVariables_DropsOneShotDeclarations_KeepsReferencedOnes()
         {

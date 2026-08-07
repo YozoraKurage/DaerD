@@ -86,7 +86,17 @@ namespace Yozolab.DaerD.Authoring
                             + "Fix the script and use Assets > Create > DaerD > Recipe Asset From Script.");
                     continue;
                 }
-                CreateAsset(pending, type);
+                try
+                {
+                    CreateAsset(pending, type);
+                }
+                catch (Exception e)
+                {
+                    // One bad record must not take the queue down with it — an escaped
+                    // exception here used to skip the save below and replay everything.
+                    Debug.LogError("DaerD: creating the recipe asset at '" + pending.assetPath
+                        + "' failed: " + e.Message);
+                }
             }
             Save(new PendingList { items = remaining });
         }
@@ -115,12 +125,74 @@ namespace Yozolab.DaerD.Authoring
             }
             serialized.ApplyModifiedPropertiesWithoutUndo();
 
-            AssetDatabase.CreateAsset(recipe, AssetDatabase.GenerateUniqueAssetPath(pending.assetPath));
+            // GenerateUniqueAssetPath (and CreateAsset) return garbage for folders the
+            // AssetDatabase doesn't know — validate and materialize the chain first, and
+            // fall back to Assets/ rather than losing the configured instance.
+            string path = pending.assetPath.Replace('\\', '/');
+            int lastSlash = path.LastIndexOf('/');
+            string folder = lastSlash > 0 ? path.Substring(0, lastSlash) : "Assets";
+            string file = lastSlash > 0 ? path.Substring(lastSlash + 1) : path;
+            if (!EnsureAssetFolder(folder))
+            {
+                Debug.LogWarning("DaerD: '" + folder + "' is not a usable project folder — "
+                    + "the recipe asset goes to Assets/ instead.");
+                folder = "Assets";
+            }
+            AssetDatabase.CreateAsset(recipe,
+                AssetDatabase.GenerateUniqueAssetPath(folder + "/" + file));
             AssetDatabase.SaveAssets();
             Selection.activeObject = recipe;
             EditorGUIUtility.PingObject(recipe);
             Debug.Log("DaerD: recipe asset created at '" + AssetDatabase.GetAssetPath(recipe)
                 + "' — asset references are pre-assigned; press Generate to test the round trip.");
+        }
+
+        /// <summary>Makes sure a project folder exists AND is imported, creating the chain
+        /// through the AssetDatabase (Directory.CreateDirectory alone leaves folders the
+        /// asset pipeline hasn't seen, which corrupts GenerateUniqueAssetPath).</summary>
+        internal static bool EnsureAssetFolder(string folder)
+        {
+            folder = NormalizeProjectFolder(folder);
+            if (folder == null) return false;
+            if (AssetDatabase.IsValidFolder(folder)) return true;
+
+            var parts = folder.Split('/');
+            string current = parts[0];
+            for (int i = 1; i < parts.Length; i++)
+            {
+                string next = current + "/" + parts[i];
+                if (!AssetDatabase.IsValidFolder(next)
+                    && string.IsNullOrEmpty(AssetDatabase.CreateFolder(current, parts[i])))
+                    return false;
+                current = next;
+            }
+            return AssetDatabase.IsValidFolder(folder);
+        }
+
+        /// <summary>
+        /// Coerces user input (typed text, an absolute picker path) into an "Assets/…"
+        /// project folder, or null when it can't be — the export window refuses to run on
+        /// null instead of letting a mangled path reach the asset pipeline.
+        /// </summary>
+        internal static string NormalizeProjectFolder(string folder)
+        {
+            if (string.IsNullOrEmpty(folder)) return null;
+            folder = folder.Replace('\\', '/').Trim().TrimEnd('/');
+            if (folder == "Assets" || folder.StartsWith("Assets/")) return folder;
+
+            // Absolute path into this project? Cut at the project's own Assets folder.
+            string dataPath = Application.dataPath.Replace('\\', '/');   // ".../Project/Assets"
+            if (folder.StartsWith(dataPath))
+            {
+                string tail = folder.Substring(dataPath.Length).TrimStart('/');
+                return tail.Length == 0 ? "Assets" : "Assets/" + tail;
+            }
+            // Last resort: the last "/Assets/" segment boundary (never a substring match
+            // inside a name — that's exactly the bug this guards against).
+            int boundary = folder.LastIndexOf("/Assets/", StringComparison.Ordinal);
+            if (boundary >= 0) return folder.Substring(boundary + 1);
+            if (folder.EndsWith("/Assets")) return "Assets";
+            return null;
         }
 
         static UnityEngine.Object Resolve(string id) =>

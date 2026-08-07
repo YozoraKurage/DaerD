@@ -66,14 +66,25 @@ namespace Yozolab.DaerD
             if (GUILayout.Button("…", GUILayout.Width(28)))
             {
                 string picked = EditorUtility.SaveFolderPanel(L.Tr("Output Folder"), _folder, string.Empty);
-                if (!string.IsNullOrEmpty(picked) && picked.Contains("Assets"))
-                    _folder = "Assets" + picked.Substring(picked.IndexOf("Assets") + "Assets".Length);
+                if (!string.IsNullOrEmpty(picked))
+                {
+                    string normalized = RecipeExportQueue.NormalizeProjectFolder(picked);
+                    if (normalized != null)
+                        _folder = normalized;
+                    else
+                        Debug.LogWarning("DaerD: '" + picked + "' is outside this project — keeping the previous folder.");
+                }
             }
             EditorGUILayout.EndHorizontal();
 
+            string projectFolder = RecipeExportQueue.NormalizeProjectFolder(_folder);
+            if (projectFolder == null)
+                EditorGUILayout.HelpBox(
+                    L.Tr("The output folder must be inside this project ('Assets/…')."),
+                    MessageType.Error);
             // Recipes reference the (editor-only) DaerD assembly, so outside an Editor folder
             // the player build would try — and fail — to compile them.
-            if (!("/" + _folder + "/").Contains("/Editor/"))
+            else if (!("/" + projectFolder + "/").Contains("/Editor/"))
                 EditorGUILayout.HelpBox(
                     L.Tr("The folder is not under an 'Editor' folder — an 'Editor' subfolder will be added so player builds don't try to compile the recipe."),
                     MessageType.None);
@@ -105,16 +116,17 @@ namespace Yozolab.DaerD
             GUILayout.FlexibleSpace();
             if (GUILayout.Button(L.Tr("Cancel"), GUILayout.Width(100)))
                 Close();
-            using (new EditorGUI.DisabledScope(checkedCount == 0 || string.IsNullOrEmpty(_className)))
+            using (new EditorGUI.DisabledScope(checkedCount == 0
+                || string.IsNullOrEmpty(_className) || projectFolder == null))
                 if (GUILayout.Button(L.Tr("Export"), GUILayout.Width(100)))
                 {
-                    DoExport(exclusive);
+                    DoExport(exclusive, projectFolder);
                     GUIUtility.ExitGUI();
                 }
             EditorGUILayout.EndHorizontal();
         }
 
-        void DoExport(bool exclusive)
+        void DoExport(bool exclusive, string projectFolder)
         {
             EditorPrefs.SetString(NamespacePref, _namespace ?? string.Empty);
             string className = RecipeScript.Identifier(_className, lowerFirst: false);
@@ -132,10 +144,17 @@ namespace Yozolab.DaerD
             foreach (var warning in result.warnings)
                 Debug.LogWarning("DaerD: " + warning);
 
-            string folder = _folder.TrimEnd('/');
+            string folder = projectFolder;
             if (!("/" + folder + "/").Contains("/Editor/"))
                 folder += "/Editor";
-            Directory.CreateDirectory(folder);
+            // Through the AssetDatabase, not Directory.CreateDirectory: the pipeline must
+            // know the folder or GenerateUniqueAssetPath/CreateAsset mangle their paths.
+            if (!RecipeExportQueue.EnsureAssetFolder(folder))
+            {
+                EditorUtility.DisplayDialog(L.Tr("Export C# Recipe"),
+                    L.Tr("Could not create the output folder '{0}'.", folder), "OK");
+                return;
+            }
 
             string csPath = AssetDatabase.GenerateUniqueAssetPath(folder + "/" + className + ".cs");
             File.WriteAllText(csPath, result.code);
