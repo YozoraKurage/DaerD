@@ -219,7 +219,10 @@ namespace Yozolab.DaerD
                 if (ta.isStateTransition && tb.isStateTransition)
                 {
                     Field(child, "has exit time", ta.hasExitTime, tb.hasExitTime, diffs);
-                    Field(child, "exit time", ta.exitTime, tb.exitTime, diffs);
+                    // The exit-time VALUE is invisible while the flag is off; Unity keeps
+                    // stale numbers there, and declared IR keeps its default.
+                    if (ta.hasExitTime && tb.hasExitTime)
+                        Field(child, "exit time", ta.exitTime, tb.exitTime, diffs);
                     Field(child, "fixed duration", ta.hasFixedDuration, tb.hasFixedDuration, diffs);
                     Field(child, "duration", ta.duration, tb.duration, diffs);
                     Field(child, "offset", ta.offset, tb.offset, diffs);

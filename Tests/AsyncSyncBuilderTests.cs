@@ -611,6 +611,51 @@ namespace Yozolab.DaerD.Tests
             Assert.IsNotNull(AsyncSyncBuilder.Validate(badChannels));
         }
 
+        // ---- explicit schedule -----------------------------------------------
+
+        [Test]
+        public void ScheduleOverride_IsUsedVerbatim_AndDrivesTheIntervals()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.scheduleOverride.AddRange(new[] { "F", "B", "F", "I" });
+
+            Assert.IsNull(AsyncSyncBuilder.Validate(request));
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var sm = controller.layers[1].stateMachine;
+            // 4 schedule steps (F twice) + idle + 3 recv.
+            Assert.AreEqual(8, sm.states.Length);
+            Assert.IsNotNull(FindState(sm, "Send F (2)"));
+
+            var intervals = AsyncSyncBuilder.RefreshIntervals(request);
+            Assert.AreEqual(2f * request.stepSeconds, intervals["F"], 0.0001f);
+            Assert.AreEqual(4f * request.stepSeconds, intervals["B"], 0.0001f);
+        }
+
+        [Test]
+        public void ScheduleOverride_RejectsBrokenSchedules()
+        {
+            var controller = NewController();
+
+            var unknown = NewRequest(controller, "F", "B");
+            unknown.scheduleOverride.AddRange(new[] { "F", "Nope" });
+            Assert.IsNotNull(AsyncSyncBuilder.Validate(unknown));
+
+            var uncovered = NewRequest(controller, "F", "B", "I");
+            uncovered.scheduleOverride.AddRange(new[] { "F", "B" });
+            Assert.IsNotNull(AsyncSyncBuilder.Validate(uncovered), "'I' is never visited");
+
+            var adjacent = NewRequest(controller, "F", "B", "I");
+            adjacent.scheduleOverride.AddRange(new[] { "F", "F", "B", "I" });
+            Assert.IsNotNull(AsyncSyncBuilder.Validate(adjacent));
+
+            var wrap = NewRequest(controller, "F", "B", "I");
+            wrap.scheduleOverride.AddRange(new[] { "F", "B", "I", "F" });
+            Assert.IsNotNull(AsyncSyncBuilder.Validate(wrap),
+                "the last and first step are adjacent too — the cycle wraps");
+        }
+
         // ---- Empty clip -----------------------------------------------------
 
         /// <summary>A clip with an actual length — normalized exit times need one.</summary>

@@ -281,6 +281,42 @@ namespace Yozolab.DaerD.Tests
             Assert.IsEmpty(diffs, string.Join("\n", diffs));
         }
 
+        [Test]
+        public void AsyncSync_FromARecipe_GeneratesOnce_AndRegeneratesInPlace()
+        {
+            var controller = Track(new AnimatorController());
+            var recipe = NewRecipe(controller, c =>
+            {
+                c.Float("Hue").Int("Outfit").Bool("Tail");
+                c.Layer("Base").State("S");
+                c.AsyncSync("Zip")
+                    .Targets("Hue", "Outfit", "Tail")
+                    .Schedule("Hue", "Outfit", "Hue", "Tail")
+                    .SkipDriversForTest();
+            });
+
+            var warnings = recipe.Generate();
+            Assert.IsFalse(warnings.Exists(w => w.Contains("Async Sync 'Zip':")),
+                string.Join("\n", warnings));
+
+            int LayerIndex(string name)
+            {
+                for (int i = 0; i < controller.layers.Length; i++)
+                    if (controller.layers[i].name == name) return i;
+                return -1;
+            }
+            Assert.GreaterOrEqual(LayerIndex("Zip"), 0);
+            Assert.IsNotNull(DbtBuilder.FindParameter(controller, "Zip/Index"));
+            var zip = controller.layers[LayerIndex("Zip")].stateMachine;
+            // Explicit schedule: 4 send steps (Hue twice) + idle + 3 recv.
+            Assert.AreEqual(8, zip.states.Length);
+
+            int layersAfterFirst = controller.layers.Length;
+            recipe.Generate();
+            Assert.AreEqual(layersAfterFirst, controller.layers.Length,
+                "regenerating must rebuild the Zip layer in place, not stack another");
+        }
+
         static AnimatorState FindState(AnimatorStateMachine sm, string name)
         {
             foreach (var child in sm.states)

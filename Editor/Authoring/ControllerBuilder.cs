@@ -24,8 +24,8 @@ namespace Yozolab.DaerD.Authoring
     public sealed class ControllerBuilder
     {
         internal readonly ControllerIR IR = new ControllerIR();
-        internal readonly List<Action<AnimatorController>> PostOps =
-            new List<Action<AnimatorController>>();
+        internal readonly List<Func<AnimatorController, List<string>>> PostOps =
+            new List<Func<AnimatorController, List<string>>>();
         internal readonly List<string> Notes = new List<string>();
         internal readonly List<Action> PostBakeSyncs = new List<Action>();
         internal RecipeScript Script;
@@ -100,9 +100,22 @@ namespace Yozolab.DaerD.Authoring
         /// </summary>
         public ControllerBuilder Raw(Action<AnimatorController> action)
         {
-            if (action != null) PostOps.Add(action);
+            if (action != null)
+                PostOps.Add(controller =>
+                {
+                    action(controller);
+                    return new List<string>();
+                });
             return this;
         }
+
+        /// <summary>
+        /// Async Sync (parameter compression) as a post step: full wizard configuration plus
+        /// the explicit per-step schedule the wizard doesn't expose. The generated layer is
+        /// regenerated in place on every Generate, matched by base name.
+        /// </summary>
+        public AsyncSyncRecipeBuilder AsyncSync(string baseName = "Async") =>
+            new AsyncSyncRecipeBuilder(this, baseName);
 
         // ---- bake --------------------------------------------------------------
 

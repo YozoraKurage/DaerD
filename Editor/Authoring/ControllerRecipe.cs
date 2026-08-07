@@ -60,7 +60,7 @@ namespace Yozolab.DaerD.Authoring
                 warnings.AddRange(ControllerIRBuilder.Rebuild(
                     builder.IR, targetController, exclusive));
                 foreach (var op in builder.PostOps)
-                    op(targetController);
+                    warnings.AddRange(op(targetController));
             }
 
             ownedLayers.Clear();

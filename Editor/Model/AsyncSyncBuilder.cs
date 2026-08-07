@@ -69,6 +69,15 @@ namespace Yozolab.DaerD
             public int RateOf(string name) =>
                 rates != null && rates.TryGetValue(name, out int rate)
                     ? Mathf.Clamp(rate, 1, MaxRate) : 1;
+
+            /// <summary>
+            /// Explicit cycle, as a sequence of target names (a batched Float stands for its
+            /// whole slot). When non-empty this IS the schedule — rates are ignored — and
+            /// validation enforces what the decoder needs: every slot visited, no slot in
+            /// adjacent steps. The deepest control the recipe API exposes.
+            /// </summary>
+            public List<string> scheduleOverride = new List<string>();
+
             /// <summary>Layer to create; defaults to the base name.</summary>
             public string layerName;
             /// <summary>Existing async-sync layer to REGENERATE in place (its states are
@@ -282,6 +291,54 @@ namespace Yozolab.DaerD
             }
         }
 
+        /// <summary>Maps <see cref="Request.scheduleOverride"/> onto slot indices; errors
+        /// (unknown name, uncovered slot, adjacent repeats) go to <paramref name="errors"/>.</summary>
+        public static List<int> ResolveScheduleOverride(Request r, List<Slot> slots,
+            List<string> errors)
+        {
+            var schedule = new List<int>();
+            var slotOf = new Dictionary<string, int>();
+            for (int i = 0; i < slots.Count; i++)
+                foreach (var name in slots[i].targets)
+                    slotOf[name] = i;
+
+            foreach (var name in r.scheduleOverride)
+            {
+                if (!slotOf.TryGetValue(name, out int slot))
+                {
+                    errors?.Add(L.Tr("Schedule entry '{0}' is not a multiplexed parameter.", name));
+                    return null;
+                }
+                schedule.Add(slot);
+            }
+
+            var visited = new HashSet<int>(schedule);
+            if (visited.Count < slots.Count)
+            {
+                errors?.Add(L.Tr("The explicit schedule never visits some slots — every parameter must appear at least once."));
+                return null;
+            }
+            for (int i = 0; i < schedule.Count; i++)
+                if (schedule.Count > 1 && schedule[i] == schedule[(i + 1) % schedule.Count])
+                {
+                    errors?.Add(L.Tr("The explicit schedule puts one slot in adjacent steps (position {0}) — the decoder would not re-trigger.", i));
+                    return null;
+                }
+            return schedule;
+        }
+
+        /// <summary>The schedule a request actually runs: the explicit override when given
+        /// (and valid), the rate-based automatic one otherwise.</summary>
+        public static List<int> EffectiveSchedule(Request r, List<Slot> slots)
+        {
+            if (r?.scheduleOverride != null && r.scheduleOverride.Count > 0)
+            {
+                var resolved = ResolveScheduleOverride(r, slots, null);
+                if (resolved != null) return resolved;
+            }
+            return BuildSchedule(slots);
+        }
+
         // ---- resolution and cost ---------------------------------------------
 
         /// <summary>
@@ -328,7 +385,7 @@ namespace Yozolab.DaerD
         /// <summary>Seconds for one full pass of the schedule — the worst-case age of a
         /// regular value.</summary>
         public static float CycleSeconds(Request r) =>
-            r == null ? 0f : BuildSchedule(BuildSlots(r)).Count * r.stepSeconds;
+            r == null ? 0f : EffectiveSchedule(r, BuildSlots(r)).Count * r.stepSeconds;
 
         /// <summary>
         /// Seconds between two syncs of each target, from the actual schedule: pass length ×
@@ -340,7 +397,7 @@ namespace Yozolab.DaerD
             var intervals = new Dictionary<string, float>();
             if (r == null) return intervals;
             var slots = BuildSlots(r);
-            var schedule = BuildSchedule(slots);
+            var schedule = EffectiveSchedule(r, slots);
             if (schedule.Count == 0) return intervals;
 
             var occurrences = new int[slots.Count];
@@ -501,6 +558,13 @@ namespace Yozolab.DaerD
             if (slotCount < 2)
                 return L.Tr("Everything fits into a single slot, so the index would never change and remotes would stop decoding. Lower Float Channels or add parameters.");
 
+            if (r.scheduleOverride != null && r.scheduleOverride.Count > 0)
+            {
+                var errors = new List<string>();
+                if (ResolveScheduleOverride(r, BuildSlots(r), errors) == null && errors.Count > 0)
+                    return errors[0];
+            }
+
             var isLocal = DbtBuilder.FindParameter(controller, NetworkSyncBuilder.IsLocalParameter);
             if (isLocal != null && isLocal.type != AnimatorControllerParameterType.Bool)
                 return L.Tr("Parameter '{0}' exists but is not a Bool.", NetworkSyncBuilder.IsLocalParameter);
@@ -541,10 +605,12 @@ namespace Yozolab.DaerD
             if (cycle > 3f)
                 warnings.Add(L.Tr(
                     "One full pass takes {0:0.#} s ({1} steps × {2:0.##} s), so a remote can be that far behind on any one value.",
-                    cycle, BuildSchedule(BuildSlots(r)).Count, r.stepSeconds));
+                    cycle, EffectiveSchedule(r, BuildSlots(r)).Count, r.stepSeconds));
 
             // Say when a rate could not be honored: normalization (common factor) is
-            // intentional and invisible, but a cap changes what the user asked for.
+            // intentional and invisible, but a cap changes what the user asked for. An
+            // explicit schedule replaces rates entirely, so the check would only mislead.
+            if (r.scheduleOverride == null || r.scheduleOverride.Count == 0)
             {
                 var slots = BuildSlots(r);
                 var weights = EffectiveWeights(slots);
@@ -677,7 +743,7 @@ namespace Yozolab.DaerD
                 }
 
                 var slots = BuildSlots(r);
-                var schedule = BuildSchedule(slots);
+                var schedule = EffectiveSchedule(r, slots);
                 var encoding = ResolveEncoding(r);
                 // Motion for the generated states. Zero-length clips are refused: exit times are
                 // normalized to the motion, so a length of 0 would make them meaningless.
