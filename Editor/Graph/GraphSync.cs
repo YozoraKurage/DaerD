@@ -59,7 +59,7 @@ namespace Yozolab.DaerD
             // Snapshot the current graph selection by underlying model so we can restore it
             // after the rebuild. Without this, Ctrl+Z and other rebuilds collapse multi-select
             // back to whatever single object Context.Selection points at.
-            var capturedSelection = CaptureGraphSelection();
+            var capturedSelection = new GraphSelectionSet(_graphView.selection);
 
             _stateNodes.Clear();
             _ssmNodes.Clear();
@@ -216,53 +216,7 @@ namespace Yozolab.DaerD
 
         // ---- selection -------------------------------------------------------
 
-        /// <summary>
-        /// Per-element identity capture of the current graph selection. We store the
-        /// underlying animator objects (and SpecialNode kinds) so the matching graph
-        /// elements can be found again after a rebuild has replaced every visual node.
-        /// </summary>
-        class CapturedSelection
-        {
-            public readonly List<AnimatorState> States = new List<AnimatorState>();
-            public readonly List<AnimatorStateMachine> StateMachines = new List<AnimatorStateMachine>();
-            public readonly List<SpecialNodeKind> Specials = new List<SpecialNodeKind>();
-            public readonly List<AnimatorTransitionBase> Transitions = new List<AnimatorTransitionBase>();
-            public readonly List<GraphFrameData.Frame> Frames = new List<GraphFrameData.Frame>();
-            public readonly List<GraphFrameData.Note> Notes = new List<GraphFrameData.Note>();
-        }
-
-        CapturedSelection CaptureGraphSelection()
-        {
-            var captured = new CapturedSelection();
-            foreach (var selectable in _graphView.selection)
-            {
-                switch (selectable)
-                {
-                    case StateNode sn when sn.State != null:
-                        captured.States.Add(sn.State);
-                        break;
-                    case SubStateMachineNode mn when mn.StateMachine != null:
-                        captured.StateMachines.Add(mn.StateMachine);
-                        break;
-                    case SpecialNode spn:
-                        captured.Specials.Add(spn.Kind);
-                        break;
-                    case TransitionEdge te:
-                        foreach (var t in te.Transitions)
-                            if (t != null) captured.Transitions.Add(t);
-                        break;
-                    case FrameNode fn when fn.Frame != null:
-                        captured.Frames.Add(fn.Frame);
-                        break;
-                    case NoteNode nn when nn.Note != null:
-                        captured.Notes.Add(nn.Note);
-                        break;
-                }
-            }
-            return captured;
-        }
-
-        void RestoreSelection(CapturedSelection captured)
+        void RestoreSelection(GraphSelectionSet captured)
         {
             var elements = new List<GraphElement>();
 
@@ -1303,10 +1257,7 @@ namespace Yozolab.DaerD
 
         public void CopySelectedStates()
         {
-            var states = new List<AnimatorState>();
-            foreach (var selectable in _graphView.selection)
-                if (selectable is StateNode sn && sn.State != null)
-                    states.Add(sn.State);
+            var states = new GraphSelectionSet(_graphView.selection).States;
             if (states.Count == 0) return;
             StateClipboard.Copy(states, StateNodePosition, null, _context.Controller, _context.CurrentStateMachine);
             // States and frames/notes paste together, so a fresh copy of one kind has to drop the
@@ -1344,20 +1295,11 @@ namespace Yozolab.DaerD
         /// </summary>
         public void CopySelectedElements()
         {
-            var states = new List<AnimatorState>();
-            var frames = new List<GraphFrameData.Frame>();
-            var notes = new List<GraphFrameData.Note>();
-            int subStateMachines = 0;
-            foreach (var selectable in _graphView.selection)
-            {
-                switch (selectable)
-                {
-                    case StateNode sn when sn.State != null: states.Add(sn.State); break;
-                    case FrameNode fn when fn.Frame != null: frames.Add(fn.Frame); break;
-                    case NoteNode nn when nn.Note != null: notes.Add(nn.Note); break;
-                    case SubStateMachineNode ssm when ssm.StateMachine != null: subStateMachines++; break;
-                }
-            }
+            var selected = new GraphSelectionSet(_graphView.selection);
+            var states = selected.States;
+            var frames = selected.Frames;
+            var notes = selected.Notes;
+            int subStateMachines = selected.StateMachines.Count;
             // Sub-state machines aren't part of the state clipboard. Say so instead of copying a
             // silently incomplete selection — "select all" in a layer that has them looks like it
             // worked until the paste comes up short.
