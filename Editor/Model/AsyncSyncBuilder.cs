@@ -132,57 +132,28 @@ namespace Yozolab.DaerD
             public int rate = 1;
         }
 
-        public static string IndexParameter(string baseName) => baseName + "/Index";
+        // Spelled out in AsyncSyncNaming; the facade keeps the names its callers know.
+
+        public static string IndexParameter(string baseName) =>
+            AsyncSyncNaming.IndexParameter(baseName);
 
         public static string BitParameter(string baseName, int bit) =>
-            baseName + "/Index/b" + bit;
+            AsyncSyncNaming.BitParameter(baseName, bit);
 
         public static string ChannelParameter(string baseName, AnimatorControllerParameterType type) =>
-            baseName + "/" + type;
+            AsyncSyncNaming.ChannelParameter(baseName, type);
 
-        /// <summary>Channel 0 keeps the legacy "/Float" name; extras are "/Float2", "/Float3"…</summary>
         public static string FloatChannelParameter(string baseName, int channel) =>
-            channel == 0
-                ? baseName + "/" + AnimatorControllerParameterType.Float
-                : baseName + "/" + AnimatorControllerParameterType.Float + (channel + 1);
+            AsyncSyncNaming.FloatChannelParameter(baseName, channel);
 
-        /// <summary>The local request flag for one target. Lives under the base namespace, so
-        /// <see cref="IsReservedName"/> keeps it out of the multiplexed set automatically.</summary>
         public static string RequestParameter(string baseName, string target) =>
-            baseName + "/Req/" + target;
+            AsyncSyncNaming.RequestParameter(baseName, target);
 
-        /// <summary>
-        /// The base name a new setup on this controller starts from: "DD" plus the first six
-        /// hex digits of the controller's asset GUID. A fixed default collides as soon as two
-        /// distributions that each bring a cycle meet on one avatar — both would own
-        /// "Async/Index" — while the GUID is unique per controller and never moves, so a
-        /// recipe regenerating its layer resolves the same name on every Generate. An
-        /// in-memory controller has no GUID and keeps the historical "Async".
-        /// </summary>
-        public static string DefaultBaseName(AnimatorController controller)
-        {
-            string path = AssetDatabase.GetAssetPath(controller);
-            var taken = new List<string>();
-            foreach (var config in GraphFrameData.GetAsyncSyncs(controller))
-                if (!string.IsNullOrEmpty(config.baseName))
-                    taken.Add(config.baseName);
-            return DefaultBaseName(
-                string.IsNullOrEmpty(path) ? null : AssetDatabase.AssetPathToGUID(path), taken);
-        }
+        public static string DefaultBaseName(AnimatorController controller) =>
+            AsyncSyncNaming.DefaultBaseName(controller);
 
-        /// <summary>Core of <see cref="DefaultBaseName(AnimatorController)"/>: one controller can
-        /// host several setups, and the second one can't answer to the first one's name — hence
-        /// the "_2", "_3"… suffixes.</summary>
-        internal static string DefaultBaseName(string guid, ICollection<string> taken)
-        {
-            if (string.IsNullOrEmpty(guid)) return "Async";
-            string stem = "DD" + guid.Substring(0, Mathf.Min(6, guid.Length));
-            string name = stem;
-            // Terminates: the taken set is finite and every candidate name is distinct.
-            for (int n = 2; taken != null && taken.Contains(name); n++)
-                name = stem + "_" + n;
-            return name;
-        }
+        internal static string DefaultBaseName(string guid, ICollection<string> taken) =>
+            AsyncSyncNaming.DefaultBaseName(guid, taken);
 
         // ---- slots and schedule ----------------------------------------------
 
