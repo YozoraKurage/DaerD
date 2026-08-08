@@ -43,7 +43,7 @@ namespace Yozolab.DaerD
             string layerName, string query, int maxResults, List<Result> results)
         {
             if (results.Count >= maxResults) return;
-            string pathLabel = BuildPathLabel(layerName, path);
+            string pathLabel = path.PathLabel(layerName);
 
             foreach (var cs in sm.states)
             {
@@ -91,19 +91,6 @@ namespace Yozolab.DaerD
                 stateMachinePath = new List<AnimatorStateMachine>(path),
                 target = target,
             };
-        }
-
-        static string BuildPathLabel(string layerName, List<AnimatorStateMachine> path)
-        {
-            // path[0] is the layer's root SM, represented by the layer name instead.
-            if (path.Count <= 1) return layerName;
-            var sb = new System.Text.StringBuilder(layerName);
-            for (int i = 1; i < path.Count; i++)
-            {
-                sb.Append(" / ");
-                sb.Append(path[i] != null ? path[i].name : "?");
-            }
-            return sb.ToString();
         }
     }
 }
