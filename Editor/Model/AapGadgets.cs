@@ -53,6 +53,7 @@ namespace Yozolab.DaerD
             Tangent,
             Lut1D,
             Atan2,
+            Buffer,
         }
 
         public static bool IsBinary(Kind kind) =>
@@ -63,7 +64,7 @@ namespace Yozolab.DaerD
 
         public static bool UsesRange(Kind kind) =>
             kind == Kind.Smooth || kind == Kind.AddRanged || kind == Kind.SubRanged
-            || kind == Kind.Remap || kind == Kind.SmoothLinear;
+            || kind == Kind.Remap || kind == Kind.SmoothLinear || kind == Kind.Buffer;
 
         /// <summary>Kinds that take a second, shareable Float setting how fast they follow.</summary>
         public static bool UsesSmoothing(Kind kind) => kind == Kind.Smooth || kind == Kind.SmoothLinear;
@@ -112,6 +113,9 @@ namespace Yozolab.DaerD
             public AnimationCurve curve;
             /// <summary>Lut1D: evenly spaced samples baked into the tree (2..128).</summary>
             public int lutSamples = 33;
+            /// <summary>Buffer: how many frames late the copy runs (1..8) — one identity
+            /// stage per frame.</summary>
+            public int bufferFrames = 1;
             /// <summary>Atan2: directions sampled around the circle (8..64).</summary>
             public int atan2Directions = 16;
             /// <summary>Existing DBT (or empty) layer to add the gadget to, or -1 to create one.</summary>
@@ -125,10 +129,26 @@ namespace Yozolab.DaerD
         /// the base name for them. The private parameters a gadget keeps for itself live under
         /// the same names, so checking these keeps them clear too.
         /// </summary>
-        public static string[] OutputParameters(Request r) =>
-            r.kind == Kind.SeparateDigits
-                ? new[] { r.output + "/Tenths", r.output + "/Hundredths", r.output + "/Thousandths" }
-                : new[] { r.output };
+        public static string[] OutputParameters(Request r)
+        {
+            if (r.kind == Kind.SeparateDigits)
+                return new[] { r.output + "/Tenths", r.output + "/Hundredths", r.output + "/Thousandths" };
+            if (r.kind == Kind.Buffer && r.bufferFrames > 1)
+            {
+                // The chain's intermediate stages are parameters of their own, and a stage
+                // name that already belongs to something else corrupts silently — so they go
+                // through the same "must be new" gate as the output.
+                var names = new string[Mathf.Clamp(r.bufferFrames, MinBufferFrames, MaxBufferFrames)];
+                for (int i = 0; i < names.Length - 1; i++)
+                    names[i] = BufferStage(r.output, i + 1);
+                names[names.Length - 1] = r.output;
+                return names;
+            }
+            return new[] { r.output };
+        }
+
+        /// <summary>Intermediate parameter of a buffer chain: "output/1", "output/2", …</summary>
+        public static string BufferStage(string output, int stage) => output + "/" + stage;
 
         /// <summary>Human-readable reason the request can't run, or null when it can.</summary>
         public static string Validate(Request r)
@@ -164,7 +184,8 @@ namespace Yozolab.DaerD
                     return L.Tr("Parameter '{0}' exists but is not a Float.", r.smoothing);
             }
 
-            if ((r.kind == Kind.AddRanged || r.kind == Kind.SubRanged || r.kind == Kind.SmoothLinear)
+            if ((r.kind == Kind.AddRanged || r.kind == Kind.SubRanged || r.kind == Kind.SmoothLinear
+                || r.kind == Kind.Buffer)
                 && !(r.rangeMin < r.rangeMax))
                 return L.Tr("Range Min must be smaller than Range Max.");
             if (r.kind == Kind.Remap && !(r.inMin < r.inMax))
@@ -181,6 +202,9 @@ namespace Yozolab.DaerD
             if (r.kind == Kind.Atan2
                 && (r.atan2Directions < MinAtan2Directions || r.atan2Directions > MaxAtan2Directions))
                 return L.Tr("Directions must be between 8 and 64.");
+            if (r.kind == Kind.Buffer
+                && (r.bufferFrames < MinBufferFrames || r.bufferFrames > MaxBufferFrames))
+                return L.Tr("Frames must be between 1 and 8.");
 
             // The layer-only kinds bring their own layer; there is no target to check.
             if (!UsesDbtLayer(r.kind)) return null;
@@ -262,6 +286,8 @@ namespace Yozolab.DaerD
                 // Input A is the numerator of atan2 and input B the denominator, so the
                 // wizard's A/B pair reads in the order the function's arguments do.
                 case Kind.Atan2: return Atan2(c, a, b, output, r.atan2Directions);
+                case Kind.Buffer:
+                    return Buffer(c, a, output, one, r.rangeMin, r.rangeMax, r.bufferFrames);
                 default: return null;
             }
         }
@@ -806,6 +832,44 @@ namespace Yozolab.DaerD
             float angle = 2f * Mathf.PI * turn;
             tree.AddChild(DbtBuilder.ParameterClip(c, output, turn),
                 new Vector2(Mathf.Cos(angle), Mathf.Sin(angle)));
+        }
+
+        // ---- buffering ----------------------------------------------------------
+
+        /// <summary>How many frames a buffer may span. One is the common case; the ceiling
+        /// only keeps a slider from minting stage parameters nobody needs.</summary>
+        public const int MinBufferFrames = 1;
+        public const int MaxBufferFrames = 8;
+
+        /// <summary>
+        /// output = the input, exactly <paramref name="frames"/> frames late. Every parameter
+        /// hop inside the blend tree costs one frame — a stage reads what the previous
+        /// evaluation wrote — so two branches tapping the same input at different pipeline
+        /// depths see different frames of it, and anything comparing or combining them works
+        /// on skewed data. A buffer is the alignment tool: a chain of identity remaps, one
+        /// per frame, inserted on the shallower branch so both signals arrive at the same age.
+        ///
+        /// The copy is only faithful inside min..max — a 1D tree clamps outside its outer
+        /// thresholds, like every gadget here.
+        /// Reference: https://vrc.school/docs/Other/Advanced-BlendTrees
+        /// </summary>
+        public static BlendTree Buffer(AnimatorController c, string input, string output,
+            string one, float min, float max, int frames)
+        {
+            frames = Mathf.Clamp(frames, MinBufferFrames, MaxBufferFrames);
+            if (frames == 1)
+                return Remap(c, input, output, min, max, min, max);
+
+            var tree = DbtBuilder.DirectTree(c, Name("Buffer", input, null));
+            string from = input;
+            for (int i = 0; i < frames; i++)
+            {
+                string to = i == frames - 1 ? output : BufferStage(output, i + 1);
+                DbtBuilder.EnsureFloatParameter(c, to, 0f);
+                DbtBuilder.AddDirectChild(tree, Remap(c, from, to, min, max, min, max), one);
+                from = to;
+            }
+            return tree;
         }
 
         // ---- supporting layers --------------------------------------------------

@@ -33,6 +33,7 @@ namespace Yozolab.DaerD
         float _threshold = 0.5f;
         AnimationCurve _curve = AnimationCurve.Linear(0f, 0f, 1f, 1f);
         int _lutSamples = 33;
+        int _bufferFrames = 1;
         int _atan2Directions = 16;
         // 0 = create a new layer; 1.. = _layerCandidates[index - 1].
         int _layerChoice;
@@ -105,6 +106,7 @@ namespace Yozolab.DaerD
                 case AapGadgets.Kind.Tangent: _output = a + "/Tan"; break;
                 case AapGadgets.Kind.Lut1D: _output = a + "/Lut"; break;
                 case AapGadgets.Kind.Atan2: _output = a + "/Angle"; break;
+                case AapGadgets.Kind.Buffer: _output = a + "/Buffered"; break;
             }
         }
 
@@ -154,6 +156,8 @@ namespace Yozolab.DaerD
                     return L.Tr("Bakes the curve into a 1D blend tree lookup table: the curve's time axis is the input, its value the output, linearly interpolated between evenly spaced sample points. Lives entirely inside the blend tree layer.");
                 case AapGadgets.Kind.Atan2:
                     return L.Tr("output = atan2(Y, X) in turns: 0..1 counter-clockwise from +X, ready to feed the Sine / Cosine gadgets. Values near the origin collapse toward 0 — gate by magnitude. The 0/1 seam sits in a narrow band at +X.");
+                case AapGadgets.Kind.Buffer:
+                    return L.Tr("output = the input, delayed by exactly N frames. Every blend tree stage costs one frame, so branches of different depth see different frames of the same parameter — insert a buffer on the shallower branch to line the two up again.");
             }
             return string.Empty;
         }
@@ -164,7 +168,7 @@ namespace Yozolab.DaerD
             "Smooth", "Add", "Add (Ranged)", "Sub", "Sub (Ranged)", "Multiply",
             "And", "Or", "Not", "Float As Bool", "Remap",
             "Reciprocal", "Divide", "Frame Time", "Smooth (Linear)", "Separate Digits",
-            "Sine", "Cosine", "Tangent", "LUT (Curve)", "Atan2",
+            "Sine", "Cosine", "Tangent", "LUT (Curve)", "Atan2", "Buffer (Delay)",
         };
 
         /// <summary>Shapes the Curve field can be filled with. Index 0 writes nothing — see
@@ -270,6 +274,13 @@ namespace Yozolab.DaerD
                         L.Tr("Ring samples around the circle. Angle accuracy is about 1/N turn between neighbouring directions; each direction is one clip.")),
                     _atan2Directions, AapGadgets.MinAtan2Directions, AapGadgets.MaxAtan2Directions);
             }
+            else if (_kind == AapGadgets.Kind.Buffer)
+            {
+                _bufferFrames = EditorGUILayout.IntSlider(
+                    new GUIContent(L.Tr("Frames"),
+                        L.Tr("How many frames late the copy runs — one identity stage per frame. Match it to the pipeline depth of the branch you are aligning with.")),
+                    _bufferFrames, AapGadgets.MinBufferFrames, AapGadgets.MaxBufferFrames);
+            }
 
             if (AapGadgets.UsesRange(_kind))
             {
@@ -361,6 +372,7 @@ namespace Yozolab.DaerD
                 curve = _curve,
                 lutSamples = _lutSamples,
                 atan2Directions = _atan2Directions,
+                bufferFrames = _bufferFrames,
                 smoothing = _smoothing != null ? _smoothing.Trim() : string.Empty,
                 smoothingDefault = _kind == AapGadgets.Kind.SmoothLinear ? _stepSize : _smoothingDefault,
                 layerIndex = _layerChoice > 0 && _layerChoice - 1 < _layerCandidates.Count

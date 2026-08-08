@@ -674,6 +674,66 @@ namespace Yozolab.DaerD.Tests
             Object.DestroyImmediate(controller);
         }
 
+        /// <summary>Each parameter hop is one frame late — the buffer turns that side effect
+        /// into the product: N chained identity remaps delay the input by exactly N frames,
+        /// so branches of different pipeline depth can be re-aligned.</summary>
+        [Test]
+        public void Buffer_ChainsOneIdentityStagePerFrame()
+        {
+            var controller = NewController("A", "B");
+            var request = NewRequest(controller, AapGadgets.Kind.Buffer);
+            request.bufferFrames = 3;
+            request.rangeMin = -1f;
+            request.rangeMax = 1f;
+            Assert.IsTrue(AapGadgets.Apply(request));
+
+            // The stage parameters exist alongside the output.
+            Assert.IsNotNull(DbtBuilder.FindParameter(controller, "Out/1"));
+            Assert.IsNotNull(DbtBuilder.FindParameter(controller, "Out/2"));
+            Assert.IsNotNull(DbtBuilder.FindParameter(controller, "Out"));
+
+            // A -> Out/1 -> Out/2 -> Out, every hop an identity remap over the range.
+            var chain = GadgetRoot(controller);
+            Assert.AreEqual(3, chain.children.Length);
+            var reads = new[] { "A", "Out/1", "Out/2" };
+            var writes = new[] { "Out/1", "Out/2", "Out" };
+            for (int i = 0; i < 3; i++)
+            {
+                var stage = (BlendTree)chain.children[i].motion;
+                Assert.AreEqual(reads[i], stage.blendParameter);
+                Assert.AreEqual(-1f, stage.children[0].threshold, 1e-4f);
+                Assert.AreEqual(-1f, ClipValue(stage.children[0].motion, writes[i]), 1e-4f);
+                Assert.AreEqual(1f, stage.children[1].threshold, 1e-4f);
+                Assert.AreEqual(1f, ClipValue(stage.children[1].motion, writes[i]), 1e-4f);
+            }
+        }
+
+        [Test]
+        public void Buffer_SingleFrameIsABareRemap_AndValidateGuardsTheChain()
+        {
+            var controller = NewController("A", "B");
+            var single = NewRequest(controller, AapGadgets.Kind.Buffer);
+            single.rangeMin = 0f;
+            single.rangeMax = 1f;
+            Assert.IsTrue(AapGadgets.Apply(single));
+            var stage = GadgetRoot(controller);
+            Assert.AreEqual("A", stage.blendParameter);
+            Assert.AreEqual(2, stage.children.Length, "one frame needs no chain");
+
+            var broken = NewRequest(NewController("A", "B"), AapGadgets.Kind.Buffer);
+            broken.bufferFrames = 0;
+            Assert.IsNotNull(AapGadgets.Validate(broken));
+            broken.bufferFrames = AapGadgets.MaxBufferFrames + 1;
+            Assert.IsNotNull(AapGadgets.Validate(broken));
+
+            // A stage name that already belongs to something else must be refused: writing
+            // through it would silently corrupt whatever owned it.
+            var collision = NewRequest(NewController("A", "B"), AapGadgets.Kind.Buffer);
+            collision.bufferFrames = 2;
+            collision.controller.AddParameter("Out/1", AnimatorControllerParameterType.Bool);
+            Assert.IsNotNull(AapGadgets.Validate(collision));
+        }
+
         [Test]
         public void SetNormalizedBlendValues_FlipsTheHiddenFlag()
         {

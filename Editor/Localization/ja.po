@@ -578,6 +578,18 @@ msgstr "円周に並べるサンプルの数。隣り合う方向の間では、
 msgid "Directions must be between 8 and 64."
 msgstr "方向の数は 8〜64 の範囲で指定してください。"
 
+msgid "Frames must be between 1 and 8."
+msgstr "フレーム数は 1〜8 の範囲で指定してください。"
+
+msgid "Frames"
+msgstr "フレーム数"
+
+msgid "How many frames late the copy runs — one identity stage per frame. Match it to the pipeline depth of the branch you are aligning with."
+msgstr "コピーを何フレーム遅らせるかです（1 フレームにつき恒等ステージ 1 段）。揃えたい相手側の分岐のパイプライン段数に合わせてください。"
+
+msgid "output = the input, delayed by exactly N frames. Every blend tree stage costs one frame, so branches of different depth see different frames of the same parameter — insert a buffer on the shallower branch to line the two up again."
+msgstr "output = 入力をちょうど N フレーム遅らせた値。ブレンドツリーの各段は 1 フレームかかるため、段数の異なる分岐は同じパラメーターの別フレームの値を見てしまいます — 浅い側の分岐にバッファを挟んで時系列を揃えます。"
+
 msgid "Step Size Parameter"
 msgstr "ステップ幅パラメーター"
 
