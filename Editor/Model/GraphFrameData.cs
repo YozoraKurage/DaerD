@@ -262,6 +262,38 @@ namespace Yozolab.DaerD
             EditorUtility.SetDirty(data);
         }
 
+        /// <summary>The designated Empty clip, created on first use: a 1-second clip animating a
+        /// binding that exists on no avatar (a no-op at runtime), stored inside the .controller
+        /// and registered as this controller's Empty clip. In-memory controllers have no asset
+        /// to store it in — null, and callers leave their states motion-less.</summary>
+        public static AnimationClip EnsureEmptyClip(AnimatorController controller)
+        {
+            // An already designated clip is the user's choice — kept even at zero length,
+            // rather than silently replaced by a generated one.
+            var designated = GetEmptyClip(controller);
+            if (designated != null) return designated;
+
+            var path = controller != null ? AssetDatabase.GetAssetPath(controller) : null;
+            if (string.IsNullOrEmpty(path)) return null;
+
+            var clip = new AnimationClip { name = "Empty" };
+            // Curve on a path no avatar has, so playing the clip changes nothing; it exists only
+            // to give the clip a length, which normalized exit times need to divide by.
+            AnimationUtility.SetEditorCurve(clip,
+                EditorCurveBinding.FloatCurve("DaerD Empty", typeof(GameObject), "m_IsActive"),
+                AnimationCurve.Constant(0f, 1f, 1f));
+            Undo.RegisterCreatedObjectUndo(clip, "Create Empty Clip");
+            AssetDatabase.AddObjectToAsset(clip, controller);
+            EditorUtility.SetDirty(controller);
+            // The Project window lists sub-assets from the imported artifact, not from the
+            // objects in memory, so the clip stays invisible there until the file is written
+            // and reimported.
+            AssetDatabase.SaveAssets();
+            AssetDatabase.ImportAsset(path);
+            SetEmptyClip(controller, clip);
+            return clip;
+        }
+
         public static UnityEngine.Object GetParameterStore(AnimatorController controller)
         {
             var data = Find(controller);
