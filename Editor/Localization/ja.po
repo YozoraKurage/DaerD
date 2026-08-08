@@ -434,6 +434,12 @@ msgstr "入力 A"
 msgid "Input B"
 msgstr "入力 B"
 
+msgid "Input Y"
+msgstr "入力 Y"
+
+msgid "Input X"
+msgstr "入力 X"
+
 msgid "Output Min"
 msgstr "出力の最小値"
 
@@ -514,6 +520,63 @@ msgstr "output = cos(2π × 入力)。入力 0..1 でちょうど 1 周します
 
 msgid "output = tan(2π × input): 0..1 walks one whole turn, held to ±100 around the poles."
 msgstr "output = tan(2π × 入力)。入力 0..1 でちょうど 1 周し、漸近線の周辺は ±100 に抑えられます。"
+
+msgid "Bakes the curve into a 1D blend tree lookup table: the curve's time axis is the input, its value the output, linearly interpolated between evenly spaced sample points. Lives entirely inside the blend tree layer."
+msgstr "カーブを 1D Blend Tree の LUT にベイクします。カーブの時間軸が入力、値が出力で、等間隔のサンプル点の間は線形補間されます。Blend Tree のレイヤー内だけで完結します。"
+
+msgid "output = atan2(Y, X) in turns: 0..1 counter-clockwise from +X, ready to feed the Sine / Cosine gadgets. Values near the origin collapse toward 0 — gate by magnitude. The 0/1 seam sits in a narrow band at +X."
+msgstr "output = atan2(Y, X) を「周」単位で返します。+X 方向が 0 で、反時計回りに 0..1。そのまま Sine / Cosine ガジェットへ渡せます。原点付近では出力が 0 へ縮退するので、ベクトルの大きさでゲートしてください。0 と 1 の継ぎ目は +X 方向の細い帯に収まります。"
+
+msgid "Preset"
+msgstr "プリセット"
+
+msgid "Custom"
+msgstr "カスタム"
+
+msgid "Linear"
+msgstr "リニア"
+
+msgid "Sqrt"
+msgstr "平方根"
+
+msgid "Square"
+msgstr "2 乗"
+
+msgid "Smoothstep"
+msgstr "スムーズステップ"
+
+msgid "Ease Out"
+msgstr "イーズアウト"
+
+msgid "Curve"
+msgstr "カーブ"
+
+msgid "The function to bake: the time axis is the input, the value the output. Only the span between the first and last key is used; inputs outside it clamp."
+msgstr "ベイクする関数。時間軸が入力、値が出力です。使われるのは最初のキーから最後のキーまでの区間だけで、その外側の入力はクランプされます。"
+
+msgid "Samples"
+msgstr "サンプル数"
+
+msgid "How many points the curve is sampled at. The tree interpolates linearly between them, so corners want a sample of their own."
+msgstr "カーブをサンプリングする点の数。点と点の間はツリーが線形補間するため、折れ曲がる箇所にはサンプル点を置いてください。"
+
+msgid "The LUT needs a curve with at least two keys."
+msgstr "LUT には 2 つ以上のキーを持つカーブが必要です。"
+
+msgid "The curve's keys must span a time range."
+msgstr "カーブのキーは時間の幅を持つ必要があります。"
+
+msgid "Samples must be between 2 and 128."
+msgstr "サンプル数は 2〜128 の範囲で指定してください。"
+
+msgid "Directions"
+msgstr "方向の数"
+
+msgid "Ring samples around the circle. Angle accuracy is about 1/N turn between neighbouring directions; each direction is one clip."
+msgstr "円周に並べるサンプルの数。隣り合う方向の間では、角度の精度がおよそ 1/N 周になります。方向 1 つにつきクリップが 1 つ作られます。"
+
+msgid "Directions must be between 8 and 64."
+msgstr "方向の数は 8〜64 の範囲で指定してください。"
 
 msgid "Step Size Parameter"
 msgstr "ステップ幅パラメーター"

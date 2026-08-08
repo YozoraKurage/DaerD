@@ -31,6 +31,9 @@ namespace Yozolab.DaerD
         float _inMin = 0f;
         float _inMax = 1f;
         float _threshold = 0.5f;
+        AnimationCurve _curve = AnimationCurve.Linear(0f, 0f, 1f, 1f);
+        int _lutSamples = 33;
+        int _atan2Directions = 16;
         // 0 = create a new layer; 1.. = _layerCandidates[index - 1].
         int _layerChoice;
         string _newLayerName = "DBT";
@@ -100,6 +103,8 @@ namespace Yozolab.DaerD
                 case AapGadgets.Kind.Sine: _output = a + "/Sin"; break;
                 case AapGadgets.Kind.Cosine: _output = a + "/Cos"; break;
                 case AapGadgets.Kind.Tangent: _output = a + "/Tan"; break;
+                case AapGadgets.Kind.Lut1D: _output = a + "/Lut"; break;
+                case AapGadgets.Kind.Atan2: _output = a + "/Angle"; break;
             }
         }
 
@@ -145,6 +150,10 @@ namespace Yozolab.DaerD
                     return L.Tr("output = cos(2π × input): 0..1 walks one whole turn.");
                 case AapGadgets.Kind.Tangent:
                     return L.Tr("output = tan(2π × input): 0..1 walks one whole turn, held to ±100 around the poles.");
+                case AapGadgets.Kind.Lut1D:
+                    return L.Tr("Bakes the curve into a 1D blend tree lookup table: the curve's time axis is the input, its value the output, linearly interpolated between evenly spaced sample points. Lives entirely inside the blend tree layer.");
+                case AapGadgets.Kind.Atan2:
+                    return L.Tr("output = atan2(Y, X) in turns: 0..1 counter-clockwise from +X, ready to feed the Sine / Cosine gadgets. Values near the origin collapse toward 0 — gate by magnitude. The 0/1 seam sits in a narrow band at +X.");
             }
             return string.Empty;
         }
@@ -155,8 +164,46 @@ namespace Yozolab.DaerD
             "Smooth", "Add", "Add (Ranged)", "Sub", "Sub (Ranged)", "Multiply",
             "And", "Or", "Not", "Float As Bool", "Remap",
             "Reciprocal", "Divide", "Frame Time", "Smooth (Linear)", "Separate Digits",
-            "Sine", "Cosine", "Tangent",
+            "Sine", "Cosine", "Tangent", "LUT (Curve)", "Atan2",
         };
+
+        /// <summary>Shapes the Curve field can be filled with. Index 0 writes nothing — see
+        /// <see cref="CurvePresetValue"/> for the rest.</summary>
+        static readonly string[] CurvePresetLabels =
+        {
+            "Custom", "Linear", "Sqrt", "Square", "Smoothstep", "Ease Out",
+        };
+
+        /// <summary>Keys a preset is drawn with. Enough to carry the shape into the curve
+        /// editor; the LUT samples the curve again at its own resolution anyway.</summary>
+        const int CurvePresetKeys = 9;
+
+        static AnimationCurve BuildCurvePreset(int preset)
+        {
+            // A straight line is exactly two keys — sampling it nine times would only give the
+            // user more handles to drag than the shape needs.
+            if (preset == 1) return AnimationCurve.Linear(0f, 0f, 1f, 1f);
+            var curve = new AnimationCurve();
+            for (int i = 0; i < CurvePresetKeys; i++)
+            {
+                float t = (float)i / (CurvePresetKeys - 1);
+                curve.AddKey(new Keyframe(t, CurvePresetValue(preset, t)));
+            }
+            AapGadgets.SmoothTangents(curve);
+            return curve;
+        }
+
+        static float CurvePresetValue(int preset, float t)
+        {
+            switch (preset)
+            {
+                case 2: return Mathf.Sqrt(t);
+                case 3: return t * t;
+                case 4: return t * t * (3f - 2f * t);      // smoothstep
+                case 5: return 1f - (1f - t) * (1f - t);   // ease out
+                default: return t;
+            }
+        }
 
         void OnGUI()
         {
@@ -181,10 +228,15 @@ namespace Yozolab.DaerD
 
             EditorGUI.BeginChangeCheck();
             _kind = (AapGadgets.Kind)EditorGUILayout.Popup(L.Tr("Operation"), (int)_kind, KindLabels);
+            // Atan2's inputs are a vector, not an A/B pair, and naming them after the axes is
+            // the only hint that A is the one atan2 takes first.
+            bool vectorInputs = _kind == AapGadgets.Kind.Atan2;
             if (AapGadgets.NeedsInput(_kind))
-                _inputAIndex = EditorGUILayout.Popup(L.Tr("Input A"), _inputAIndex, _floatParams);
+                _inputAIndex = EditorGUILayout.Popup(
+                    vectorInputs ? L.Tr("Input Y") : L.Tr("Input A"), _inputAIndex, _floatParams);
             if (AapGadgets.IsBinary(_kind))
-                _inputBIndex = EditorGUILayout.Popup(L.Tr("Input B"), _inputBIndex, _floatParams);
+                _inputBIndex = EditorGUILayout.Popup(
+                    vectorInputs ? L.Tr("Input X") : L.Tr("Input B"), _inputBIndex, _floatParams);
             if (EditorGUI.EndChangeCheck())
                 ApplyOutputDefault();   // follow the inputs until the name is edited below
 
@@ -206,6 +258,17 @@ namespace Yozolab.DaerD
                     new GUIContent(L.Tr("Default Step Size"),
                         L.Tr("How far the output may travel per frame, in parameter units. Stored as the step size parameter's default value; other gadgets can share the parameter.")),
                     _stepSize);
+            }
+            else if (_kind == AapGadgets.Kind.Lut1D)
+            {
+                DrawCurveField();
+            }
+            else if (_kind == AapGadgets.Kind.Atan2)
+            {
+                _atan2Directions = EditorGUILayout.IntSlider(
+                    new GUIContent(L.Tr("Directions"),
+                        L.Tr("Ring samples around the circle. Angle accuracy is about 1/N turn between neighbouring directions; each direction is one clip.")),
+                    _atan2Directions, AapGadgets.MinAtan2Directions, AapGadgets.MaxAtan2Directions);
             }
 
             if (AapGadgets.UsesRange(_kind))
@@ -245,6 +308,27 @@ namespace Yozolab.DaerD
             EditorGUILayout.EndHorizontal();
         }
 
+        void DrawCurveField()
+        {
+            // A "fill it in with this shape" button wearing a popup's clothes: it always shows
+            // Custom, because the curve it writes stays editable by hand afterwards and a
+            // sticky selection would soon be describing something the user has since redrawn.
+            var presets = new string[CurvePresetLabels.Length];
+            for (int i = 0; i < presets.Length; i++)
+                presets[i] = L.Tr(CurvePresetLabels[i]);
+            int preset = EditorGUILayout.Popup(L.Tr("Preset"), 0, presets);
+            if (preset > 0) _curve = BuildCurvePreset(preset);
+
+            _curve = EditorGUILayout.CurveField(
+                new GUIContent(L.Tr("Curve"),
+                    L.Tr("The function to bake: the time axis is the input, the value the output. Only the span between the first and last key is used; inputs outside it clamp.")),
+                _curve);
+            _lutSamples = EditorGUILayout.IntSlider(
+                new GUIContent(L.Tr("Samples"),
+                    L.Tr("How many points the curve is sampled at. The tree interpolates linearly between them, so corners want a sample of their own.")),
+                _lutSamples, AapGadgets.MinLutSamples, AapGadgets.MaxLutSamples);
+        }
+
         void DrawLayerChoice()
         {
             var labels = new string[_layerCandidates.Count + 1];
@@ -274,6 +358,9 @@ namespace Yozolab.DaerD
                 inMin = _inMin,
                 inMax = _inMax,
                 threshold = _threshold,
+                curve = _curve,
+                lutSamples = _lutSamples,
+                atan2Directions = _atan2Directions,
                 smoothing = _smoothing != null ? _smoothing.Trim() : string.Empty,
                 smoothingDefault = _kind == AapGadgets.Kind.SmoothLinear ? _stepSize : _smoothingDefault,
                 layerIndex = _layerChoice > 0 && _layerChoice - 1 < _layerCandidates.Count

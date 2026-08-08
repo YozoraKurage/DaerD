@@ -490,6 +490,160 @@ namespace Yozolab.DaerD.Tests
         }
 
         [Test]
+        public void Lut1D_BakesTheCurveOntoEvenlySpacedThresholds()
+        {
+            var controller = NewController("A");
+            var request = NewRequest(controller, AapGadgets.Kind.Lut1D);
+            request.inputB = null;
+            // Not a straight line, so the samples have to follow the curve rather than its ends.
+            var curve = new AnimationCurve();
+            for (int i = 0; i <= 8; i++)
+                curve.AddKey(new Keyframe(i / 8f, Mathf.Sqrt(i / 8f)));
+            request.curve = curve;
+            request.lutSamples = 9;
+            Assert.IsTrue(AapGadgets.Apply(request));
+
+            var gadget = GadgetRoot(controller);
+            Assert.AreEqual(BlendTreeType.Simple1D, gadget.blendType);
+            Assert.AreEqual("A", gadget.blendParameter);
+            Assert.AreEqual(9, gadget.children.Length);
+            for (int i = 0; i < 9; i++)
+            {
+                // Thresholds span the curve's own time range, ends included.
+                Assert.AreEqual(i / 8f, gadget.children[i].threshold, 1e-4f);
+                Assert.AreEqual(curve.Evaluate(i / 8f),
+                    ClipValue(gadget.children[i].motion, "Out"), 1e-4f);
+            }
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void Lut1D_SharesOneClipPerDistinctValue()
+        {
+            var controller = NewController("A");
+            var request = NewRequest(controller, AapGadgets.Kind.Lut1D);
+            request.inputB = null;
+            request.curve = AnimationCurve.Constant(0f, 1f, 0.5f);
+            request.lutSamples = 5;
+            Assert.IsTrue(AapGadgets.Apply(request));
+
+            var gadget = GadgetRoot(controller);
+            Assert.AreEqual(5, gadget.children.Length);
+            foreach (var child in gadget.children)
+                Assert.AreSame(gadget.children[0].motion, child.motion,
+                    "a flat stretch is one clip, not one per sample");
+            Assert.AreEqual(0.5f, ClipValue(gadget.children[0].motion, "Out"), 1e-4f);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void Validate_ChecksTheLutCurveAndSampleCount()
+        {
+            var controller = NewController("A");
+            var request = NewRequest(controller, AapGadgets.Kind.Lut1D);
+            request.inputB = null;
+
+            Assert.IsNotNull(AapGadgets.Validate(request), "there is nothing to bake without a curve");
+            request.curve = new AnimationCurve(new Keyframe(0f, 0f));
+            Assert.IsNotNull(AapGadgets.Validate(request), "one key interpolates nothing");
+            request.curve = new AnimationCurve(new Keyframe(1f, 0f), new Keyframe(1f, 1f));
+            Assert.IsNotNull(AapGadgets.Validate(request), "keys that span no time span no input");
+
+            request.curve = AnimationCurve.Linear(0f, 0f, 1f, 1f);
+            Assert.IsNull(AapGadgets.Validate(request));
+            request.lutSamples = AapGadgets.MinLutSamples - 1;
+            Assert.IsNotNull(AapGadgets.Validate(request));
+            request.lutSamples = AapGadgets.MaxLutSamples + 1;
+            Assert.IsNotNull(AapGadgets.Validate(request));
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void Atan2_LaysTheAngleOutAroundTheUnitCircle()
+        {
+            var controller = NewController("X", "Y");
+            var request = NewRequest(controller, AapGadgets.Kind.Atan2);
+            request.inputA = "Y";
+            request.inputB = "X";
+            Assert.IsTrue(AapGadgets.Apply(request));
+
+            var gadget = GadgetRoot(controller);
+            Assert.AreEqual(BlendTreeType.FreeformDirectional2D, gadget.blendType);
+            Assert.AreEqual("X", gadget.blendParameter);
+            Assert.AreEqual("Y", gadget.blendParameterY);
+            // One child per direction, +X split across the seam, plus the origin child.
+            Assert.AreEqual(request.atan2Directions + 2, gadget.children.Length);
+            Assert.AreEqual(18, gadget.children.Length, "the default ring is 16 directions");
+
+            Assert.AreEqual(0f, gadget.children[0].position.x, 1e-6f);
+            Assert.AreEqual(0f, gadget.children[0].position.y, 1e-6f);
+            Assert.AreEqual(0f, ClipValue(gadget.children[0].motion, "Out"), 1e-4f);
+
+            // A quarter turn is +Y, and reads back as 0.25. The origin and the seam come first,
+            // so direction k sits at k + 1.
+            var quarter = gadget.children[request.atan2Directions / 4 + 1];
+            Assert.AreEqual(0f, quarter.position.x, 1e-4f);
+            Assert.AreEqual(1f, quarter.position.y, 1e-4f);
+            Assert.AreEqual(0.25f, ClipValue(quarter.motion, "Out"), 1e-4f);
+
+            // The seam: two children a hair either side of +X, carrying ε and 1 - ε.
+            var above = gadget.children[1];
+            var below = gadget.children[gadget.children.Length - 1];
+            float low = ClipValue(above.motion, "Out"), high = ClipValue(below.motion, "Out");
+            Assert.Greater(low, 0f);
+            Assert.Less(low, 0.01f, "the seam stays a narrow wedge");
+            Assert.AreEqual(1f, low + high, 1e-4f);
+            Assert.AreEqual(1f, above.position.x, 1e-2f);
+            Assert.Greater(above.position.y, 0f);
+            Assert.AreEqual(1f, below.position.x, 1e-2f);
+            Assert.Less(below.position.y, 0f);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void Atan2_TakesTheDirectionCountFromTheRequest()
+        {
+            var controller = NewController("X", "Y");
+            var request = NewRequest(controller, AapGadgets.Kind.Atan2);
+            request.inputA = "Y";
+            request.inputB = "X";
+
+            request.atan2Directions = AapGadgets.MinAtan2Directions - 1;
+            Assert.IsNotNull(AapGadgets.Validate(request), "too coarse a ring is no circle");
+            request.atan2Directions = AapGadgets.MaxAtan2Directions + 1;
+            Assert.IsNotNull(AapGadgets.Validate(request), "and the ceiling caps the clip count");
+
+            request.atan2Directions = 8;
+            Assert.IsTrue(AapGadgets.Apply(request));
+
+            var gadget = GadgetRoot(controller);
+            Assert.AreEqual(10, gadget.children.Length);
+
+            // k = 2 of 8 is a quarter turn, wherever the ring is sampled: +Y, reading back 0.25.
+            var quarter = gadget.children[3];
+            Assert.AreEqual(0f, quarter.position.x, 1e-4f);
+            Assert.AreEqual(1f, quarter.position.y, 1e-4f);
+            Assert.AreEqual(0.25f, ClipValue(quarter.motion, "Out"), 1e-4f);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void CommitSubAssets_LeavesAnInMemoryControllerAlone()
+        {
+            var controller = NewController("A");
+            // Nothing was imported, so there is nothing to flush — and nothing to throw either.
+            Assert.DoesNotThrow(() => DbtBuilder.CommitSubAssets(controller));
+            Assert.DoesNotThrow(() => DbtBuilder.CommitSubAssets(null));
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
         public void Validate_CoversTheKindsWithTheirOwnParameterRules()
         {
             var controller = NewController("A");
@@ -512,6 +666,10 @@ namespace Yozolab.DaerD.Tests
             Assert.IsNotNull(AapGadgets.Validate(linear), "the step size needs a parameter");
             linear.smoothing = "StepSize";
             Assert.IsNull(AapGadgets.Validate(linear));
+
+            var angle = NewRequest(controller, AapGadgets.Kind.Atan2);
+            angle.inputB = null;
+            Assert.IsNotNull(AapGadgets.Validate(angle), "atan2 needs both components");
 
             Object.DestroyImmediate(controller);
         }

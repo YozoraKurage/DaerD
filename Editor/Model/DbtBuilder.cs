@@ -156,6 +156,27 @@ namespace Yozolab.DaerD
             return tree;
         }
 
+        /// <summary>
+        /// A 2D Freeform Directional tree. This mode blends by the *direction* of (x, y)
+        /// rather than by the plane distance, which is what turns a ring of children into a
+        /// lookup table over the angle; a child at the origin is the value the field collapses
+        /// to when the vector has no direction to speak of.
+        /// </summary>
+        public static BlendTree Tree2DFreeformDirectional(AnimatorController controller, string name,
+            string xParameter, string yParameter)
+        {
+            var tree = new BlendTree
+            {
+                name = name,
+                blendType = BlendTreeType.FreeformDirectional2D,
+                blendParameter = xParameter,
+                blendParameterY = yParameter,
+                hideFlags = HideFlags.HideInHierarchy,
+            };
+            Attach(controller, tree);
+            return tree;
+        }
+
         public static BlendTree DirectTree(AnimatorController controller, string name)
         {
             var tree = new BlendTree
@@ -203,6 +224,18 @@ namespace Yozolab.DaerD
             Undo.RegisterCreatedObjectUndo(obj, "DBT Gadget");
             if (!string.IsNullOrEmpty(AssetDatabase.GetAssetPath(controller)))
                 AssetDatabase.AddObjectToAsset(obj, controller);
+        }
+
+        /// <summary>Flushes freshly attached sub-assets into the imported artifact. The Project
+        /// window lists sub-assets from the import, not from memory, so anything added with
+        /// AddObjectToAsset stays invisible there until the file is saved and reimported. Once
+        /// per batch — import churn is the reason this isn't part of Attach itself.</summary>
+        public static void CommitSubAssets(AnimatorController controller)
+        {
+            var path = controller != null ? AssetDatabase.GetAssetPath(controller) : null;
+            if (string.IsNullOrEmpty(path)) return;
+            AssetDatabase.SaveAssets();
+            AssetDatabase.ImportAsset(path);
         }
 
         /// <summary>Sub-asset names keep out of Unity's menu-splitting on '/'.</summary>

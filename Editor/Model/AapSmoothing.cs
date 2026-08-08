@@ -117,6 +117,8 @@ namespace Yozolab.DaerD
                 DbtBuilder.AddDirectChild(root, smoothTree, weightParam);
                 EditorUtility.SetDirty(controller);
             }
+            // The clips and trees above are sub-assets; one flush shows the whole batch.
+            DbtBuilder.CommitSubAssets(controller);
             return true;
         }
     }

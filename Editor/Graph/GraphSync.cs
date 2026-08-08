@@ -800,6 +800,7 @@ namespace Yozolab.DaerD
             if (sm == null) return null;
 
             AnimatorState state;
+            bool attachedSubAsset = false;
             using (new UndoScope("Create State"))
             {
                 Undo.RegisterCompleteObjectUndo(sm, "Create State");
@@ -822,11 +823,18 @@ namespace Yozolab.DaerD
                     var blendTree = new BlendTree { name = "Blend Tree", hideFlags = HideFlags.HideInHierarchy };
                     var path = AssetDatabase.GetAssetPath(_context.Controller);
                     if (!string.IsNullOrEmpty(path))
+                    {
                         AssetDatabase.AddObjectToAsset(blendTree, _context.Controller);
+                        attachedSubAsset = true;
+                    }
                     state.motion = blendTree;
                 }
                 EditorUtility.SetDirty(sm);
             }
+            // Written and reimported once the state holds the tree, so the Project window lists
+            // the new sub-asset instead of waiting for the next save.
+            if (attachedSubAsset)
+                DbtBuilder.CommitSubAssets(_context.Controller);
             return state;
         }
 

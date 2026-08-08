@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
@@ -16,6 +17,10 @@ namespace Yozolab.DaerD
     ///   Multiply  output = A × B            (nested Direct trees multiply their weights)
     ///   Ranged Add/Sub remap both inputs through 1D trees first, so negatives work too.
     /// Logic gadgets assume 0..1 inputs.
+    ///
+    /// A second family gets there by interpolation instead of arithmetic: a tree's own
+    /// blending IS a lookup table, so sampling a function onto the children's thresholds
+    /// (Lut1D) or onto a ring of directions (Atan2) evaluates it without leaving the tree.
     ///
     /// Three gadget families need more than a blend tree child, and add a layer of their own
     /// at the end of the controller: division (a curve covers the half a Direct weight cannot
@@ -46,12 +51,15 @@ namespace Yozolab.DaerD
             Sine,
             Cosine,
             Tangent,
+            Lut1D,
+            Atan2,
         }
 
         public static bool IsBinary(Kind kind) =>
             kind == Kind.Add || kind == Kind.AddRanged || kind == Kind.Sub
             || kind == Kind.SubRanged || kind == Kind.Multiply
-            || kind == Kind.And || kind == Kind.Or || kind == Kind.Divide;
+            || kind == Kind.And || kind == Kind.Or || kind == Kind.Divide
+            || kind == Kind.Atan2;
 
         public static bool UsesRange(Kind kind) =>
             kind == Kind.Smooth || kind == Kind.AddRanged || kind == Kind.SubRanged
@@ -100,6 +108,12 @@ namespace Yozolab.DaerD
             public string smoothing;
             /// <summary>Default value stored on <see cref="smoothing"/> when it is created.</summary>
             public float smoothingDefault = 0.9f;
+            /// <summary>Lut1D: the function to bake — time axis is the input, value the output.</summary>
+            public AnimationCurve curve;
+            /// <summary>Lut1D: evenly spaced samples baked into the tree (2..128).</summary>
+            public int lutSamples = 33;
+            /// <summary>Atan2: directions sampled around the circle (8..64).</summary>
+            public int atan2Directions = 16;
             /// <summary>Existing DBT (or empty) layer to add the gadget to, or -1 to create one.</summary>
             public int layerIndex = -1;
             public string newLayerName = "DBT";
@@ -155,6 +169,18 @@ namespace Yozolab.DaerD
                 return L.Tr("Range Min must be smaller than Range Max.");
             if (r.kind == Kind.Remap && !(r.inMin < r.inMax))
                 return L.Tr("Input Min must be smaller than Input Max.");
+            if (r.kind == Kind.Lut1D)
+            {
+                if (r.curve == null || r.curve.length < 2)
+                    return L.Tr("The LUT needs a curve with at least two keys.");
+                if (!(r.curve.keys[r.curve.length - 1].time > r.curve.keys[0].time))
+                    return L.Tr("The curve's keys must span a time range.");
+                if (r.lutSamples < MinLutSamples || r.lutSamples > MaxLutSamples)
+                    return L.Tr("Samples must be between 2 and 128.");
+            }
+            if (r.kind == Kind.Atan2
+                && (r.atan2Directions < MinAtan2Directions || r.atan2Directions > MaxAtan2Directions))
+                return L.Tr("Directions must be between 8 and 64.");
 
             // The layer-only kinds bring their own layer; there is no target to check.
             if (!UsesDbtLayer(r.kind)) return null;
@@ -206,6 +232,8 @@ namespace Yozolab.DaerD
                 }
                 EditorUtility.SetDirty(controller);
             }
+            // Everything the gadget built is a sub-asset; one flush shows the whole batch.
+            DbtBuilder.CommitSubAssets(controller);
             return true;
         }
 
@@ -230,6 +258,10 @@ namespace Yozolab.DaerD
                 case Kind.SmoothLinear:
                     return SmoothLinear(c, a, output, one, r.smoothing, r.rangeMin, r.rangeMax);
                 case Kind.SeparateDigits: return SeparateDigits(c, a, output, one);
+                case Kind.Lut1D: return Lut1D(c, a, output, r.curve, r.lutSamples);
+                // Input A is the numerator of atan2 and input B the denominator, so the
+                // wizard's A/B pair reads in the order the function's arguments do.
+                case Kind.Atan2: return Atan2(c, a, b, output, r.atan2Directions);
                 default: return null;
             }
         }
@@ -676,6 +708,106 @@ namespace Yozolab.DaerD
             return Mathf.Clamp(Mathf.Tan(angle), -TangentLimit, TangentLimit);
         }
 
+        // ---- lookup tables ------------------------------------------------------
+
+        /// <summary>How many samples <see cref="Lut1D"/> accepts. Two is the smallest tree that
+        /// interpolates at all; the ceiling only keeps a slider from filling a controller with
+        /// thousands of sub-assets.</summary>
+        public const int MinLutSamples = 2;
+        public const int MaxLutSamples = 128;
+
+        /// <summary>
+        /// Bakes an arbitrary curve into a piecewise-linear lookup table: a 1D tree blends
+        /// linearly between adjacent thresholds, so children holding f(t_i) at threshold t_i
+        /// evaluate f for any input in between. The whole gadget is one blend tree — no
+        /// motion-time state, and so no layer of its own.
+        ///
+        /// What lands in the tree is the curve *sampled*, not the curve: its Hermite tangents
+        /// only decide the values read at the sample points, and between them the tree
+        /// interpolates straight. Accuracy is therefore the sample count's business, and a
+        /// curve with corners wants a sample on each of them. Inputs outside the curve's time
+        /// range clamp to the first and last child, as any 1D tree does.
+        /// Reference: https://vrc.school/docs/Other/Advanced-BlendTrees
+        /// </summary>
+        public static BlendTree Lut1D(AnimatorController c, string input, string output,
+            AnimationCurve curve, int samples)
+        {
+            // The wizard can't ask for fewer than two, but a recipe could — and one sample
+            // divides by zero below rather than producing a degenerate tree.
+            samples = Mathf.Clamp(samples, MinLutSamples, MaxLutSamples);
+
+            var keys = curve.keys;
+            float from = keys[0].time, to = keys[keys.Length - 1].time;
+
+            var tree = DbtBuilder.Tree1D(c, Name("Lut", input, null), input);
+            // A flat stretch of the curve would otherwise mint one identical clip per sample;
+            // sharing them by value keeps the sub-asset count down to the distinct outputs.
+            var clips = new Dictionary<float, AnimationClip>();
+            for (int i = 0; i < samples; i++)
+            {
+                float t = Mathf.Lerp(from, to, (float)i / (samples - 1));
+                float value = curve.Evaluate(t);
+                if (!clips.TryGetValue(value, out var clip))
+                    clips[value] = clip = DbtBuilder.ParameterClip(c, output, value);
+                tree.AddChild(clip, t);
+            }
+            return tree;
+        }
+
+        /// <summary>How many directions <see cref="Atan2"/> accepts around the circle. Eight is
+        /// the coarsest ring that still reads as a circle at all; the ceiling only keeps a
+        /// slider from filling a controller with clips.</summary>
+        public const int MinAtan2Directions = 8;
+        public const int MaxAtan2Directions = 64;
+
+        /// <summary>How far off +X the two halves of the seam sit, in turns.</summary>
+        const float Atan2Seam = 0.004f;
+
+        /// <summary>
+        /// output = atan2(Y, X), in turns: 0 at +X, counter-clockwise to 1 at +X again. Turns
+        /// are the unit the <see cref="Kind.Sine"/> / <see cref="Kind.Cosine"/> gadgets read,
+        /// so the result feeds them directly.
+        ///
+        /// A 2D Freeform Directional tree blends by direction, and near-linearly in the angle
+        /// between two neighbouring children, so a ring of children holding their own angle is
+        /// an angle lookup table: exact on the sampled directions and interpolated within
+        /// ~1/directions turn of them. Accuracy is therefore the direction count's business,
+        /// and it costs one clip per direction.
+        ///
+        /// Two details the caller has to live with. The seam is real — 0 and 1 are the same
+        /// direction but not the same number — so +X is covered by two children at ±ε instead
+        /// of one, which pins the jump inside a 2ε-wide wedge instead of letting it smear over
+        /// a whole wedge between two directions. And the origin child (value 0) is what the
+        /// field collapses toward as the vector shrinks, because a direction-blended tree has
+        /// no direction to read there: gate the result by the vector's magnitude.
+        /// Reference: https://vrc.school/docs/Other/Advanced-BlendTrees
+        /// </summary>
+        public static BlendTree Atan2(AnimatorController c, string y, string x, string output, int directions)
+        {
+            // The wizard keeps to the range, but a recipe could ask for anything — and a ring
+            // of one or two children has no circle left to interpolate around.
+            directions = Mathf.Clamp(directions, MinAtan2Directions, MaxAtan2Directions);
+
+            var tree = DbtBuilder.Tree2DFreeformDirectional(c, Name("Atan2", y, x), x, y);
+
+            tree.AddChild(DbtBuilder.ParameterClip(c, output, 0f), Vector2.zero);
+            // Children in ascending angle, the +X sample split across the two ends of the range.
+            AddDirection(c, tree, output, Atan2Seam);
+            for (int k = 1; k < directions; k++)
+                AddDirection(c, tree, output, (float)k / directions);
+            AddDirection(c, tree, output, 1f - Atan2Seam);
+            return tree;
+        }
+
+        /// <summary>One ring child: the direction <paramref name="turn"/> points in, holding
+        /// that same turn as its value.</summary>
+        static void AddDirection(AnimatorController c, BlendTree tree, string output, float turn)
+        {
+            float angle = 2f * Mathf.PI * turn;
+            tree.AddChild(DbtBuilder.ParameterClip(c, output, turn),
+                new Vector2(Mathf.Cos(angle), Mathf.Sin(angle)));
+        }
+
         // ---- supporting layers --------------------------------------------------
 
         /// <summary>Adds a layer at the end of the controller. Last is the point: these layers
@@ -717,8 +849,9 @@ namespace Yozolab.DaerD
         }
 
         /// <summary>Auto tangents on every key: these curves stand for smooth functions, and the
-        /// flat tangents a bare Keyframe carries would make them ripple between the samples.</summary>
-        static void SmoothTangents(AnimationCurve curve)
+        /// flat tangents a bare Keyframe carries would make them ripple between the samples.
+        /// Public because the wizard builds its curve presets the same way.</summary>
+        public static void SmoothTangents(AnimationCurve curve)
         {
             for (int i = 0; i < curve.length; i++)
             {
