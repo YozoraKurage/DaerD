@@ -139,7 +139,7 @@ namespace Yozolab.DaerD
         }
 
         /// <summary>Store-vs-controller checks, appended to the analyzer's issue list.</summary>
-        public void Analyze(AnimatorController controller, List<ControllerAnalyzer.Issue> issues)
+        public void Analyze(AnimatorController controller, List<AnalyzerIssue> issues)
         {
             if (controller == null || Target == null) return;
             var entries = Read();
@@ -152,10 +152,10 @@ namespace Yozolab.DaerD
                     if (entry.synced)
                         used += VrcExpressionParameters.BitCost(entry.valueType);
                 if (used > capacity)
-                    issues.Add(new ControllerAnalyzer.Issue
+                    issues.Add(new AnalyzerIssue
                     {
-                        kind = ControllerAnalyzer.Kind.VrcParameters,
-                        severity = ControllerAnalyzer.Severity.Error,
+                        kind = IssueKind.VrcParameters,
+                        severity = IssueSeverity.Error,
                         message = L.Tr("Expression parameters use {0} of {1} synced bits.", used, capacity),
                         context = Target,
                     });
@@ -167,10 +167,10 @@ namespace Yozolab.DaerD
                 if (controllerParameter == null)
                 {
                     if (entry.synced)
-                        issues.Add(new ControllerAnalyzer.Issue
+                        issues.Add(new AnalyzerIssue
                         {
-                            kind = ControllerAnalyzer.Kind.VrcParameters,
-                            severity = ControllerAnalyzer.Severity.Info,
+                            kind = IssueKind.VrcParameters,
+                            severity = IssueSeverity.Info,
                             message = L.Tr("Expression parameter '{0}' has no matching controller parameter.", entry.name),
                             context = Target,
                         });
@@ -183,10 +183,10 @@ namespace Yozolab.DaerD
                 if (!entry.typed) continue;
                 var mapped = VrcExpressionParameters.MapType(controllerParameter.type);
                 if (mapped != null && mapped.Value != entry.valueType)
-                    issues.Add(new ControllerAnalyzer.Issue
+                    issues.Add(new AnalyzerIssue
                     {
-                        kind = ControllerAnalyzer.Kind.VrcParameters,
-                        severity = ControllerAnalyzer.Severity.Info,
+                        kind = IssueKind.VrcParameters,
+                        severity = IssueSeverity.Info,
                         message = L.Tr("Expression parameter '{0}' is {1} while the controller parameter is {2} — VRChat converts between them (parameter mismatching); make sure it's intentional.",
                             entry.name, entry.valueType, controllerParameter.type),
                         context = Target,

@@ -8,64 +8,26 @@ namespace Yozolab.DaerD
     /// <summary>Audits a controller and provides controller-wide bulk fixes.</summary>
     static class ControllerAnalyzer
     {
-        public enum Severity { Info, Warning, Error }
-
-        /// <summary>Stable machine-readable issue type; <see cref="CategoryLabel"/> gives its localized label.</summary>
-        public enum Kind
-        {
-            UnusedParameter,
-            InvalidCondition,
-            DeadTransition,
-            UnreachableState,
-            DuplicateName,
-            TerminalStates,
-            WriteDefaults,
-            MissingMotion,
-            EmptyLayer,
-            LayerWeight,
-            MissingBehaviour,
-            DuplicateCondition,
-            DirectBlendTree,
-            VrcParameters,
-            ClipBindings,
-        }
-
-        public class Issue
-        {
-            public Kind kind;
-            public Severity severity;
-            public string message;
-            public Object context;
-            /// <summary>For layer-scoped issues whose context is the controller itself, the
-            /// layer the message talks about — lets Ping open that layer. -1 when unset.</summary>
-            public int layerIndex = -1;
-            /// <summary>Optional one-click repair. Runs its own Undo registration; the caller
-            /// re-analyzes afterwards, so the delegate doesn't need to update any UI.</summary>
-            public System.Action fix;
-            public string fixLabel;
-            public string fixTooltip;
-        }
-
         /// <summary>Localized display label for an issue kind, resolved at display time.</summary>
-        public static string CategoryLabel(Kind kind)
+        public static string CategoryLabel(IssueKind kind)
         {
             switch (kind)
             {
-                case Kind.UnusedParameter: return L.Tr("Unused Parameter");
-                case Kind.InvalidCondition: return L.Tr("Invalid Condition");
-                case Kind.DeadTransition: return L.Tr("Dead Transition");
-                case Kind.UnreachableState: return L.Tr("Unreachable State");
-                case Kind.DuplicateName: return L.Tr("Duplicate Name");
-                case Kind.TerminalStates: return L.Tr("Terminal States");
-                case Kind.WriteDefaults: return L.Tr("WriteDefaults");
-                case Kind.MissingMotion: return L.Tr("Missing Motion");
-                case Kind.EmptyLayer: return L.Tr("Empty Layer");
-                case Kind.LayerWeight: return L.Tr("Layer Weight");
-                case Kind.MissingBehaviour: return L.Tr("Missing Behaviour");
-                case Kind.DuplicateCondition: return L.Tr("Duplicate Condition");
-                case Kind.DirectBlendTree: return L.Tr("Direct Blend Tree");
-                case Kind.VrcParameters: return L.Tr("VRC Parameters");
-                case Kind.ClipBindings: return L.Tr("Clip Bindings");
+                case IssueKind.UnusedParameter: return L.Tr("Unused Parameter");
+                case IssueKind.InvalidCondition: return L.Tr("Invalid Condition");
+                case IssueKind.DeadTransition: return L.Tr("Dead Transition");
+                case IssueKind.UnreachableState: return L.Tr("Unreachable State");
+                case IssueKind.DuplicateName: return L.Tr("Duplicate Name");
+                case IssueKind.TerminalStates: return L.Tr("Terminal States");
+                case IssueKind.WriteDefaults: return L.Tr("WriteDefaults");
+                case IssueKind.MissingMotion: return L.Tr("Missing Motion");
+                case IssueKind.EmptyLayer: return L.Tr("Empty Layer");
+                case IssueKind.LayerWeight: return L.Tr("Layer Weight");
+                case IssueKind.MissingBehaviour: return L.Tr("Missing Behaviour");
+                case IssueKind.DuplicateCondition: return L.Tr("Duplicate Condition");
+                case IssueKind.DirectBlendTree: return L.Tr("Direct Blend Tree");
+                case IssueKind.VrcParameters: return L.Tr("VRC Parameters");
+                case IssueKind.ClipBindings: return L.Tr("Clip Bindings");
             }
             return kind.ToString();
         }
@@ -113,9 +75,9 @@ namespace Yozolab.DaerD
             return unused;
         }
 
-        public static List<Issue> Analyze(AnimatorController controller)
+        public static List<AnalyzerIssue> Analyze(AnimatorController controller)
         {
-            var issues = new List<Issue>();
+            var issues = new List<AnalyzerIssue>();
             if (controller == null) return issues;
 
             AddUnusedParameterIssues(controller, issues);
@@ -145,14 +107,14 @@ namespace Yozolab.DaerD
             return issues;
         }
 
-        static void AddUnusedParameterIssues(AnimatorController controller, List<Issue> issues)
+        static void AddUnusedParameterIssues(AnimatorController controller, List<AnalyzerIssue> issues)
         {
             foreach (var name in FindUnusedParameters(controller))
             {
-                issues.Add(new Issue
+                issues.Add(new AnalyzerIssue
                 {
-                    severity = Severity.Info,
-                    kind = Kind.UnusedParameter,
+                    severity = IssueSeverity.Info,
+                    kind = IssueKind.UnusedParameter,
                     message = L.Tr("Parameter '{0}' is never referenced.", name),
                     context = controller,
                     fixLabel = L.Tr("Delete"),
@@ -176,7 +138,7 @@ namespace Yozolab.DaerD
             }
         }
 
-        static void AddConditionIssues(AnimatorController controller, List<Issue> issues)
+        static void AddConditionIssues(AnimatorController controller, List<AnalyzerIssue> issues)
         {
             var paramTypes = new Dictionary<string, AnimatorControllerParameterType>();
             foreach (var p in controller.parameters) paramTypes[p.name] = p.type;
@@ -188,30 +150,30 @@ namespace Yozolab.DaerD
                     if (string.IsNullOrEmpty(c.parameter)) continue;
                     if (!paramTypes.TryGetValue(c.parameter, out var type))
                     {
-                        issues.Add(new Issue
+                        issues.Add(new AnalyzerIssue
                         {
-                            severity = Severity.Error,
-                            kind = Kind.InvalidCondition,
+                            severity = IssueSeverity.Error,
+                            kind = IssueKind.InvalidCondition,
                             message = L.Tr("Condition references missing parameter '{0}'.", c.parameter),
                             context = t,
                         });
                         continue;
                     }
                     if (!IsModeValid(c.mode, type))
-                        issues.Add(new Issue
+                        issues.Add(new AnalyzerIssue
                         {
-                            severity = Severity.Error,
-                            kind = Kind.InvalidCondition,
+                            severity = IssueSeverity.Error,
+                            kind = IssueKind.InvalidCondition,
                             message = L.Tr("Mode '{0}' is invalid for {1} parameter '{2}'.", c.mode, type, c.parameter),
                             context = t,
                         });
                 }
 
                 if (HasDuplicateConditions(t))
-                    issues.Add(new Issue
+                    issues.Add(new AnalyzerIssue
                     {
-                        severity = Severity.Info,
-                        kind = Kind.DuplicateCondition,
+                        severity = IssueSeverity.Info,
+                        kind = IssueKind.DuplicateCondition,
                         message = L.Tr("Transition {0} has duplicate conditions.",
                             ParameterConverter.DescribeTransition(t)),
                         context = t,
@@ -253,7 +215,7 @@ namespace Yozolab.DaerD
             EditorUtility.SetDirty(transition);
         }
 
-        static void AddDeadTransitionIssues(AnimatorController controller, List<Issue> issues)
+        static void AddDeadTransitionIssues(AnimatorController controller, List<AnalyzerIssue> issues)
         {
             // Walked with owners (unlike AllTransitions) so the fix can actually detach the
             // transition from the state / state machine that holds it.
@@ -270,10 +232,10 @@ namespace Yozolab.DaerD
         static bool IsDeadTransition(AnimatorStateTransition t) =>
             t != null && t.conditions.Length == 0 && !t.hasExitTime;
 
-        static Issue MakeDeadTransitionIssue(AnimatorStateTransition t, System.Action fix) => new Issue
+        static AnalyzerIssue MakeDeadTransitionIssue(AnimatorStateTransition t, System.Action fix) => new AnalyzerIssue
         {
-            severity = Severity.Warning,
-            kind = Kind.DeadTransition,
+            severity = IssueSeverity.Warning,
+            kind = IssueKind.DeadTransition,
             message = L.Tr("Transition {0} has no conditions and no exit time; it can never fire.",
                 ParameterConverter.DescribeTransition(t)),
             context = t,
@@ -298,7 +260,7 @@ namespace Yozolab.DaerD
             EditorUtility.SetDirty(owner);
         }
 
-        static void AddUnreachableStateIssues(AnimatorController controller, List<Issue> issues)
+        static void AddUnreachableStateIssues(AnimatorController controller, List<AnalyzerIssue> issues)
         {
             var reachable = new HashSet<AnimatorState>();
             foreach (var sm in controller.AllStateMachines())
@@ -307,16 +269,16 @@ namespace Yozolab.DaerD
                 if (t.destinationState != null) reachable.Add(t.destinationState);
             foreach (var s in controller.AllStates())
                 if (!reachable.Contains(s))
-                    issues.Add(new Issue
+                    issues.Add(new AnalyzerIssue
                     {
-                        severity = Severity.Warning,
-                        kind = Kind.UnreachableState,
+                        severity = IssueSeverity.Warning,
+                        kind = IssueKind.UnreachableState,
                         message = L.Tr("State '{0}' has no incoming transition and is not a default state.", s.name),
                         context = s,
                     });
         }
 
-        static void AddDuplicateNameIssues(AnimatorController controller, List<Issue> issues)
+        static void AddDuplicateNameIssues(AnimatorController controller, List<AnalyzerIssue> issues)
         {
             foreach (var sm in controller.AllStateMachines())
             {
@@ -325,10 +287,10 @@ namespace Yozolab.DaerD
                 {
                     if (cs.state == null) continue;
                     if (!seen.Add(cs.state.name))
-                        issues.Add(new Issue
+                        issues.Add(new AnalyzerIssue
                         {
-                            severity = Severity.Warning,
-                            kind = Kind.DuplicateName,
+                            severity = IssueSeverity.Warning,
+                            kind = IssueKind.DuplicateName,
                             message = L.Tr("State name '{0}' is used more than once in '{1}'.", cs.state.name, sm.name),
                             context = cs.state,
                         });
@@ -336,7 +298,7 @@ namespace Yozolab.DaerD
             }
         }
 
-        static void AddWriteDefaultsIssues(AnimatorController controller, List<Issue> issues)
+        static void AddWriteDefaultsIssues(AnimatorController controller, List<AnalyzerIssue> issues)
         {
             var layers = controller.layers;
             for (int li = 0; li < layers.Length; li++)
@@ -351,10 +313,10 @@ namespace Yozolab.DaerD
                         else hasFalse = true;
                     }
                 if (hasTrue && hasFalse)
-                    issues.Add(new Issue
+                    issues.Add(new AnalyzerIssue
                     {
-                        severity = Severity.Warning,
-                        kind = Kind.WriteDefaults,
+                        severity = IssueSeverity.Warning,
+                        kind = IssueKind.WriteDefaults,
                         message = L.Tr("Layer '{0}' mixes Write Defaults ON and OFF across its states.", layer.name),
                         context = controller,
                         layerIndex = li,
@@ -362,7 +324,7 @@ namespace Yozolab.DaerD
             }
         }
 
-        static void AddMissingMotionIssues(AnimatorController controller, List<Issue> issues)
+        static void AddMissingMotionIssues(AnimatorController controller, List<AnalyzerIssue> issues)
         {
             // A shared blend tree is reported once (for the first state found using it).
             var visited = new HashSet<BlendTree>();
@@ -376,10 +338,10 @@ namespace Yozolab.DaerD
                     // nothing back, so every animated property freezes at its last value —
                     // that's a real malfunction, not a cosmetic gap.
                     bool wdOff = !s.writeDefaultValues;
-                    var issue = new Issue
+                    var issue = new AnalyzerIssue
                     {
-                        severity = wdOff ? Severity.Error : Severity.Warning,
-                        kind = Kind.MissingMotion,
+                        severity = wdOff ? IssueSeverity.Error : IssueSeverity.Warning,
+                        kind = IssueKind.MissingMotion,
                         message = wdOff
                             ? L.Tr("State '{0}' has Write Defaults OFF and no motion; animated properties freeze at their last value while it plays.", s.name)
                             : L.Tr("State '{0}' has no motion assigned.", s.name),
@@ -400,7 +362,7 @@ namespace Yozolab.DaerD
         }
 
         static void AddEmptyBlendTreeSlots(Motion motion, AnimatorState owner,
-            HashSet<BlendTree> visited, List<Issue> issues, AnimationClip empty)
+            HashSet<BlendTree> visited, List<AnalyzerIssue> issues, AnimationClip empty)
         {
             if (!(motion is BlendTree tree) || !visited.Add(tree)) return;
             bool hasEmptySlot = false;
@@ -411,10 +373,10 @@ namespace Yozolab.DaerD
             }
             if (hasEmptySlot)
             {
-                var issue = new Issue
+                var issue = new AnalyzerIssue
                 {
-                    severity = Severity.Warning,
-                    kind = Kind.MissingMotion,
+                    severity = IssueSeverity.Warning,
+                    kind = IssueKind.MissingMotion,
                     message = L.Tr("Blend tree '{0}' in state '{1}' has a child slot with no motion.",
                         tree.name, owner.name),
                     context = tree,
@@ -455,7 +417,7 @@ namespace Yozolab.DaerD
             EditorUtility.SetDirty(tree);
         }
 
-        static void AddLayerIssues(AnimatorController controller, List<Issue> issues)
+        static void AddLayerIssues(AnimatorController controller, List<AnalyzerIssue> issues)
         {
             var layers = controller.layers;
             for (int i = 0; i < layers.Length; i++)
@@ -471,10 +433,10 @@ namespace Yozolab.DaerD
                     foreach (var sm in layer.stateMachine.SelfAndDescendants())
                         if (sm.states.Length > 0) { hasState = true; break; }
                 if (!hasState && !synced)
-                    issues.Add(new Issue
+                    issues.Add(new AnalyzerIssue
                     {
-                        severity = Severity.Info,
-                        kind = Kind.EmptyLayer,
+                        severity = IssueSeverity.Info,
+                        kind = IssueKind.EmptyLayer,
                         message = L.Tr("Layer '{0}' contains no states.", layer.name),
                         context = controller,
                         layerIndex = i,
@@ -483,10 +445,10 @@ namespace Yozolab.DaerD
                 // The base layer's weight is forced to 1 at runtime, so only flag the others.
                 // Weight-0 layers are sometimes intentional (driven at runtime), hence Info.
                 if (i > 0 && layer.defaultWeight == 0f)
-                    issues.Add(new Issue
+                    issues.Add(new AnalyzerIssue
                     {
-                        severity = Severity.Info,
-                        kind = Kind.LayerWeight,
+                        severity = IssueSeverity.Info,
+                        kind = IssueKind.LayerWeight,
                         message = L.Tr(
                             "Layer '{0}' has default weight 0; it has no effect until its weight is raised at runtime.",
                             layer.name),
@@ -496,12 +458,12 @@ namespace Yozolab.DaerD
             }
         }
 
-        static void AddMissingBehaviourIssues(AnimatorController controller, List<Issue> issues)
+        static void AddMissingBehaviourIssues(AnimatorController controller, List<AnalyzerIssue> issues)
         {
-            Issue Make(string message, Object context, System.Action fix) => new Issue
+            AnalyzerIssue Make(string message, Object context, System.Action fix) => new AnalyzerIssue
             {
-                severity = Severity.Error,
-                kind = Kind.MissingBehaviour,
+                severity = IssueSeverity.Error,
+                kind = IssueKind.MissingBehaviour,
                 message = message,
                 context = context,
                 fixLabel = L.Tr("Fix"),
@@ -557,17 +519,17 @@ namespace Yozolab.DaerD
         /// writes silently misbehave otherwise), and every Direct child needs an existing
         /// Float weight parameter — a missing or unset one pins that child's weight to 0.
         /// </summary>
-        static void AddDirectBlendTreeIssues(AnimatorController controller, List<Issue> issues)
+        static void AddDirectBlendTreeIssues(AnimatorController controller, List<AnalyzerIssue> issues)
         {
             foreach (var s in controller.AllStates())
             {
                 if (s.writeDefaultValues || !(s.motion is BlendTree tree) || !ContainsDirectTree(tree))
                     continue;
                 var state = s;
-                issues.Add(new Issue
+                issues.Add(new AnalyzerIssue
                 {
-                    severity = Severity.Error,
-                    kind = Kind.DirectBlendTree,
+                    severity = IssueSeverity.Error,
+                    kind = IssueKind.DirectBlendTree,
                     message = L.Tr("State '{0}' plays a Direct blend tree but has Write Defaults OFF.", s.name),
                     context = s,
                     fixLabel = L.Tr("Fix"),
@@ -593,10 +555,10 @@ namespace Yozolab.DaerD
                     {
                         if (reportedEmpty) continue;
                         reportedEmpty = true;
-                        issues.Add(new Issue
+                        issues.Add(new AnalyzerIssue
                         {
-                            severity = Severity.Warning,
-                            kind = Kind.DirectBlendTree,
+                            severity = IssueSeverity.Warning,
+                            kind = IssueKind.DirectBlendTree,
                             message = L.Tr("Direct blend tree '{0}' has a child with no weight parameter; that child never plays.", bt.name),
                             context = bt,
                         });
@@ -604,10 +566,10 @@ namespace Yozolab.DaerD
                     else if (!paramTypes.TryGetValue(weight, out var type))
                     {
                         if (!reported.Add(weight)) continue;
-                        issues.Add(new Issue
+                        issues.Add(new AnalyzerIssue
                         {
-                            severity = Severity.Error,
-                            kind = Kind.DirectBlendTree,
+                            severity = IssueSeverity.Error,
+                            kind = IssueKind.DirectBlendTree,
                             message = L.Tr("Direct blend tree '{0}' weights a child with missing parameter '{1}'.", bt.name, weight),
                             context = bt,
                         });
@@ -615,10 +577,10 @@ namespace Yozolab.DaerD
                     else if (type != AnimatorControllerParameterType.Float)
                     {
                         if (!reported.Add(weight)) continue;
-                        issues.Add(new Issue
+                        issues.Add(new AnalyzerIssue
                         {
-                            severity = Severity.Warning,
-                            kind = Kind.DirectBlendTree,
+                            severity = IssueSeverity.Warning,
+                            kind = IssueKind.DirectBlendTree,
                             message = L.Tr("Weight parameter '{1}' of Direct blend tree '{0}' is not a Float.", bt.name, weight),
                             context = bt,
                         });
@@ -658,9 +620,9 @@ namespace Yozolab.DaerD
         /// components with no transition leaving the group and no Exit transition. The group
         /// containing the layer's default state is excluded — that is just the layer's main loop.
         /// </summary>
-        public static List<Issue> FindTerminalStateGroups(AnimatorControllerLayer layer)
+        public static List<AnalyzerIssue> FindTerminalStateGroups(AnimatorControllerLayer layer)
         {
-            var issues = new List<Issue>();
+            var issues = new List<AnalyzerIssue>();
             if (layer?.stateMachine == null) return issues;
 
             // Collect every state in the layer and a state→state edge list. A transition to a
@@ -721,10 +683,10 @@ namespace Yozolab.DaerD
             {
                 if (!trapped[c] || members[c] == null) continue;
                 string list = string.Join("', '", members[c]);
-                issues.Add(new Issue
+                issues.Add(new AnalyzerIssue
                 {
-                    severity = Severity.Info,
-                    kind = Kind.TerminalStates,
+                    severity = IssueSeverity.Info,
+                    kind = IssueKind.TerminalStates,
                     message = L.Tr("Layer '{0}': once entered, '{1}' can never be left (no outgoing transition or exit).",
                         layer.name, list),
                     context = context[c],

@@ -590,7 +590,7 @@ namespace Yozolab.DaerD
         /// open their layer. Returns true when it navigated; the caller falls back to a
         /// Project ping otherwise.
         /// </summary>
-        internal bool TryFocusIssue(ControllerAnalyzer.Issue issue)
+        internal bool TryFocusIssue(AnalyzerIssue issue)
         {
             // Freshly opened window: CreateGUI (and with it the context) hasn't run yet.
             if (_context == null || _context.Controller == null) return false;
