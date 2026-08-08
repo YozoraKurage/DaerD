@@ -863,14 +863,14 @@ namespace Yozolab.DaerD
             {
                 Undo.RegisterCompleteObjectUndo(controller, "Async Sync");
 
-                EnsureParameter(controller, NetworkSyncBuilder.IsLocalParameter,
+                DbtBuilder.EnsureParameter(controller, NetworkSyncBuilder.IsLocalParameter,
                     AnimatorControllerParameterType.Bool);
                 var generated = GeneratedParameters(r);
                 foreach (var (name, type) in generated)
-                    EnsureParameter(controller, name, type);
+                    DbtBuilder.EnsureParameter(controller, name, type);
                 // The request flags are animator-local machinery: created, never synced.
                 foreach (var (name, type) in RequestParameters(r))
-                    EnsureParameter(controller, name, type);
+                    DbtBuilder.EnsureParameter(controller, name, type);
 
                 AnimatorStateMachine stateMachine;
                 if (r.layerIndex >= 0)
@@ -1127,13 +1127,6 @@ namespace Yozolab.DaerD
             foreach (var child in stateMachine.stateMachines)
                 if (child.stateMachine != null)
                     stateMachine.RemoveStateMachine(child.stateMachine);
-        }
-
-        static void EnsureParameter(AnimatorController controller, string name,
-            AnimatorControllerParameterType type)
-        {
-            if (DbtBuilder.FindParameter(controller, name) == null)
-                controller.AddParameter(name, type);
         }
     }
 }
