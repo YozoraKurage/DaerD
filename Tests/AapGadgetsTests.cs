@@ -734,6 +734,37 @@ namespace Yozolab.DaerD.Tests
             Assert.IsNotNull(AapGadgets.Validate(collision));
         }
 
+        /// <summary>The supporting-layer names a caller can ask for have to be the names the
+        /// builders actually take: anything that regenerates removes them by name first, and
+        /// a miss would leave the old layer running beside the new one, both writing the
+        /// same output.</summary>
+        [Test]
+        public void SupportingLayerNames_MatchTheLayersTheGadgetsCreate()
+        {
+            var withLayers = new[]
+            {
+                AapGadgets.Kind.Reciprocal, AapGadgets.Kind.Divide, AapGadgets.Kind.FrameTime,
+                AapGadgets.Kind.Sine, AapGadgets.Kind.Cosine, AapGadgets.Kind.Tangent,
+            };
+            foreach (var kind in withLayers)
+            {
+                var controller = NewController("A", "B");
+                var request = NewRequest(controller, kind);
+                Assert.IsTrue(AapGadgets.Apply(request), kind.ToString());
+
+                var names = AapGadgets.SupportingLayerNames(request);
+                Assert.AreEqual(1, names.Length, kind.ToString());
+                // FindLayer fails the test when the name isn't there.
+                Assert.IsNotNull(FindLayer(controller, names[0]), kind.ToString());
+                Object.DestroyImmediate(controller);
+            }
+
+            var plain = NewController("A", "B");
+            Assert.IsEmpty(AapGadgets.SupportingLayerNames(NewRequest(plain, AapGadgets.Kind.Multiply)),
+                "a gadget that fits in the tree brings no layer");
+            Object.DestroyImmediate(plain);
+        }
+
         [Test]
         public void SetNormalizedBlendValues_FlipsTheHiddenFlag()
         {

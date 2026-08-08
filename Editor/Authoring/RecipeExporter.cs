@@ -13,12 +13,20 @@ namespace Yozolab.DaerD.Authoring
     /// call sequence whose result can be diffed against the original — that replayed builder
     /// comes back in the result for the tests to verify. Assets become [SerializeField]
     /// fields (pre-assigned on the generated .asset), never GUIDs in code.
+    ///
+    /// Two files come out, halves of one partial class: the generated one, rewritten whole on
+    /// every export, and a hand half written only when it doesn't exist yet. The split is what
+    /// makes the round trip survivable — export, reshape the code, Generate, export again —
+    /// since the re-export lands next to the reshaped half instead of on top of it.
     /// </summary>
     static class RecipeExporter
     {
         public class Result
         {
+            /// <summary>The generated half ("&lt;Name&gt;.Generated.cs") — always rewritten.</summary>
             public string code;
+            /// <summary>The hand half ("&lt;Name&gt;.cs") — only written when it doesn't exist yet.</summary>
+            public string handHalf;
             public string className;
             public readonly List<FieldRef> fields = new List<FieldRef>();
             public readonly List<string> warnings = new List<string>();
@@ -71,7 +79,8 @@ namespace Yozolab.DaerD.Authoring
             new Driver(builder, ir, result.warnings).Run();
             result.warnings.AddRange(builder.Bake());
 
-            result.code = Compose(script, className, namespaceName, controller, result);
+            result.code = ComposeGenerated(script, className, namespaceName, controller, result);
+            result.handHalf = ComposeHandHalf(className, namespaceName);
             return result;
         }
 
@@ -185,6 +194,16 @@ namespace Yozolab.DaerD.Authoring
                         continue;
                     }
                     _c.Script.Comment(Header("Layer: " + layer.name));
+                    // A gadget layer exports as the raw tree it is — accurate, and a wall of
+                    // children nobody edits by hand. The calls that build this kind of layer
+                    // are right there in the API, so point at them where the wall starts.
+                    if (IsGadgetShapedLayer(layer.machine))
+                    {
+                        _c.Script.Comment("Direct blend tree (DBT gadget) layer. The gadget calls that"
+                            + " build this kind of layer");
+                        _c.Script.Comment("(c.Gadgets(\"" + layer.name
+                            + "\").Multiply / .Remap / .Smooth / .Lut1D …) edit better than the tree below.");
+                    }
 
                     var lb = _c.Layer(layer.name);
                     if (layer.defaultWeight != 1f) lb.WithWeight(layer.defaultWeight);
@@ -228,6 +247,16 @@ namespace Yozolab.DaerD.Authoring
                     }
                     _c.Script.EndPack();
                 }
+            }
+
+            /// <summary>The shape every DBT gadget layer has: one state, playing a Direct
+            /// blend tree, and nothing else in the machine.</summary>
+            static bool IsGadgetShapedLayer(ControllerIR.Machine machine)
+            {
+                if (machine == null || machine.machines.Count > 0 || machine.states.Count != 1)
+                    return false;
+                var tree = machine.states[0].tree;
+                return tree != null && tree.type == BlendTreeType.Direct;
             }
 
             // ---- parameter handles ------------------------------------------------
@@ -873,8 +902,7 @@ namespace Yozolab.DaerD.Authoring
         // ---- composing the file --------------------------------------------------
 
         const string CheatSheet =
-@"// DaerD recipe — edit this file, then press Generate on the recipe asset.
-// AnimatorAsCode-style API (Yozolab.DaerD.Authoring), quick reference:
+@"// AnimatorAsCode-style API (Yozolab.DaerD.Authoring), quick reference:
 //   Parameters   var go = c.BoolParameter(""Go"");   var x = c.FloatParameter(""X"", 0.5f);
 //                c.IntParameter(""N"");   c.TriggerParameter(""Fire"");
 //   Layers       var fx = c.Layer(""Name"").WithWeight(1).Additive().WithAvatarMask(mask);
@@ -895,16 +923,32 @@ namespace Yozolab.DaerD.Authoring
 //                Direct: .Direct() + .WithAnimation(clip, weightParam);  extras: t.LastChild.TimeScale(2)
 //   Drivers      s.Drives(n, 1).DrivingIncreases(x, 0.1f).DrivingCopies(a, b).DrivingLocally()
 //                    .DrivingRemaps(a, 0, 1, b, -1, 1).DrivingRandomizes(x, 0, 1);
+//   Gadgets      c.Gadgets(""DBT"").Multiply(a, b, ""A*B"").Remap(x, ""X01"", -1, 1, 0, 1)
+//                    .Smooth(x, ""X/Smoothed"", ""X/Smoothing"").Buffer(x, ""X/Late"", 2);
+//                (the per-frame float math from the Add menu; its layer is rebuilt each time)
+//   Async sync   c.AsyncSync().Targets(""Hue"", ""Outfit"").Rate(""Hue"", 2).Requestable(""Hue"")
+//                    .Schedule(""Hue"", ""Outfit"", ""Hue"");   // explicit cycle, wizard has none
 //   Fallbacks    s.BehaviourJson(typeName, json);   c.Raw(controller => { /* full API */ });
 // Assets are the [SerializeField] fields below — assign them on the recipe asset.
-// This Build method is ordinary C#: loops, helpers and interpolation all work here.";
+// A build body is ordinary C#: loops, helpers and interpolation all work in your half.";
 
-        static string Compose(RecipeScript script, string className, string namespaceName,
+        /// <summary>
+        /// The exporter's half: fields and BuildGenerated, rewritten whole on every export.
+        /// It is deliberately the file nobody edits — that is what lets the other half be
+        /// reshaped freely, and what makes its own git diff a clean report of what changed in
+        /// the controller since the last export.
+        /// </summary>
+        static string ComposeGenerated(RecipeScript script, string className, string namespaceName,
             AnimatorController controller, Result result)
         {
             var sb = new StringBuilder();
             sb.AppendLine("// <auto-generated> Exported from \"" + controller.name
-                + "\" by DaerD. Safe to edit — this file is yours now. </auto-generated>");
+                + "\" by DaerD. </auto-generated>");
+            sb.AppendLine("// DO NOT EDIT — every export overwrites this file. Your half is "
+                + className + ".cs:");
+            sb.AppendLine("// its Build() is what Generate runs, and DaerD never touches it. After a re-export,");
+            sb.AppendLine("// diff this file, carry what changed into yours, then press Compare on the recipe");
+            sb.AppendLine("// asset — it passes when both halves declare the same controller.");
             sb.AppendLine(CheatSheet);
             sb.AppendLine();
             sb.AppendLine("using UnityEditor.Animations;");
@@ -920,14 +964,14 @@ namespace Yozolab.DaerD.Authoring
                 sb.AppendLine("{");
             }
 
-            sb.AppendLine(indent + "public class " + className + " : ControllerRecipe");
+            sb.AppendLine(indent + "public partial class " + className + " : ControllerRecipe");
             sb.AppendLine(indent + "{");
             foreach (var field in result.fields)
                 sb.AppendLine(indent + "    [SerializeField] " + field.fieldType + " "
                     + field.fieldName + ";");
             if (result.fields.Count > 0) sb.AppendLine();
 
-            sb.AppendLine(indent + "    protected override void Build(ControllerBuilder c)");
+            sb.AppendLine(indent + "    protected override void BuildGenerated(ControllerBuilder c)");
             sb.AppendLine(indent + "    {");
             var body = StripUnusedVariables(script.Lines);
             while (body.Count > 0 && body[0].Length == 0) body.RemoveAt(0);
@@ -935,6 +979,49 @@ namespace Yozolab.DaerD.Authoring
             foreach (var line in body)
                 sb.AppendLine(line.Length == 0 ? string.Empty : indent + "        " + line);
             sb.AppendLine(indent + "    }");
+            sb.AppendLine(indent + "}");
+            if (hasNamespace) sb.AppendLine("}");
+            return sb.ToString();
+        }
+
+        /// <summary>First line of a hand half, so the exporter can tell one from a recipe
+        /// written before the split (which carries the fields and Build the generated half
+        /// now owns, and would collide with it).</summary>
+        public const string HandHalfMarker = "// <daerd-recipe>";
+
+        /// <summary>
+        /// Your half: a Build that delegates to the generated one, and nothing else. Written
+        /// once, at the first export, and never overwritten afterwards — whatever it grows
+        /// into (loops, helpers, an AI's reshaping) is yours to keep. Delegating is the honest
+        /// starting point: a fresh export generates the right controller before anyone has
+        /// touched anything.
+        /// </summary>
+        static string ComposeHandHalf(string className, string namespaceName)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine(HandHalfMarker + " Hand half of " + className
+                + " — DaerD never overwrites this file. </daerd-recipe>");
+            sb.AppendLine("// " + className + ".Generated.cs is the exporter's half: rewritten on every export,");
+            sb.AppendLine("// with an API cheat sheet at the top. Shape this Build() however you like — loops,");
+            sb.AppendLine("// helpers, your own names — and press Compare on the recipe asset to check that it");
+            sb.AppendLine("// still declares the same controller as the export it came from.");
+            sb.AppendLine();
+            sb.AppendLine("using UnityEditor.Animations;");
+            sb.AppendLine("using UnityEngine;");
+            sb.AppendLine("using Yozolab.DaerD.Authoring;");
+            sb.AppendLine();
+
+            bool hasNamespace = !string.IsNullOrEmpty(namespaceName);
+            string indent = hasNamespace ? "    " : string.Empty;
+            if (hasNamespace)
+            {
+                sb.AppendLine("namespace " + namespaceName);
+                sb.AppendLine("{");
+            }
+
+            sb.AppendLine(indent + "public partial class " + className);
+            sb.AppendLine(indent + "{");
+            sb.AppendLine(indent + "    protected override void Build(ControllerBuilder c) => BuildGenerated(c);");
             sb.AppendLine(indent + "}");
             if (hasNamespace) sb.AppendLine("}");
             return sb.ToString();

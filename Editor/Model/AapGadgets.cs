@@ -150,6 +150,27 @@ namespace Yozolab.DaerD
         /// <summary>Intermediate parameter of a buffer chain: "output/1", "output/2", …</summary>
         public static string BufferStage(string output, int stage) => output + "/" + stage;
 
+        /// <summary>
+        /// The layers this request adds beside the blend tree child, under the exact names it
+        /// gives them. Anything that regenerates — a recipe rebuilds its gadget layer on every
+        /// Generate — needs them by name: the builders take a free name when one is taken, so
+        /// a leftover copy wouldn't be replaced but joined by a numbered twin still writing
+        /// the same output.
+        /// </summary>
+        public static string[] SupportingLayerNames(Request r)
+        {
+            switch (r.kind)
+            {
+                case Kind.Reciprocal: return new[] { ReciprocalLayerName(r.output) };
+                case Kind.Divide: return new[] { ReciprocalLayerName(InverseParameter(r.output)) };
+                case Kind.FrameTime: return new[] { ClockLayerName(r.output) };
+                case Kind.Sine:
+                case Kind.Cosine:
+                case Kind.Tangent: return new[] { TrigLayerName(r.kind, r.output) };
+                default: return new string[0];
+            }
+        }
+
         /// <summary>Human-readable reason the request can't run, or null when it can.</summary>
         public static string Validate(Request r)
         {
@@ -224,11 +245,14 @@ namespace Yozolab.DaerD
             newLayerName = r.newLayerName,
         };
 
-        /// <summary>Runs the (pre-validated) request; returns false when validation fails.</summary>
-        public static bool Apply(Request r)
+        /// <summary>Runs the (pre-validated) request; returns false when validation fails.
+        /// Turning <paramref name="commitSubAssets"/> off leaves the flush to the caller: a
+        /// batch that applies several gadgets in a row pays one reimport at the end instead
+        /// of one per gadget.</summary>
+        public static bool Apply(Request r, bool commitSubAssets = true)
         {
             if (r.kind == Kind.Smooth)
-                return AapSmoothing.Apply(ToSmoothingRequest(r));
+                return AapSmoothing.Apply(ToSmoothingRequest(r), commitSubAssets);
 
             if (Validate(r) != null) return false;
             var controller = r.controller;
@@ -257,7 +281,7 @@ namespace Yozolab.DaerD
                 EditorUtility.SetDirty(controller);
             }
             // Everything the gadget built is a sub-asset; one flush shows the whole batch.
-            DbtBuilder.CommitSubAssets(controller);
+            if (commitSubAssets) DbtBuilder.CommitSubAssets(controller);
             return true;
         }
 
@@ -472,6 +496,8 @@ namespace Yozolab.DaerD
             return tree;
         }
 
+        static string ReciprocalLayerName(string output) => output + " 1/x";
+
         /// <summary>
         /// The 0 &lt; x &lt; 1 half of <see cref="Reciprocal"/>. A state whose motion time is the
         /// input plays a curve that holds span/t; the clip spans exactly that many seconds, so
@@ -480,7 +506,7 @@ namespace Yozolab.DaerD
         /// </summary>
         static void BuildReciprocalLayer(AnimatorController c, string input, string output)
         {
-            var stateMachine = AddSupportingLayer(c, output + " 1/x");
+            var stateMachine = AddSupportingLayer(c, ReciprocalLayerName(output));
 
             var curve = new AnimationCurve();
             for (int i = 1; i <= ReciprocalSamples; i++)
@@ -507,7 +533,7 @@ namespace Yozolab.DaerD
         /// more frame of lag on top of its two — the multiply reads last frame's reciprocal.</summary>
         public static BlendTree Divide(AnimatorController c, string a, string b, string output, string one)
         {
-            string inverse = output + "/Inv";
+            string inverse = InverseParameter(output);
             DbtBuilder.EnsureFloatParameter(c, output, 0f);
 
             var tree = DbtBuilder.DirectTree(c, Name("Div", a, b));
@@ -515,6 +541,10 @@ namespace Yozolab.DaerD
             DbtBuilder.AddDirectChild(tree, Multiply(c, a, inverse, output), one);
             return tree;
         }
+
+        /// <summary>Where <see cref="Divide"/> keeps the divisor's reciprocal — and so the
+        /// output name the supporting layer of that inner gadget is named after.</summary>
+        static string InverseParameter(string output) => output + "/Inv";
 
         // ---- frame time --------------------------------------------------------
 
@@ -550,9 +580,11 @@ namespace Yozolab.DaerD
             return tree;
         }
 
+        static string ClockLayerName(string output) => output + " Clock";
+
         static void BuildClockLayer(AnimatorController c, string output, string clock)
         {
-            var stateMachine = AddSupportingLayer(c, output + " Clock");
+            var stateMachine = AddSupportingLayer(c, ClockLayerName(output));
             // One unit per second. The tangents carry the same slope, so the ramp between the
             // two keys stays exactly linear instead of easing at its ends.
             var curve = new AnimationCurve(
@@ -696,6 +728,12 @@ namespace Yozolab.DaerD
         const int TrigSamples = 64;
         const float TangentLimit = 100f;
 
+        static string TrigLabel(Kind kind) =>
+            kind == Kind.Sine ? "sin" : kind == Kind.Cosine ? "cos" : "tan";
+
+        static string TrigLayerName(Kind kind, string output) =>
+            output + " " + TrigLabel(kind) + "(x)";
+
         /// <summary>
         /// sin / cos / tan of the input, as a curve read by motion time: the state's normalized
         /// time IS the input, so 0..1 walks one whole period (0 to 2π) of a one-second clip.
@@ -704,8 +742,8 @@ namespace Yozolab.DaerD
         /// </summary>
         static void BuildTrigonometryLayer(AnimatorController c, Kind kind, string input, string output)
         {
-            string label = kind == Kind.Sine ? "sin" : kind == Kind.Cosine ? "cos" : "tan";
-            var stateMachine = AddSupportingLayer(c, output + " " + label + "(x)");
+            string label = TrigLabel(kind);
+            var stateMachine = AddSupportingLayer(c, TrigLayerName(kind, output));
 
             var curve = new AnimationCurve();
             for (int i = 0; i <= TrigSamples; i++)

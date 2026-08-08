@@ -26,6 +26,10 @@ namespace Yozolab.DaerD.Authoring
             new List<Func<AnimatorController, List<string>>>();
         internal readonly List<string> Notes = new List<string>();
         internal readonly List<Action> PostBakeSyncs = new List<Action>();
+        /// <summary>Layers a post step generated (async sync, gadgets). They belong to the
+        /// recipe as much as the declared ones — the next Generate rebuilds them by name —
+        /// so they carry the same ownership mark.</summary>
+        internal readonly List<string> PostLayers = new List<string>();
         internal RecipeScript Script;
 
         // ---- parameters ----------------------------------------------------------
@@ -150,6 +154,29 @@ namespace Yozolab.DaerD.Authoring
         /// </summary>
         public AsyncSyncRecipeBuilder AsyncSync(string baseName = null) =>
             new AsyncSyncRecipeBuilder(this, baseName);
+
+        /// <summary>
+        /// DBT (AAP) gadgets — the per-frame float math from the parameter panel's Add menu —
+        /// as a post step, collected into one Direct blend tree layer named
+        /// <paramref name="layerName"/>. The layer is rebuilt from scratch on every Generate;
+        /// see <see cref="GadgetRecipeBuilder"/> for what that sweeps.
+        ///
+        ///   c.Gadgets("Math").Multiply(hue, gain, "Hue/Scaled")
+        ///                    .Smooth("Hue/Scaled", "Hue/Smoothed", "Hue/Smoothing");
+        /// </summary>
+        public GadgetRecipeBuilder Gadgets(string layerName = "DBT")
+        {
+            // Idempotent like a parameter handle: naming the same layer twice keeps adding to
+            // the same one. A second builder over the same name would sweep away what the
+            // first one built — its rebuild starts by clearing that layer.
+            string name = string.IsNullOrEmpty(layerName) ? "DBT" : layerName;
+            if (!_gadgets.TryGetValue(name, out var builder))
+                _gadgets[name] = builder = new GadgetRecipeBuilder(this, name);
+            return builder;
+        }
+
+        readonly Dictionary<string, GadgetRecipeBuilder> _gadgets =
+            new Dictionary<string, GadgetRecipeBuilder>();
 
         // ---- bake ---------------------------------------------------------------
 

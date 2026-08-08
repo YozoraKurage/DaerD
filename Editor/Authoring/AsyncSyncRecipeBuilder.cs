@@ -67,6 +67,13 @@ namespace Yozolab.DaerD.Authoring
                     return warnings;
                 }
                 AsyncSyncBuilder.Apply(_request);
+                // The generated layer is the recipe's: the next Generate rebuilds it, which
+                // is what the layer list's ownership badge and the panels' "add it in the
+                // recipe instead" hints are there to say.
+                string layer = string.IsNullOrEmpty(_request.layerName)
+                    ? _request.baseName : _request.layerName;
+                if (!root.PostLayers.Contains(layer)) root.PostLayers.Add(layer);
+
                 warnings.AddRange(AsyncSyncBuilder.Warnings(_request));
                 return warnings;
             });

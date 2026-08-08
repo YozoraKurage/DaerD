@@ -7,8 +7,24 @@ using Yozolab.DaerD.Authoring;
 
 namespace Yozolab.DaerD.Tests
 {
-    /// <summary>Recipe whose Build body is injected per test.</summary>
+    /// <summary>Recipe whose halves are injected per test: <see cref="body"/> is the hand
+    /// half that runs, <see cref="generated"/> stands in for the exported one.</summary>
     class TestRecipe : ControllerRecipe
+    {
+        public Action<ControllerBuilder> body;
+        public Action<ControllerBuilder> generated;
+
+        protected override void Build(ControllerBuilder c) => body?.Invoke(c);
+
+        protected override void BuildGenerated(ControllerBuilder c)
+        {
+            if (generated != null) generated(c);
+            else base.BuildGenerated(c);
+        }
+    }
+
+    /// <summary>A hand-written recipe — no exported half to compare against.</summary>
+    class PlainTestRecipe : ControllerRecipe
     {
         public Action<ControllerBuilder> body;
         protected override void Build(ControllerBuilder c) => body?.Invoke(c);
@@ -449,6 +465,141 @@ namespace Yozolab.DaerD.Tests
             recipe.Generate();
             Assert.AreEqual(layers, controller.layers.Length,
                 "regenerating must rebuild the same layer in place, not stack another");
+        }
+
+        [Test]
+        public void Gadgets_FromARecipe_CollectIntoOneLayer_AndRegenerateInPlace()
+        {
+            var controller = Track(new AnimatorController());
+            var recipe = NewRecipe(controller, c =>
+            {
+                var x = c.FloatParameter("X");
+                var y = c.FloatParameter("Y");
+                // Declared because the rest of the recipe reads it back; the gadget still
+                // owns the name, and the layer's rebuild recreates it.
+                var product = c.FloatParameter("X*Y");
+                var fx = c.Layer("Base");
+                var idle = fx.NewState("Idle");
+                var lit = fx.NewState("Lit");
+                idle.TransitionsTo(lit).When(product.IsGreaterThan(0.5f));
+
+                c.Gadgets("Math")
+                    .Multiply(x, y, product)        // a handle …
+                    .Buffer(x, "X/Late", 2)         // … or a bare name
+                    .Reciprocal(y, "Y/Inverse");
+            });
+
+            var warnings = recipe.Generate();
+            Assert.IsEmpty(warnings, string.Join("\n", warnings));
+
+            int math = IndexOfLayer(controller, "Math");
+            Assert.GreaterOrEqual(math, 0);
+            // The reciprocal's supporting layer covers the half the tree can't compute, so
+            // it only works while it sits after the tree that wrote the other half.
+            Assert.Greater(IndexOfLayer(controller, "Y/Inverse 1/x"), math);
+
+            var root = (BlendTree)controller.layers[math].stateMachine.states[0].state.motion;
+            Assert.AreEqual(BlendTreeType.Direct, root.blendType);
+            Assert.AreEqual(3, root.children.Length, "one child per gadget, all in one layer");
+            Assert.IsNotNull(DbtBuilder.FindParameter(controller, "X*Y"));
+            Assert.IsNotNull(DbtBuilder.FindParameter(controller, "X/Late/1"), "the buffer's stage");
+            Assert.IsNotNull(DbtBuilder.FindParameter(controller, "Y/Inverse/Shift"));
+            Assert.IsTrue(new List<string>(recipe.OwnedLayers).Contains("Math"),
+                "a generated gadget layer belongs to the recipe like a declared one");
+
+            // Repeatability is the point of the sweep: gadgets refuse to write an output that
+            // already exists, and the layers would otherwise stack a copy per Generate.
+            int layers = controller.layers.Length;
+            var second = recipe.Generate();
+            Assert.IsEmpty(second, string.Join("\n", second));
+            Assert.AreEqual(layers, controller.layers.Length);
+            root = (BlendTree)controller.layers[IndexOfLayer(controller, "Math")]
+                .stateMachine.states[0].state.motion;
+            Assert.AreEqual(3, root.children.Length, "…and the layer's contents don't stack either");
+        }
+
+        [Test]
+        public void Gadgets_ReportAFailedRequest_AndRunTheRestOfTheLayer()
+        {
+            var controller = Track(new AnimatorController());
+            var recipe = NewRecipe(controller, c =>
+            {
+                var x = c.FloatParameter("X");
+                c.BoolParameter("Flag");
+                c.Layer("Base").NewState("S");
+                c.Gadgets("Math")
+                    .Not("Flag", "Flag/Not")                  // Bool input: gadgets read Floats
+                    .Remap(x, "X01", -1f, 1f, 0f, 1f);
+            });
+
+            var warnings = recipe.Generate();
+            Assert.AreEqual(1, warnings.Count, string.Join("\n", warnings));
+            Assert.IsTrue(warnings[0].Contains("Flag/Not") && warnings[0].Contains("Math"),
+                warnings[0]);
+
+            Assert.IsNull(DbtBuilder.FindParameter(controller, "Flag/Not"));
+            Assert.IsNotNull(DbtBuilder.FindParameter(controller, "X01"),
+                "one bad request must not take the whole layer down with it");
+        }
+
+        /// <summary>Reshaping the hand half is the point of the split, so the check has to
+        /// pass on code that reads nothing like the export and fail on code that builds
+        /// something else — it compares what the halves declare, not how they read.</summary>
+        [Test]
+        public void Compare_PassesOnAReshapedHalf_AndCatchesRealDrift()
+        {
+            var controller = Track(new AnimatorController());
+            var recipe = NewRecipe(controller, c =>
+            {
+                // The hand half, reshaped into a loop.
+                c.FloatParameter("X");
+                var layer = c.Layer("L");
+                for (int i = 1; i <= 3; i++)
+                    layer.NewState("S" + i).At(0f, i * 100f);
+            });
+            recipe.generated = c =>
+            {
+                // What the exporter would have written: every state spelled out.
+                c.FloatParameter("X");
+                var layer = c.Layer("L");
+                var s1 = layer.NewState("S1");
+                var s2 = layer.NewState("S2");
+                var s3 = layer.NewState("S3");
+                s1.At(0f, 100f);
+                s2.At(0f, 200f);
+                s3.At(0f, 300f);
+            };
+
+            var clean = recipe.Compare();
+            Assert.IsEmpty(clean, string.Join("\n", clean));
+
+            // A half that declares something else does not slip through.
+            recipe.body = c =>
+            {
+                c.FloatParameter("X");
+                var layer = c.Layer("L");
+                for (int i = 1; i <= 3; i++)
+                    layer.NewState(i == 2 ? "Oops" : "S" + i).At(0f, i * 100f);
+            };
+            Assert.IsNotEmpty(recipe.Compare());
+        }
+
+        [Test]
+        public void Compare_SaysSoWhenTheRecipeHasNoExportedHalf()
+        {
+            var recipe = ScriptableObject.CreateInstance<PlainTestRecipe>();
+            _cleanup.Add(recipe);
+            recipe.body = c => c.Layer("L").NewState("S");
+
+            Assert.IsFalse(recipe.HasGeneratedHalf);
+            Assert.AreEqual(1, recipe.Compare().Count);
+        }
+
+        static int IndexOfLayer(AnimatorController controller, string name)
+        {
+            for (int i = 0; i < controller.layers.Length; i++)
+                if (controller.layers[i].name == name) return i;
+            return -1;
         }
 
         static AnimatorState FindState(AnimatorStateMachine sm, string name)

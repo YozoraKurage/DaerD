@@ -81,8 +81,10 @@ namespace Yozolab.DaerD
             return null;
         }
 
-        /// <summary>Runs the (pre-validated) request; returns false when validation fails.</summary>
-        public static bool Apply(Request r)
+        /// <summary>Runs the (pre-validated) request; returns false when validation fails.
+        /// <paramref name="commitSubAssets"/> off leaves the flush to the caller — see
+        /// <see cref="AapGadgets.Apply"/>.</summary>
+        public static bool Apply(Request r, bool commitSubAssets = true)
         {
             if (Validate(r) != null) return false;
             var controller = r.controller;
@@ -118,7 +120,7 @@ namespace Yozolab.DaerD
                 EditorUtility.SetDirty(controller);
             }
             // The clips and trees above are sub-assets; one flush shows the whole batch.
-            DbtBuilder.CommitSubAssets(controller);
+            if (commitSubAssets) DbtBuilder.CommitSubAssets(controller);
             return true;
         }
     }
