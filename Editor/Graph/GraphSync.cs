@@ -1543,12 +1543,12 @@ namespace Yozolab.DaerD
                     {
                         t = state.AddExitTransition();
                     }
-                    else if (snap.destinationState != null && IsStateInStateMachine(snap.destinationState, sm))
+                    else if (snap.destinationState != null && sm.ContainsState(snap.destinationState))
                     {
                         if (snap.destinationState == state) continue;
                         t = state.AddTransition(snap.destinationState);
                     }
-                    else if (snap.destinationStateMachine != null && IsStateMachineInStateMachine(snap.destinationStateMachine, sm))
+                    else if (snap.destinationStateMachine != null && sm.ContainsStateMachine(snap.destinationStateMachine))
                     {
                         t = state.AddTransition(snap.destinationStateMachine);
                     }
@@ -1589,13 +1589,13 @@ namespace Yozolab.DaerD
                     {
                         case TransitionClipboard.SourceKind.State:
                             if (snap.sourceState == null || snap.sourceState == state) break;
-                            if (!IsStateInStateMachine(snap.sourceState, sm)) break;
+                            if (!sm.ContainsState(snap.sourceState)) break;
                             Undo.RegisterCompleteObjectUndo(snap.sourceState, "Paste Transition");
                             t = snap.sourceState.AddTransition(state);
                             break;
                         case TransitionClipboard.SourceKind.SubStateMachine:
                             if (snap.sourceStateMachine == null) break;
-                            if (!IsStateMachineInStateMachine(snap.sourceStateMachine, sm)) break;
+                            if (!sm.ContainsStateMachine(snap.sourceStateMachine)) break;
                             t = sm.AddStateMachineTransition(snap.sourceStateMachine, state);
                             break;
                         case TransitionClipboard.SourceKind.AnyState:
@@ -1615,22 +1615,6 @@ namespace Yozolab.DaerD
 
             Rebuild();
             if (created.Count > 0) _context.Select(created[0]);
-        }
-
-        static bool IsStateInStateMachine(AnimatorState target, AnimatorStateMachine sm)
-        {
-            if (target == null || sm == null) return false;
-            foreach (var cs in sm.states)
-                if (cs.state == target) return true;
-            return false;
-        }
-
-        static bool IsStateMachineInStateMachine(AnimatorStateMachine target, AnimatorStateMachine sm)
-        {
-            if (target == null || sm == null) return false;
-            foreach (var cm in sm.stateMachines)
-                if (cm.stateMachine == target) return true;
-            return false;
         }
 
         // ---- highlighting ----------------------------------------------------

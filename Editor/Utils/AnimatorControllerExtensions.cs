@@ -100,6 +100,24 @@ namespace Yozolab.DaerD
             }
         }
 
+        /// <summary>True when the state is a DIRECT child of the state machine (not nested deeper).</summary>
+        public static bool ContainsState(this AnimatorStateMachine sm, AnimatorState target)
+        {
+            if (target == null || sm == null) return false;
+            foreach (var cs in sm.states)
+                if (cs.state == target) return true;
+            return false;
+        }
+
+        /// <summary>True when the machine is a DIRECT child of the state machine (not nested deeper).</summary>
+        public static bool ContainsStateMachine(this AnimatorStateMachine sm, AnimatorStateMachine target)
+        {
+            if (target == null || sm == null) return false;
+            foreach (var cm in sm.stateMachines)
+                if (cm.stateMachine == target) return true;
+            return false;
+        }
+
         /// <summary>
         /// True when <paramref name="root"/> is, or nests (at any depth), <paramref name="target"/>.
         /// Safe to call on trees that already contain reference cycles.
