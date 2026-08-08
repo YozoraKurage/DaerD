@@ -727,5 +727,51 @@ namespace Yozolab.DaerD.Tests
             Object.DestroyImmediate(clip);
             Object.DestroyImmediate(controller);
         }
+
+        [Test]
+        public void Apply_WithNoDesignatedClip_CreatesTheEmptyClipInsideTheController()
+        {
+            const string path = "Assets/DaerDAsyncSyncEmptyClipTest.controller";
+            AssetDatabase.CreateAsset(new AnimatorController(), path);
+            try
+            {
+                var controller = AssetDatabase.LoadAssetAtPath<AnimatorController>(path);
+                controller.AddLayer("Base");
+                controller.AddParameter("F", AnimatorControllerParameterType.Float);
+                controller.AddParameter("B", AnimatorControllerParameterType.Bool);
+                controller.AddParameter("I", AnimatorControllerParameterType.Int);
+
+                var request = NewRequest(controller, "F", "B", "I");
+                request.stepSeconds = 0.3f;
+                Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+                var created = GraphFrameData.GetEmptyClip(controller);
+                Assert.IsNotNull(created, "nothing was designated, so applying should create the clip");
+                Assert.Greater(created.length, 0f, "exit times are normalized to the motion");
+                Assert.AreEqual(AssetDatabase.GetAssetPath(controller), AssetDatabase.GetAssetPath(created),
+                    "the clip lives inside the .controller");
+
+                var sm = controller.layers[controller.layers.Length - 1].stateMachine;
+                foreach (var child in sm.states)
+                    Assert.AreSame(created, child.state.motion,
+                        "state '" + child.state.name + "' has no motion");
+                // The generated clip is 1 s long, so the normalized dwell reads as the step itself.
+                Assert.AreEqual(0.3f / 1f, FindState(sm, "Send F").transitions[0].exitTime, 0.0001f);
+
+                // Regenerating reuses the designated clip instead of stacking one clip per run.
+                var again = NewRequest(controller, "F", "B", "I");
+                again.layerIndex = controller.layers.Length - 1;
+                Assert.IsTrue(AsyncSyncBuilder.Apply(again));
+                Assert.AreSame(created, GraphFrameData.GetEmptyClip(controller));
+                int clips = 0;
+                foreach (var asset in AssetDatabase.LoadAllAssetsAtPath(path))
+                    if (asset is AnimationClip) clips++;
+                Assert.AreEqual(1, clips, "the second run reused the clip");
+            }
+            finally
+            {
+                AssetDatabase.DeleteAsset(path);
+            }
+        }
     }
 }
