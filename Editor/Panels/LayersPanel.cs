@@ -324,7 +324,7 @@ namespace Yozolab.DaerD
         {
             var controller = Context.Controller;
             Undo.RegisterCompleteObjectUndo(controller, "Add Layer");
-            controller.AddLayer(MakeUniqueLayerName(controller, "New Layer"));
+            controller.AddLayer(DbtBuilder.UniqueLayerName(controller, "New Layer"));
             var layers = controller.layers;
             layers[layers.Length - 1].defaultWeight = 1f;
             controller.layers = layers;
@@ -377,7 +377,7 @@ namespace Yozolab.DaerD
             {
                 Undo.RegisterCompleteObjectUndo(controller, "Duplicate Layer");
                 var src = controller.layers[idx];
-                controller.AddLayer(MakeUniqueLayerName(controller, src.name + " Copy"));
+                controller.AddLayer(DbtBuilder.UniqueLayerName(controller, src.name + " Copy"));
                 var layers = controller.layers;
                 int newIdx = layers.Length - 1;
                 layers[newIdx].defaultWeight = src.defaultWeight;
@@ -395,20 +395,6 @@ namespace Yozolab.DaerD
             }
             Context.NotifyLayersChanged();
             Context.SetLayer(controller.layers.Length - 1);
-        }
-
-        static string MakeUniqueLayerName(AnimatorController controller, string baseName)
-        {
-            bool Taken(string n)
-            {
-                foreach (var l in controller.layers)
-                    if (l.name == n) return true;
-                return false;
-            }
-            if (!Taken(baseName)) return baseName;
-            int i = 1;
-            while (Taken(baseName + " " + i)) i++;
-            return baseName + " " + i;
         }
     }
 }
