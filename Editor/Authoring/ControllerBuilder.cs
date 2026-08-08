@@ -368,6 +368,44 @@ namespace Yozolab.DaerD.Authoring
             return transition;
         }
 
+        // ---- behaviours on the machine itself -----------------------------------
+
+        /// <summary>
+        /// A StateMachineBehaviour on this machine (the layer's root, or a sub-machine) rather
+        /// than on a state — Unity allows both, and OnStateMachineEnter/Exit is the difference.
+        /// From an EditorJsonUtility snapshot, like the state-level fallback.
+        /// </summary>
+        public MachineScope BehaviourJson(string typeName, string json, string instanceName = null)
+        {
+            Machine.behaviours.Add(new ControllerIR.Behaviour
+            {
+                typeName = typeName,
+                json = json,
+                instanceName = instanceName ?? string.Empty,
+            });
+            // Never chained into the declaration line: this returns the base scope, so
+            // "var sub = main.NewSubStateMachine("Sub").BehaviourJson(…)" would type `sub` as
+            // MachineScope and the layout block's sub.At(x, y) would stop compiling.
+            Root.Script?.Call(this, instanceName == null
+                ? $"BehaviourJson({RecipeScript.S(typeName)}, {RecipeScript.S(json)})"
+                : $"BehaviourJson({RecipeScript.S(typeName)}, {RecipeScript.S(json)}, {RecipeScript.S(instanceName)})",
+                chain: false);
+            return this;
+        }
+
+        /// <summary>Escape hatch, as on a state: adds the behaviour and hands the live
+        /// instance to <paramref name="configure"/> at apply time.</summary>
+        public MachineScope Behaviour<T>(Action<T> configure) where T : StateMachineBehaviour
+        {
+            Machine.behaviours.Add(new ControllerIR.Behaviour
+            {
+                typeName = typeof(T).Name,
+                configure = configure == null ? (Action<StateMachineBehaviour>)null
+                    : b => configure((T)b),
+            });
+            return this;
+        }
+
         public MachineScope EntryAt(float x, float y)
         {
             Machine.entryPosition = new Vector3(x, y, 0f);
@@ -500,6 +538,32 @@ namespace Yozolab.DaerD.Authoring
             { statePath = statePath, motion = motion });
             _root.Script?.Call(this,
                 $"Override({RecipeScript.S(statePath)}, {_root.Script.AssetRef(motion)})");
+            return this;
+        }
+
+        /// <summary>
+        /// Adds a behaviour this layer runs on a source-layer state instead of the source's
+        /// own — the behaviour half of a synced layer's overrides. Call once per behaviour;
+        /// they stack on that state in call order.
+        /// </summary>
+        public SyncedLayerBuilder OverrideBehaviourJson(string statePath, string typeName,
+            string json, string instanceName = null)
+        {
+            var entry = _layer.syncedBehaviours.Find(o => o.statePath == statePath);
+            if (entry == null)
+            {
+                entry = new ControllerIR.BehaviourOverride { statePath = statePath };
+                _layer.syncedBehaviours.Add(entry);
+            }
+            entry.behaviours.Add(new ControllerIR.Behaviour
+            {
+                typeName = typeName,
+                json = json,
+                instanceName = instanceName ?? string.Empty,
+            });
+            _root.Script?.Call(this, instanceName == null
+                ? $"OverrideBehaviourJson({RecipeScript.S(statePath)}, {RecipeScript.S(typeName)}, {RecipeScript.S(json)})"
+                : $"OverrideBehaviourJson({RecipeScript.S(statePath)}, {RecipeScript.S(typeName)}, {RecipeScript.S(json)}, {RecipeScript.S(instanceName)})");
             return this;
         }
     }

@@ -65,6 +65,17 @@ namespace Yozolab.DaerD
                     a.syncedMotions[i].motion, b.syncedMotions[i].motion, diffs);
             }
 
+            CompareCount(where + ": behaviour overrides",
+                a.syncedBehaviours.Count, b.syncedBehaviours.Count, diffs);
+            int behaviourOverrides = Mathf.Min(a.syncedBehaviours.Count, b.syncedBehaviours.Count);
+            for (int i = 0; i < behaviourOverrides; i++)
+            {
+                Field(where, "behaviour override state",
+                    a.syncedBehaviours[i].statePath, b.syncedBehaviours[i].statePath, diffs);
+                CompareBehaviours(where + " override '" + a.syncedBehaviours[i].statePath + "'",
+                    a.syncedBehaviours[i].behaviours, b.syncedBehaviours[i].behaviours, diffs);
+            }
+
             if ((a.machine == null) != (b.machine == null))
             {
                 diffs.Add(where + ": state machine present " + (a.machine != null) + " ≠ " + (b.machine != null));
@@ -82,6 +93,8 @@ namespace Yozolab.DaerD
             Field(where, "entry position", a.entryPosition, b.entryPosition, diffs);
             Field(where, "exit position", a.exitPosition, b.exitPosition, diffs);
             Field(where, "any-state position", a.anyStatePosition, b.anyStatePosition, diffs);
+
+            CompareBehaviours(where, a.behaviours, b.behaviours, diffs);
 
             CompareCount(where + ": states", a.states.Count, b.states.Count, diffs);
             int states = Mathf.Min(a.states.Count, b.states.Count);

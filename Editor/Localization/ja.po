@@ -1846,8 +1846,8 @@ msgstr "この Recipe を対象コントローラーに適用します（Undo �
 msgid "Async Sync '{0}': {1}"
 msgstr "巡回同期 '{0}': {1}"
 
-msgid "Behaviour type '{0}' was not found (SDK missing?) — skipped on state '{1}'."
-msgstr "Behaviour 型 '{0}' が見つかりません（SDK 未導入？）。State '{1}' への追加をスキップしました。"
+msgid "Behaviour type '{0}' was not found (SDK missing?) — skipped on '{1}'."
+msgstr "Behaviour 型 '{0}' が見つかりません（SDK 未導入？）。'{1}' への追加をスキップしました。"
 
 msgid "Class Name"
 msgstr "クラス名"

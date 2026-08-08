@@ -335,6 +335,9 @@ namespace Yozolab.DaerD.Authoring
                 if (layer.syncedLayerAffectsTiming) lb.AffectsTiming();
                 foreach (var entry in layer.syncedMotions)
                     lb.Override(entry.statePath, entry.motion);
+                foreach (var entry in layer.syncedBehaviours)
+                    foreach (var behaviour in entry.behaviours)
+                        lb.OverrideBehaviourJson(entry.statePath, behaviour.typeName, behaviour.json);
             }
 
             void CreateScope(MachineScope scope, ControllerIR.Machine machine,
@@ -344,6 +347,11 @@ namespace Yozolab.DaerD.Authoring
                 List<(MachineScope scope, ControllerIR.Machine machine)> scopes, FoldPlan plan)
             {
                 scopes.Add((scope, machine));
+                // Machine-level behaviours before the states, where they read as belonging to
+                // the machine rather than to whatever state happens to be emitted last.
+                foreach (var behaviour in machine.behaviours)
+                    scope.BehaviourJson(behaviour.typeName, behaviour.json);
+
                 foreach (var state in machine.states)
                 {
                     // A blend tree must exist as a variable before the state can reference it.

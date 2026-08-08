@@ -56,6 +56,8 @@ namespace Yozolab.DaerD.Tests
 
             var behaviour = (IRTestBehaviour)b.AddStateMachineBehaviour(typeof(IRTestBehaviour));
             behaviour.payload = "data";
+            // On the machine itself: the round-trip test below is what proves it survives.
+            ((IRTestBehaviour)sm.AddStateMachineBehaviour(typeof(IRTestBehaviour))).payload = "machine";
 
             var t = a.AddTransition(b);
             t.AddCondition(AnimatorConditionMode.If, 0f, "Go");
@@ -133,6 +135,8 @@ namespace Yozolab.DaerD.Tests
             StringAssert.Contains(".WithAnimation(clipA, 0.25f)", code);
             StringAssert.Contains(".WithAnimation(move)", code);
             StringAssert.Contains("BehaviourJson(\"IRTestBehaviour\"", code);
+            // The machine's own behaviour is emitted on the layer, not on a state.
+            StringAssert.Contains("main.BehaviourJson(\"IRTestBehaviour\"", code);
             // No GUIDs anywhere — assets are fields.
             StringAssert.DoesNotContain("guid", code.ToLowerInvariant());
         }

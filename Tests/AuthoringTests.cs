@@ -542,6 +542,33 @@ namespace Yozolab.DaerD.Tests
                 "one bad request must not take the whole layer down with it");
         }
 
+        /// <summary>A behaviour can sit on a state machine as well as on a state, and the
+        /// recipe API has to be able to say so — otherwise regenerating a layer silently
+        /// strips whatever the controller had there.</summary>
+        [Test]
+        public void MachineBehaviours_AreDeclarableOnALayerRootAndOnASubMachine()
+        {
+            var controller = Track(new AnimatorController());
+            var recipe = NewRecipe(controller, c =>
+            {
+                var layer = c.Layer("L");
+                layer.BehaviourJson("IRTestBehaviour", "{\"payload\":\"root\"}");
+                layer.NewState("S");
+                var sub = layer.NewSubStateMachine("Sub");
+                sub.BehaviourJson("IRTestBehaviour", "{\"number\":7}");
+                sub.NewState("Inner");
+            });
+
+            var warnings = recipe.Generate();
+            Assert.IsEmpty(warnings, string.Join("\n", warnings));
+
+            var machine = controller.layers[IndexOfLayer(controller, "L")].stateMachine;
+            Assert.AreEqual(1, machine.behaviours.Length);
+            Assert.AreEqual("root", ((IRTestBehaviour)machine.behaviours[0]).payload);
+            Assert.AreEqual(7,
+                ((IRTestBehaviour)machine.stateMachines[0].stateMachine.behaviours[0]).number);
+        }
+
         /// <summary>Reshaping the hand half is the point of the split, so the check has to
         /// pass on code that reads nothing like the export and fail on code that builds
         /// something else — it compares what the halves declare, not how they read.</summary>

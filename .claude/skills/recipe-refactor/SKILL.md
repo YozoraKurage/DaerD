@@ -52,7 +52,9 @@ protected override void Build(ControllerBuilder c) => BuildGenerated(c);
   - **同じ遷移元からの遷移の順**（評価優先度そのもの）。`AnyTransitionsTo` /
     `EntryTransitionsTo` / `TransitionsTo` / `Exits` を張る順を元と揃える。
     遷移元が異なる遷移同士の順序だけは自由に並べ替えてよい
-  - 1 ステート内のビヘイビアの順、1 遷移内の `When`/`And` 条件の順
+  - 1 ステート内のビヘイビアの順、1 遷移内の `When`/`And` 条件の順。
+    ステートマシンに付いた Behaviour（`main.BehaviourJson(...)` / `sub.BehaviourJson(...)`）は
+    **どのマシンに付いているか**を取り違えないこと。ステートの Behaviour とは別物
   - テーブル化するときは行の並び = 元の生成順。並びが不規則でも「元データどおり」と
     コメントして保存する
 - **`[SerializeField]` フィールドは Generated 側にある**。手編集側で再宣言しない

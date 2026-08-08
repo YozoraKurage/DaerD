@@ -50,15 +50,23 @@ namespace Yozolab.DaerD
             public bool syncedLayerAffectsTiming;
             /// <summary>Root state machine; null for synced layers (they don't own one).</summary>
             public Machine machine;
-            /// <summary>Synced-layer motion overrides, keyed by source-layer state path.
-            /// (Behaviour overrides are not carried — a documented limitation.)</summary>
+            /// <summary>Synced-layer motion overrides, keyed by source-layer state path.</summary>
             public readonly List<MotionOverride> syncedMotions = new List<MotionOverride>();
+            /// <summary>Synced-layer behaviour overrides, keyed the same way. Only states that
+            /// override something appear.</summary>
+            public readonly List<BehaviourOverride> syncedBehaviours = new List<BehaviourOverride>();
         }
 
         public class MotionOverride
         {
             public string statePath;
             public Motion motion;
+        }
+
+        public class BehaviourOverride
+        {
+            public string statePath;
+            public readonly List<Behaviour> behaviours = new List<Behaviour>();
         }
 
         public class Machine
@@ -70,6 +78,10 @@ namespace Yozolab.DaerD
             public Vector3 parentPosition;
             /// <summary>Layer-local path of this machine's default state; null when none.</summary>
             public string defaultState;
+            /// <summary>Behaviours on the machine itself — Unity allows them on a state
+            /// machine as much as on a state, and dropping them here would delete them from
+            /// the controller on the next Generate, without a diff to show for it.</summary>
+            public readonly List<Behaviour> behaviours = new List<Behaviour>();
             public readonly List<State> states = new List<State>();
             public readonly List<ChildMachine> machines = new List<ChildMachine>();
             public readonly List<Transition> anyStateTransitions = new List<Transition>();
@@ -255,9 +267,17 @@ namespace Yozolab.DaerD
                             if (motion != null)
                                 layer.syncedMotions.Add(new MotionOverride
                                 { statePath = pair.Value, motion = motion });
+
+                            var behaviours = source.GetOverrideBehaviours(pair.Key);
+                            if (behaviours == null || behaviours.Length == 0) continue;
+                            var entry = new BehaviourOverride { statePath = pair.Value };
+                            ParseBehaviours(behaviours, entry.behaviours);
+                            if (entry.behaviours.Count > 0) layer.syncedBehaviours.Add(entry);
                         }
                         // Deterministic order for diff and codegen.
                         layer.syncedMotions.Sort((a, b) =>
+                            string.CompareOrdinal(a.statePath, b.statePath));
+                        layer.syncedBehaviours.Sort((a, b) =>
                             string.CompareOrdinal(a.statePath, b.statePath));
                     }
                     continue;
@@ -316,6 +336,8 @@ namespace Yozolab.DaerD
                     && map.states.TryGetValue(sm.defaultState, out var dp) ? dp : null,
             };
 
+            ParseBehaviours(sm.behaviours, machine.behaviours);
+
             foreach (var child in sm.states)
             {
                 if (child.state == null) continue;
@@ -346,6 +368,26 @@ namespace Yozolab.DaerD
             return machine;
         }
 
+        /// <summary>Snapshots a behaviour list — the same shape whether it hangs off a state,
+        /// a state machine or a synced layer's override.</summary>
+        static void ParseBehaviours(StateMachineBehaviour[] source, List<Behaviour> into)
+        {
+            if (source == null) return;
+            foreach (var behaviour in source)
+            {
+                if (behaviour == null) continue;
+                var entry = new Behaviour
+                {
+                    typeName = behaviour.GetType().Name,
+                    json = EditorJsonUtility.ToJson(behaviour),
+                    instanceName = behaviour.name ?? string.Empty,
+                };
+                if (VrcParameterDriver.Is(behaviour))
+                    entry.driver = VrcParameterDriver.ReadSpec(behaviour);
+                into.Add(entry);
+            }
+        }
+
         static State ParseState(AnimatorState source, Vector3 position, PathMap map,
             string controllerPath)
         {
@@ -373,19 +415,7 @@ namespace Yozolab.DaerD
                 out state.motionAsset, out var tree);
             state.tree = tree;
 
-            foreach (var behaviour in source.behaviours)
-            {
-                if (behaviour == null) continue;
-                var entry = new Behaviour
-                {
-                    typeName = behaviour.GetType().Name,
-                    json = EditorJsonUtility.ToJson(behaviour),
-                    instanceName = behaviour.name ?? string.Empty,
-                };
-                if (VrcParameterDriver.Is(behaviour))
-                    entry.driver = VrcParameterDriver.ReadSpec(behaviour);
-                state.behaviours.Add(entry);
-            }
+            ParseBehaviours(source.behaviours, state.behaviours);
 
             foreach (var t in source.transitions)
                 if (t != null)
