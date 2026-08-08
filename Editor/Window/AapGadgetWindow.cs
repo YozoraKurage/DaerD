@@ -23,6 +23,9 @@ namespace Yozolab.DaerD
         string _output = string.Empty;
         string _smoothing = string.Empty;
         float _smoothingDefault = 0.9f;
+        // Kept apart from _smoothingDefault: the two mean different things, and switching
+        // operations back and forth shouldn't rewrite the value the other one is holding.
+        float _stepSize = 0.05f;
         float _rangeMin = -1f;
         float _rangeMax = 1f;
         float _inMin = 0f;
@@ -74,7 +77,7 @@ namespace Yozolab.DaerD
         {
             string a = ParamAt(_inputAIndex), b = ParamAt(_inputBIndex);
             if (a == null) { _output = string.Empty; _smoothing = string.Empty; return; }
-            _smoothing = a + "/Smoothing";
+            _smoothing = _kind == AapGadgets.Kind.SmoothLinear ? a + "/StepSize" : a + "/Smoothing";
             switch (_kind)
             {
                 case AapGadgets.Kind.Smooth: _output = a + "/Smoothed"; break;
@@ -88,6 +91,15 @@ namespace Yozolab.DaerD
                 case AapGadgets.Kind.Not: _output = a + "/Not"; break;
                 case AapGadgets.Kind.FloatAsBool: _output = a + "/Bool"; break;
                 case AapGadgets.Kind.Remap: _output = a + "/Remapped"; break;
+                case AapGadgets.Kind.Reciprocal: _output = a + "/Inv"; break;
+                case AapGadgets.Kind.Divide: _output = a + "÷" + b; break;
+                // No input to name it after — and one per controller is the idea anyway.
+                case AapGadgets.Kind.FrameTime: _output = "FrameTime"; break;
+                case AapGadgets.Kind.SmoothLinear: _output = a + "/Smoothed"; break;
+                case AapGadgets.Kind.SeparateDigits: _output = a + "/Digits"; break;
+                case AapGadgets.Kind.Sine: _output = a + "/Sin"; break;
+                case AapGadgets.Kind.Cosine: _output = a + "/Cos"; break;
+                case AapGadgets.Kind.Tangent: _output = a + "/Tan"; break;
             }
         }
 
@@ -117,6 +129,22 @@ namespace Yozolab.DaerD
                     return L.Tr("output = 1 when the input is at or above the threshold, else 0.");
                 case AapGadgets.Kind.Remap:
                     return L.Tr("Linearly remaps the input range to the output range (reversed output ranges invert the slope).");
+                case AapGadgets.Kind.Reciprocal:
+                    return L.Tr("output = 1 / input, for positive inputs. The result trails the input by two frames.");
+                case AapGadgets.Kind.Divide:
+                    return L.Tr("output = A / B, for positive inputs. Builds B's reciprocal first, so the result trails by three frames.");
+                case AapGadgets.Kind.FrameTime:
+                    return L.Tr("output = the seconds since the previous frame. Add only one per controller — the clock it runs is shared machinery.");
+                case AapGadgets.Kind.SmoothLinear:
+                    return L.Tr("Moves the output toward the input by Step Size every frame — a constant speed, where Smooth eases in. Drive Step Size from a Frame Time gadget for a frame-rate independent speed.");
+                case AapGadgets.Kind.SeparateDigits:
+                    return L.Tr("Splits a 0..1 input into its first three decimals: '/Tenths' holds 0…0.9, '/Hundredths' 0…0.09 and '/Thousandths' 0…0.009. The output name is the base name for the three.");
+                case AapGadgets.Kind.Sine:
+                    return L.Tr("output = sin(2π × input): 0..1 walks one whole turn.");
+                case AapGadgets.Kind.Cosine:
+                    return L.Tr("output = cos(2π × input): 0..1 walks one whole turn.");
+                case AapGadgets.Kind.Tangent:
+                    return L.Tr("output = tan(2π × input): 0..1 walks one whole turn, held to ±100 around the poles.");
             }
             return string.Empty;
         }
@@ -126,6 +154,8 @@ namespace Yozolab.DaerD
         {
             "Smooth", "Add", "Add (Ranged)", "Sub", "Sub (Ranged)", "Multiply",
             "And", "Or", "Not", "Float As Bool", "Remap",
+            "Reciprocal", "Divide", "Frame Time", "Smooth (Linear)", "Separate Digits",
+            "Sine", "Cosine", "Tangent",
         };
 
         void OnGUI()
@@ -151,7 +181,8 @@ namespace Yozolab.DaerD
 
             EditorGUI.BeginChangeCheck();
             _kind = (AapGadgets.Kind)EditorGUILayout.Popup(L.Tr("Operation"), (int)_kind, KindLabels);
-            _inputAIndex = EditorGUILayout.Popup(L.Tr("Input A"), _inputAIndex, _floatParams);
+            if (AapGadgets.NeedsInput(_kind))
+                _inputAIndex = EditorGUILayout.Popup(L.Tr("Input A"), _inputAIndex, _floatParams);
             if (AapGadgets.IsBinary(_kind))
                 _inputBIndex = EditorGUILayout.Popup(L.Tr("Input B"), _inputBIndex, _floatParams);
             if (EditorGUI.EndChangeCheck())
@@ -167,6 +198,14 @@ namespace Yozolab.DaerD
                     new GUIContent(L.Tr("Default Smoothing"),
                         L.Tr("0 = follow instantly; closer to 1 = smoother and slower. Stored as the smoothing parameter's default value.")),
                     _smoothingDefault, 0f, 1f);
+            }
+            else if (_kind == AapGadgets.Kind.SmoothLinear)
+            {
+                _smoothing = EditorGUILayout.TextField(L.Tr("Step Size Parameter"), _smoothing);
+                _stepSize = EditorGUILayout.FloatField(
+                    new GUIContent(L.Tr("Default Step Size"),
+                        L.Tr("How far the output may travel per frame, in parameter units. Stored as the step size parameter's default value; other gadgets can share the parameter.")),
+                    _stepSize);
             }
 
             if (AapGadgets.UsesRange(_kind))
@@ -188,7 +227,13 @@ namespace Yozolab.DaerD
             if (_kind == AapGadgets.Kind.FloatAsBool)
                 _threshold = EditorGUILayout.FloatField(L.Tr("Threshold"), _threshold);
 
-            DrawLayerChoice();
+            if (AapGadgets.UsesDbtLayer(_kind))
+                DrawLayerChoice();
+            if (AapGadgets.CreatesSupportingLayer(_kind))
+                EditorGUILayout.HelpBox(AapGadgets.UsesDbtLayer(_kind)
+                        ? L.Tr("This operation also adds a layer of its own, at the end of the controller. It has to stay after the blend tree layer to work.")
+                        : L.Tr("This operation is a layer of its own: one state whose motion time follows the input. Nothing is added to a blend tree."),
+                    MessageType.Info);
 
             EditorGUILayout.Space(8);
             EditorGUILayout.BeginHorizontal();
@@ -221,7 +266,7 @@ namespace Yozolab.DaerD
             {
                 controller = _controller,
                 kind = _kind,
-                inputA = ParamAt(_inputAIndex),
+                inputA = AapGadgets.NeedsInput(_kind) ? ParamAt(_inputAIndex) : null,
                 inputB = AapGadgets.IsBinary(_kind) ? ParamAt(_inputBIndex) : null,
                 output = _output != null ? _output.Trim() : string.Empty,
                 rangeMin = _rangeMin,
@@ -230,7 +275,7 @@ namespace Yozolab.DaerD
                 inMax = _inMax,
                 threshold = _threshold,
                 smoothing = _smoothing != null ? _smoothing.Trim() : string.Empty,
-                smoothingDefault = _smoothingDefault,
+                smoothingDefault = _kind == AapGadgets.Kind.SmoothLinear ? _stepSize : _smoothingDefault,
                 layerIndex = _layerChoice > 0 && _layerChoice - 1 < _layerCandidates.Count
                     ? _layerCandidates[_layerChoice - 1] : -1,
                 newLayerName = _newLayerName != null ? _newLayerName.Trim() : string.Empty,

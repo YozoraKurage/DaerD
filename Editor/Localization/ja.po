@@ -491,6 +491,45 @@ msgstr "入力がしきい値以上のとき output = 1、未満のとき 0 に�
 msgid "Linearly remaps the input range to the output range (reversed output ranges invert the slope)."
 msgstr "入力範囲を出力範囲へ線形にリマップします（出力範囲を逆順にすると傾きが反転します）。"
 
+msgid "output = 1 / input, for positive inputs. The result trails the input by two frames."
+msgstr "output = 1 / 入力（正の入力専用）。結果は入力より 2 フレーム遅れます。"
+
+msgid "output = A / B, for positive inputs. Builds B's reciprocal first, so the result trails by three frames."
+msgstr "output = A / B（正の入力専用）。先に B の逆数を作るため、結果は 3 フレーム遅れます。"
+
+msgid "output = the seconds since the previous frame. Add only one per controller — the clock it runs is shared machinery."
+msgstr "output = 前フレームからの経過秒数。動かす時計は共有の仕掛けなので、1 つのコントローラーにつき 1 個だけ追加してください。"
+
+msgid "Moves the output toward the input by Step Size every frame — a constant speed, where Smooth eases in. Drive Step Size from a Frame Time gadget for a frame-rate independent speed."
+msgstr "毎フレーム、出力を入力へステップ幅のぶんだけ近づけます。Smooth が減速しながら追従するのに対し、こちらは一定速度です。ステップ幅を Frame Time ガジェットで駆動すると、フレームレートに依存しない速度になります。"
+
+msgid "Splits a 0..1 input into its first three decimals: '/Tenths' holds 0…0.9, '/Hundredths' 0…0.09 and '/Thousandths' 0…0.009. The output name is the base name for the three."
+msgstr "0..1 の入力を小数第 3 位までの各桁に分解します。'/Tenths' が 0〜0.9、'/Hundredths' が 0〜0.09、'/Thousandths' が 0〜0.009 を保持します。出力パラメーター名はこの 3 つの基底名になります。"
+
+msgid "output = sin(2π × input): 0..1 walks one whole turn."
+msgstr "output = sin(2π × 入力)。入力 0..1 でちょうど 1 周します。"
+
+msgid "output = cos(2π × input): 0..1 walks one whole turn."
+msgstr "output = cos(2π × 入力)。入力 0..1 でちょうど 1 周します。"
+
+msgid "output = tan(2π × input): 0..1 walks one whole turn, held to ±100 around the poles."
+msgstr "output = tan(2π × 入力)。入力 0..1 でちょうど 1 周し、漸近線の周辺は ±100 に抑えられます。"
+
+msgid "Step Size Parameter"
+msgstr "ステップ幅パラメーター"
+
+msgid "Default Step Size"
+msgstr "ステップ幅の初期値"
+
+msgid "How far the output may travel per frame, in parameter units. Stored as the step size parameter's default value; other gadgets can share the parameter."
+msgstr "1 フレームあたりに出力が動ける量（パラメーターの単位）。ステップ幅パラメーターの初期値として保存されます。このパラメーターは他のガジェットと共有できます。"
+
+msgid "This operation also adds a layer of its own, at the end of the controller. It has to stay after the blend tree layer to work."
+msgstr "この演算はコントローラーの末尾に専用のレイヤーも追加します。正しく動作させるには、Blend Tree のレイヤーより後ろに置いたままにしてください。"
+
+msgid "This operation is a layer of its own: one state whose motion time follows the input. Nothing is added to a blend tree."
+msgstr "この演算はレイヤーそのものです。モーションタイムが入力に追従する State を 1 つ作るだけで、Blend Tree には何も追加しません。"
+
 # ---- object toggle wizard ----
 
 msgid "Object Toggle"

@@ -116,6 +116,32 @@ namespace Yozolab.DaerD
             return clip;
         }
 
+        /// <summary>Multi-key AAP clip: same binding as <see cref="ParameterClip"/>, but the
+        /// parameter follows the curve over the clip's length — a state playing it by motion
+        /// time turns the curve into a lookup table indexed by another parameter.</summary>
+        public static AnimationClip CurveClip(AnimatorController controller, string name,
+            string parameter, AnimationCurve curve, float frameRate)
+        {
+            var clip = new AnimationClip { name = name };
+            var binding = EditorCurveBinding.FloatCurve(string.Empty, typeof(Animator), parameter);
+            AnimationUtility.SetEditorCurve(clip, binding, curve);
+            // Only the authoring grid the curve is drawn against; the keys keep their exact
+            // times, and the clip's length stays the last key's time.
+            clip.frameRate = frameRate;
+            Attach(controller, clip);
+            return clip;
+        }
+
+        /// <summary>A clip that animates nothing. Blend tree children and states both need a
+        /// motion to exist, and some of them are there to carry a weight or to hold a layer
+        /// still rather than to write anything.</summary>
+        public static AnimationClip EmptyClip(AnimatorController controller, string name)
+        {
+            var clip = new AnimationClip { name = name };
+            Attach(controller, clip);
+            return clip;
+        }
+
         public static BlendTree Tree1D(AnimatorController controller, string name, string blendParameter)
         {
             var tree = new BlendTree
