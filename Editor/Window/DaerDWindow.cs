@@ -32,6 +32,13 @@ namespace Yozolab.DaerD
         StateSearchField _searchField;
         AnimatorGraphView _graphView;
         BlendTreeGraphView _blendTreeView;
+        AsyncSyncPanel _asyncSyncPanel;
+        // The centre pane shows the async-sync settings panel instead of the graph while an
+        // async-sync layer is active — its states are generated machinery. "Show Graph" flips
+        // this for a peek; it resets on every layer/controller switch, so the settings view
+        // is always the way back in.
+        bool _showSyncGraph;
+        Button _syncViewButton;
         VisualElement _graphHost;
         LayersPanel _layersPanel;
         ParametersPanel _parametersPanel;
@@ -254,13 +261,34 @@ namespace Yozolab.DaerD
             _inspectorPanel = new InspectorPanel(_context, _graphView);
             _hierarchyPanel = new BlendTreeHierarchyPanel(_context);
 
-            // The two graph surfaces share the centre pane; only one is visible at a time
-            // depending on whether the user has drilled into a blend tree.
+            // The three centre surfaces share the pane; one is visible at a time depending
+            // on whether the user has drilled into a blend tree or sits on an async-sync
+            // layer (whose graph is generated machinery — the settings panel is the view).
             _graphHost = new VisualElement { style = { flexGrow = 1 } };
             _graphView.style.flexGrow = 1;
             _blendTreeView.style.flexGrow = 1;
+            _asyncSyncPanel = new AsyncSyncPanel(_context) { style = { flexGrow = 1 } };
+            _asyncSyncPanel.ShowGraphRequested += () =>
+            {
+                _showSyncGraph = true;
+                RefreshGraphVisibility();
+            };
             _graphHost.Add(_graphView);
             _graphHost.Add(_blendTreeView);
+            _graphHost.Add(_asyncSyncPanel);
+
+            // Floating way back from the raw graph to the settings view; only visible while
+            // peeking at an async-sync layer's graph.
+            _syncViewButton = new Button(() =>
+            {
+                _showSyncGraph = false;
+                RefreshGraphVisibility();
+            });
+            _syncViewButton.style.position = Position.Absolute;
+            _syncViewButton.style.top = 6;
+            _syncViewButton.style.right = 6;
+            ApplySyncViewButtonText();
+            _graphHost.Add(_syncViewButton);
 
             var leftSplit = new TwoPaneSplitView(0, 220, TwoPaneSplitViewOrientation.Vertical);
             leftSplit.Add(_layersPanel);
@@ -297,10 +325,18 @@ namespace Yozolab.DaerD
             _context.LayerChanged += SyncSerializedState;
             _context.ControllerChanged += SyncSerializedState;
 
+            // Subscribed before RefreshGraphVisibility so the flag is fresh when it runs.
+            _context.LayerChanged += ResetSyncGraphPeek;
+            _context.ControllerChanged += ResetSyncGraphPeek;
+
             _context.BlendTreePathChanged += RefreshGraphVisibility;
             _context.StateMachinePathChanged += RefreshGraphVisibility;
             _context.ControllerChanged += RefreshGraphVisibility;
             _context.LayerChanged += RefreshGraphVisibility;
+            // A layer can become (or stop being) an async-sync layer without the selection
+            // moving: the wizard applying onto it, an undo, a recipe regenerating it.
+            _context.LayersChanged += RefreshGraphVisibility;
+            _context.GraphStructureChanged += RefreshGraphVisibility;
             RefreshGraphVisibility();
 
             // SelectSync must subscribe before StatePreview so that on a State selection change
@@ -415,12 +451,20 @@ namespace Yozolab.DaerD
             _searchField.RefreshTooltip();
         }
 
+        void ApplySyncViewButtonText()
+        {
+            if (_syncViewButton == null) return;
+            _syncViewButton.text = L.Tr("Sync Settings");
+            _syncViewButton.tooltip = L.Tr("Back to this async-sync layer's settings view");
+        }
+
         /// <summary>Restamps localized labels in place — no rebuild, so toggle state and the
         /// subsystems they drive are untouched.</summary>
         void OnLanguageChanged()
         {
             if (_selectSyncToggle == null) return;
             ApplyToolbarTexts();
+            ApplySyncViewButtonText();
             RefreshTabBar();   // "Close tab" tooltips
         }
 
@@ -474,13 +518,36 @@ namespace Yozolab.DaerD
             }
         }
 
-        /// <summary>Shows the blend tree view when the context has drilled into one, otherwise the state machine view.</summary>
+        void ResetSyncGraphPeek() => _showSyncGraph = false;
+
+        /// <summary>Picks the centre view: the blend tree editor when drilled into one, the
+        /// async-sync settings panel when sitting at the root of a generated sync layer
+        /// (unless the user asked to peek at the graph), the state machine graph otherwise.</summary>
         void RefreshGraphVisibility()
         {
             if (_graphView == null || _blendTreeView == null) return;
             bool inBlendTree = _context != null && _context.IsViewingBlendTree;
-            _graphView.style.display = inBlendTree ? DisplayStyle.None : DisplayStyle.Flex;
+
+            // Only the layer ROOT swaps to the settings panel — a generated layer has no sub
+            // machines, so a drilled-down path means the user is somewhere hand-made.
+            var syncConfig = !inBlendTree && _context != null
+                && _context.StateMachinePath.Count == 0
+                ? AsyncSyncPanel.ConfigOf(_context.Controller, _context.CurrentLayer?.stateMachine)
+                : null;
+            bool showSyncPanel = syncConfig != null && !_showSyncGraph;
+
+            _graphView.style.display = inBlendTree || showSyncPanel
+                ? DisplayStyle.None : DisplayStyle.Flex;
             _blendTreeView.style.display = inBlendTree ? DisplayStyle.Flex : DisplayStyle.None;
+            if (_asyncSyncPanel != null)
+            {
+                _asyncSyncPanel.style.display = showSyncPanel
+                    ? DisplayStyle.Flex : DisplayStyle.None;
+                if (showSyncPanel) _asyncSyncPanel.Refresh();
+            }
+            if (_syncViewButton != null)
+                _syncViewButton.style.display = syncConfig != null && !showSyncPanel
+                    ? DisplayStyle.Flex : DisplayStyle.None;
             if (inBlendTree)
                 _blendTreeView.RequestRebuild();
 
@@ -571,6 +638,7 @@ namespace Yozolab.DaerD
             _parametersPanel?.Refresh();
             _inspectorPanel?.Refresh();
             _hierarchyPanel?.Refresh();
+            _asyncSyncPanel?.Refresh();
         }
 
         void OnPlayModeChanged(PlayModeStateChange change) => _graphView?.Sync.RequestRebuild();

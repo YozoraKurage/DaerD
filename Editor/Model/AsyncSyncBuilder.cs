@@ -33,6 +33,19 @@ namespace Yozolab.DaerD
     /// step) while the local value keeps full precision, so a multiplexed Float reads back
     /// slightly quantized for everyone but the wearer.
     /// See https://www.proustite.com/articles/float-expression-parameters/
+    ///
+    /// Targets marked requestable additionally accept sync REQUESTS: a local, unsynced Bool
+    /// ("base/Req/target") that anything on the avatar can raise — DaerD's per-state sync
+    /// request drives it from a Parameter Driver. At each step boundary the cycle checks the
+    /// flags and jumps to a requested slot instead of the ring's next step, so a fresh value
+    /// reaches remotes after at most one step instead of a full pass; the slot's send driver
+    /// clears the flag as it services it. A request for the slot that just sent is picked up
+    /// one step later — never back-to-back, which the decoder couldn't see.
+    ///
+    /// Requests queue, they don't interrupt: a redirect carries the ring's exit time, so the
+    /// step that was running when a flag went up still spends its full dwell and the jump
+    /// happens at the boundary. One request is serviced per boundary — the first in cycle
+    /// order — and flags that lost the boundary stay raised for the next one.
     /// </summary>
     static class AsyncSyncBuilder
     {
@@ -65,6 +78,15 @@ namespace Yozolab.DaerD
             /// names not present in <see cref="targets"/> are ignored, so a stale saved
             /// setup doesn't block regeneration.</summary>
             public Dictionary<string, int> rates = new Dictionary<string, int>();
+
+            /// <summary>
+            /// Targets that accept an on-demand sync request. Each gets a local, unsynced
+            /// Bool ("base/Req/target"); anything on the avatar — typically a DaerD sync
+            /// request on a state — sets it to 1, and the send cycle jumps to that target's
+            /// slot at the next step boundary instead of waiting out the pass. The slot's
+            /// send driver resets the flag once the value is on the wire.
+            /// </summary>
+            public List<string> requestTargets = new List<string>();
 
             public int RateOf(string name) =>
                 rates != null && rates.TryGetValue(name, out int rate)
@@ -123,6 +145,44 @@ namespace Yozolab.DaerD
             channel == 0
                 ? baseName + "/" + AnimatorControllerParameterType.Float
                 : baseName + "/" + AnimatorControllerParameterType.Float + (channel + 1);
+
+        /// <summary>The local request flag for one target. Lives under the base namespace, so
+        /// <see cref="IsReservedName"/> keeps it out of the multiplexed set automatically.</summary>
+        public static string RequestParameter(string baseName, string target) =>
+            baseName + "/Req/" + target;
+
+        /// <summary>
+        /// The base name a new setup on this controller starts from: "DD" plus the first six
+        /// hex digits of the controller's asset GUID. A fixed default collides as soon as two
+        /// distributions that each bring a cycle meet on one avatar — both would own
+        /// "Async/Index" — while the GUID is unique per controller and never moves, so a
+        /// recipe regenerating its layer resolves the same name on every Generate. An
+        /// in-memory controller has no GUID and keeps the historical "Async".
+        /// </summary>
+        public static string DefaultBaseName(AnimatorController controller)
+        {
+            string path = AssetDatabase.GetAssetPath(controller);
+            var taken = new List<string>();
+            foreach (var config in GraphFrameData.GetAsyncSyncs(controller))
+                if (!string.IsNullOrEmpty(config.baseName))
+                    taken.Add(config.baseName);
+            return DefaultBaseName(
+                string.IsNullOrEmpty(path) ? null : AssetDatabase.AssetPathToGUID(path), taken);
+        }
+
+        /// <summary>Core of <see cref="DefaultBaseName(AnimatorController)"/>: one controller can
+        /// host several setups, and the second one can't answer to the first one's name — hence
+        /// the "_2", "_3"… suffixes.</summary>
+        internal static string DefaultBaseName(string guid, ICollection<string> taken)
+        {
+            if (string.IsNullOrEmpty(guid)) return "Async";
+            string stem = "DD" + guid.Substring(0, Mathf.Min(6, guid.Length));
+            string name = stem;
+            // Terminates: the taken set is finite and every candidate name is distinct.
+            for (int n = 2; taken != null && taken.Contains(name); n++)
+                name = stem + "_" + n;
+            return name;
+        }
 
         // ---- slots and schedule ----------------------------------------------
 
@@ -569,7 +629,9 @@ namespace Yozolab.DaerD
             if (isLocal != null && isLocal.type != AnimatorControllerParameterType.Bool)
                 return L.Tr("Parameter '{0}' exists but is not a Bool.", NetworkSyncBuilder.IsLocalParameter);
 
-            foreach (var (name, type) in GeneratedParameters(r))
+            var machineParameters = GeneratedParameters(r);
+            machineParameters.AddRange(RequestParameters(r));
+            foreach (var (name, type) in machineParameters)
             {
                 if (seen.Contains(name))
                     return L.Tr("Generated parameter '{0}' collides with a target.", name);
@@ -646,15 +708,29 @@ namespace Yozolab.DaerD
             if (r.assignEmptyClip)
             {
                 var clip = r.emptyClip != null ? r.emptyClip : GraphFrameData.GetEmptyClip(r.controller);
-                if (clip == null)
+                // Applying creates the clip when none is designated, so this only bites on a
+                // controller with no asset file to store one in.
+                if (clip == null && string.IsNullOrEmpty(AssetDatabase.GetAssetPath(r.controller)))
                     warnings.Add(L.Tr("No Empty clip is set for this controller, so the generated states stay motion-less — the analyzer flags every one of them. Set one in the controller overview to have them filled in."));
-                else if (clip.length <= 0f)
+                else if (clip != null && clip.length <= 0f)
                     warnings.Add(L.Tr("The Empty clip '{0}' has zero length, so it can't carry the step timing; the generated states stay motion-less.", clip.name));
             }
 
             if (r.layerIndex >= 0 && r.layerIndex < r.controller.layers.Length
                 && r.controller.layers[r.layerIndex].defaultWeight <= 0f && r.layerIndex != 0)
                 warnings.Add(L.Tr("The target layer's weight is 0 — the send cycle won't run until it is raised."));
+
+            // Stale request entries are ignored rather than blocking (same contract as rates),
+            // but a recipe author typing .Requestable("Typo") deserves to hear about it.
+            if (r.requestTargets != null)
+                foreach (var name in r.requestTargets)
+                    if (!r.targets.Contains(name))
+                    {
+                        warnings.Add(L.Tr(
+                            "Sync requests are enabled for '{0}', which is not multiplexed here — the entry is ignored.",
+                            name));
+                        break;
+                    }
 
             if (r.stepSeconds < 0.3f)
                 warnings.Add(L.Tr("Steps shorter than VRChat's ~0.3 s sync cadence risk remotes skipping slots."));
@@ -705,7 +781,77 @@ namespace Yozolab.DaerD
             return generated;
         }
 
+        /// <summary>
+        /// The request flags this request will create (all Bool). Unlike
+        /// <see cref="GeneratedParameters"/> these stay local: they are never synced and never
+        /// added to the parameter store — a request is raised and serviced on the wearer's
+        /// client, and remotes just see the slot arrive early.
+        /// </summary>
+        public static List<(string name, AnimatorControllerParameterType type)> RequestParameters(Request r)
+        {
+            var generated = new List<(string, AnimatorControllerParameterType)>();
+            foreach (var target in RequestableTargets(r))
+                generated.Add((RequestParameter(r.baseName, target),
+                    AnimatorControllerParameterType.Bool));
+            return generated;
+        }
+
+        /// <summary>Request targets in cycle order, deduplicated, restricted to actual
+        /// targets — a stale saved entry must not block regeneration (same contract as
+        /// <see cref="Request.rates"/>).</summary>
+        public static List<string> RequestableTargets(Request r)
+        {
+            var requestable = new List<string>();
+            if (r?.requestTargets == null || r.targets == null) return requestable;
+            foreach (var target in r.targets)
+                if (r.requestTargets.Contains(target) && !requestable.Contains(target))
+                    requestable.Add(target);
+            return requestable;
+        }
+
         // ---- build ----------------------------------------------------------------
+
+        /// <summary>
+        /// A runnable request rebuilt from a saved setup — what regenerating outside the
+        /// wizard (per-state sync requests, the layer panel) starts from. Mirrors the wizard's
+        /// own restore: layer resolved through the config's state machine, store and Empty
+        /// clip from the controller's current associations. An explicit recipe schedule is
+        /// not persisted, so a recipe-authored layer regenerated this way falls back to
+        /// rates until the recipe's next Generate.
+        /// </summary>
+        public static Request FromConfig(AnimatorController controller,
+            GraphFrameData.AsyncSyncConfig config)
+        {
+            var request = new Request
+            {
+                controller = controller,
+                baseName = config.baseName,
+                encoding = (IndexEncoding)config.encoding,
+                stepSeconds = config.stepSeconds,
+                floatChannels = Mathf.Clamp(config.FloatChannelsOrDefault, 1, 8),
+                store = ParameterStore.Of(controller),
+                emptyClip = GraphFrameData.GetEmptyClip(controller),
+                layerIndex = LayerIndexOf(controller, config),
+            };
+            request.targets.AddRange(config.targets);
+            foreach (var rate in config.RateMap())
+                request.rates[rate.Key] = rate.Value;
+            if (config.requests != null)
+                request.requestTargets.AddRange(config.requests);
+            return request;
+        }
+
+        /// <summary>The layer a saved setup owns right now, or -1 when it is gone.</summary>
+        public static int LayerIndexOf(AnimatorController controller,
+            GraphFrameData.AsyncSyncConfig config)
+        {
+            if (controller == null || config == null) return -1;
+            var layers = controller.layers;
+            for (int i = 0; i < layers.Length; i++)
+                if (layers[i].stateMachine == config.layer)
+                    return i;
+            return -1;
+        }
 
         /// <summary>Runs the (pre-validated) request; returns false when validation fails.</summary>
         public static bool Apply(Request r)
@@ -721,6 +867,9 @@ namespace Yozolab.DaerD
                     AnimatorControllerParameterType.Bool);
                 var generated = GeneratedParameters(r);
                 foreach (var (name, type) in generated)
+                    EnsureParameter(controller, name, type);
+                // The request flags are animator-local machinery: created, never synced.
+                foreach (var (name, type) in RequestParameters(r))
                     EnsureParameter(controller, name, type);
 
                 AnimatorStateMachine stateMachine;
@@ -748,6 +897,12 @@ namespace Yozolab.DaerD
                 // Motion for the generated states. Zero-length clips are refused: exit times are
                 // normalized to the motion, so a length of 0 would make them meaningless.
                 var empty = ResolveEmptyClip(r);
+                // Nothing designated: create the clip rather than leave every generated state
+                // motion-less. A clip that exists but was refused (zero length, explicit or
+                // designated) is left alone — that is the user's own clip, and the warning says so.
+                if (empty == null && r.assignEmptyClip && r.emptyClip == null
+                    && GraphFrameData.GetEmptyClip(controller) == null)
+                    empty = GraphFrameData.EnsureEmptyClip(controller);
 
                 string[] indexBits = null;
                 if (encoding == IndexEncoding.Bool)
@@ -765,8 +920,15 @@ namespace Yozolab.DaerD
                 // the same dwell has to be expressed in units of that clip.
                 float exitTime = empty != null ? r.stepSeconds / empty.length : r.stepSeconds;
 
+                var requestable = RequestableTargets(r);
+                var slotOfTarget = new Dictionary<string, int>();
+                for (int i = 0; i < slots.Count; i++)
+                    foreach (var name in slots[i].targets)
+                        slotOfTarget[name] = i;
+
                 var visits = new Dictionary<int, int>();
                 var sendStates = new List<AnimatorState>(schedule.Count);
+                var firstSendOfSlot = new Dictionary<int, AnimatorState>();
                 for (int k = 0; k < schedule.Count; k++)
                 {
                     int slotIndex = schedule[k];
@@ -780,6 +942,7 @@ namespace Yozolab.DaerD
                     state.writeDefaultValues = true;
                     state.motion = empty;
                     sendStates.Add(state);
+                    if (visit == 0) firstSendOfSlot[slotIndex] = state;
 
                     if (r.skipDrivers) continue;
                     var driver = VrcParameterDriver.AddTo(state, "Async Send");
@@ -794,7 +957,35 @@ namespace Yozolab.DaerD
                         for (int bit = 0; bit < indexBits.Length; bit++)
                             VrcParameterDriver.AddSetEntry(driver, indexBits[bit],
                                 ((slotIndex >> bit) & 1) == 1 ? 1f : 0f);
+                    // Entering this state IS the service: the fresh value was just copied, so
+                    // any pending request for this slot's targets is satisfied — clear it.
+                    foreach (var name in slot.targets)
+                        if (requestable.Contains(name))
+                            VrcParameterDriver.AddSetEntry(driver,
+                                RequestParameter(r.baseName, name), 0f);
                 }
+                // Sync requests: from every step, a raised flag redirects the cycle to the
+                // requested slot at the step boundary. These are added BEFORE the ring
+                // transition, so they win when their flag is up; the same exit time keeps the
+                // current slot's dwell (the values just sent still need their sync window).
+                // No route targets the state's own slot: back-to-back sends of one index are
+                // invisible to the decoder (canTransitionToSelf is off), and the next step's
+                // routes — one per OTHER slot, and the ring never repeats a slot — pick the
+                // still-raised flag up one step later.
+                for (int k = 0; k < sendStates.Count; k++)
+                    foreach (var name in requestable)
+                    {
+                        int slotIndex = slotOfTarget[name];
+                        if (slotIndex == schedule[k]) continue;
+                        var transition = sendStates[k].AddTransition(firstSendOfSlot[slotIndex]);
+                        transition.hasExitTime = true;
+                        transition.exitTime = exitTime;
+                        transition.hasFixedDuration = true;
+                        transition.duration = 0f;
+                        transition.AddCondition(AnimatorConditionMode.If, 0f,
+                            RequestParameter(r.baseName, name));
+                        EditorUtility.SetDirty(transition);
+                    }
                 for (int k = 0; k < sendStates.Count; k++)
                 {
                     var transition = sendStates[k].AddTransition(sendStates[(k + 1) % sendStates.Count]);
@@ -878,6 +1069,7 @@ namespace Yozolab.DaerD
                     floatChannels = r.floatChannels,
                     targets = new List<string>(r.targets),
                     rates = GraphFrameData.AsyncSyncConfig.ToRateEntries(r.rates),
+                    requests = RequestableTargets(r),
                 });
 
                 EditorUtility.SetDirty(stateMachine);

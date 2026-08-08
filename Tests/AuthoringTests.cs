@@ -361,7 +361,8 @@ namespace Yozolab.DaerD.Tests
                 return -1;
             }
             Assert.GreaterOrEqual(LayerIndex("Zip"), 0);
-            Assert.IsNotNull(DbtBuilder.FindParameter(controller, "Zip/Index"));
+            // Auto encoding on 3 slots resolves to the 2-bit Bool index, not the flat Int one.
+            Assert.IsNotNull(DbtBuilder.FindParameter(controller, "Zip/Index/b0"));
             var zip = controller.layers[LayerIndex("Zip")].stateMachine;
             // Explicit schedule: 4 send steps (Hue twice) + idle + 3 recv.
             Assert.AreEqual(8, zip.states.Length);
@@ -370,6 +371,84 @@ namespace Yozolab.DaerD.Tests
             recipe.Generate();
             Assert.AreEqual(layersAfterFirst, controller.layers.Length,
                 "regenerating must rebuild the Zip layer in place, not stack another");
+        }
+
+        [Test]
+        public void AsyncSync_Requestable_BuildsTheRequestRoutes()
+        {
+            var controller = Track(new AnimatorController());
+            var recipe = NewRecipe(controller, c =>
+            {
+                c.FloatParameter("Hue");
+                c.IntParameter("Outfit");
+                c.BoolParameter("Tail");
+                c.Layer("Base").NewState("S");
+                c.AsyncSync("Zip")
+                    .Targets("Hue", "Outfit", "Tail")
+                    .Requestable("Hue")
+                    .SkipDriversForTest();
+            });
+
+            var warnings = recipe.Generate();
+            Assert.IsFalse(warnings.Exists(w => w.Contains("Async Sync 'Zip':")),
+                string.Join("\n", warnings));
+
+            var flag = DbtBuilder.FindParameter(controller, "Zip/Req/Hue");
+            Assert.IsNotNull(flag);
+            Assert.AreEqual(AnimatorControllerParameterType.Bool, flag.type);
+
+            AnimatorStateMachine zip = null;
+            foreach (var layer in controller.layers)
+                if (layer.name == "Zip")
+                    zip = layer.stateMachine;
+            Assert.IsNotNull(zip);
+
+            // From a step of another slot, the flag redirects the cycle to Send Hue ahead
+            // of the ring transition.
+            var sendOutfit = FindState(zip, "Send Outfit");
+            Assert.AreEqual(2, sendOutfit.transitions.Length);
+            Assert.AreEqual("Send Hue", sendOutfit.transitions[0].destinationState.name);
+            bool conditioned = false;
+            foreach (var condition in sendOutfit.transitions[0].conditions)
+                if (condition.parameter == "Zip/Req/Hue"
+                    && condition.mode == AnimatorConditionMode.If)
+                    conditioned = true;
+            Assert.IsTrue(conditioned);
+        }
+
+        [Test]
+        public void AsyncSync_Unnamed_KeepsTheLegacyBaseName_WithoutAnAssetGuid()
+        {
+            var controller = Track(new AnimatorController());
+            var recipe = NewRecipe(controller, c =>
+            {
+                c.FloatParameter("Hue");
+                c.IntParameter("Outfit");
+                c.BoolParameter("Tail");
+                c.Layer("Base").NewState("S");
+                c.AsyncSync()
+                    .Targets("Hue", "Outfit", "Tail")
+                    .SkipDriversForTest();
+            });
+
+            var warnings = recipe.Generate();
+            Assert.IsFalse(warnings.Exists(w => w.Contains("Async Sync 'Async':")),
+                string.Join("\n", warnings));
+
+            // An in-memory controller has no GUID to derive a per-controller name from, so the
+            // default is still the historical "Async" — the layer and the channels prove it.
+            int layers = controller.layers.Length;
+            bool named = false;
+            foreach (var layer in controller.layers)
+                if (layer.name == "Async") named = true;
+            Assert.IsTrue(named, "the unnamed setup names its layer after the base name");
+            Assert.IsNotNull(DbtBuilder.FindParameter(controller, "Async/Float"));
+
+            // And the name has to be resolved the same way on the next run, or the second
+            // Generate would build a second cycle beside the first.
+            recipe.Generate();
+            Assert.AreEqual(layers, controller.layers.Length,
+                "regenerating must rebuild the same layer in place, not stack another");
         }
 
         static AnimatorState FindState(AnimatorStateMachine sm, string name)

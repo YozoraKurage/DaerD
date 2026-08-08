@@ -32,6 +32,27 @@ namespace Yozolab.DaerD
         public bool Rename(string oldName, string newName) =>
             Edit(oldName, entry => entry.name = newName);
 
+        /// <summary>
+        /// Sets the synced flag on every listed entry that exists in the store; returns how
+        /// many actually changed. Names the store doesn't hold, and entries already on the
+        /// wanted side, are skipped. Turning sync ON is skipped for entries with no concrete
+        /// type (MA "NotSynced" rows): there is no type to sync them as, and the MA backend
+        /// deliberately never invents one — give such a row a type in MA first.
+        /// </summary>
+        public int SetSynced(IEnumerable<string> names, bool synced)
+        {
+            if (names == null) return 0;
+            int changed = 0;
+            foreach (var name in names)
+            {
+                var entry = Find(name);
+                if (entry == null || entry.synced == synced) continue;
+                if (synced && !entry.typed) continue;
+                if (Edit(name, e => e.synced = synced)) changed++;
+            }
+            return changed;
+        }
+
         public VrcExpressionParameters.Entry Find(string name)
         {
             foreach (var entry in Read())
@@ -77,6 +98,44 @@ namespace Yozolab.DaerD
             var vrc = VrcExpressionParameters.FindAssetFor(controller);
             if (vrc != null) return vrc;
             return MaStore.FindFor(controller);
+        }
+
+        /// <summary>
+        /// The controller's parameters that have no row in the store yet, as entries ready to
+        /// <see cref="Add"/>: async by default (neither synced nor saved), carrying the
+        /// controller's own default value. Triggers are left out — they have no expression
+        /// parameter equivalent. A null store yields every mappable parameter.
+        /// </summary>
+        public static List<VrcExpressionParameters.Entry> MissingEntries(
+            AnimatorController controller, ParameterStore store)
+        {
+            var missing = new List<VrcExpressionParameters.Entry>();
+            if (controller == null) return missing;
+
+            var known = new HashSet<string>();
+            if (store != null)
+                foreach (var entry in store.Read())
+                    known.Add(entry.name);
+
+            foreach (var parameter in controller.parameters)
+            {
+                if (!known.Add(parameter.name)) continue;
+                var mapped = VrcExpressionParameters.MapType(parameter.type);
+                if (mapped == null) continue;   // Trigger
+                missing.Add(new VrcExpressionParameters.Entry
+                {
+                    name = parameter.name,
+                    valueType = mapped.Value,
+                    defaultValue = parameter.type == AnimatorControllerParameterType.Float
+                        ? parameter.defaultFloat
+                        : parameter.type == AnimatorControllerParameterType.Int
+                            ? parameter.defaultInt
+                            : parameter.defaultBool ? 1f : 0f,
+                    synced = false,
+                    saved = false,
+                });
+            }
+            return missing;
         }
 
         /// <summary>Store-vs-controller checks, appended to the analyzer's issue list.</summary>

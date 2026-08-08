@@ -80,6 +80,9 @@ namespace Yozolab.DaerD
             public List<string> priorities = new List<string>();
             /// <summary>Per-target sync rates (×1 entries are simply not stored).</summary>
             public List<SyncRate> rates = new List<SyncRate>();
+            /// <summary>Targets that accept an on-demand sync request (a "base/Req/target"
+            /// Bool plus redirect transitions in the generated layer).</summary>
+            public List<string> requests = new List<string>();
 
             [Serializable]
             public class SyncRate
@@ -118,6 +121,25 @@ namespace Yozolab.DaerD
         }
 
         public List<AsyncSyncConfig> asyncSyncs = new List<AsyncSyncConfig>();
+
+        /// <summary>
+        /// One per-state sync request: while the avatar is in <see cref="state"/>, the async
+        /// sync setup named <see cref="baseName"/> is asked to send <see cref="targets"/> out
+        /// of turn. The record is the authoring side; the runtime side is a Parameter Driver
+        /// on the state (see SyncRequestBuilder), and this is what lets DaerD re-materialize
+        /// and edit that driver as a component instead of raw driver rows.
+        /// </summary>
+        [Serializable]
+        public class SyncRequest
+        {
+            public AnimatorState state;
+            /// <summary>Base name of the async-sync setup the request talks to.</summary>
+            public string baseName;
+            /// <summary>Targets to request, a subset of the setup's multiplexed targets.</summary>
+            public List<string> targets = new List<string>();
+        }
+
+        public List<SyncRequest> syncRequests = new List<SyncRequest>();
 
         /// <summary>Layers generated (and regenerated) by a C# recipe — the layer list shows
         /// them with a "C#" badge so hand-edits there read as "will be overwritten".</summary>
@@ -246,6 +268,72 @@ namespace Yozolab.DaerD
             if (data != null) data.SaveAsyncSync(config);
         }
 
+        /// <summary>The saved setup with this base name, or null. Base names are how sync
+        /// requests refer to a setup — they survive the layer being regenerated.</summary>
+        public static AsyncSyncConfig FindAsyncSync(AnimatorController controller, string baseName)
+        {
+            if (string.IsNullOrEmpty(baseName)) return null;
+            foreach (var config in GetAsyncSyncs(controller))
+                if (config.baseName == baseName)
+                    return config;
+            return null;
+        }
+
+        // ---- per-state sync requests -----------------------------------------
+
+        /// <summary>Live sync requests (entries whose state was deleted are pruned).</summary>
+        public List<SyncRequest> SyncRequests()
+        {
+            syncRequests.RemoveAll(request => request == null || request.state == null);
+            return new List<SyncRequest>(syncRequests);
+        }
+
+        /// <summary>Adds or replaces the request for its (state, base name) pair.</summary>
+        public void SaveSyncRequest(SyncRequest request)
+        {
+            if (request == null || request.state == null) return;
+            Undo.RegisterCompleteObjectUndo(this, "Save Sync Request");
+            syncRequests.RemoveAll(existing => existing == null || existing.state == null
+                || (existing.state == request.state && existing.baseName == request.baseName));
+            syncRequests.Add(request);
+            EditorUtility.SetDirty(this);
+        }
+
+        public void RemoveSyncRequest(AnimatorState state, string baseName)
+        {
+            Undo.RegisterCompleteObjectUndo(this, "Remove Sync Request");
+            syncRequests.RemoveAll(existing => existing == null || existing.state == null
+                || (existing.state == state && existing.baseName == baseName));
+            EditorUtility.SetDirty(this);
+        }
+
+        public static List<SyncRequest> GetSyncRequests(AnimatorController controller)
+        {
+            var data = Find(controller);
+            return data != null ? data.SyncRequests() : new List<SyncRequest>();
+        }
+
+        public static List<SyncRequest> GetSyncRequests(AnimatorController controller,
+            AnimatorState state)
+        {
+            var requests = GetSyncRequests(controller);
+            requests.RemoveAll(request => request.state != state);
+            return requests;
+        }
+
+        public static void SaveSyncRequest(AnimatorController controller, SyncRequest request)
+        {
+            var data = GetOrCreate(controller);
+            if (data != null) data.SaveSyncRequest(request);
+        }
+
+        public static void RemoveSyncRequest(AnimatorController controller, AnimatorState state,
+            string baseName)
+        {
+            var data = Find(controller);
+            if (data != null) data.RemoveSyncRequest(state, baseName);
+        }
+
         public static AnimationClip GetEmptyClip(AnimatorController controller)
         {
             var data = Find(controller);
@@ -260,6 +348,38 @@ namespace Yozolab.DaerD
             Undo.RegisterCompleteObjectUndo(data, "Set Empty Clip");
             data.emptyClip = clip;
             EditorUtility.SetDirty(data);
+        }
+
+        /// <summary>The designated Empty clip, created on first use: a 1-second clip animating a
+        /// binding that exists on no avatar (a no-op at runtime), stored inside the .controller
+        /// and registered as this controller's Empty clip. In-memory controllers have no asset
+        /// to store it in — null, and callers leave their states motion-less.</summary>
+        public static AnimationClip EnsureEmptyClip(AnimatorController controller)
+        {
+            // An already designated clip is the user's choice — kept even at zero length,
+            // rather than silently replaced by a generated one.
+            var designated = GetEmptyClip(controller);
+            if (designated != null) return designated;
+
+            var path = controller != null ? AssetDatabase.GetAssetPath(controller) : null;
+            if (string.IsNullOrEmpty(path)) return null;
+
+            var clip = new AnimationClip { name = "Empty" };
+            // Curve on a path no avatar has, so playing the clip changes nothing; it exists only
+            // to give the clip a length, which normalized exit times need to divide by.
+            AnimationUtility.SetEditorCurve(clip,
+                EditorCurveBinding.FloatCurve("DaerD Empty", typeof(GameObject), "m_IsActive"),
+                AnimationCurve.Constant(0f, 1f, 1f));
+            Undo.RegisterCreatedObjectUndo(clip, "Create Empty Clip");
+            AssetDatabase.AddObjectToAsset(clip, controller);
+            EditorUtility.SetDirty(controller);
+            // The Project window lists sub-assets from the imported artifact, not from the
+            // objects in memory, so the clip stays invisible there until the file is written
+            // and reimported.
+            AssetDatabase.SaveAssets();
+            AssetDatabase.ImportAsset(path);
+            SetEmptyClip(controller, clip);
+            return clip;
         }
 
         public static UnityEngine.Object GetParameterStore(AnimatorController controller)

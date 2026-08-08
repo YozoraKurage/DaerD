@@ -144,9 +144,11 @@ namespace Yozolab.DaerD.Authoring
         /// <summary>
         /// Async Sync (parameter compression) as a post step: full wizard configuration plus
         /// the explicit per-step schedule the wizard doesn't expose. The generated layer is
-        /// regenerated in place on every Generate, matched by base name.
+        /// regenerated in place on every Generate, matched by base name. Left unnamed, the
+        /// base name is derived from the target controller so two distributions that both
+        /// multiplex don't fight over the same synced parameters.
         /// </summary>
-        public AsyncSyncRecipeBuilder AsyncSync(string baseName = "Async") =>
+        public AsyncSyncRecipeBuilder AsyncSync(string baseName = null) =>
             new AsyncSyncRecipeBuilder(this, baseName);
 
         // ---- bake ---------------------------------------------------------------

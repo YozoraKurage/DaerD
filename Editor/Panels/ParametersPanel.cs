@@ -259,6 +259,13 @@ namespace Yozolab.DaerD
                 EditorStyles.miniLabel);
             GUI.color = prev;
             GUILayout.FlexibleSpace();
+            if (GUILayout.Button(new GUIContent(L.Tr("Add All"),
+                    L.Tr("Add every controller parameter the store doesn't list yet (Triggers aside) as an async row: neither synced nor saved. An MA Parameters component has to declare a parameter before anything can use it, so this is the starting point for a prefab gimmick.")),
+                    EditorStyles.miniButton, GUILayout.Width(64)))
+            {
+                AddMissingToStore();
+                GUIUtility.ExitGUI();
+            }
             if (GUILayout.Button(new GUIContent(L.Tr("Sync"),
                     L.Tr("Align the parameter store to this controller's parameter list (with a diff preview).")),
                     EditorStyles.miniButton, GUILayout.Width(52)))
@@ -267,6 +274,32 @@ namespace Yozolab.DaerD
                 GUIUtility.ExitGUI();
             }
             EditorGUILayout.EndHorizontal();
+        }
+
+        /// <summary>
+        /// The bulk form of the per-row "+", for the MA Parameters workflow: a gimmick prefab
+        /// has to declare every parameter it uses, and most of them are local. Rows are added
+        /// unsynced and unsaved — the opposite default of the single-row "+", which adds one
+        /// parameter the user deliberately picked and usually wants on the wire.
+        /// </summary>
+        void AddMissingToStore()
+        {
+            if (_store == null) return;
+            var missing = ParameterStore.MissingEntries(Context.Controller, _store);
+            if (missing.Count == 0)
+            {
+                EditorUtility.DisplayDialog(L.Tr("Parameter Store"),
+                    L.Tr("Every controller parameter is already in the store."), "OK");
+                return;
+            }
+            if (!EditorUtility.DisplayDialog(L.Tr("Parameter Store"),
+                    L.Tr("Add {0} parameter(s) to the store, unsynced and unsaved?", missing.Count),
+                    L.Tr("Add"), L.Tr("Cancel")))
+                return;
+            using (new UndoScope("Add Parameters To Store"))
+                foreach (var entry in missing)
+                    _store.Add(entry);
+            Refresh();
         }
 
         /// <summary>Per-row S (synced) / D (saved) toggles for parameters present in the
