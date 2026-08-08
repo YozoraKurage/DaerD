@@ -646,9 +646,11 @@ namespace Yozolab.DaerD
             if (r.assignEmptyClip)
             {
                 var clip = r.emptyClip != null ? r.emptyClip : GraphFrameData.GetEmptyClip(r.controller);
-                if (clip == null)
+                // Applying creates the clip when none is designated, so this only bites on a
+                // controller with no asset file to store one in.
+                if (clip == null && string.IsNullOrEmpty(AssetDatabase.GetAssetPath(r.controller)))
                     warnings.Add(L.Tr("No Empty clip is set for this controller, so the generated states stay motion-less — the analyzer flags every one of them. Set one in the controller overview to have them filled in."));
-                else if (clip.length <= 0f)
+                else if (clip != null && clip.length <= 0f)
                     warnings.Add(L.Tr("The Empty clip '{0}' has zero length, so it can't carry the step timing; the generated states stay motion-less.", clip.name));
             }
 
@@ -748,6 +750,12 @@ namespace Yozolab.DaerD
                 // Motion for the generated states. Zero-length clips are refused: exit times are
                 // normalized to the motion, so a length of 0 would make them meaningless.
                 var empty = ResolveEmptyClip(r);
+                // Nothing designated: create the clip rather than leave every generated state
+                // motion-less. A clip that exists but was refused (zero length, explicit or
+                // designated) is left alone — that is the user's own clip, and the warning says so.
+                if (empty == null && r.assignEmptyClip && r.emptyClip == null
+                    && GraphFrameData.GetEmptyClip(controller) == null)
+                    empty = GraphFrameData.EnsureEmptyClip(controller);
 
                 string[] indexBits = null;
                 if (encoding == IndexEncoding.Bool)

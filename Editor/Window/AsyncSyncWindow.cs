@@ -126,16 +126,16 @@ namespace Yozolab.DaerD
                 _stepSeconds);
 
             // The generated states are machinery, but Unity (and the analyzer) still want a
-            // motion on them; the controller's Empty clip is exactly what that is for.
+            // motion on them; the controller's Empty clip is exactly what that is for. Offered
+            // even with no clip designated — applying creates one inside the controller.
             var emptyClip = GraphFrameData.GetEmptyClip(_controller);
-            using (new EditorGUI.DisabledScope(emptyClip == null))
-                _assignEmptyClip = EditorGUILayout.Toggle(
-                    new GUIContent(
-                        emptyClip != null
-                            ? L.Tr("Fill States With '{0}'", emptyClip.name)
-                            : L.Tr("Fill States With The Empty Clip"),
-                        L.Tr("Assign this controller's Empty clip to the generated states, so they aren't motion-less. Set the clip in the controller overview.")),
-                    emptyClip != null && _assignEmptyClip);
+            _assignEmptyClip = EditorGUILayout.Toggle(
+                new GUIContent(
+                    emptyClip != null
+                        ? L.Tr("Fill States With '{0}'", emptyClip.name)
+                        : L.Tr("Fill States With The Empty Clip"),
+                    L.Tr("Fill the generated states with this controller's Empty clip. If none is set yet, a 1-second no-op clip is created inside the controller and registered as its Empty clip.")),
+                _assignEmptyClip);
 
             var store = ParameterStore.Of(_controller);
             if (store != null)

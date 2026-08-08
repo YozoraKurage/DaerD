@@ -1535,8 +1535,8 @@ msgstr "生成 State に '{0}' を割り当てる"
 msgid "Fill States With The Empty Clip"
 msgstr "生成 State に Empty クリップを割り当てる"
 
-msgid "Assign this controller's Empty clip to the generated states, so they aren't motion-less. Set the clip in the controller overview."
-msgstr "生成される State にこのコントローラーの Empty クリップを割り当て、モーション未設定の State ができないようにします。クリップはコントローラー概要で設定します。"
+msgid "Fill the generated states with this controller's Empty clip. If none is set yet, a 1-second no-op clip is created inside the controller and registered as its Empty clip."
+msgstr "生成される State にこのコントローラーの Empty クリップを割り当てます。未設定の場合は、コントローラー内に 1 秒の no-op クリップを生成して Empty クリップとして登録します。"
 
 msgid "Auto picked the {0} index for {1} slots."
 msgstr "スロット {1} 個に対し、自動判定で {0} インデックスを選びました。"
