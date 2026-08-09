@@ -576,10 +576,7 @@ namespace Yozolab.DaerD
             // Freshly opened window: CreateGUI (and with it the context) hasn't run yet.
             if (_context == null || _context.Controller == null) return false;
 
-            var location = ControllerLocator.Locate(_context.Controller, issue.context);
-            if (location == null && issue.layerIndex >= 0
-                && issue.layerIndex < _context.Controller.layers.Length)
-                location = new ControllerLocator.Location { layerIndex = issue.layerIndex };
+            var location = ControllerLocator.LocateIssue(_context.Controller, issue);
             if (location == null) return false;
             return TryNavigateTo(location.layerIndex, location.stateMachinePath, location.target);
         }

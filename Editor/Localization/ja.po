@@ -235,6 +235,9 @@ msgstr "このツールを独立したウィンドウで開きます。グラフ
 msgid "Clips"
 msgstr "クリップ"
 
+msgid "Analyzer"
+msgstr "解析"
+
 # ---- overview / analysis UI ----
 
 msgid "Controller"

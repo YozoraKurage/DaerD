@@ -46,6 +46,7 @@ namespace Yozolab.DaerD
 
         readonly CleanupInspector _cleanup = new CleanupInspector();
         readonly ClipsForm _clips = new ClipsForm();
+        readonly AnalyzerForm _analyzer = new AnalyzerForm();
 
         // The three lists start expanded: seeing what the controller carries is the reason to
         // open this screen at all, so folding them away is the exception, not the default.
@@ -53,6 +54,7 @@ namespace Yozolab.DaerD
         bool _syncsOpen = true;
         bool _recipesOpen = true;
         bool _clipsOpen;
+        bool _analyzerOpen;
         bool _cleanupOpen;
 
         // Bumped whenever the controller changed in a way a tool's collected data could care
@@ -60,6 +62,7 @@ namespace Yozolab.DaerD
         // re-collects exactly once instead of walking the controller on every repaint.
         int _revision;
         int _clipsRevision = -1;
+        int _analyzerRevision = -1;
 
         public HomePanel(DaerDContext context) : base(context, "Home")
         {
@@ -79,6 +82,30 @@ namespace Yozolab.DaerD
             };
             // A bulk replace rewrote motions; node labels carry their names.
             _clips.ControllerModified = () => Context.NotifyGraphStructureChanged();
+
+            _analyzer.FocusRequested = FocusIssue;
+            // A fix can delete a parameter or a transition — the same refresh the standalone
+            // window asks every open DaerD window for, done straight on this one's context.
+            _analyzer.ControllerModified = () =>
+            {
+                Context.ValidatePath();
+                Context.NotifyParametersChanged();
+                Context.NotifyGraphStructureChanged();
+            };
+        }
+
+        /// <summary>An analyzer Ping, seen from inside the window that owns the graph: locate
+        /// the issue and navigate there, leaving home on the way. False when the issue points at
+        /// nothing the graph can show, and the form pings the Project window instead.</summary>
+        bool FocusIssue(AnalyzerIssue issue)
+        {
+            var controller = Context.Controller;
+            var location = ControllerLocator.LocateIssue(controller, issue);
+            if (location == null) return false;
+            if (Context.IsHomeSelected)
+                Context.SetLayer(location.layerIndex);
+            Context.NavigateTo(location.layerIndex, location.stateMachinePath, location.target);
+            return true;
         }
 
         /// <summary>The leftover scan (and the object references captured in it) belongs to the
@@ -475,11 +502,37 @@ namespace Yozolab.DaerD
         /// would bury everything else in the column.</summary>
         void DrawTools(AnimatorController controller)
         {
+            DrawAnalyzerTool(controller);
+            EditorGUILayout.Space(8);
             DrawClipsTool(controller);
             EditorGUILayout.Space(8);
             DrawWindowTools(controller);
             EditorGUILayout.Space(8);
             DrawCleanupTool(controller);
+        }
+
+        /// <summary>The analysis report, inline. Bound the same way the clip index is: a full
+        /// audit walks the whole controller, so it runs when something changed, not per repaint.
+        /// </summary>
+        void DrawAnalyzerTool(AnimatorController controller)
+        {
+            _analyzerOpen = BeginToolCard(L.Tr("Analyzer"), _analyzerOpen, out bool window);
+            if (window)
+            {
+                AnalyzerWindow.Open(controller);
+                GUIUtility.ExitGUI();   // the focus moved to another window under this layout pass
+            }
+            if (_analyzerOpen)
+            {
+                if (_analyzer.Controller != controller || _analyzerRevision != _revision)
+                {
+                    _analyzer.SetController(controller);
+                    _analyzerRevision = _revision;
+                }
+                _analyzer.DrawHeader(withControllerSlot: false);
+                _analyzer.DrawReport();
+            }
+            EndCard();
         }
 
         /// <summary>The clip index, inline. The form is bound lazily and only re-collected when
@@ -514,12 +567,6 @@ namespace Yozolab.DaerD
             BeginCard(L.Tr("Tools"));
 
             EditorGUILayout.BeginHorizontal();
-            if (GUILayout.Button(new GUIContent(L.Tr("Analyze Controller"),
-                    L.Tr("Audit this controller for unused parameters, broken conditions, unreachable states and more."))))
-            {
-                AnalyzerWindow.Open(controller);
-                GUIUtility.ExitGUI();   // the focus moved to another window under this layout pass
-            }
             if (GUILayout.Button(new GUIContent(L.Tr("Export C# Recipe"),
                     L.Tr("Convert this controller (or chosen layers) into editable C# that rebuilds it — clips stay assignable by drag & drop on the recipe asset."))))
             {
