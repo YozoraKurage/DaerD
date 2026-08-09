@@ -137,7 +137,7 @@ namespace Yozolab.DaerD
                 case AapGadgets.Kind.Remap:
                     return L.Tr("Linearly remaps the input range to the output range (reversed output ranges invert the slope).");
                 case AapGadgets.Kind.Reciprocal:
-                    return L.Tr("output = 1 / input, for positive inputs. The result trails the input by two frames.");
+                    return L.Tr("output = 1 / input, for positive inputs: exact from 1 up, a lookup table below it (capped at 240). The result trails the input by two frames.");
                 case AapGadgets.Kind.Divide:
                     return L.Tr("output = A / B, for positive inputs. Builds B's reciprocal first, so the result trails by three frames.");
                 case AapGadgets.Kind.FrameTime:
@@ -147,11 +147,11 @@ namespace Yozolab.DaerD
                 case AapGadgets.Kind.SeparateDigits:
                     return L.Tr("Splits a 0..1 input into its first three decimals: '/Tenths' holds 0…0.9, '/Hundredths' 0…0.09 and '/Thousandths' 0…0.009. The output name is the base name for the three.");
                 case AapGadgets.Kind.Sine:
-                    return L.Tr("output = sin(2π × input): 0..1 walks one whole turn.");
+                    return L.Tr("output = sin(2π × input): 0..1 walks one whole turn. A lookup table inside the blend tree layer.");
                 case AapGadgets.Kind.Cosine:
-                    return L.Tr("output = cos(2π × input): 0..1 walks one whole turn.");
+                    return L.Tr("output = cos(2π × input): 0..1 walks one whole turn. A lookup table inside the blend tree layer.");
                 case AapGadgets.Kind.Tangent:
-                    return L.Tr("output = tan(2π × input): 0..1 walks one whole turn, held to ±100 around the poles.");
+                    return L.Tr("output = tan(2π × input): 0..1 walks one whole turn, held to ±100 around the poles. A lookup table inside the blend tree layer.");
                 case AapGadgets.Kind.Lut1D:
                     return L.Tr("Bakes the curve into a 1D blend tree lookup table: the curve's time axis is the input, its value the output, linearly interpolated between evenly spaced sample points. Lives entirely inside the blend tree layer.");
                 case AapGadgets.Kind.Atan2:
@@ -304,9 +304,8 @@ namespace Yozolab.DaerD
             if (AapGadgets.UsesDbtLayer(_kind))
                 DrawLayerChoice();
             if (AapGadgets.CreatesSupportingLayer(_kind))
-                EditorGUILayout.HelpBox(AapGadgets.UsesDbtLayer(_kind)
-                        ? L.Tr("This operation also adds a layer of its own, at the end of the controller. It has to stay after the blend tree layer to work.")
-                        : L.Tr("This operation is a layer of its own: one state whose motion time follows the input. Nothing is added to a blend tree."),
+                EditorGUILayout.HelpBox(
+                    L.Tr("This operation also adds a layer of its own, at the end of the controller. It has to stay after the blend tree layer to work."),
                     MessageType.Info);
 
             EditorGUILayout.Space(8);
