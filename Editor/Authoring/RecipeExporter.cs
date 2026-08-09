@@ -70,13 +70,14 @@ namespace Yozolab.DaerD.Authoring
                 }
             }
 
+            var gadgets = PlanGadgets(controller, layerNames, result.warnings);
             var script = new RecipeScript();
             var builder = new ControllerBuilder { Script = script };
             script.RegisterRoot(builder);
             result.replayed = builder;
 
-            RegisterAssets(ir, script, result);
-            new RecipeDriver(builder, ir, result.warnings).Run();
+            RegisterAssets(ir, script, result, gadgets);
+            new RecipeDriver(builder, ir, result.warnings, gadgets).Run();
             result.warnings.AddRange(builder.Bake());
 
             result.code = ComposeGenerated(script, className, namespaceName, controller, result);
@@ -96,11 +97,135 @@ namespace Yozolab.DaerD.Authoring
             return referenced;
         }
 
+        // ---- gadget layers -----------------------------------------------------
+
+        /// <summary>
+        /// The layers a controller can have written back as <c>c.Gadgets(…)</c> calls instead
+        /// of as the tree they expanded into, plus what that implies for the rest of the export.
+        /// </summary>
+        internal class GadgetPlan
+        {
+            /// <summary>Layer name → its gadgets, in the order the root tree holds them, which
+            /// is the order they were built in and the order they have to be rebuilt in.</summary>
+            public readonly Dictionary<string, List<AapGadgets.Request>> layers =
+                new Dictionary<string, List<AapGadgets.Request>>();
+
+            /// <summary>Layers a covered gadget brings along and regenerates by itself
+            /// (FrameTime's clock). Exporting their states as well would only add a second
+            /// copy under a numbered name.</summary>
+            public readonly HashSet<string> supporting = new HashSet<string>();
+
+            /// <summary>Whether a covered gadget owns this parameter — the output, or the
+            /// namespace under it. Its call recreates them, so declaring them up top is noise
+            /// the next Generate overwrites anyway. Shared machinery (a smoothing amount, the
+            /// constant One) lives outside that namespace and stays declared.</summary>
+            public bool Owns(string parameter)
+            {
+                foreach (var pair in layers)
+                    foreach (var request in pair.Value)
+                        if (!string.IsNullOrEmpty(request.output)
+                            && (parameter == request.output
+                                || parameter.StartsWith(request.output + "/",
+                                    System.StringComparison.Ordinal)))
+                            return true;
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Works out which layers qualify. The check runs on the live controller rather than on
+        /// the IR: the IR holds copies of the trees, and the saved configs point at the real
+        /// ones, so a reference match is only meaningful here.
+        ///
+        /// A layer qualifies only when every child of its root Direct tree has a config to
+        /// stand for it — a child added by hand has no call that would rebuild it, and
+        /// rewriting the layer as calls would drop it without a word.
+        /// </summary>
+        static GadgetPlan PlanGadgets(AnimatorController controller, ICollection<string> layerNames,
+            List<string> warnings)
+        {
+            var plan = new GadgetPlan();
+            var configs = GraphFrameData.GetGadgets(controller);
+            if (configs.Count == 0) return plan;
+
+            var layers = controller.layers;
+            foreach (var layer in layers)
+            {
+                if (layerNames != null && !layerNames.Contains(layer.name)) continue;
+                var root = GadgetRootTree(layer);
+                if (root == null) continue;
+
+                var covered = new List<AapGadgets.Request>();
+                int uncovered = 0;
+                foreach (var child in root.children)
+                {
+                    var config = FindGadget(configs, layer.stateMachine, child.motion);
+                    if (config == null) uncovered++;
+                    else covered.Add(AapGadgets.ToRequest(config, controller));
+                }
+                if (covered.Count == 0) continue;
+                if (uncovered > 0)
+                {
+                    warnings.Add(L.Tr("Layer '{0}': {1} of {2} blend tree children have no saved gadget config; exported as a raw tree.",
+                        layer.name, uncovered, root.children.Length));
+                    continue;
+                }
+
+                plan.layers[layer.name] = covered;
+                foreach (var request in covered)
+                    foreach (var name in AapGadgets.SupportingLayerNames(request))
+                        plan.supporting.Add(name);
+            }
+
+            // Gadgets are a post step: their layers are rebuilt at the end of the controller.
+            // The order survives that only while nothing but other gadget layers follows them.
+            if (plan.layers.Count > 0 && FollowedByOrdinaryLayers(layers, layerNames, plan))
+                warnings.Add(L.Tr("Gadget layers are regenerated at the end of the controller; the layer order will differ from the original."));
+            return plan;
+        }
+
+        /// <summary>The root Direct tree of a gadget-shaped layer — one state, playing a Direct
+        /// blend tree, and nothing else in the machine — or null. Live-side twin of the IR check
+        /// the driver makes before it points at the gadget API.</summary>
+        static BlendTree GadgetRootTree(AnimatorControllerLayer layer)
+        {
+            var machine = layer.stateMachine;
+            if (machine == null || machine.stateMachines.Length > 0 || machine.states.Length != 1)
+                return null;
+            var state = machine.states[0].state;
+            return state != null && state.motion is BlendTree root
+                && root.blendType == BlendTreeType.Direct ? root : null;
+        }
+
+        static GraphFrameData.AapGadgetConfig FindGadget(
+            List<GraphFrameData.AapGadgetConfig> configs, AnimatorStateMachine machine, Motion child)
+        {
+            foreach (var config in configs)
+                if (config.layer == machine && config.tree == child)
+                    return config;
+            return null;
+        }
+
+        static bool FollowedByOrdinaryLayers(AnimatorControllerLayer[] layers,
+            ICollection<string> layerNames, GadgetPlan plan)
+        {
+            bool seenGadget = false;
+            foreach (var layer in layers)
+            {
+                if (layerNames != null && !layerNames.Contains(layer.name)) continue;
+                if (plan.layers.ContainsKey(layer.name) || plan.supporting.Contains(layer.name))
+                    seenGadget = true;
+                else if (seenGadget) return true;
+            }
+            return false;
+        }
+
         // ---- asset fields ------------------------------------------------------
 
         /// <summary>Walks the IR in emission order so field declarations come out in a
         /// stable, readable order.</summary>
-        static void RegisterAssets(ControllerIR ir, RecipeScript script, Result result)
+        static void RegisterAssets(ControllerIR ir, RecipeScript script, Result result,
+            GadgetPlan gadgets)
         {
             void Register(Object asset)
             {
@@ -139,6 +264,10 @@ namespace Yozolab.DaerD.Authoring
 
             foreach (var layer in ir.layers)
             {
+                // A layer the gadget calls rebuild contributes no fields: every clip in it is
+                // minted by those calls, and a field for one would refer to nothing.
+                if (gadgets.layers.ContainsKey(layer.name) || gadgets.supporting.Contains(layer.name))
+                    continue;
                 Register(layer.mask);
                 Machine(layer.machine);
                 foreach (var entry in layer.syncedMotions)

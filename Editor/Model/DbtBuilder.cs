@@ -62,6 +62,34 @@ namespace Yozolab.DaerD
         }
 
         /// <summary>
+        /// The state machine of the layer holding <paramref name="gadget"/> — either as a
+        /// state's own motion (a layer's root Direct tree) or as one of such a root's direct
+        /// children (one gadget inside it). <see cref="EnsureDirectBlendTreeLayer"/> hands back
+        /// the root and nothing else, and a saved gadget record is keyed by the layer it landed
+        /// in, so scanning back for it is the only way there. Null when no layer holds it.
+        /// </summary>
+        public static AnimatorStateMachine HostingMachine(AnimatorController controller, Motion gadget)
+        {
+            if (controller == null || gadget == null) return null;
+            foreach (var layer in controller.layers)
+            {
+                var stateMachine = layer.stateMachine;
+                if (stateMachine == null) continue;
+                // A DBT layer keeps its tree on the one state at the machine's root; nothing
+                // deeper can be a gadget host, so the search stops there.
+                foreach (var child in stateMachine.states)
+                {
+                    var motion = child.state != null ? child.state.motion : null;
+                    if (motion == gadget) return stateMachine;
+                    if (!(motion is BlendTree root) || root.blendType != BlendTreeType.Direct) continue;
+                    foreach (var entry in root.children)
+                        if (entry.motion == gadget) return stateMachine;
+                }
+            }
+            return null;
+        }
+
+        /// <summary>
         /// Direct blend tree weights need a float parameter that stays 1. Reuses a suitable
         /// existing "One" (Float with default 1); otherwise creates the first free candidate.
         /// </summary>

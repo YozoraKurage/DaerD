@@ -425,6 +425,24 @@ msgstr "DBT ガジェット"
 msgid "Adds a Direct blend tree gadget that computes the picked operation every frame. The generated clips and trees are stored as sub-assets of this controller."
 msgstr "選択した演算を毎フレーム計算する Direct Blend Tree の仕掛けを追加します。生成されるクリップとツリーはこのコントローラーのサブアセットとして保存されます。"
 
+msgid "Gadget"
+msgstr "ガジェット"
+
+msgid "Create new gadget"
+msgstr "新規ガジェットを作成"
+
+msgid "Applying regenerates this gadget in place (its trees are rebuilt)."
+msgstr "適用するとこのガジェットをその場で再生成します（ツリーは作り直されます）。"
+
+msgid "Parameter '{0}' referenced by this gadget no longer exists."
+msgstr "このガジェットが参照するパラメーター '{0}' は既に存在しません。"
+
+msgid "Regenerate"
+msgstr "再生成"
+
+msgid "Delete this gadget? Its trees, clips and parameters are removed."
+msgstr "このガジェットを削除しますか？ ツリー・クリップ・パラメーターも一緒に削除されます。"
+
 msgid "Operation"
 msgstr "演算"
 
@@ -1906,6 +1924,9 @@ msgstr "C# Recipe をエクスポート"
 msgid "Export Layer To C#"
 msgstr "レイヤーを C# にエクスポート"
 
+msgid "Gadget layers are regenerated at the end of the controller; the layer order will differ from the original."
+msgstr "ガジェットのレイヤーはコントローラーの末尾に再生成されます。元のレイヤー順とは変わります。"
+
 msgid "Generate"
 msgstr "生成"
 
@@ -1917,6 +1938,12 @@ msgstr "チェックしたレイヤーを DaerD の Authoring API で再構築�
 
 msgid "Layer '{0}' is declared more than once."
 msgstr "レイヤー '{0}' が複数回宣言されています。"
+
+msgid "Layer '{0}': {1} of {2} blend tree children have no saved gadget config; exported as a raw tree."
+msgstr "レイヤー '{0}': Blend Tree の子 {2} 個のうち {1} 個に保存されたガジェット設定がありません。ツリーのままエクスポートしました。"
+
+msgid "LUT curve for '{0}' uses weighted tangents; the exported curve drops the weights."
+msgstr "'{0}' の LUT カーブが重み付きタンジェントを使っています。エクスポートされるカーブでは重みが失われます。"
 
 msgid "Layers To Export"
 msgstr "エクスポートするレイヤー"

@@ -156,11 +156,37 @@ namespace Yozolab.DaerD.Authoring
             return -1;
         }
 
-        GadgetRecipeBuilder Queue(AapGadgets.Request request)
+        GadgetRecipeBuilder Queue(AapGadgets.Request request, string call)
         {
             _requests.Add(request);
+            // Recorded on this builder, so a run of gadget calls comes back out as the one
+            // fluent chain the API is written to read as.
+            _root.Script?.Call(this, call);
             return this;
         }
+
+        // ---- recording ----------------------------------------------------------
+
+        /// <summary>
+        /// The source line for one gadget call. A trailing argument that matches its
+        /// parameter's own default is dropped, so an exported call reads like the hand-written
+        /// one it stands for — and stays correct, because it is the same default. Trimming
+        /// stops at the first argument that differs: C# has no way to skip a positional one.
+        /// </summary>
+        static string Line(string method, string[] head, params (string arg, string fallback)[] tail)
+        {
+            int last = tail.Length;
+            while (last > 0 && tail[last - 1].arg == tail[last - 1].fallback) last--;
+            var args = new List<string>(head);
+            for (int i = 0; i < last; i++) args.Add(tail[i].arg);
+            return method + "(" + string.Join(", ", args) + ")";
+        }
+
+        /// <summary>A parameter argument as source: always a string literal. The implicit
+        /// conversion into <see cref="ParamRef"/> has already dropped whichever handle it came
+        /// from, and there is nothing to point back at — a name compiles just as well, which is
+        /// the whole point of the type.</summary>
+        static string P(ParamRef parameter) => RecipeScript.S(parameter.Name);
 
         // ---- arithmetic ---------------------------------------------------------
 
@@ -173,7 +199,7 @@ namespace Yozolab.DaerD.Authoring
                 inputA = a.Name,
                 inputB = b.Name,
                 output = output.Name,
-            });
+            }, Line("Add", new[] { P(a), P(b), P(output) }));
 
         /// <summary>output = A + B for signed inputs: both are remapped through the range
         /// first, so values outside min..max clamp.</summary>
@@ -187,7 +213,8 @@ namespace Yozolab.DaerD.Authoring
                 output = output.Name,
                 rangeMin = min,
                 rangeMax = max,
-            });
+            }, Line("AddRanged", new[] { P(a), P(b), P(output) },
+                (RecipeScript.F(min), "-1"), (RecipeScript.F(max), "1")));
 
         /// <summary>output = A − B. Positive inputs only; see <see cref="SubRanged"/>.</summary>
         public GadgetRecipeBuilder Sub(ParamRef a, ParamRef b, ParamRef output) =>
@@ -197,7 +224,7 @@ namespace Yozolab.DaerD.Authoring
                 inputA = a.Name,
                 inputB = b.Name,
                 output = output.Name,
-            });
+            }, Line("Sub", new[] { P(a), P(b), P(output) }));
 
         /// <summary>output = A − B for signed inputs. The negation is exact only for a
         /// symmetric range (min = −max); an asymmetric one shifts the result by min + max.</summary>
@@ -211,7 +238,8 @@ namespace Yozolab.DaerD.Authoring
                 output = output.Name,
                 rangeMin = min,
                 rangeMax = max,
-            });
+            }, Line("SubRanged", new[] { P(a), P(b), P(output) },
+                (RecipeScript.F(min), "-1"), (RecipeScript.F(max), "1")));
 
         /// <summary>output = A × B, via nested Direct trees. Positive inputs only.</summary>
         public GadgetRecipeBuilder Multiply(ParamRef a, ParamRef b, ParamRef output) =>
@@ -221,7 +249,7 @@ namespace Yozolab.DaerD.Authoring
                 inputA = a.Name,
                 inputB = b.Name,
                 output = output.Name,
-            });
+            }, Line("Multiply", new[] { P(a), P(b), P(output) }));
 
         /// <summary>output = 1 / input for positive inputs, all inside the blend tree: exact
         /// above 1, a geometric lookup ladder below it. The shift the exact half computes on
@@ -232,7 +260,7 @@ namespace Yozolab.DaerD.Authoring
                 kind = AapGadgets.Kind.Reciprocal,
                 inputA = input.Name,
                 output = output.Name,
-            });
+            }, Line("Reciprocal", new[] { P(input), P(output) }));
 
         /// <summary>output = A / B for positive inputs: B's reciprocal, then A times it.
         /// Inherits <see cref="Reciprocal"/>'s extra frame of lag, and one more on top —
@@ -244,7 +272,7 @@ namespace Yozolab.DaerD.Authoring
                 inputA = a.Name,
                 inputB = b.Name,
                 output = output.Name,
-            });
+            }, Line("Divide", new[] { P(a), P(b), P(output) }));
 
         /// <summary>Linear remap: input over inMin..inMax → output over outMin..outMax,
         /// clamped outside. A reversed output range inverts the slope.</summary>
@@ -259,7 +287,11 @@ namespace Yozolab.DaerD.Authoring
                 inMax = inMax,
                 rangeMin = outMin,
                 rangeMax = outMax,
-            });
+            }, Line("Remap", new[]
+            {
+                P(input), P(output), RecipeScript.F(inMin), RecipeScript.F(inMax),
+                RecipeScript.F(outMin), RecipeScript.F(outMax),
+            }));
 
         // ---- logic (inputs assumed 0..1) ----------------------------------------
 
@@ -270,7 +302,7 @@ namespace Yozolab.DaerD.Authoring
                 inputA = a.Name,
                 inputB = b.Name,
                 output = output.Name,
-            });
+            }, Line("And", new[] { P(a), P(b), P(output) }));
 
         public GadgetRecipeBuilder Or(ParamRef a, ParamRef b, ParamRef output) =>
             Queue(new AapGadgets.Request
@@ -279,7 +311,7 @@ namespace Yozolab.DaerD.Authoring
                 inputA = a.Name,
                 inputB = b.Name,
                 output = output.Name,
-            });
+            }, Line("Or", new[] { P(a), P(b), P(output) }));
 
         public GadgetRecipeBuilder Not(ParamRef input, ParamRef output) =>
             Queue(new AapGadgets.Request
@@ -287,7 +319,7 @@ namespace Yozolab.DaerD.Authoring
                 kind = AapGadgets.Kind.Not,
                 inputA = input.Name,
                 output = output.Name,
-            });
+            }, Line("Not", new[] { P(input), P(output) }));
 
         /// <summary>0 below the threshold, 1 from it up.</summary>
         public GadgetRecipeBuilder FloatAsBool(ParamRef input, ParamRef output,
@@ -298,7 +330,8 @@ namespace Yozolab.DaerD.Authoring
                 inputA = input.Name,
                 output = output.Name,
                 threshold = threshold,
-            });
+            }, Line("FloatAsBool", new[] { P(input), P(output) },
+                (RecipeScript.F(threshold), "0.5f")));
 
         // ---- smoothing and time -------------------------------------------------
 
@@ -319,7 +352,9 @@ namespace Yozolab.DaerD.Authoring
                 smoothingDefault = smoothingDefault,
                 rangeMin = min,
                 rangeMax = max,
-            });
+            }, Line("Smooth", new[] { P(input), P(output), P(smoothing) },
+                (RecipeScript.F(smoothingDefault), "0.9f"),
+                (RecipeScript.F(min), "-1"), (RecipeScript.F(max), "1")));
 
         /// <summary>Moves the output toward the input at a constant stepSize per frame and
         /// settles there, where <see cref="Smooth"/> eases in and never quite arrives. Drive
@@ -336,7 +371,9 @@ namespace Yozolab.DaerD.Authoring
                 smoothingDefault = stepDefault,
                 rangeMin = min,
                 rangeMax = max,
-            });
+            }, Line("SmoothLinear", new[] { P(input), P(output), P(stepSize) },
+                (RecipeScript.F(stepDefault), "0.05f"),
+                (RecipeScript.F(min), "-1"), (RecipeScript.F(max), "1")));
 
         /// <summary>output = the seconds since the previous frame, from a clock on a
         /// supporting layer. One per controller is the intent — it is a shared stopwatch —
@@ -346,7 +383,7 @@ namespace Yozolab.DaerD.Authoring
             {
                 kind = AapGadgets.Kind.FrameTime,
                 output = output.Name,
-            });
+            }, Line("FrameTime", new[] { P(output) }));
 
         /// <summary>
         /// output = the input, exactly N frames late (1–8). Every blend tree stage costs one
@@ -363,7 +400,8 @@ namespace Yozolab.DaerD.Authoring
                 bufferFrames = frames,
                 rangeMin = min,
                 rangeMax = max,
-            });
+            }, Line("Buffer", new[] { P(input), P(output) }, (frames.ToString(), "1"),
+                (RecipeScript.F(min), "-1"), (RecipeScript.F(max), "1")));
 
         // ---- functions ----------------------------------------------------------
 
@@ -376,7 +414,7 @@ namespace Yozolab.DaerD.Authoring
                 kind = AapGadgets.Kind.SeparateDigits,
                 inputA = input.Name,
                 output = outputBase.Name,
-            });
+            }, Line("SeparateDigits", new[] { P(input), P(outputBase) }));
 
         /// <summary>sin of the input in turns (0..1 is one whole period), as a 1D lookup
         /// tree inside the blend tree — the period sampled evenly and interpolated straight
@@ -392,13 +430,15 @@ namespace Yozolab.DaerD.Authoring
         public GadgetRecipeBuilder Tangent(ParamRef input, ParamRef output) =>
             Trigonometry(AapGadgets.Kind.Tangent, input, output);
 
+        /// <summary>The three kinds are named after the methods that queue them, so the enum
+        /// already spells the call that has to be written down.</summary>
         GadgetRecipeBuilder Trigonometry(AapGadgets.Kind kind, ParamRef input, ParamRef output) =>
             Queue(new AapGadgets.Request
             {
                 kind = kind,
                 inputA = input.Name,
                 output = output.Name,
-            });
+            }, Line(kind.ToString(), new[] { P(input), P(output) }));
 
         /// <summary>
         /// Bakes a curve into a piecewise-linear lookup table inside the blend tree: the
@@ -408,15 +448,24 @@ namespace Yozolab.DaerD.Authoring
         /// range clamp. No supporting layer.
         /// </summary>
         public GadgetRecipeBuilder Lut1D(ParamRef input, ParamRef output, AnimationCurve curve,
-            int samples = 33) =>
-            Queue(new AapGadgets.Request
+            int samples = 33)
+        {
+            // Only a recording run cares: a recipe holding its own curve object keeps the
+            // weights, while a curve written out as source can only carry what a Keyframe
+            // constructor takes — and the samples it bakes shift a little without them.
+            if (_root.Script != null && RecipeScript.HasWeightedTangents(curve))
+                _root.Notes.Add(L.Tr("LUT curve for '{0}' uses weighted tangents; the exported curve drops the weights.",
+                    output.Name));
+            return Queue(new AapGadgets.Request
             {
                 kind = AapGadgets.Kind.Lut1D,
                 inputA = input.Name,
                 output = output.Name,
                 curve = curve,
                 lutSamples = samples,
-            });
+            }, Line("Lut1D", new[] { P(input), P(output), RecipeScript.Curve(curve) },
+                (samples.ToString(), "33")));
+        }
 
         /// <summary>
         /// output = atan2(y, x) in turns: 0 at +X, counter-clockwise to 1, ready to feed
@@ -433,6 +482,6 @@ namespace Yozolab.DaerD.Authoring
                 inputB = x.Name,
                 output = output.Name,
                 atan2Directions = directions,
-            });
+            }, Line("Atan2", new[] { P(y), P(x), P(output) }, (directions.ToString(), "16")));
     }
 }
