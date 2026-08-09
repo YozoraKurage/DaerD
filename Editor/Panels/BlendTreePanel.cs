@@ -90,12 +90,16 @@ namespace Yozolab.DaerD
                 list.Add(new ChildMotion { timeScale = 1f, position = Vector2.zero });
                 changed = true;
             }
+            bool attachedSubAsset = false;
             if (GUILayout.Button("+ Add Nested Blend Tree"))
             {
                 var nested = new BlendTree { name = "Nested Blend Tree", hideFlags = HideFlags.HideInHierarchy };
                 var path = AssetDatabase.GetAssetPath(controller);
                 if (!string.IsNullOrEmpty(path))
+                {
                     AssetDatabase.AddObjectToAsset(nested, controller);
+                    attachedSubAsset = true;
+                }
                 list.Add(new ChildMotion { motion = nested, timeScale = 1f });
                 changed = true;
             }
@@ -108,6 +112,10 @@ namespace Yozolab.DaerD
                 EditorUtility.SetDirty(tree);
                 context.NotifyBlendTreeChanged();
             }
+            // Only on the click that added the tree — the button's event, never a repaint — so
+            // the Project window lists the new sub-asset without reimporting on every frame.
+            if (attachedSubAsset)
+                DbtBuilder.CommitSubAssets(controller);
         }
 
         /// <summary>

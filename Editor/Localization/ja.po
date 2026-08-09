@@ -176,6 +176,77 @@ msgstr "このコントローラーの Empty クリップを割り当てます"
 msgid "Fill the empty child slots with this controller's Empty clip"
 msgstr "モーション未設定の子スロットにこのコントローラーの Empty クリップを割り当てます"
 
+# ---- home screen ----
+
+msgid "Home"
+msgstr "ホーム"
+
+msgid "Open Home"
+msgstr "ホームを開く"
+
+msgid "Gadgets, sync setups and tools for this controller live in the Home screen."
+msgstr "ガジェット・巡回同期の設定・各種ツールはホーム画面にまとまっています。"
+
+msgid "{0} layers · {1} parameters"
+msgstr "レイヤー {0} 個 · パラメーター {1} 個"
+
+msgid "The VRC Expressions Menu this controller belongs to, opened by the menu editor. Assigned explicitly — DaerD never guesses it from the scene."
+msgstr "このコントローラーが属する VRC Expressions Menu。メニューエディターが開く対象です。明示的に指定するもので、DaerD がシーンから推測することはありません。"
+
+msgid "DBT Gadgets"
+msgstr "DBT ガジェット"
+
+msgid "No gadgets yet."
+msgstr "ガジェットはまだありません。"
+
+msgid "Edit"
+msgstr "編集"
+
+msgid "+ Add Gadget"
+msgstr "+ ガジェットを追加"
+
+msgid "Add a Direct blend tree gadget that computes a float operation every frame."
+msgstr "Float 演算を毎フレーム計算する Direct Blend Tree ガジェットを追加します。"
+
+msgid "No async sync setups yet."
+msgstr "巡回同期の設定はまだありません。"
+
+msgid "{0} target(s), {1}s step"
+msgstr "対象 {0} 件 / ステップ間隔 {1} 秒"
+
+msgid "+ New Async Sync"
+msgstr "+ 巡回同期を新規作成"
+
+msgid "C# Recipes"
+msgstr "C# レシピ"
+
+msgid "No recipe-owned layers."
+msgstr "レシピが生成したレイヤーはありません。"
+
+msgid "Tools"
+msgstr "ツール"
+
+msgid "Window"
+msgstr "ウィンドウ"
+
+msgid "Open this tool in a window of its own, so it stays visible while you edit the graph."
+msgstr "このツールを独立したウィンドウで開きます。グラフを編集している間も表示したままにできます。"
+
+msgid "Clips"
+msgstr "クリップ"
+
+msgid "Analyzer"
+msgstr "解析"
+
+msgid "Recipe Export"
+msgstr "レシピ書き出し"
+
+msgid "The menu editor works on the avatar's menu tree, in a window of its own."
+msgstr "メニューエディターはアバターのメニュー階層を編集するため、独立したウィンドウで開きます。"
+
+msgid "Open Menu Editor"
+msgstr "メニューエディターを開く"
+
 # ---- overview / analysis UI ----
 
 msgid "Controller"
@@ -425,6 +496,24 @@ msgstr "DBT ガジェット"
 msgid "Adds a Direct blend tree gadget that computes the picked operation every frame. The generated clips and trees are stored as sub-assets of this controller."
 msgstr "選択した演算を毎フレーム計算する Direct Blend Tree の仕掛けを追加します。生成されるクリップとツリーはこのコントローラーのサブアセットとして保存されます。"
 
+msgid "Gadget"
+msgstr "ガジェット"
+
+msgid "Create new gadget"
+msgstr "新規ガジェットを作成"
+
+msgid "Applying regenerates this gadget in place (its trees are rebuilt)."
+msgstr "適用するとこのガジェットをその場で再生成します（ツリーは作り直されます）。"
+
+msgid "Parameter '{0}' referenced by this gadget no longer exists."
+msgstr "このガジェットが参照するパラメーター '{0}' は既に存在しません。"
+
+msgid "Regenerate"
+msgstr "再生成"
+
+msgid "Delete this gadget? Its trees, clips and parameters are removed."
+msgstr "このガジェットを削除しますか？ ツリー・クリップ・パラメーターも一緒に削除されます。"
+
 msgid "Operation"
 msgstr "演算"
 
@@ -433,6 +522,12 @@ msgstr "入力 A"
 
 msgid "Input B"
 msgstr "入力 B"
+
+msgid "Input Y"
+msgstr "入力 Y"
+
+msgid "Input X"
+msgstr "入力 X"
 
 msgid "Output Min"
 msgstr "出力の最小値"
@@ -490,6 +585,126 @@ msgstr "入力がしきい値以上のとき output = 1、未満のとき 0 に�
 
 msgid "Linearly remaps the input range to the output range (reversed output ranges invert the slope)."
 msgstr "入力範囲を出力範囲へ線形にリマップします（出力範囲を逆順にすると傾きが反転します）。"
+
+msgid "output = 1 / input, for positive inputs. The result trails the input by two frames."
+msgstr "output = 1 / 入力（正の入力専用）。結果は入力より 2 フレーム遅れます。"
+
+msgid "output = 1 / input, for positive inputs: exact from 1 up, a lookup table below it (capped at 240). The result trails the input by two frames."
+msgstr "output = 1 / 入力（正の入力専用）。1 以上は厳密に、1 未満は LUT で求めます（出力の上限は 240）。結果は入力より 2 フレーム遅れます。"
+
+msgid "output = A / B, for positive inputs. Builds B's reciprocal first, so the result trails by three frames."
+msgstr "output = A / B（正の入力専用）。先に B の逆数を作るため、結果は 3 フレーム遅れます。"
+
+msgid "output = the seconds since the previous frame. Add only one per controller — the clock it runs is shared machinery."
+msgstr "output = 前フレームからの経過秒数。動かす時計は共有の仕掛けなので、1 つのコントローラーにつき 1 個だけ追加してください。"
+
+msgid "Moves the output toward the input by Step Size every frame — a constant speed, where Smooth eases in. Drive Step Size from a Frame Time gadget for a frame-rate independent speed."
+msgstr "毎フレーム、出力を入力へステップ幅のぶんだけ近づけます。Smooth が減速しながら追従するのに対し、こちらは一定速度です。ステップ幅を Frame Time ガジェットで駆動すると、フレームレートに依存しない速度になります。"
+
+msgid "Splits a 0..1 input into its first three decimals: '/Tenths' holds 0…0.9, '/Hundredths' 0…0.09 and '/Thousandths' 0…0.009. The output name is the base name for the three."
+msgstr "0..1 の入力を小数第 3 位までの各桁に分解します。'/Tenths' が 0〜0.9、'/Hundredths' が 0〜0.09、'/Thousandths' が 0〜0.009 を保持します。出力パラメーター名はこの 3 つの基底名になります。"
+
+msgid "output = sin(2π × input): 0..1 walks one whole turn."
+msgstr "output = sin(2π × 入力)。入力 0..1 でちょうど 1 周します。"
+
+msgid "output = cos(2π × input): 0..1 walks one whole turn."
+msgstr "output = cos(2π × 入力)。入力 0..1 でちょうど 1 周します。"
+
+msgid "output = tan(2π × input): 0..1 walks one whole turn, held to ±100 around the poles."
+msgstr "output = tan(2π × 入力)。入力 0..1 でちょうど 1 周し、漸近線の周辺は ±100 に抑えられます。"
+
+msgid "output = sin(2π × input): 0..1 walks one whole turn. A lookup table inside the blend tree layer."
+msgstr "output = sin(2π × 入力)。入力 0..1 でちょうど 1 周します。Blend Tree のレイヤー内の LUT です。"
+
+msgid "output = cos(2π × input): 0..1 walks one whole turn. A lookup table inside the blend tree layer."
+msgstr "output = cos(2π × 入力)。入力 0..1 でちょうど 1 周します。Blend Tree のレイヤー内の LUT です。"
+
+msgid "output = tan(2π × input): 0..1 walks one whole turn, held to ±100 around the poles. A lookup table inside the blend tree layer."
+msgstr "output = tan(2π × 入力)。入力 0..1 でちょうど 1 周し、漸近線の周辺は ±100 に抑えられます。Blend Tree のレイヤー内の LUT です。"
+
+msgid "Bakes the curve into a 1D blend tree lookup table: the curve's time axis is the input, its value the output, linearly interpolated between evenly spaced sample points. Lives entirely inside the blend tree layer."
+msgstr "カーブを 1D Blend Tree の LUT にベイクします。カーブの時間軸が入力、値が出力で、等間隔のサンプル点の間は線形補間されます。Blend Tree のレイヤー内だけで完結します。"
+
+msgid "output = atan2(Y, X) in turns: 0..1 counter-clockwise from +X, ready to feed the Sine / Cosine gadgets. Values near the origin collapse toward 0 — gate by magnitude. The 0/1 seam sits in a narrow band at +X."
+msgstr "output = atan2(Y, X) を「周」単位で返します。+X 方向が 0 で、反時計回りに 0..1。そのまま Sine / Cosine ガジェットへ渡せます。原点付近では出力が 0 へ縮退するので、ベクトルの大きさでゲートしてください。0 と 1 の継ぎ目は +X 方向の細い帯に収まります。"
+
+msgid "Preset"
+msgstr "プリセット"
+
+msgid "Custom"
+msgstr "カスタム"
+
+msgid "Linear"
+msgstr "リニア"
+
+msgid "Sqrt"
+msgstr "平方根"
+
+msgid "Square"
+msgstr "2 乗"
+
+msgid "Smoothstep"
+msgstr "スムーズステップ"
+
+msgid "Ease Out"
+msgstr "イーズアウト"
+
+msgid "Curve"
+msgstr "カーブ"
+
+msgid "The function to bake: the time axis is the input, the value the output. Only the span between the first and last key is used; inputs outside it clamp."
+msgstr "ベイクする関数。時間軸が入力、値が出力です。使われるのは最初のキーから最後のキーまでの区間だけで、その外側の入力はクランプされます。"
+
+msgid "Samples"
+msgstr "サンプル数"
+
+msgid "How many points the curve is sampled at. The tree interpolates linearly between them, so corners want a sample of their own."
+msgstr "カーブをサンプリングする点の数。点と点の間はツリーが線形補間するため、折れ曲がる箇所にはサンプル点を置いてください。"
+
+msgid "The LUT needs a curve with at least two keys."
+msgstr "LUT には 2 つ以上のキーを持つカーブが必要です。"
+
+msgid "The curve's keys must span a time range."
+msgstr "カーブのキーは時間の幅を持つ必要があります。"
+
+msgid "Samples must be between 2 and 128."
+msgstr "サンプル数は 2〜128 の範囲で指定してください。"
+
+msgid "Directions"
+msgstr "方向の数"
+
+msgid "Ring samples around the circle. Angle accuracy is about 1/N turn between neighbouring directions; each direction is one clip."
+msgstr "円周に並べるサンプルの数。隣り合う方向の間では、角度の精度がおよそ 1/N 周になります。方向 1 つにつきクリップが 1 つ作られます。"
+
+msgid "Directions must be between 8 and 64."
+msgstr "方向の数は 8〜64 の範囲で指定してください。"
+
+msgid "Frames must be between 1 and 8."
+msgstr "フレーム数は 1〜8 の範囲で指定してください。"
+
+msgid "Frames"
+msgstr "フレーム数"
+
+msgid "How many frames late the copy runs — one identity stage per frame. Match it to the pipeline depth of the branch you are aligning with."
+msgstr "コピーを何フレーム遅らせるかです（1 フレームにつき恒等ステージ 1 段）。揃えたい相手側の分岐のパイプライン段数に合わせてください。"
+
+msgid "output = the input, delayed by exactly N frames. Every blend tree stage costs one frame, so branches of different depth see different frames of the same parameter — insert a buffer on the shallower branch to line the two up again."
+msgstr "output = 入力をちょうど N フレーム遅らせた値。ブレンドツリーの各段は 1 フレームかかるため、段数の異なる分岐は同じパラメーターの別フレームの値を見てしまいます — 浅い側の分岐にバッファを挟んで時系列を揃えます。"
+
+msgid "Step Size Parameter"
+msgstr "ステップ幅パラメーター"
+
+msgid "Default Step Size"
+msgstr "ステップ幅の初期値"
+
+msgid "How far the output may travel per frame, in parameter units. Stored as the step size parameter's default value; other gadgets can share the parameter."
+msgstr "1 フレームあたりに出力が動ける量（パラメーターの単位）。ステップ幅パラメーターの初期値として保存されます。このパラメーターは他のガジェットと共有できます。"
+
+msgid "This operation also adds a layer of its own, at the end of the controller. It has to stay after the blend tree layer to work."
+msgstr "この演算はコントローラーの末尾に専用のレイヤーも追加します。正しく動作させるには、Blend Tree のレイヤーより後ろに置いたままにしてください。"
+
+msgid "This operation is a layer of its own: one state whose motion time follows the input. Nothing is added to a blend tree."
+msgstr "この演算はレイヤーそのものです。モーションタイムが入力に追従する State を 1 つ作るだけで、Blend Tree には何も追加しません。"
 
 # ---- object toggle wizard ----
 
@@ -687,6 +902,86 @@ msgstr "VRChat の同期間隔（約 0.3 秒）より短いステップは、リ
 
 msgid "Some targets are still synced in the parameter store — unsync them there to actually save bits."
 msgstr "対象パラメーターのいくつかがパラメーターストアで synced のままです。ビットを節約するにはストア側で同期を外してください。"
+
+msgid "Unsync Targets In Store"
+msgstr "ストアで対象を非同期化"
+
+msgid "Clear the synced flag on the multiplexed targets in the parameter store. Their values travel through the generated channels instead, which is the whole point of the setup."
+msgstr "パラメーターストア側で、多重化する対象の synced を外します。値は生成されたチャンネル経由で送られるため、対象そのものを同期する必要はありません。"
+
+# ---- sync requests ----
+
+msgid "Sync requests are enabled for '{0}', which is not multiplexed here — the entry is ignored."
+msgstr "'{0}' に同期リクエストが設定されていますが、ここでは多重化されていません。このエントリは無視されます。"
+
+msgid "Accept sync requests: a state's Sync Request (or anything setting the '{0}' flag) makes the cycle send this parameter at the next step instead of waiting a full pass. Costs no synced bits."
+msgstr "同期リクエストを受け付けます。State の同期リクエスト（または '{0}' フラグを立てる任意の仕組み）で、1 周を待たずに次のステップでこのパラメーターを送信させられます。同期 bit は消費しません。"
+
+msgid "Sync requests: {0} local Bool flag(s), nothing synced."
+msgstr "同期リクエスト: ローカル Bool フラグ {0} 個（同期コストなし）"
+
+msgid "This controller has no saved async sync setup — create one first."
+msgstr "このコントローラーには保存された巡回同期設定がありません。先に作成してください。"
+
+msgid "Pick at least one parameter to request."
+msgstr "リクエストするパラメーターを 1 つ以上選んでください。"
+
+msgid "'{0}' is not multiplexed by async sync '{1}'."
+msgstr "'{0}' は巡回同期 '{1}' で多重化されていません。"
+
+msgid "Sync Request"
+msgstr "同期リクエスト"
+
+msgid "This state requests from async sync '{0}', which no longer exists."
+msgstr "この State は巡回同期 '{0}' へリクエストしていますが、その設定は存在しません。"
+
+msgid "Remove"
+msgstr "削除"
+
+msgid "+ Add Sync Request"
+msgstr "+ 同期リクエストを追加"
+
+msgid "Async Sync '{0}'"
+msgstr "巡回同期 '{0}'"
+
+msgid "Ticked parameters are synced out of turn while this state plays."
+msgstr "チェックしたパラメーターは、この State の再生中に巡回順を待たずに同期されます。"
+
+msgid "This layer is generated by a recipe — the next Generate rebuilds its states and this request is lost. Add the request in the recipe instead."
+msgstr "このレイヤーはレシピが生成しています。次の Generate で State が作り直され、このリクエストは失われます。リクエストはレシピ側に追加してください。"
+
+msgid "Async sync '{0}' is generated by a recipe — mark the targets with .Requestable(...) there, or the next Generate drops the request routes."
+msgstr "巡回同期 '{0}' はレシピが生成しています。レシピ側で .Requestable(...) を指定しないと、次の Generate でリクエスト経路が失われます。"
+
+msgid "This layer has no async sync setup."
+msgstr "このレイヤーには巡回同期設定がありません。"
+
+msgid "Async sync layer '{0}'"
+msgstr "巡回同期レイヤー '{0}'"
+
+msgid "Show Graph"
+msgstr "グラフを表示"
+
+msgid "This layer is generated machinery — edit the setup here and apply; the states are rebuilt in place."
+msgstr "このレイヤーは自動生成の機構です。ここで設定を編集して適用すると、State はその場で作り直されます。"
+
+msgid "Apply (Regenerate Layer)"
+msgstr "適用（レイヤーを再生成）"
+
+msgid "Requesting States"
+msgstr "リクエスト元の State"
+
+msgid "No state requests from this setup yet. Select a state and add a Sync Request in its inspector."
+msgstr "この設定へリクエストする State はまだありません。State を選択し、インスペクターで同期リクエストを追加してください。"
+
+msgid "Select"
+msgstr "選択"
+
+msgid "Sync Settings"
+msgstr "同期設定"
+
+msgid "Back to this async-sync layer's settings view"
+msgstr "この巡回同期レイヤーの設定画面に戻ります"
 
 # ---- network sync ----
 
@@ -1240,6 +1535,18 @@ msgstr "このストアが使用中の同期ビット数です（Bool = 1、Int 
 msgid "Align the parameter store to this controller's parameter list (with a diff preview)."
 msgstr "パラメーターストアをこのコントローラーのパラメーター一覧に合わせます（差分プレビュー付き）。"
 
+msgid "Add All"
+msgstr "すべて追加"
+
+msgid "Add every controller parameter the store doesn't list yet (Triggers aside) as an async row: neither synced nor saved. An MA Parameters component has to declare a parameter before anything can use it, so this is the starting point for a prefab gimmick."
+msgstr "ストアにまだ無いコントローラーのパラメーター（Trigger を除く）を、非同期の行として追加します（synced も saved も付けません）。MA Parameters は使用するパラメーターをすべて宣言する必要があるため、プレハブギミックではここが出発点になります。"
+
+msgid "Every controller parameter is already in the store."
+msgstr "コントローラーのパラメーターはすべてストアに登録済みです。"
+
+msgid "Add {0} parameter(s) to the store, unsynced and unsaved?"
+msgstr "{0} 件のパラメーターを、synced も saved も付けずにストアへ追加しますか？"
+
 msgid "Sync Parameters"
 msgstr "パラメーター同期"
 
@@ -1640,14 +1947,29 @@ msgstr "この Recipe を対象コントローラーに適用します（Undo �
 msgid "Async Sync '{0}': {1}"
 msgstr "巡回同期 '{0}': {1}"
 
-msgid "Behaviour type '{0}' was not found (SDK missing?) — skipped on state '{1}'."
-msgstr "Behaviour 型 '{0}' が見つかりません（SDK 未導入？）。State '{1}' への追加をスキップしました。"
+msgid "Behaviour type '{0}' was not found (SDK missing?) — skipped on '{1}'."
+msgstr "Behaviour 型 '{0}' が見つかりません（SDK 未導入？）。'{1}' への追加をスキップしました。"
 
 msgid "Class Name"
 msgstr "クラス名"
 
 msgid "Clean — code and controller match."
 msgstr "一致 — コードとコントローラーに差分はありません。"
+
+msgid "Clean — your half and the exported half declare the same thing."
+msgstr "一致 — あなたの Build とエクスポート側の BuildGenerated は同じ内容を宣言しています。"
+
+msgid "Compare With Exported Half"
+msgstr "エクスポート側と比較"
+
+msgid "Check that your Build declares the same controller as the exporter's BuildGenerated — the safety net for reshaping exported code by hand or with an AI."
+msgstr "あなたの Build がエクスポート側の BuildGenerated と同じコントローラーを宣言しているか確認します。手や AI でコードを整形するときの安全網です。"
+
+msgid "This recipe has no exported half to compare against."
+msgstr "この Recipe には比較対象のエクスポート側がありません。"
+
+msgid "Post steps (Raw, Async Sync, DBT gadgets) declare nothing comparable — check those by hand."
+msgstr "後段ステップ（Raw・巡回同期・DBT ガジェット）は比較対象になりません。そこは目視で確認してください。"
 
 msgid "Compare what the code declares against the controller's current contents."
 msgstr "コードの宣言内容とコントローラーの現状を比較します。"
@@ -1673,17 +1995,26 @@ msgstr "C# Recipe をエクスポート"
 msgid "Export Layer To C#"
 msgstr "レイヤーを C# にエクスポート"
 
+msgid "Gadget layers are regenerated at the end of the controller; the layer order will differ from the original."
+msgstr "ガジェットのレイヤーはコントローラーの末尾に再生成されます。元のレイヤー順とは変わります。"
+
 msgid "Generate"
 msgstr "生成"
 
 msgid "Generated by recipe '{0}' — Generate on that asset rebuilds this layer"
 msgstr "Recipe '{0}' が生成したレイヤーです。そのアセットの「生成」でこのレイヤーは作り直されます"
 
-msgid "Generates a recipe: C# that rebuilds the checked layers through the DaerD authoring API. Clips and masks become fields on a recipe asset (assigned automatically), so the code carries no GUIDs and stays editable — by you or by an AI."
-msgstr "チェックしたレイヤーを DaerD の Authoring API で再構築する C#（Recipe）を生成します。クリップやマスクは Recipe アセットのフィールドになり（自動割り当て）、コードに GUID は含まれません。人にも AI にも編集しやすい形です。"
+msgid "Generates a recipe: C# that rebuilds the checked layers through the DaerD authoring API. Clips and masks become fields on a recipe asset (assigned automatically), so the code carries no GUIDs and stays editable — by you or by an AI.\n\nTwo files, halves of one partial class: '<Name>.Generated.cs' is rewritten on every export, '<Name>.cs' is yours and is written only once. Reshape yours freely; a re-export lands beside it, and Compare on the recipe asset checks that both still declare the same controller."
+msgstr "チェックしたレイヤーを DaerD の Authoring API で再構築する C#（Recipe）を生成します。クリップやマスクは Recipe アセットのフィールドになり（自動割り当て）、コードに GUID は含まれません。人にも AI にも編集しやすい形です。\n\n出力は partial class を分けた 2 ファイルです: '<Name>.Generated.cs' は毎回のエクスポートで書き換えられ、'<Name>.cs' はあなたのもので初回のみ生成されます。自分側は自由に整形してください。再エクスポートは隣に出力されるだけで、Recipe アセットの「エクスポート側と比較」で両者が同じコントローラーを宣言しているか確認できます。"
 
 msgid "Layer '{0}' is declared more than once."
 msgstr "レイヤー '{0}' が複数回宣言されています。"
+
+msgid "Layer '{0}': {1} of {2} blend tree children have no saved gadget config; exported as a raw tree."
+msgstr "レイヤー '{0}': Blend Tree の子 {2} 個のうち {1} 個に保存されたガジェット設定がありません。ツリーのままエクスポートしました。"
+
+msgid "LUT curve for '{0}' uses weighted tangents; the exported curve drops the weights."
+msgstr "'{0}' の LUT カーブが重み付きタンジェントを使っています。エクスポートされるカーブでは重みが失われます。"
 
 msgid "Layers To Export"
 msgstr "エクスポートするレイヤー"
@@ -1739,8 +2070,11 @@ msgstr "明示スケジュールで同じスロットが隣接ステップに並
 msgid "The folder is not under an 'Editor' folder — an 'Editor' subfolder will be added so player builds don't try to compile the recipe."
 msgstr "出力先が 'Editor' フォルダ配下ではありません。プレイヤービルドで Recipe がコンパイルされないよう、'Editor' サブフォルダを自動で追加します。"
 
-msgid "This recipe has Raw steps; their output is not covered by Verify."
-msgstr "この Recipe には Raw ステップがあります。その出力は Verify の対象外です。"
+msgid "This recipe has post steps (Raw, Async Sync, DBT gadgets); their output is not covered by Verify."
+msgstr "この Recipe には後段ステップ（Raw・巡回同期・DBT ガジェット）があります。その出力は Verify の対象外です。"
+
+msgid "DBT gadget '{0}' in layer '{1}': {2}"
+msgstr "レイヤー '{1}' の DBT ガジェット '{0}': {2}"
 
 msgid "Transition from '{0}' to '{1}' could not be resolved — skipped."
 msgstr "'{0}' から '{1}' への Transition を解決できなかったため、スキップしました。"
@@ -1760,17 +2094,279 @@ msgstr "出力フォルダはこのプロジェクト内（'Assets/…'）を指
 msgid "Could not create the output folder '{0}'."
 msgstr "出力フォルダ '{0}' を作成できませんでした。"
 
-msgid "'{0}' already exists — exporting overwrites the file and updates the existing recipe asset in place (no duplicates)."
-msgstr "'{0}' は既に存在します。エクスポートするとファイルを上書きし、既存の Recipe アセットもその場で更新します（重複は作りません）。"
+msgid "'{0}' already exists — only the generated half beside it is rewritten, and the existing recipe asset is updated in place (no duplicates)."
+msgstr "'{0}' は既に存在します。書き換えるのは隣の生成側ファイルだけで、既存の Recipe アセットはその場で更新します（重複は作りません）。"
 
-msgid "'{0}' already exists. Overwrite it with the freshly exported code? Hand edits in that file will be lost."
-msgstr "'{0}' は既に存在します。エクスポートしたコードで上書きしますか？ ファイルへの手編集は失われます。"
+msgid "'{0}' is a single-file recipe from an earlier DaerD. Exports now write two halves of one partial class: '{1}', regenerated every time, and a hand half DaerD never overwrites.\n\nMigrating copies the current file to '{0}.bak' and replaces it with the hand half — carry anything you edited over from the backup."
+msgstr "'{0}' は旧バージョンの DaerD が出力した 1 ファイル構成の Recipe です。現在のエクスポートは partial class を 2 つに分けて出力します: 毎回作り直す '{1}' と、DaerD が決して上書きしない手編集側です。\n\n移行すると現在のファイルを '{0}.bak' にコピーしてから手編集側で置き換えます。編集内容はバックアップから移してください。"
 
-msgid "Overwrite"
-msgstr "上書き"
+msgid "Migrate"
+msgstr "移行する"
 
 msgid "Assembly Definition (faster compiles)"
 msgstr "Assembly Definition（コンパイル高速化）"
 
 msgid "Put the recipe folder in its own small assembly, so an export recompiles only the recipes instead of your whole editor assembly. Skipped when the folder already belongs to an asmdef or contains scripts DaerD didn't generate."
 msgstr "Recipe フォルダを専用の小さなアセンブリに分離し、エクスポート時の再コンパイルをエディタアセンブリ全体ではなく Recipe だけに抑えます。フォルダが既に asmdef 管理下にある場合や、DaerD 以外のスクリプトを含む場合はスキップします。"
+
+# ---- state inspector ----
+
+msgid "Motion"
+msgstr "モーション"
+
+msgid "Speed"
+msgstr "速度"
+
+msgid "Cycle Offset"
+msgstr "サイクルオフセット"
+
+msgid "Mirror"
+msgstr "ミラー"
+
+msgid "Foot IK"
+msgstr "Foot IK"
+
+msgid "Tag"
+msgstr "タグ"
+
+msgid "Parameter Overrides"
+msgstr "パラメーター上書き"
+
+msgid "Speed Multiplier"
+msgstr "速度の倍率"
+
+msgid "Motion Time"
+msgstr "モーション時間"
+
+msgid "States"
+msgstr "State 数"
+
+msgid "Sub-State Machines"
+msgstr "Sub-State Machine 数"
+
+# ---- multi-state inspector ----
+
+msgid "{0} states selected"
+msgstr "{0} 件の State を選択中"
+
+msgid "Parameter Overrides (applied to all)"
+msgstr "パラメーター上書き（すべてに適用）"
+
+msgid "Bulk Actions"
+msgstr "一括操作"
+
+msgid "Set Default State to First"
+msgstr "先頭を Default State に設定"
+
+msgid "Delete All {0}"
+msgstr "{0} 件すべて削除"
+
+msgid "Delete States"
+msgstr "State の削除"
+
+msgid "Delete the {0} selected states? Their transitions will be removed too."
+msgstr "選択中の State {0} 件を削除しますか？ 関連する Transition も削除されます。"
+
+# ---- behaviour list ----
+
+msgid "+ Add Behaviour"
+msgstr "+ Behaviour を追加"
+
+msgid "+ Add Behaviour to All {0}"
+msgstr "+ Behaviour を {0} 件すべてに追加"
+
+# ---- frame / note inspector ----
+
+msgid "This frame no longer exists."
+msgstr "この Frame は既に存在しません。"
+
+msgid "Frame"
+msgstr "Frame"
+
+msgid "Title"
+msgstr "タイトル"
+
+msgid "Color"
+msgstr "色"
+
+msgid "Dragging the title bar also moves the nodes inside the frame."
+msgstr "タイトルバーをドラッグすると、Frame 内のノードも一緒に移動します。"
+
+msgid "Locked"
+msgstr "ロック"
+
+msgid "A locked frame cannot be moved, resized, renamed or deleted."
+msgstr "ロック中の Frame は移動・サイズ変更・名前変更・削除ができません。"
+
+msgid "This note no longer exists."
+msgstr "この Note は既に存在しません。"
+
+msgid "Note"
+msgstr "Note"
+
+msgid "Text"
+msgstr "本文"
+
+msgid "(empty)"
+msgstr "(空)"
+
+msgid "Edit Text in Graph"
+msgstr "グラフ上で本文を編集"
+
+msgid "Tip: double-click the note (or press F2) to edit text in place."
+msgstr "ヒント: Note をダブルクリック（または F2）すると、その場で本文を編集できます。"
+
+# ---- blend tree / clip selection ----
+
+msgid "{0} node. Drag from its port to create transitions."
+msgstr "{0} ノードです。ポートからドラッグすると Transition を作成できます。"
+
+msgid "Blend Tree"
+msgstr "Blend Tree"
+
+msgid "Animation Clip"
+msgstr "Animation クリップ"
+
+msgid "Clip"
+msgstr "クリップ"
+
+msgid "Length"
+msgstr "長さ"
+
+msgid "Frame Rate"
+msgstr "フレームレート"
+
+msgid "Looping"
+msgstr "ループ"
+
+msgid "Yes"
+msgstr "はい"
+
+msgid "No"
+msgstr "いいえ"
+
+msgid "Ping in Project"
+msgstr "Project で表示"
+
+# ---- VRC behaviour drawers ----
+
+msgid "Debug String"
+msgstr "デバッグ文字列"
+
+msgid "Delay Time"
+msgstr "遅延時間"
+
+msgid "Playable"
+msgstr "Playable"
+
+msgid "Layer"
+msgstr "レイヤー"
+
+msgid "Blend Duration"
+msgstr "ブレンド時間"
+
+msgid "Source Path"
+msgstr "ソースパス"
+
+msgid "Tracking Control"
+msgstr "Tracking Control"
+
+msgid "No Change"
+msgstr "変更なし"
+
+msgid "Tracking"
+msgstr "トラッキング"
+
+msgid "Animation"
+msgstr "アニメーション"
+
+msgid "All"
+msgstr "すべて"
+
+msgid "Head"
+msgstr "頭"
+
+msgid "Left Hand"
+msgstr "左手"
+
+msgid "Right Hand"
+msgstr "右手"
+
+msgid "Hip"
+msgstr "腰"
+
+msgid "Left Foot"
+msgstr "左足"
+
+msgid "Right Foot"
+msgstr "右足"
+
+msgid "Left Fingers"
+msgstr "左手の指"
+
+msgid "Right Fingers"
+msgstr "右手の指"
+
+msgid "Eyes & Eyelids"
+msgstr "目・まぶた"
+
+msgid "Mouth & Jaw"
+msgstr "口・あご"
+
+msgid ""
+"This behaviour modifies parameters on this and all other animation controllers referenced on the avatar descriptor.\n"
+"\n"
+"Keep in mind only parameters defined in your VRCExpressionParameter object will be synced across the network.\n"
+"\n"
+"Additionally, synced parameters are clamped between Int [0,255] and Float [-1,1]. Operations that modify these parameters will be clipped inside those bounds."
+msgstr ""
+"この Behaviour は、このコントローラーとアバターディスクリプターが参照する他のすべてのアニメーションコントローラーのパラメーターを変更します。\n"
+"\n"
+"ネットワーク越しに同期されるのは VRCExpressionParameter オブジェクトに定義したパラメーターだけである点に注意してください。\n"
+"\n"
+"また、同期パラメーターは Int [0,255]・Float [-1,1] にクランプされます。これらを変更する操作の結果も、その範囲内に丸められます。"
+
+msgid "Local Only"
+msgstr "ローカルのみ"
+
+msgid "Up"
+msgstr "上へ"
+
+msgid "Down"
+msgstr "下へ"
+
+msgid "Parameter {0}"
+msgstr "パラメーター {0}"
+
+msgid "Source"
+msgstr "コピー元"
+
+msgid "Destination"
+msgstr "コピー先"
+
+msgid "Parameter '{0}' not found. Make sure you defined it in the Animator window's Parameter list."
+msgstr "パラメーター '{0}' が見つかりません。Animator ウィンドウの Parameters リストに定義されているか確認してください。"
+
+msgid "Value Min"
+msgstr "最小値"
+
+msgid "Value Max"
+msgstr "最大値"
+
+msgid "Chance"
+msgstr "確率"
+
+msgid "Convert Range"
+msgstr "範囲を変換"
+
+msgid "Min"
+msgstr "最小"
+
+msgid "Max"
+msgstr "最大"
+
+msgid "Other"
+msgstr "その他"
+
+msgid "No StateMachineBehaviour types found"
+msgstr "StateMachineBehaviour の型が見つかりません"

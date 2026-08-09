@@ -12,6 +12,8 @@ namespace Yozolab.DaerD
     {
         [SerializeField] AnimatorController _controller;
         [SerializeField] int _layerIndex;
+        // Home is a selection like a layer is, so it has to survive a domain reload the same way.
+        [SerializeField] bool _homeSelected;
 
         // Remembered across domain reloads so the open tabs survive script recompiles / play mode.
         [SerializeField] List<AnimatorController> _openControllers = new List<AnimatorController>();
@@ -20,7 +22,7 @@ namespace Yozolab.DaerD
         [SerializeField] List<int> _openControllerLayers = new List<int>();
 
         DaerDContext _context;
-        VisualElement _tabBar;
+        TabStrip _tabs;
         // Kept so a language change can restamp their labels in place. Rebuilding the toolbar
         // instead would re-fire the toggle callbacks (opening the Animation window as a side
         // effect) and reset toggle state.
@@ -32,6 +34,14 @@ namespace Yozolab.DaerD
         StateSearchField _searchField;
         AnimatorGraphView _graphView;
         BlendTreeGraphView _blendTreeView;
+        AsyncSyncPanel _asyncSyncPanel;
+        HomePanel _homePanel;
+        // The centre pane shows the async-sync settings panel instead of the graph while an
+        // async-sync layer is active — its states are generated machinery. "Show Graph" flips
+        // this for a peek; it resets on every layer/controller switch, so the settings view
+        // is always the way back in.
+        bool _showSyncGraph;
+        Button _syncViewButton;
         VisualElement _graphHost;
         LayersPanel _layersPanel;
         ParametersPanel _parametersPanel;
@@ -65,11 +75,8 @@ namespace Yozolab.DaerD
                 RefreshTabBar();
                 return;
             }
-            if (!_openControllers.Contains(controller))
-            {
-                _openControllers.Add(controller);
-                _openControllerLayers.Add(0);
-            }
+            if (!_tabs.Contains(controller))
+                _tabs.Add(controller);
             // Re-opening the already-active controller must not reset layer / selection / drill-down.
             if (controller != _controller)
                 ActivateController(controller);
@@ -92,7 +99,7 @@ namespace Yozolab.DaerD
             // Save the outgoing tab's current layer so we can return to it next time.
             RememberCurrentLayer();
 
-            int restoredLayer = LookupRememberedLayer(controller);
+            int restoredLayer = _tabs.Lookup(controller);
             SetController(controller);
             if (restoredLayer > 0)
                 _context?.SetLayer(restoredLayer);
@@ -101,18 +108,14 @@ namespace Yozolab.DaerD
 
         void CloseController(AnimatorController controller)
         {
-            int index = _openControllers.IndexOf(controller);
+            int index = _tabs.Remove(controller);
             if (index < 0) return;
-            _openControllers.RemoveAt(index);
-            if (index < _openControllerLayers.Count) _openControllerLayers.RemoveAt(index);
             if (controller == _controller)
             {
-                var next = _openControllers.Count > 0
-                    ? _openControllers[Mathf.Clamp(index, 0, _openControllers.Count - 1)]
-                    : null;
+                var next = _tabs.NextAfter(index);
                 if (next != null)
                 {
-                    int restoredLayer = LookupRememberedLayer(next);
+                    int restoredLayer = _tabs.Lookup(next);
                     SetController(next);
                     if (restoredLayer > 0)
                         _context?.SetLayer(restoredLayer);
@@ -125,89 +128,15 @@ namespace Yozolab.DaerD
             RefreshTabBar();
         }
 
-        /// <summary>Writes the active layer index back to the per-tab memory.</summary>
-        void RememberCurrentLayer()
-        {
-            if (_controller == null) return;
-            int index = _openControllers.IndexOf(_controller);
-            if (index < 0) return;
-            while (_openControllerLayers.Count <= index)
-                _openControllerLayers.Add(0);
-            _openControllerLayers[index] = _layerIndex;
-        }
+        void RememberCurrentLayer() => _tabs.Remember(_controller, _layerIndex);
 
-        int LookupRememberedLayer(AnimatorController controller)
-        {
-            int index = _openControllers.IndexOf(controller);
-            if (index < 0 || index >= _openControllerLayers.Count) return 0;
-            return _openControllerLayers[index];
-        }
-
-        /// <summary>Rebuilds the tab strip from the open-controller list, highlighting the active one.</summary>
-        void RefreshTabBar()
-        {
-            if (_tabBar == null) return;
-
-            // Drop the parallel layer entry for any controller that's been removed (deleted asset
-            // or null reference) so the two lists stay aligned by index.
-            for (int i = _openControllers.Count - 1; i >= 0; i--)
-            {
-                if (_openControllers[i] != null) continue;
-                _openControllers.RemoveAt(i);
-                if (i < _openControllerLayers.Count) _openControllerLayers.RemoveAt(i);
-            }
-            if (_controller != null && !_openControllers.Contains(_controller))
-            {
-                _openControllers.Add(_controller);
-                _openControllerLayers.Add(_layerIndex);
-            }
-            while (_openControllerLayers.Count < _openControllers.Count)
-                _openControllerLayers.Add(0);
-
-            _tabBar.Clear();
-            _tabBar.style.display = _openControllers.Count > 0 ? DisplayStyle.Flex : DisplayStyle.None;
-
-            foreach (var controller in _openControllers)
-            {
-                var captured = controller;
-                var tab = new VisualElement();
-                tab.AddToClassList("dd-tab");
-                if (controller == _controller) tab.AddToClassList("dd-tab--active");
-
-                var label = new Label(controller.name) { tooltip = AssetDatabase.GetAssetPath(controller) };
-                label.AddToClassList("dd-tab__label");
-                tab.Add(label);
-
-                var close = new Label("×") { tooltip = L.Tr("Close tab") };   // U+00D7, widely available
-                close.AddToClassList("dd-tab__close");
-                tab.Add(close);
-
-                tab.RegisterCallback<MouseDownEvent>(evt =>
-                {
-                    if (evt.button == 0)
-                    {
-                        // The first click activates the tab (and rebuilds this bar); the second
-                        // still arrives with clickCount 2 because UI Toolkit tracks click count
-                        // per pointer, not per element.
-                        if (evt.clickCount == 2) EditorGUIUtility.PingObject(captured);
-                        else ActivateController(captured);
-                        evt.StopPropagation();
-                    }
-                    else if (evt.button == 2) { CloseController(captured); evt.StopPropagation(); }   // middle-click
-                });
-                close.RegisterCallback<MouseDownEvent>(evt =>
-                {
-                    if (evt.button != 0) return;
-                    CloseController(captured);
-                    evt.StopPropagation();   // don't also activate the tab
-                });
-
-                _tabBar.Add(tab);
-            }
-        }
+        void RefreshTabBar() => _tabs.Refresh(_controller, _layerIndex);
 
         void OnEnable()
         {
+            // Built here, not in CreateGUI: the serialized tab lists are restored just before
+            // this runs, and a controller can be opened into the window before its UI exists.
+            _tabs = new TabStrip(_openControllers, _openControllerLayers, ActivateController, CloseController);
             Undo.undoRedoPerformed += OnUndoRedo;
             EditorApplication.update += PollRuntime;
             EditorApplication.playModeStateChanged += OnPlayModeChanged;
@@ -227,8 +156,10 @@ namespace Yozolab.DaerD
         void CreateGUI()
         {
             // Captured before the wiring below, because SetController (fired during restore) resets
-            // the layer to 0 via SyncSerializedState, clobbering the serialized value.
+            // the layer to 0 and clears the home flag via SyncSerializedState, clobbering the
+            // serialized values.
             int restoredLayer = _layerIndex;
+            bool restoredHome = _homeSelected;
 
             rootVisualElement.Clear();
             _context = new DaerDContext();
@@ -243,24 +174,46 @@ namespace Yozolab.DaerD
             L.LanguageChanged -= OnLanguageChanged;   // CreateGUI can run again after a reload
             L.LanguageChanged += OnLanguageChanged;
 
-            _tabBar = new VisualElement();
-            _tabBar.AddToClassList("dd-tabbar");
-            rootVisualElement.Add(_tabBar);
+            rootVisualElement.Add(_tabs.Bar);
 
             _graphView = new AnimatorGraphView(_context) { Owner = new EditorWindowOwner { Window = this } };
             _blendTreeView = new BlendTreeGraphView(_context);
             _layersPanel = new LayersPanel(_context);
             _parametersPanel = new ParametersPanel(_context);
-            _inspectorPanel = new InspectorPanel(_context, _graphView);
+            _inspectorPanel = new InspectorPanel(_context, _graphView.Sync);
             _hierarchyPanel = new BlendTreeHierarchyPanel(_context);
 
-            // The two graph surfaces share the centre pane; only one is visible at a time
-            // depending on whether the user has drilled into a blend tree.
+            // The four centre surfaces share the pane; one is visible at a time depending on
+            // whether Home is picked, the user has drilled into a blend tree, or sits on an
+            // async-sync layer (whose graph is generated machinery — the settings panel is
+            // the view).
             _graphHost = new VisualElement { style = { flexGrow = 1 } };
             _graphView.style.flexGrow = 1;
             _blendTreeView.style.flexGrow = 1;
+            _asyncSyncPanel = new AsyncSyncPanel(_context) { style = { flexGrow = 1 } };
+            _asyncSyncPanel.ShowGraphRequested += () =>
+            {
+                _showSyncGraph = true;
+                RefreshGraphVisibility();
+            };
+            _homePanel = new HomePanel(_context) { style = { flexGrow = 1 } };
             _graphHost.Add(_graphView);
             _graphHost.Add(_blendTreeView);
+            _graphHost.Add(_asyncSyncPanel);
+            _graphHost.Add(_homePanel);
+
+            // Floating way back from the raw graph to the settings view; only visible while
+            // peeking at an async-sync layer's graph.
+            _syncViewButton = new Button(() =>
+            {
+                _showSyncGraph = false;
+                RefreshGraphVisibility();
+            });
+            _syncViewButton.style.position = Position.Absolute;
+            _syncViewButton.style.top = 6;
+            _syncViewButton.style.right = 6;
+            ApplySyncViewButtonText();
+            _graphHost.Add(_syncViewButton);
 
             var leftSplit = new TwoPaneSplitView(0, 220, TwoPaneSplitViewOrientation.Vertical);
             leftSplit.Add(_layersPanel);
@@ -294,13 +247,24 @@ namespace Yozolab.DaerD
             _context.StateMachinePathChanged += RefreshBreadcrumb;
             _context.BlendTreePathChanged += RefreshBreadcrumb;
             _context.ControllerChanged += RefreshBreadcrumb;
+            _context.HomeChanged += RefreshBreadcrumb;
             _context.LayerChanged += SyncSerializedState;
             _context.ControllerChanged += SyncSerializedState;
+            _context.HomeChanged += SyncSerializedState;
+
+            // Subscribed before RefreshGraphVisibility so the flag is fresh when it runs.
+            _context.LayerChanged += ResetSyncGraphPeek;
+            _context.ControllerChanged += ResetSyncGraphPeek;
 
             _context.BlendTreePathChanged += RefreshGraphVisibility;
             _context.StateMachinePathChanged += RefreshGraphVisibility;
             _context.ControllerChanged += RefreshGraphVisibility;
             _context.LayerChanged += RefreshGraphVisibility;
+            // A layer can become (or stop being) an async-sync layer without the selection
+            // moving: the wizard applying onto it, an undo, a recipe regenerating it.
+            _context.LayersChanged += RefreshGraphVisibility;
+            _context.GraphStructureChanged += RefreshGraphVisibility;
+            _context.HomeChanged += RefreshGraphVisibility;
             RefreshGraphVisibility();
 
             // SelectSync must subscribe before StatePreview so that on a State selection change
@@ -314,6 +278,10 @@ namespace Yozolab.DaerD
                 _context.SetController(_controller);
                 if (restoredLayer > 0)
                     _context.SetLayer(restoredLayer);   // restore the active layer after a domain reload
+                // After the layer, not instead of it: home keeps the layer underneath as the
+                // place it returns to.
+                if (restoredHome)
+                    _context.SelectHome();
             }
 
             RefreshTabBar();
@@ -331,7 +299,21 @@ namespace Yozolab.DaerD
             if (Mathf.Approximately(delta, 0f)) return;
 
             int count = _context.Controller.layers.Length;
-            int next = Mathf.Clamp(_context.LayerIndex + (delta > 0f ? 1 : -1), 0, Mathf.Max(0, count - 1));
+            bool down = delta > 0f;
+            // Home sits above layer 0 in the list, so the gesture walks the two as one strip:
+            // down off home lands on the first layer, up off the first layer goes back to it.
+            if (_context.IsHomeSelected)
+            {
+                if (down && count > 0) _context.SetLayer(0);
+                return;
+            }
+            if (!down && _context.LayerIndex == 0)
+            {
+                _context.SelectHome();
+                return;
+            }
+
+            int next = Mathf.Clamp(_context.LayerIndex + (down ? 1 : -1), 0, Mathf.Max(0, count - 1));
             if (next != _context.LayerIndex)
                 _context.SetLayer(next);
         }
@@ -340,6 +322,7 @@ namespace Yozolab.DaerD
         {
             _controller = _context.Controller;
             _layerIndex = _context.LayerIndex;
+            _homeSelected = _context.IsHomeSelected;
             RememberCurrentLayer();
         }
 
@@ -415,12 +398,20 @@ namespace Yozolab.DaerD
             _searchField.RefreshTooltip();
         }
 
+        void ApplySyncViewButtonText()
+        {
+            if (_syncViewButton == null) return;
+            _syncViewButton.text = L.Tr("Sync Settings");
+            _syncViewButton.tooltip = L.Tr("Back to this async-sync layer's settings view");
+        }
+
         /// <summary>Restamps localized labels in place — no rebuild, so toggle state and the
         /// subsystems they drive are untouched.</summary>
         void OnLanguageChanged()
         {
             if (_selectSyncToggle == null) return;
             ApplyToolbarTexts();
+            ApplySyncViewButtonText();
             RefreshTabBar();   // "Close tab" tooltips
         }
 
@@ -429,6 +420,17 @@ namespace Yozolab.DaerD
             if (_breadcrumb == null) return;
             _breadcrumb.Clear();
             if (_context == null || !_context.HasController) return;
+
+            // Home is not inside any layer, so there is no trail to draw — just where we are.
+            if (_context.IsHomeSelected)
+            {
+                var home = new Label(L.Tr("Home"));
+                home.style.unityFontStyleAndWeight = FontStyle.Bold;
+                home.style.marginLeft = 6;
+                home.style.marginRight = 2;
+                _breadcrumb.Add(home);
+                return;
+            }
 
             var layer = _context.CurrentLayer;
             if (layer != null)
@@ -474,13 +476,59 @@ namespace Yozolab.DaerD
             }
         }
 
-        /// <summary>Shows the blend tree view when the context has drilled into one, otherwise the state machine view.</summary>
+        void ResetSyncGraphPeek() => _showSyncGraph = false;
+
+        /// <summary>Picks the centre view: the home screen when it is selected, the blend tree
+        /// editor when drilled into one, the async-sync settings panel when sitting at the root
+        /// of a generated sync layer (unless the user asked to peek at the graph), the state
+        /// machine graph otherwise.</summary>
         void RefreshGraphVisibility()
         {
             if (_graphView == null || _blendTreeView == null) return;
+
+            // Home wins over everything: it is about the controller, so none of the views of a
+            // single layer (nor the way back into one of them) belongs on screen beside it.
+            bool home = _context != null && _context.IsHomeSelected;
+            if (_homePanel != null)
+            {
+                _homePanel.style.display = home ? DisplayStyle.Flex : DisplayStyle.None;
+                if (home) _homePanel.Refresh();
+            }
+            if (home)
+            {
+                _graphView.style.display = DisplayStyle.None;
+                _blendTreeView.style.display = DisplayStyle.None;
+                if (_asyncSyncPanel != null) _asyncSyncPanel.style.display = DisplayStyle.None;
+                if (_syncViewButton != null) _syncViewButton.style.display = DisplayStyle.None;
+                RefreshRightColumnLayout(false);
+                return;
+            }
+
             bool inBlendTree = _context != null && _context.IsViewingBlendTree;
-            _graphView.style.display = inBlendTree ? DisplayStyle.None : DisplayStyle.Flex;
+
+            // Only the layer ROOT swaps to the settings panel — a generated layer has no sub
+            // machines, so a drilled-down path means the user is somewhere hand-made. The path
+            // always carries the layer's root machine at index 0, so "not drilled" is one entry
+            // and not none: at zero the layer has no state machine at all, and there would be
+            // nothing to match a saved setup against anyway.
+            var syncConfig = !inBlendTree && _context != null
+                && _context.StateMachinePath.Count <= 1
+                ? AsyncSyncPanel.ConfigOf(_context.Controller, _context.CurrentLayer?.stateMachine)
+                : null;
+            bool showSyncPanel = syncConfig != null && !_showSyncGraph;
+
+            _graphView.style.display = inBlendTree || showSyncPanel
+                ? DisplayStyle.None : DisplayStyle.Flex;
             _blendTreeView.style.display = inBlendTree ? DisplayStyle.Flex : DisplayStyle.None;
+            if (_asyncSyncPanel != null)
+            {
+                _asyncSyncPanel.style.display = showSyncPanel
+                    ? DisplayStyle.Flex : DisplayStyle.None;
+                if (showSyncPanel) _asyncSyncPanel.Refresh();
+            }
+            if (_syncViewButton != null)
+                _syncViewButton.style.display = syncConfig != null && !showSyncPanel
+                    ? DisplayStyle.Flex : DisplayStyle.None;
             if (inBlendTree)
                 _blendTreeView.RequestRebuild();
 
@@ -523,15 +571,12 @@ namespace Yozolab.DaerD
         /// open their layer. Returns true when it navigated; the caller falls back to a
         /// Project ping otherwise.
         /// </summary>
-        internal bool TryFocusIssue(ControllerAnalyzer.Issue issue)
+        internal bool TryFocusIssue(AnalyzerIssue issue)
         {
             // Freshly opened window: CreateGUI (and with it the context) hasn't run yet.
             if (_context == null || _context.Controller == null) return false;
 
-            var location = ControllerLocator.Locate(_context.Controller, issue.context);
-            if (location == null && issue.layerIndex >= 0
-                && issue.layerIndex < _context.Controller.layers.Length)
-                location = new ControllerLocator.Location { layerIndex = issue.layerIndex };
+            var location = ControllerLocator.LocateIssue(_context.Controller, issue);
             if (location == null) return false;
             return TryNavigateTo(location.layerIndex, location.stateMachinePath, location.target);
         }
@@ -571,6 +616,8 @@ namespace Yozolab.DaerD
             _parametersPanel?.Refresh();
             _inspectorPanel?.Refresh();
             _hierarchyPanel?.Refresh();
+            _asyncSyncPanel?.Refresh();
+            _homePanel?.Refresh();
         }
 
         void OnPlayModeChanged(PlayModeStateChange change) => _graphView?.Sync.RequestRebuild();

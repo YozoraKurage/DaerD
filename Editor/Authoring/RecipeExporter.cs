@@ -13,12 +13,20 @@ namespace Yozolab.DaerD.Authoring
     /// call sequence whose result can be diffed against the original — that replayed builder
     /// comes back in the result for the tests to verify. Assets become [SerializeField]
     /// fields (pre-assigned on the generated .asset), never GUIDs in code.
+    ///
+    /// Two files come out, halves of one partial class: the generated one, rewritten whole on
+    /// every export, and a hand half written only when it doesn't exist yet. The split is what
+    /// makes the round trip survivable — export, reshape the code, Generate, export again —
+    /// since the re-export lands next to the reshaped half instead of on top of it.
     /// </summary>
     static class RecipeExporter
     {
         public class Result
         {
+            /// <summary>The generated half ("&lt;Name&gt;.Generated.cs") — always rewritten.</summary>
             public string code;
+            /// <summary>The hand half ("&lt;Name&gt;.cs") — only written when it doesn't exist yet.</summary>
+            public string handHalf;
             public string className;
             public readonly List<FieldRef> fields = new List<FieldRef>();
             public readonly List<string> warnings = new List<string>();
@@ -62,16 +70,18 @@ namespace Yozolab.DaerD.Authoring
                 }
             }
 
+            var gadgets = PlanGadgets(controller, layerNames, result.warnings);
             var script = new RecipeScript();
             var builder = new ControllerBuilder { Script = script };
             script.RegisterRoot(builder);
             result.replayed = builder;
 
-            RegisterAssets(ir, script, result);
-            new Driver(builder, ir, result.warnings).Run();
+            RegisterAssets(ir, script, result, gadgets);
+            new RecipeDriver(builder, ir, result.warnings, gadgets).Run();
             result.warnings.AddRange(builder.Bake());
 
-            result.code = Compose(script, className, namespaceName, controller, result);
+            result.code = ComposeGenerated(script, className, namespaceName, controller, result);
+            result.handHalf = ComposeHandHalf(className, namespaceName);
             return result;
         }
 
@@ -87,11 +97,135 @@ namespace Yozolab.DaerD.Authoring
             return referenced;
         }
 
+        // ---- gadget layers -----------------------------------------------------
+
+        /// <summary>
+        /// The layers a controller can have written back as <c>c.Gadgets(…)</c> calls instead
+        /// of as the tree they expanded into, plus what that implies for the rest of the export.
+        /// </summary>
+        internal class GadgetPlan
+        {
+            /// <summary>Layer name → its gadgets, in the order the root tree holds them, which
+            /// is the order they were built in and the order they have to be rebuilt in.</summary>
+            public readonly Dictionary<string, List<AapGadgets.Request>> layers =
+                new Dictionary<string, List<AapGadgets.Request>>();
+
+            /// <summary>Layers a covered gadget brings along and regenerates by itself
+            /// (FrameTime's clock). Exporting their states as well would only add a second
+            /// copy under a numbered name.</summary>
+            public readonly HashSet<string> supporting = new HashSet<string>();
+
+            /// <summary>Whether a covered gadget owns this parameter — the output, or the
+            /// namespace under it. Its call recreates them, so declaring them up top is noise
+            /// the next Generate overwrites anyway. Shared machinery (a smoothing amount, the
+            /// constant One) lives outside that namespace and stays declared.</summary>
+            public bool Owns(string parameter)
+            {
+                foreach (var pair in layers)
+                    foreach (var request in pair.Value)
+                        if (!string.IsNullOrEmpty(request.output)
+                            && (parameter == request.output
+                                || parameter.StartsWith(request.output + "/",
+                                    System.StringComparison.Ordinal)))
+                            return true;
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Works out which layers qualify. The check runs on the live controller rather than on
+        /// the IR: the IR holds copies of the trees, and the saved configs point at the real
+        /// ones, so a reference match is only meaningful here.
+        ///
+        /// A layer qualifies only when every child of its root Direct tree has a config to
+        /// stand for it — a child added by hand has no call that would rebuild it, and
+        /// rewriting the layer as calls would drop it without a word.
+        /// </summary>
+        static GadgetPlan PlanGadgets(AnimatorController controller, ICollection<string> layerNames,
+            List<string> warnings)
+        {
+            var plan = new GadgetPlan();
+            var configs = GraphFrameData.GetGadgets(controller);
+            if (configs.Count == 0) return plan;
+
+            var layers = controller.layers;
+            foreach (var layer in layers)
+            {
+                if (layerNames != null && !layerNames.Contains(layer.name)) continue;
+                var root = GadgetRootTree(layer);
+                if (root == null) continue;
+
+                var covered = new List<AapGadgets.Request>();
+                int uncovered = 0;
+                foreach (var child in root.children)
+                {
+                    var config = FindGadget(configs, layer.stateMachine, child.motion);
+                    if (config == null) uncovered++;
+                    else covered.Add(AapGadgets.ToRequest(config, controller));
+                }
+                if (covered.Count == 0) continue;
+                if (uncovered > 0)
+                {
+                    warnings.Add(L.Tr("Layer '{0}': {1} of {2} blend tree children have no saved gadget config; exported as a raw tree.",
+                        layer.name, uncovered, root.children.Length));
+                    continue;
+                }
+
+                plan.layers[layer.name] = covered;
+                foreach (var request in covered)
+                    foreach (var name in AapGadgets.SupportingLayerNames(request))
+                        plan.supporting.Add(name);
+            }
+
+            // Gadgets are a post step: their layers are rebuilt at the end of the controller.
+            // The order survives that only while nothing but other gadget layers follows them.
+            if (plan.layers.Count > 0 && FollowedByOrdinaryLayers(layers, layerNames, plan))
+                warnings.Add(L.Tr("Gadget layers are regenerated at the end of the controller; the layer order will differ from the original."));
+            return plan;
+        }
+
+        /// <summary>The root Direct tree of a gadget-shaped layer — one state, playing a Direct
+        /// blend tree, and nothing else in the machine — or null. Live-side twin of the IR check
+        /// the driver makes before it points at the gadget API.</summary>
+        static BlendTree GadgetRootTree(AnimatorControllerLayer layer)
+        {
+            var machine = layer.stateMachine;
+            if (machine == null || machine.stateMachines.Length > 0 || machine.states.Length != 1)
+                return null;
+            var state = machine.states[0].state;
+            return state != null && state.motion is BlendTree root
+                && root.blendType == BlendTreeType.Direct ? root : null;
+        }
+
+        static GraphFrameData.AapGadgetConfig FindGadget(
+            List<GraphFrameData.AapGadgetConfig> configs, AnimatorStateMachine machine, Motion child)
+        {
+            foreach (var config in configs)
+                if (config.layer == machine && config.tree == child)
+                    return config;
+            return null;
+        }
+
+        static bool FollowedByOrdinaryLayers(AnimatorControllerLayer[] layers,
+            ICollection<string> layerNames, GadgetPlan plan)
+        {
+            bool seenGadget = false;
+            foreach (var layer in layers)
+            {
+                if (layerNames != null && !layerNames.Contains(layer.name)) continue;
+                if (plan.layers.ContainsKey(layer.name) || plan.supporting.Contains(layer.name))
+                    seenGadget = true;
+                else if (seenGadget) return true;
+            }
+            return false;
+        }
+
         // ---- asset fields ------------------------------------------------------
 
         /// <summary>Walks the IR in emission order so field declarations come out in a
         /// stable, readable order.</summary>
-        static void RegisterAssets(ControllerIR ir, RecipeScript script, Result result)
+        static void RegisterAssets(ControllerIR ir, RecipeScript script, Result result,
+            GadgetPlan gadgets)
         {
             void Register(Object asset)
             {
@@ -130,6 +264,10 @@ namespace Yozolab.DaerD.Authoring
 
             foreach (var layer in ir.layers)
             {
+                // A layer the gadget calls rebuild contributes no fields: every clip in it is
+                // minted by those calls, and a field for one would refer to nothing.
+                if (gadgets.layers.ContainsKey(layer.name) || gadgets.supporting.Contains(layer.name))
+                    continue;
                 Register(layer.mask);
                 Machine(layer.machine);
                 foreach (var entry in layer.syncedMotions)
@@ -137,733 +275,8 @@ namespace Yozolab.DaerD.Authoring
             }
         }
 
-        // ---- driving the builder ------------------------------------------------
-
-        /// <summary>
-        /// One export pass over the IR. Stateful because parameter handles are the recipe's
-        /// vocabulary: every condition, driver entry and blend parameter goes through the
-        /// typed handle declared up top, shared across layers.
-        /// </summary>
-        class Driver
-        {
-            readonly ControllerBuilder _c;
-            readonly ControllerIR _ir;
-            readonly List<string> _warnings;
-            readonly Dictionary<string, ParamHandle> _handles =
-                new Dictionary<string, ParamHandle>();
-            readonly Dictionary<string, AnimatorControllerParameterType> _types =
-                new Dictionary<string, AnimatorControllerParameterType>();
-
-            public Driver(ControllerBuilder c, ControllerIR ir, List<string> warnings)
-            {
-                _c = c;
-                _ir = ir;
-                _warnings = warnings;
-                foreach (var p in ir.parameters)
-                    _types[p.name] = p.type;
-            }
-
-            public void Run()
-            {
-                // Parameters first, whatever the layer layout — they're the controller-wide
-                // vocabulary, and one handle per line so a long list stays scannable.
-                if (_ir.parameters.Count > 0)
-                    _c.Script.Comment(Header("Parameters"));
-                foreach (var p in _ir.parameters)
-                    _handles[p.name] = Declare(p);
-
-                foreach (var layer in _ir.layers)
-                {
-                    _c.Script.Blank();
-                    if (layer.machine == null)
-                    {
-                        string source = layer.syncedLayerIndex >= 0
-                            && layer.syncedLayerIndex < _ir.layers.Count
-                            ? _ir.layers[layer.syncedLayerIndex].name : "?";
-                        _c.Script.Comment(Header("Synced Layer: " + layer.name + " (mirrors " + source + ")"));
-                        SyncedLayer(layer);
-                        continue;
-                    }
-                    _c.Script.Comment(Header("Layer: " + layer.name));
-
-                    var lb = _c.Layer(layer.name);
-                    if (layer.defaultWeight != 1f) lb.WithWeight(layer.defaultWeight);
-                    if (layer.blending == AnimatorLayerBlendingMode.Additive) lb.Additive();
-                    if (layer.ikPass) lb.WithIkPass();
-                    if (layer.mask != null) lb.WithAvatarMask(layer.mask);
-
-                    // A layer reads in blocks: state definitions, folded uniform settings,
-                    // transitions, then layout — positions are the least-edited data, so
-                    // they live at the bottom instead of noising up every state line.
-                    var states = new Dictionary<string, StateBuilder>();
-                    var machines = new Dictionary<string, MachineBuilder>();
-                    var order = new List<(StateBuilder builder, ControllerIR.State state)>();
-                    var machineOrder = new List<(MachineBuilder builder, ControllerIR.ChildMachine child)>();
-                    var scopes = new List<(MachineScope scope, ControllerIR.Machine machine)>();
-                    var plan = PlanFolds(layer.machine);
-                    CreateScope(lb, layer.machine, states, machines, order, machineOrder, scopes, plan);
-                    EmitFolds(plan, order);
-
-                    if (HasWiring(layer.machine, string.Empty))
-                    {
-                        _c.Script.Blank();
-                        _c.Script.Comment("transitions");
-                    }
-                    WireScope(lb, layer.machine, states, machines);
-
-                    _c.Script.Blank();
-                    _c.Script.Comment("layout");
-                    _c.Script.BeginPack();
-                    foreach (var (sb, state) in order)
-                        sb.At(state.position.x, state.position.y);
-                    foreach (var (mb, child) in machineOrder)
-                        mb.At(child.position.x, child.position.y);
-                    foreach (var (scope, machine) in scopes)
-                    {
-                        scope.EntryAt(machine.entryPosition.x, machine.entryPosition.y);
-                        scope.ExitAt(machine.exitPosition.x, machine.exitPosition.y);
-                        scope.AnyStateAt(machine.anyStatePosition.x, machine.anyStatePosition.y);
-                        if (machine.parentPosition != Vector3.zero)
-                            scope.ParentAt(machine.parentPosition.x, machine.parentPosition.y);
-                    }
-                    _c.Script.EndPack();
-                }
-            }
-
-            // ---- parameter handles ------------------------------------------------
-
-            /// <summary>A default of zero/false stays unstated: the declaration is then
-            /// reference-only and Generate won't stomp a default it doesn't care about.</summary>
-            ParamHandle Declare(ControllerIR.Param p)
-            {
-                switch (p.type)
-                {
-                    case AnimatorControllerParameterType.Float:
-                        return p.defaultFloat != 0f
-                            ? _c.FloatParameter(p.name, p.defaultFloat) : _c.FloatParameter(p.name);
-                    case AnimatorControllerParameterType.Int:
-                        return p.defaultInt != 0
-                            ? _c.IntParameter(p.name, p.defaultInt) : _c.IntParameter(p.name);
-                    case AnimatorControllerParameterType.Bool:
-                        return p.defaultBool
-                            ? _c.BoolParameter(p.name, true) : _c.BoolParameter(p.name);
-                    default:
-                        return _c.TriggerParameter(p.name);
-                }
-            }
-
-            /// <summary>The handle for a parameter name — typed by its declaration, or by
-            /// <paramref name="guess"/> for names the controller never declared.</summary>
-            ParamHandle Handle(string name, AnimatorControllerParameterType guess)
-            {
-                if (_handles.TryGetValue(name, out var existing)) return existing;
-                var type = _types.TryGetValue(name, out var known) ? known : guess;
-                ParamHandle made;
-                switch (type)
-                {
-                    case AnimatorControllerParameterType.Int: made = _c.IntParameter(name); break;
-                    case AnimatorControllerParameterType.Bool: made = _c.BoolParameter(name); break;
-                    case AnimatorControllerParameterType.Trigger: made = _c.TriggerParameter(name); break;
-                    default: made = _c.FloatParameter(name); break;
-                }
-                _handles[name] = made;
-                return made;
-            }
-
-            // A use that needs one specific handle type (a Float blend parameter, a Bool
-            // condition) while the declaration says otherwise re-declares under the needed
-            // type — the builder then reports the conflict, which is the honest outcome for
-            // a controller whose parameter usage disagrees with its parameter table.
-            FloatParam FloatOf(string name) =>
-                Handle(name, AnimatorControllerParameterType.Float) as FloatParam
-                    ?? _c.FloatParameter(name);
-
-            BoolParam BoolOf(string name) =>
-                Handle(name, AnimatorControllerParameterType.Bool) as BoolParam
-                    ?? _c.BoolParameter(name);
-
-            IntParam IntOf(string name) =>
-                Handle(name, AnimatorControllerParameterType.Int) as IntParam
-                    ?? _c.IntParameter(name);
-
-            AnimatorControllerParameterType TypeOf(string name) =>
-                _types.TryGetValue(name, out var type) ? type : AnimatorControllerParameterType.Float;
-
-            // ---- layers ----------------------------------------------------------
-
-            void SyncedLayer(ControllerIR.Layer layer)
-            {
-                if (layer.syncedLayerIndex < 0 || layer.syncedLayerIndex >= _ir.layers.Count)
-                {
-                    _warnings.Add(L.Tr("Synced layer '{0}' points outside the exported layers and was skipped — export its source layer too.", layer.name));
-                    return;
-                }
-                var lb = _c.SyncedLayer(layer.name, _ir.layers[layer.syncedLayerIndex].name);
-                if (layer.defaultWeight != 1f) lb.WithWeight(layer.defaultWeight);
-                if (layer.blending == AnimatorLayerBlendingMode.Additive) lb.Additive();
-                if (layer.ikPass) lb.WithIkPass();
-                if (layer.mask != null) lb.WithAvatarMask(layer.mask);
-                if (layer.syncedLayerAffectsTiming) lb.AffectsTiming();
-                foreach (var entry in layer.syncedMotions)
-                    lb.Override(entry.statePath, entry.motion);
-            }
-
-            void CreateScope(MachineScope scope, ControllerIR.Machine machine,
-                Dictionary<string, StateBuilder> states, Dictionary<string, MachineBuilder> machines,
-                List<(StateBuilder builder, ControllerIR.State state)> order,
-                List<(MachineBuilder builder, ControllerIR.ChildMachine child)> machineOrder,
-                List<(MachineScope scope, ControllerIR.Machine machine)> scopes, FoldPlan plan)
-            {
-                scopes.Add((scope, machine));
-                foreach (var state in machine.states)
-                {
-                    // A blend tree must exist as a variable before the state can reference it.
-                    TreeBuilder tree = state.tree != null ? EmitTree(state.tree) : null;
-
-                    var sb = scope.NewState(state.name);
-                    states[sb.Path] = sb;
-                    order.Add((sb, state));
-                    if (tree != null) sb.WithAnimation(tree);
-                    else if (state.motionAsset != null && !plan.animDeferred.Contains(state))
-                        sb.WithAnimation(state.motionAsset);
-
-                    if (state.speed != 1f) sb.WithSpeedSetTo(state.speed);
-                    if (state.cycleOffset != 0f) sb.WithCycleOffsetSetTo(state.cycleOffset);
-                    if (state.mirror) sb.WithMirrorSetTo(true);
-                    if (state.ikOnFeet) sb.WithFootIkSetTo(true);
-                    if (!state.writeDefaultValues && !plan.wdDeferred.Contains(state))
-                        sb.WithWriteDefaultsSetTo(false);
-                    if (!string.IsNullOrEmpty(state.tag)) sb.WithTag(state.tag);
-                    if (state.speedParameterActive) sb.WithSpeed(FloatOf(state.speedParameter));
-                    if (state.mirrorParameterActive) sb.WithMirror(BoolOf(state.mirrorParameter));
-                    if (state.cycleOffsetParameterActive)
-                        sb.WithCycleOffset(FloatOf(state.cycleOffsetParameter));
-                    if (state.timeParameterActive) sb.WithMotionTime(FloatOf(state.timeParameter));
-
-                    if (!plan.behaviourDeferred.Contains(state))
-                        foreach (var behaviour in state.behaviours)
-                            EmitBehaviour(sb, behaviour);
-                }
-
-                foreach (var child in machine.machines)
-                {
-                    // A blank line per sub-machine keeps a many-machine layer scannable.
-                    _c.Script.Blank();
-                    var mb = scope.NewSubStateMachine(child.machine.name);
-                    machines[mb.Prefix] = mb;
-                    machineOrder.Add((mb, child));
-                    CreateScope(mb, child.machine, states, machines, order, machineOrder, scopes, plan);
-                }
-            }
-
-            // ---- folded uniform settings ---------------------------------------------
-
-            const int FoldThreshold = 3;
-
-            /// <summary>States a layer configures identically — the same shared clip, Write
-            /// Defaults off, the same driver entries. Repeating the call per state buries
-            /// the signal; one foreach states it once.</summary>
-            class FoldPlan
-            {
-                public readonly List<List<ControllerIR.State>> animGroups =
-                    new List<List<ControllerIR.State>>();
-                public readonly HashSet<ControllerIR.State> animDeferred =
-                    new HashSet<ControllerIR.State>();
-                public List<ControllerIR.State> wdGroup;
-                public readonly HashSet<ControllerIR.State> wdDeferred =
-                    new HashSet<ControllerIR.State>();
-                public readonly List<List<ControllerIR.State>> behaviourGroups =
-                    new List<List<ControllerIR.State>>();
-                public readonly HashSet<ControllerIR.State> behaviourDeferred =
-                    new HashSet<ControllerIR.State>();
-            }
-
-            static FoldPlan PlanFolds(ControllerIR.Machine root)
-            {
-                var all = new List<ControllerIR.State>();
-                void Collect(ControllerIR.Machine machine)
-                {
-                    all.AddRange(machine.states);
-                    foreach (var child in machine.machines) Collect(child.machine);
-                }
-                Collect(root);
-
-                var plan = new FoldPlan();
-                var byMotion = new Dictionary<Motion, List<ControllerIR.State>>();
-                foreach (var state in all)
-                    if (state.tree == null && state.motionAsset != null)
-                    {
-                        if (!byMotion.TryGetValue(state.motionAsset, out var group))
-                            byMotion[state.motionAsset] = group = new List<ControllerIR.State>();
-                        group.Add(state);
-                    }
-                foreach (var state in all)   // groups in first-appearance order
-                    if (state.tree == null && state.motionAsset != null
-                        && byMotion.TryGetValue(state.motionAsset, out var group)
-                        && group.Count >= FoldThreshold && group[0] == state)
-                    {
-                        plan.animGroups.Add(group);
-                        foreach (var member in group) plan.animDeferred.Add(member);
-                    }
-
-                var wd = all.FindAll(state => !state.writeDefaultValues);
-                if (wd.Count >= FoldThreshold)
-                {
-                    plan.wdGroup = wd;
-                    foreach (var state in wd) plan.wdDeferred.Add(state);
-                }
-
-                var bySignature = new Dictionary<string, List<ControllerIR.State>>();
-                foreach (var state in all)
-                {
-                    string signature = BehaviourSignature(state.behaviours);
-                    if (signature == null) continue;
-                    if (!bySignature.TryGetValue(signature, out var group))
-                        bySignature[signature] = group = new List<ControllerIR.State>();
-                    group.Add(state);
-                }
-                foreach (var state in all)
-                {
-                    string signature = BehaviourSignature(state.behaviours);
-                    if (signature == null || !bySignature.TryGetValue(signature, out var group)
-                        || group.Count < FoldThreshold || group[0] != state)
-                        continue;
-                    plan.behaviourGroups.Add(group);
-                    foreach (var member in group) plan.behaviourDeferred.Add(member);
-                }
-                return plan;
-            }
-
-            /// <summary>Canonical text of a state's whole behaviour list — states fold
-            /// together only when every behaviour matches, in order. Null: nothing to fold
-            /// (empty list) or not foldable (an opaque configure action).</summary>
-            static string BehaviourSignature(List<ControllerIR.Behaviour> behaviours)
-            {
-                if (behaviours.Count == 0) return null;
-                var text = new StringBuilder();
-                foreach (var b in behaviours)
-                {
-                    if (b.configure != null) return null;
-                    text.Append(b.typeName).Append('|').Append(b.instanceName).Append('|');
-                    if (b.driver != null)
-                    {
-                        text.Append("D:").Append(b.driver.localOnly);
-                        foreach (var e in b.driver.entries)
-                            text.Append(';').Append(e.kind).Append(',').Append(e.name)
-                                .Append(',').Append(e.value).Append(',').Append(e.min)
-                                .Append(',').Append(e.max).Append(',').Append(e.chance)
-                                .Append(',').Append(e.source).Append(',').Append(e.convertRange)
-                                .Append(',').Append(e.sourceMin).Append(',').Append(e.sourceMax)
-                                .Append(',').Append(e.destMin).Append(',').Append(e.destMax);
-                    }
-                    else
-                        text.Append("J:").Append(b.json);
-                    text.Append('\n');
-                }
-                return text.ToString();
-            }
-
-            void EmitFolds(FoldPlan plan,
-                List<(StateBuilder builder, ControllerIR.State state)> order)
-            {
-                if (plan.animGroups.Count == 0 && plan.wdGroup == null
-                    && plan.behaviourGroups.Count == 0)
-                    return;
-                var builderOf = new Dictionary<ControllerIR.State, StateBuilder>();
-                foreach (var (sb, state) in order) builderOf[state] = sb;
-
-                _c.Script.Blank();
-                foreach (var group in plan.animGroups)
-                    Fold(group, builderOf, (sb, state) => sb.WithAnimation(state.motionAsset));
-                if (plan.wdGroup != null)
-                    Fold(plan.wdGroup, builderOf, (sb, state) => sb.WithWriteDefaultsSetTo(false));
-                foreach (var group in plan.behaviourGroups)
-                    Fold(group, builderOf, (sb, state) =>
-                    {
-                        foreach (var behaviour in state.behaviours)
-                            EmitBehaviour(sb, behaviour);
-                    });
-            }
-
-            /// <summary>
-            /// One foreach standing for N identical call sequences. The first state runs
-            /// with the recorder capturing (one entry per call), the rest run with recording
-            /// off — every builder is still driven for real, so the replayed IR keeps its
-            /// guarantee, and the loop's text comes from actually recorded calls.
-            /// </summary>
-            void Fold(List<ControllerIR.State> group,
-                Dictionary<ControllerIR.State, StateBuilder> builderOf,
-                System.Action<StateBuilder, ControllerIR.State> apply)
-            {
-                var script = _c.Script;
-                script.BeginCapture();
-                apply(builderOf[group[0]], group[0]);
-                var calls = script.EndCapture();
-                _c.Script = null;
-                for (int i = 1; i < group.Count; i++)
-                    apply(builderOf[group[i]], group[i]);
-                _c.Script = script;
-
-                string loop = LoopVar();
-                var names = new List<string>();
-                foreach (var state in group) names.Add(script.NameArg(builderOf[state]));
-
-                string single = "foreach (var " + loop + " in new[] { " + string.Join(", ", names)
-                    + " }) " + loop + "." + string.Join(".", calls) + ";";
-                if (single.Length <= 100)
-                {
-                    script.Statement(single);
-                    return;
-                }
-
-                string header = "foreach (var " + loop + " in new[] { " + string.Join(", ", names) + " })";
-                if (header.Length <= 100)
-                    script.Statement(header);
-                else
-                {
-                    script.Statement("foreach (var " + loop + " in new[] {");
-                    var row = new StringBuilder("        ");
-                    foreach (var name in names)
-                    {
-                        if (row.Length > 8 && row.Length + name.Length + 2 > 96)
-                        {
-                            script.Statement(row.ToString());
-                            row = new StringBuilder("        ");
-                        }
-                        row.Append(name).Append(',').Append(' ');
-                    }
-                    script.Statement(row.ToString().TrimEnd());
-                    script.Statement("    })");
-                }
-
-                // The loop body, wrapped at call boundaries like any long chain.
-                var line = new StringBuilder("    " + loop);
-                bool first = true;
-                foreach (var call in calls)
-                {
-                    if (!first && line.Length + call.Length + 2 > 100)
-                    {
-                        script.Statement(line.ToString());
-                        line = new StringBuilder("        ");
-                    }
-                    line.Append('.').Append(call);
-                    first = false;
-                }
-                script.Statement(line.Append(';').ToString());
-            }
-
-            string _loopVar;
-
-            string LoopVar() => _loopVar ?? (_loopVar = _c.Script.Reserve("s"));
-
-            /// <summary>Whether the transitions block will say anything at all.</summary>
-            static bool HasWiring(ControllerIR.Machine machine, string prefix)
-            {
-                if (machine.anyStateTransitions.Count > 0 || machine.entryTransitions.Count > 0)
-                    return true;
-                if (machine.states.Count > 0 && machine.defaultState != null
-                    && machine.defaultState != ControllerIR.Join(prefix, machine.states[0].name))
-                    return true;
-                foreach (var state in machine.states)
-                    if (state.transitions.Count > 0) return true;
-                foreach (var child in machine.machines)
-                    if (child.transitions.Count > 0
-                        || HasWiring(child.machine, ControllerIR.Join(prefix, child.machine.name)))
-                        return true;
-                return false;
-            }
-
-            // ---- blend trees ------------------------------------------------------
-
-            TreeBuilder EmitTree(ControllerIR.Tree tree)
-            {
-                // Nested trees first: their variables must precede the parent's reference.
-                var nested = new Dictionary<ControllerIR.TreeChild, TreeBuilder>();
-                foreach (var child in tree.children)
-                    if (child.tree != null)
-                        nested[child] = EmitTree(child.tree);
-
-                var tb = _c.NewBlendTree(tree.name);
-                bool is2D = false;
-                switch (tree.type)
-                {
-                    case BlendTreeType.Direct:
-                        tb.Direct();
-                        break;
-                    case BlendTreeType.Simple1D:
-                        tb.Simple1D(FloatOf(tree.blendParameter));
-                        break;
-                    case BlendTreeType.SimpleDirectional2D:
-                        tb.SimpleDirectional2D(FloatOf(tree.blendParameter), FloatOf(tree.blendParameterY));
-                        is2D = true;
-                        break;
-                    case BlendTreeType.FreeformCartesian2D:
-                        tb.FreeformCartesian2D(FloatOf(tree.blendParameter), FloatOf(tree.blendParameterY));
-                        is2D = true;
-                        break;
-                    default:
-                        tb.FreeformDirectional2D(FloatOf(tree.blendParameter), FloatOf(tree.blendParameterY));
-                        is2D = true;
-                        break;
-                }
-                if (!tree.useAutomaticThresholds) tb.AutoThresholds(false);
-                else if (tree.type == BlendTreeType.Simple1D
-                    && (tree.minThreshold != 0f || tree.maxThreshold != 1f))
-                    tb.ThresholdRange(tree.minThreshold, tree.maxThreshold);
-                if (tree.normalizedBlendValues) tb.NormalizedBlendValues();
-
-                foreach (var child in tree.children)
-                {
-                    nested.TryGetValue(child, out var sub);
-                    // The WithAnimation overload carries the slot's defining datum
-                    // (threshold / blend position / direct weight); rarities go through
-                    // LastChild below.
-                    if (tree.type == BlendTreeType.Simple1D)
-                    {
-                        if (sub != null) tb.WithAnimation(sub, child.threshold);
-                        else tb.WithAnimation(child.motionAsset, child.threshold);
-                    }
-                    else if (is2D)
-                    {
-                        if (sub != null) tb.WithAnimation(sub, child.position.x, child.position.y);
-                        else tb.WithAnimation(child.motionAsset, child.position.x, child.position.y);
-                    }
-                    else if (tree.type == BlendTreeType.Direct
-                        && !string.IsNullOrEmpty(child.directParameter))
-                    {
-                        var weight = FloatOf(child.directParameter);
-                        if (sub != null) tb.WithAnimation(sub, weight);
-                        else tb.WithAnimation(child.motionAsset, weight);
-                    }
-                    else
-                    {
-                        if (sub != null) tb.WithAnimation(sub);
-                        else tb.WithAnimation(child.motionAsset);
-                    }
-
-                    if (tree.type != BlendTreeType.Simple1D && child.threshold != 0f)
-                        tb.LastChild.Threshold(child.threshold);
-                    if (!is2D && child.position != Vector2.zero)
-                        tb.LastChild.Position(child.position.x, child.position.y);
-                    if (child.timeScale != 1f) tb.LastChild.TimeScale(child.timeScale);
-                    if (child.cycleOffset != 0f) tb.LastChild.CycleOffset(child.cycleOffset);
-                    if (child.mirror) tb.LastChild.Mirror();
-                }
-                return tb;
-            }
-
-            // ---- behaviours --------------------------------------------------------
-
-            void EmitBehaviour(StateBuilder sb, ControllerIR.Behaviour behaviour)
-            {
-                if (behaviour.driver == null)
-                {
-                    sb.BehaviourJson(behaviour.typeName, behaviour.json);
-                    return;
-                }
-
-                // The Drives family writes into the state's current driver, creating the
-                // first one on demand — NewDriver is only for a named or additional one,
-                // or a driver with nothing in it to trigger the creation.
-                var spec = behaviour.driver;
-                bool named = !string.IsNullOrEmpty(behaviour.instanceName)
-                    && behaviour.instanceName != behaviour.typeName;
-                if (named)
-                    sb.NewDriver(behaviour.instanceName);
-                else if (HasDriverAlready(sb) || (spec.entries.Count == 0 && !spec.localOnly))
-                    sb.NewDriver();
-
-                foreach (var entry in spec.entries)
-                    switch (entry.kind)
-                    {
-                        case 1:
-                            if (entry.value >= 0f)
-                                sb.DrivingIncreases(Handle(entry.name, AnimatorControllerParameterType.Float), entry.value);
-                            else
-                                sb.DrivingDecreases(Handle(entry.name, AnimatorControllerParameterType.Float), -entry.value);
-                            break;
-                        case 2:
-                            if (TypeOf(entry.name) == AnimatorControllerParameterType.Bool)
-                                sb.DrivingRandomizes(BoolOf(entry.name), entry.chance);
-                            else
-                                sb.DrivingRandomizes(Handle(entry.name, AnimatorControllerParameterType.Float), entry.min, entry.max);
-                            break;
-                        case 3:
-                            if (entry.convertRange)
-                                sb.DrivingRemaps(
-                                    Handle(entry.source, AnimatorControllerParameterType.Float),
-                                    entry.sourceMin, entry.sourceMax,
-                                    Handle(entry.name, AnimatorControllerParameterType.Float),
-                                    entry.destMin, entry.destMax);
-                            else
-                                sb.DrivingCopies(
-                                    Handle(entry.source, AnimatorControllerParameterType.Float),
-                                    Handle(entry.name, AnimatorControllerParameterType.Float));
-                            break;
-                        default:
-                            if (TypeOf(entry.name) == AnimatorControllerParameterType.Bool)
-                                sb.Drives(BoolOf(entry.name), entry.value != 0f);
-                            else
-                                sb.Drives(Handle(entry.name, AnimatorControllerParameterType.Float), entry.value);
-                            break;
-                    }
-                if (spec.localOnly) sb.DrivingLocally();
-            }
-
-            static bool HasDriverAlready(StateBuilder sb)
-            {
-                foreach (var behaviour in sb.State.behaviours)
-                    if (behaviour.driver != null) return true;
-                return false;
-            }
-
-            // ---- wiring ------------------------------------------------------------
-
-            void WireScope(MachineScope scope, ControllerIR.Machine machine,
-                Dictionary<string, StateBuilder> states, Dictionary<string, MachineBuilder> machines)
-            {
-                // .Default() only when the implicit first-state rule doesn't already cover it.
-                if (machine.states.Count > 0 && machine.defaultState != null)
-                {
-                    string firstPath = ControllerIR.Join(scope.Prefix, machine.states[0].name);
-                    if (machine.defaultState != firstPath
-                        && states.TryGetValue(machine.defaultState, out var defaultBuilder))
-                        defaultBuilder.Default();
-                }
-
-                foreach (var state in machine.states)
-                {
-                    var sb = states[ControllerIR.Join(scope.Prefix, state.name)];
-                    foreach (var t in state.transitions)
-                        EmitTransition(WireFrom(sb, t, states, machines), t);
-                }
-                foreach (var t in machine.anyStateTransitions)
-                {
-                    var built = t.target == ControllerIR.Transition.Target.State
-                        && states.TryGetValue(t.destination, out var ds) ? scope.AnyTransitionsTo(ds)
-                        : t.target == ControllerIR.Transition.Target.Machine
-                        && machines.TryGetValue(t.destination, out var dm) ? scope.AnyTransitionsTo(dm)
-                        : null;
-                    if (built == null)
-                        _warnings.Add(L.Tr("Any-State transition to '{0}' could not be resolved — skipped.", t.destination));
-                    else
-                        EmitTransition(built, t);
-                }
-                foreach (var t in machine.entryTransitions)
-                {
-                    var built = t.target == ControllerIR.Transition.Target.State
-                        && states.TryGetValue(t.destination, out var ds) ? scope.EntryTransitionsTo(ds)
-                        : t.target == ControllerIR.Transition.Target.Machine
-                        && machines.TryGetValue(t.destination, out var dm) ? scope.EntryTransitionsTo(dm)
-                        : null;
-                    if (built == null)
-                        _warnings.Add(L.Tr("Entry transition to '{0}' could not be resolved — skipped.", t.destination));
-                    else
-                        EmitTransition(built, t);
-                }
-
-                foreach (var child in machine.machines)
-                {
-                    var mb = machines[ControllerIR.Join(scope.Prefix, child.machine.name)];
-                    foreach (var t in child.transitions)
-                    {
-                        var built = t.target == ControllerIR.Transition.Target.Exit ? mb.Exits()
-                            : t.target == ControllerIR.Transition.Target.State
-                            && states.TryGetValue(t.destination, out var ds) ? mb.TransitionsTo(ds)
-                            : t.target == ControllerIR.Transition.Target.Machine
-                            && machines.TryGetValue(t.destination, out var dm) ? mb.TransitionsTo(dm)
-                            : null;
-                        if (built == null)
-                            _warnings.Add(L.Tr("Transition from machine '{0}' to '{1}' could not be resolved — skipped.",
-                                child.machine.name, t.destination));
-                        else
-                            EmitTransition(built, t);
-                    }
-                    WireScope(mb, child.machine, states, machines);
-                }
-            }
-
-            TransitionBuilder WireFrom(StateBuilder sb, ControllerIR.Transition t,
-                Dictionary<string, StateBuilder> states, Dictionary<string, MachineBuilder> machines)
-            {
-                switch (t.target)
-                {
-                    case ControllerIR.Transition.Target.Exit:
-                        return sb.Exits();
-                    case ControllerIR.Transition.Target.State
-                        when states.TryGetValue(t.destination, out var destination):
-                        return sb.TransitionsTo(destination);
-                    case ControllerIR.Transition.Target.Machine
-                        when machines.TryGetValue(t.destination, out var destination):
-                        return sb.TransitionsTo(destination);
-                }
-                _warnings.Add(L.Tr("Transition from '{0}' to '{1}' could not be resolved — skipped.",
-                    sb.Path, t.destination));
-                return null;
-            }
-
-            /// <summary>Conditions, then only the settings that differ from authoring defaults.</summary>
-            void EmitTransition(TransitionBuilder tb, ControllerIR.Transition t)
-            {
-                if (tb == null) return;
-                for (int i = 0; i < t.conditions.Count; i++)
-                {
-                    var condition = MakeCondition(t.conditions[i]);
-                    if (i == 0) tb.When(condition);
-                    else tb.And(condition);
-                }
-
-                if (!t.isStateTransition)
-                {
-                    if (t.solo) tb.Solo();
-                    if (t.mute) tb.Mute();
-                    return;
-                }
-                if (t.hasExitTime)
-                {
-                    if (t.exitTime == 1f) tb.AfterAnimationFinishes();
-                    else tb.AfterAnimationIsAtLeastAtNormalized(t.exitTime);
-                }
-                if (!t.hasFixedDuration) tb.WithTransitionDurationNormalized(t.duration);
-                else if (t.duration != 0f) tb.WithTransitionDurationSeconds(t.duration);
-                if (t.offset != 0f) tb.WithOffset(t.offset);
-                if (t.interruptionSource != TransitionInterruptionSource.None)
-                    tb.WithInterruption(t.interruptionSource);
-                if (!t.orderedInterruption) tb.WithNoOrderedInterruption();
-                if (t.canTransitionToSelf) tb.WithTransitionToSelf();
-                if (t.solo) tb.Solo();
-                if (t.mute) tb.Mute();
-            }
-
-            /// <summary>Rebuilds a condition through the handle factory matching its mode —
-            /// go.IsTrue(), blend.IsGreaterThan(0.5f) — exactly what the code will say.</summary>
-            Condition MakeCondition(ControllerIR.Condition c)
-            {
-                switch (c.mode)
-                {
-                    case AnimatorConditionMode.If:
-                        return Handle(c.parameter, AnimatorControllerParameterType.Bool)
-                            is TriggerParam trigger ? trigger.IsSet() : BoolOf(c.parameter).IsTrue();
-                    case AnimatorConditionMode.IfNot:
-                        return BoolOf(c.parameter).IsFalse();
-                    case AnimatorConditionMode.Greater:
-                        return Handle(c.parameter, AnimatorControllerParameterType.Float)
-                            is IntParam gi ? gi.IsGreaterThan((int)c.threshold)
-                            : FloatOf(c.parameter).IsGreaterThan(c.threshold);
-                    case AnimatorConditionMode.Less:
-                        return Handle(c.parameter, AnimatorControllerParameterType.Float)
-                            is IntParam li ? li.IsLessThan((int)c.threshold)
-                            : FloatOf(c.parameter).IsLessThan(c.threshold);
-                    case AnimatorConditionMode.Equals:
-                        return IntOf(c.parameter).IsEqualTo((int)c.threshold);
-                    default:
-                        return IntOf(c.parameter).IsNotEqualTo((int)c.threshold);
-                }
-            }
-        }
-
         /// <summary>"---- text ----…" divider padded to a steady width.</summary>
-        static string Header(string text)
+        internal static string Header(string text)
         {
             const int width = 72;
             string lead = "---- " + text + " ";
@@ -873,8 +286,7 @@ namespace Yozolab.DaerD.Authoring
         // ---- composing the file --------------------------------------------------
 
         const string CheatSheet =
-@"// DaerD recipe — edit this file, then press Generate on the recipe asset.
-// AnimatorAsCode-style API (Yozolab.DaerD.Authoring), quick reference:
+@"// AnimatorAsCode-style API (Yozolab.DaerD.Authoring), quick reference:
 //   Parameters   var go = c.BoolParameter(""Go"");   var x = c.FloatParameter(""X"", 0.5f);
 //                c.IntParameter(""N"");   c.TriggerParameter(""Fire"");
 //   Layers       var fx = c.Layer(""Name"").WithWeight(1).Additive().WithAvatarMask(mask);
@@ -895,16 +307,32 @@ namespace Yozolab.DaerD.Authoring
 //                Direct: .Direct() + .WithAnimation(clip, weightParam);  extras: t.LastChild.TimeScale(2)
 //   Drivers      s.Drives(n, 1).DrivingIncreases(x, 0.1f).DrivingCopies(a, b).DrivingLocally()
 //                    .DrivingRemaps(a, 0, 1, b, -1, 1).DrivingRandomizes(x, 0, 1);
+//   Gadgets      c.Gadgets(""DBT"").Multiply(a, b, ""A*B"").Remap(x, ""X01"", -1, 1, 0, 1)
+//                    .Smooth(x, ""X/Smoothed"", ""X/Smoothing"").Buffer(x, ""X/Late"", 2);
+//                (the per-frame float math from the Add menu; its layer is rebuilt each time)
+//   Async sync   c.AsyncSync().Targets(""Hue"", ""Outfit"").Rate(""Hue"", 2).Requestable(""Hue"")
+//                    .Schedule(""Hue"", ""Outfit"", ""Hue"");   // explicit cycle, wizard has none
 //   Fallbacks    s.BehaviourJson(typeName, json);   c.Raw(controller => { /* full API */ });
 // Assets are the [SerializeField] fields below — assign them on the recipe asset.
-// This Build method is ordinary C#: loops, helpers and interpolation all work here.";
+// A build body is ordinary C#: loops, helpers and interpolation all work in your half.";
 
-        static string Compose(RecipeScript script, string className, string namespaceName,
+        /// <summary>
+        /// The exporter's half: fields and BuildGenerated, rewritten whole on every export.
+        /// It is deliberately the file nobody edits — that is what lets the other half be
+        /// reshaped freely, and what makes its own git diff a clean report of what changed in
+        /// the controller since the last export.
+        /// </summary>
+        static string ComposeGenerated(RecipeScript script, string className, string namespaceName,
             AnimatorController controller, Result result)
         {
             var sb = new StringBuilder();
             sb.AppendLine("// <auto-generated> Exported from \"" + controller.name
-                + "\" by DaerD. Safe to edit — this file is yours now. </auto-generated>");
+                + "\" by DaerD. </auto-generated>");
+            sb.AppendLine("// DO NOT EDIT — every export overwrites this file. Your half is "
+                + className + ".cs:");
+            sb.AppendLine("// its Build() is what Generate runs, and DaerD never touches it. After a re-export,");
+            sb.AppendLine("// diff this file, carry what changed into yours, then press Compare on the recipe");
+            sb.AppendLine("// asset — it passes when both halves declare the same controller.");
             sb.AppendLine(CheatSheet);
             sb.AppendLine();
             sb.AppendLine("using UnityEditor.Animations;");
@@ -920,14 +348,14 @@ namespace Yozolab.DaerD.Authoring
                 sb.AppendLine("{");
             }
 
-            sb.AppendLine(indent + "public class " + className + " : ControllerRecipe");
+            sb.AppendLine(indent + "public partial class " + className + " : ControllerRecipe");
             sb.AppendLine(indent + "{");
             foreach (var field in result.fields)
                 sb.AppendLine(indent + "    [SerializeField] " + field.fieldType + " "
                     + field.fieldName + ";");
             if (result.fields.Count > 0) sb.AppendLine();
 
-            sb.AppendLine(indent + "    protected override void Build(ControllerBuilder c)");
+            sb.AppendLine(indent + "    protected override void BuildGenerated(ControllerBuilder c)");
             sb.AppendLine(indent + "    {");
             var body = StripUnusedVariables(script.Lines);
             while (body.Count > 0 && body[0].Length == 0) body.RemoveAt(0);
@@ -935,6 +363,49 @@ namespace Yozolab.DaerD.Authoring
             foreach (var line in body)
                 sb.AppendLine(line.Length == 0 ? string.Empty : indent + "        " + line);
             sb.AppendLine(indent + "    }");
+            sb.AppendLine(indent + "}");
+            if (hasNamespace) sb.AppendLine("}");
+            return sb.ToString();
+        }
+
+        /// <summary>First line of a hand half, so the exporter can tell one from a recipe
+        /// written before the split (which carries the fields and Build the generated half
+        /// now owns, and would collide with it).</summary>
+        public const string HandHalfMarker = "// <daerd-recipe>";
+
+        /// <summary>
+        /// Your half: a Build that delegates to the generated one, and nothing else. Written
+        /// once, at the first export, and never overwritten afterwards — whatever it grows
+        /// into (loops, helpers, an AI's reshaping) is yours to keep. Delegating is the honest
+        /// starting point: a fresh export generates the right controller before anyone has
+        /// touched anything.
+        /// </summary>
+        static string ComposeHandHalf(string className, string namespaceName)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine(HandHalfMarker + " Hand half of " + className
+                + " — DaerD never overwrites this file. </daerd-recipe>");
+            sb.AppendLine("// " + className + ".Generated.cs is the exporter's half: rewritten on every export,");
+            sb.AppendLine("// with an API cheat sheet at the top. Shape this Build() however you like — loops,");
+            sb.AppendLine("// helpers, your own names — and press Compare on the recipe asset to check that it");
+            sb.AppendLine("// still declares the same controller as the export it came from.");
+            sb.AppendLine();
+            sb.AppendLine("using UnityEditor.Animations;");
+            sb.AppendLine("using UnityEngine;");
+            sb.AppendLine("using Yozolab.DaerD.Authoring;");
+            sb.AppendLine();
+
+            bool hasNamespace = !string.IsNullOrEmpty(namespaceName);
+            string indent = hasNamespace ? "    " : string.Empty;
+            if (hasNamespace)
+            {
+                sb.AppendLine("namespace " + namespaceName);
+                sb.AppendLine("{");
+            }
+
+            sb.AppendLine(indent + "public partial class " + className);
+            sb.AppendLine(indent + "{");
+            sb.AppendLine(indent + "    protected override void Build(ControllerBuilder c) => BuildGenerated(c);");
             sb.AppendLine(indent + "}");
             if (hasNamespace) sb.AppendLine("}");
             return sb.ToString();

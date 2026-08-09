@@ -83,6 +83,30 @@ namespace Yozolab.DaerD.Tests
             Assert.IsNull(AsyncSyncBuilder.Validate(NewRequest(controller, "F", "B", "I")));
         }
 
+        // ---- default base name ----------------------------------------------
+
+        [Test]
+        public void DefaultBaseName_FollowsTheAssetGuid_AndDodgesSetupsAlreadyOnTheController()
+        {
+            const string guid = "0123456789abcdef0123456789abcdef";
+            Assert.AreEqual("DD012345", AsyncSyncBuilder.DefaultBaseName(guid, new List<string>()));
+
+            // A second setup on the same controller can't answer to the first one's name.
+            Assert.AreEqual("DD012345_2",
+                AsyncSyncBuilder.DefaultBaseName(guid, new List<string> { "DD012345" }));
+            Assert.AreEqual("DD012345_3",
+                AsyncSyncBuilder.DefaultBaseName(guid, new List<string> { "DD012345", "DD012345_2" }));
+
+            // No GUID: the historical name, so nothing that ran before this existed changes.
+            Assert.AreEqual("Async", AsyncSyncBuilder.DefaultBaseName(string.Empty, new List<string>()));
+            Assert.AreEqual("Async", AsyncSyncBuilder.DefaultBaseName(null, new List<string>()));
+
+            var controller = NewController();
+            Assert.AreEqual("Async", AsyncSyncBuilder.DefaultBaseName(controller),
+                "an in-memory controller has no asset GUID to derive from");
+            Object.DestroyImmediate(controller);
+        }
+
         // ---- structure ------------------------------------------------------
 
         [Test]
@@ -654,6 +678,161 @@ namespace Yozolab.DaerD.Tests
             wrap.scheduleOverride.AddRange(new[] { "F", "B", "I", "F" });
             Assert.IsNotNull(AsyncSyncBuilder.Validate(wrap),
                 "the last and first step are adjacent too — the cycle wraps");
+        }
+
+        // ---- sync requests ---------------------------------------------------
+
+        [Test]
+        public void RequestableTargets_FollowCycleOrder_AndIgnoreStaleEntries()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.requestTargets.AddRange(new[] { "I", "B", "B", "Gone" });
+
+            CollectionAssert.AreEqual(new[] { "B", "I" },
+                AsyncSyncBuilder.RequestableTargets(request));
+            Assert.IsNull(AsyncSyncBuilder.Validate(request),
+                "a stale saved entry must not block regeneration");
+            Assert.IsTrue(AsyncSyncBuilder.Warnings(request)
+                .Exists(w => w.Contains("not multiplexed")), "but it is called out");
+
+            // An existing parameter of another type under the flag's name blocks.
+            controller.AddParameter("Async/Req/B", AnimatorControllerParameterType.Float);
+            var collision = NewRequest(controller, "F", "B");
+            collision.requestTargets.Add("B");
+            Assert.IsNotNull(AsyncSyncBuilder.Validate(collision));
+        }
+
+        [Test]
+        public void Apply_WithRequests_AddsRedirectRoutesAheadOfTheRing()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.requestTargets.Add("B");
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            Assert.AreEqual(AnimatorControllerParameterType.Bool,
+                DbtBuilder.FindParameter(controller, "Async/Req/B").type);
+
+            var sm = controller.layers[1].stateMachine;
+            var sendF = FindState(sm, "Send F");
+            var sendB = FindState(sm, "Send B");
+            var sendI = FindState(sm, "Send I");
+
+            // Every OTHER step gets a redirect to Send B ahead of its ring transition —
+            // same step timing, gated on the flag; the ring stays the unconditional fallback.
+            Assert.AreEqual(2, sendF.transitions.Length);
+            var redirect = sendF.transitions[0];
+            Assert.AreEqual(sendB, redirect.destinationState);
+            Assert.IsTrue(redirect.hasExitTime);
+            Assert.AreEqual(0.3f, redirect.exitTime);
+            Assert.AreEqual(0f, redirect.duration);
+            Assert.IsTrue(HasCondition(redirect, "Async/Req/B", AnimatorConditionMode.If, 0f));
+            Assert.AreEqual(0, sendF.transitions[1].conditions.Length);
+
+            Assert.AreEqual(2, sendI.transitions.Length);
+            Assert.AreEqual(sendB, sendI.transitions[0].destinationState);
+
+            // No self-redirect: back-to-back sends of one slot are invisible to the decoder
+            // (canTransitionToSelf is off there); the next step picks the flag up instead.
+            Assert.AreEqual(1, sendB.transitions.Length);
+            Assert.AreEqual(sendI, sendB.transitions[0].destinationState);
+        }
+
+        /// <summary>
+        /// Requests queue instead of interrupting. Every redirect carries the ring's exit time,
+        /// so the running step always spends its full dwell and the jump happens at the step
+        /// boundary; at that boundary the routes are tried in cycle order, so exactly one
+        /// pending request is served and the others keep their flag raised for the next one.
+        /// </summary>
+        [Test]
+        public void Apply_WithMultipleRequests_QueuesOnePerStepBoundary()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.requestTargets.AddRange(new[] { "B", "I" });
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var sm = controller.layers[1].stateMachine;
+            var sendF = FindState(sm, "Send F");
+            var sendB = FindState(sm, "Send B");
+            var sendI = FindState(sm, "Send I");
+
+            // With both flags up, the transition order decides — and it is the cycle order.
+            Assert.AreEqual(3, sendF.transitions.Length);
+            Assert.AreEqual(sendB, sendF.transitions[0].destinationState);
+            Assert.IsTrue(HasCondition(sendF.transitions[0], "Async/Req/B",
+                AnimatorConditionMode.If, 0f));
+            Assert.AreEqual(sendI, sendF.transitions[1].destinationState);
+            Assert.IsTrue(HasCondition(sendF.transitions[1], "Async/Req/I",
+                AnimatorConditionMode.If, 0f));
+            Assert.AreEqual(sendB, sendF.transitions[2].destinationState);
+            Assert.AreEqual(0, sendF.transitions[2].conditions.Length, "the ring is the fallback");
+
+            // No redirect shortens a step: the values just sent still need their sync window,
+            // so a request raised mid-step waits out the dwell like the ring does.
+            foreach (var state in new[] { sendF, sendB, sendI })
+                foreach (var transition in state.transitions)
+                {
+                    Assert.IsTrue(transition.hasExitTime, state.name + " leaves before its dwell");
+                    Assert.AreEqual(0.3f, transition.exitTime, 0.0001f);
+                    Assert.AreEqual(0f, transition.duration);
+                }
+
+            // The step that just served B routes only to the other request; its own flag is
+            // already down, and a repeat of the same index would be invisible to the decoder.
+            Assert.AreEqual(2, sendB.transitions.Length);
+            Assert.AreEqual(sendI, sendB.transitions[0].destinationState);
+            Assert.IsTrue(HasCondition(sendB.transitions[0], "Async/Req/I",
+                AnimatorConditionMode.If, 0f));
+            Assert.AreEqual(0, sendB.transitions[1].conditions.Length);
+        }
+
+        [Test]
+        public void Apply_RequestFlags_AreCreatedButNeverSynced()
+        {
+            var controller = NewController();
+            var asset = ScriptableObject.CreateInstance<VRCExpressionParameters>();
+            var request = NewRequest(controller, "F", "B");
+            request.requestTargets.Add("F");
+            request.store = ParameterStore.TryWrap(asset);
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            Assert.IsNotNull(DbtBuilder.FindParameter(controller, "Async/Req/F"));
+            Assert.IsNotNull(VrcExpressionParameters.Find(asset, "Async/Index"));
+            Assert.IsNull(VrcExpressionParameters.Find(asset, "Async/Req/F"),
+                "request flags are local machinery — they must not cost synced bits");
+        }
+
+        /// <summary>Driver contents via the test stub: the serving state clears its own flag
+        /// after copying the value and setting the index.</summary>
+        [Test]
+        public void Apply_WithDrivers_ServingAStepClearsItsRequestFlag()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.skipDrivers = false;
+            request.requestTargets.Add("B");
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var sendB = FindState(controller.layers[1].stateMachine, "Send B");
+            var driver = sendB.behaviours[0] as VRCAvatarParameterDriver;
+            Assert.IsNotNull(driver);
+            Assert.IsTrue(driver.localOnly);
+
+            Assert.AreEqual(3, driver.parameters.Count);
+            Assert.AreEqual(3, driver.parameters[0].type);   // Copy: B -> channel
+            Assert.AreEqual("B", driver.parameters[0].source);
+            Assert.AreEqual("Async/Index", driver.parameters[1].name);
+            Assert.AreEqual(1f, driver.parameters[1].value);
+            Assert.AreEqual(0, driver.parameters[2].type);   // Set: flag down
+            Assert.AreEqual("Async/Req/B", driver.parameters[2].name);
+            Assert.AreEqual(0f, driver.parameters[2].value);
+
+            // States that don't serve the slot don't touch the flag.
+            var sendF = FindState(controller.layers[1].stateMachine, "Send F");
+            var sendFDriver = sendF.behaviours[0] as VRCAvatarParameterDriver;
+            Assert.IsFalse(sendFDriver.parameters.Exists(p => p.name == "Async/Req/B"));
         }
 
         // ---- Empty clip -----------------------------------------------------

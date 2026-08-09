@@ -39,6 +39,9 @@ namespace Yozolab.DaerD
             context.ControllerChanged += Refresh;
             context.ParametersChanged += Refresh;
             context.ControllerChanged += InvalidateStore;
+            // The store slot is also editable from the home screen, which announces the change
+            // as a parameter change — the cached wrapper here would otherwise stay stale.
+            context.ParametersChanged += InvalidateStore;
             context.GraphStructureChanged += () => _aapParams = null;
             context.ParametersChanged += () => _aapParams = null;
         }
@@ -201,47 +204,12 @@ namespace Yozolab.DaerD
             }
         }
 
-        /// <summary>The explicit parameter-store slot (VRC expression parameters asset or MA
-        /// Parameters component / its GameObject), plus budget, Sync and opt-in Detect.</summary>
+        /// <summary>The shared parameter-store slot, plus what only this panel shows for it:
+        /// the synced-bit budget, Add All and Sync.</summary>
         void DrawVrcBudget()
         {
             var controller = Context.Controller;
-            EditorGUILayout.BeginHorizontal();
-            var current = GraphFrameData.GetParameterStore(controller);
-            var picked = EditorGUILayout.ObjectField(
-                new GUIContent(L.Tr("Params"),
-                    L.Tr("The parameter store this controller belongs to: a VRC Expression Parameters asset, or a GameObject carrying an MA Parameters component. Assigned explicitly — DaerD never guesses it from the scene.")),
-                current, typeof(UnityEngine.Object), true);
-            if (picked != current)
-            {
-                var wrapped = ParameterStore.TryWrap(picked);
-                if (picked != null && wrapped == null)
-                    EditorUtility.DisplayDialog(L.Tr("Parameter Store"),
-                        L.Tr("Assign a VRC Expression Parameters asset or an object with an MA Parameters component."), "OK");
-                else
-                {
-                    // Store the wrapped component (not the whole GameObject) so the slot
-                    // shows exactly what will be edited.
-                    GraphFrameData.SetParameterStore(controller, wrapped != null ? wrapped.Target : null);
-                    InvalidateStore();
-                }
-            }
-            if (GUILayout.Button(new GUIContent(L.Tr("Detect"),
-                    L.Tr("Search the scene for an exact match: an avatar running this controller, or an MA Merge Animator referencing it. Nothing is picked up automatically without this button.")),
-                    EditorStyles.miniButton, GUILayout.Width(52)))
-            {
-                var detected = ParameterStore.DetectFor(controller);
-                if (detected == null)
-                    EditorUtility.DisplayDialog(L.Tr("Parameter Store"),
-                        L.Tr("No exact match in the scene — no avatar or MA Merge Animator references this controller."), "OK");
-                else
-                {
-                    GraphFrameData.SetParameterStore(controller, detected);
-                    InvalidateStore();
-                }
-                GUIUtility.ExitGUI();
-            }
-            EditorGUILayout.EndHorizontal();
+            PanelGui.ParameterStoreField(controller, InvalidateStore);
 
             if (_store == null) return;
             int used = _store.UsedBits();
@@ -259,6 +227,13 @@ namespace Yozolab.DaerD
                 EditorStyles.miniLabel);
             GUI.color = prev;
             GUILayout.FlexibleSpace();
+            if (GUILayout.Button(new GUIContent(L.Tr("Add All"),
+                    L.Tr("Add every controller parameter the store doesn't list yet (Triggers aside) as an async row: neither synced nor saved. An MA Parameters component has to declare a parameter before anything can use it, so this is the starting point for a prefab gimmick.")),
+                    EditorStyles.miniButton, GUILayout.Width(64)))
+            {
+                AddMissingToStore();
+                GUIUtility.ExitGUI();
+            }
             if (GUILayout.Button(new GUIContent(L.Tr("Sync"),
                     L.Tr("Align the parameter store to this controller's parameter list (with a diff preview).")),
                     EditorStyles.miniButton, GUILayout.Width(52)))
@@ -267,6 +242,32 @@ namespace Yozolab.DaerD
                 GUIUtility.ExitGUI();
             }
             EditorGUILayout.EndHorizontal();
+        }
+
+        /// <summary>
+        /// The bulk form of the per-row "+", for the MA Parameters workflow: a gimmick prefab
+        /// has to declare every parameter it uses, and most of them are local. Rows are added
+        /// unsynced and unsaved — the opposite default of the single-row "+", which adds one
+        /// parameter the user deliberately picked and usually wants on the wire.
+        /// </summary>
+        void AddMissingToStore()
+        {
+            if (_store == null) return;
+            var missing = ParameterStore.MissingEntries(Context.Controller, _store);
+            if (missing.Count == 0)
+            {
+                EditorUtility.DisplayDialog(L.Tr("Parameter Store"),
+                    L.Tr("Every controller parameter is already in the store."), "OK");
+                return;
+            }
+            if (!EditorUtility.DisplayDialog(L.Tr("Parameter Store"),
+                    L.Tr("Add {0} parameter(s) to the store, unsynced and unsaved?", missing.Count),
+                    L.Tr("Add"), L.Tr("Cancel")))
+                return;
+            using (new UndoScope("Add Parameters To Store"))
+                foreach (var entry in missing)
+                    _store.Add(entry);
+            Refresh();
         }
 
         /// <summary>Per-row S (synced) / D (saved) toggles for parameters present in the
@@ -335,12 +336,7 @@ namespace Yozolab.DaerD
 
         /// <summary>A DBT gadget added parameters, possibly a layer and a blend tree — let
         /// every panel and the graph pick that up.</summary>
-        void OnDbtGadgetApplied()
-        {
-            Context.NotifyParametersChanged();
-            Context.NotifyLayersChanged();
-            Context.NotifyGraphStructureChanged();
-        }
+        void OnDbtGadgetApplied() => Context.NotifyLayerStructureChanged();
 
         void ShowUsagesMenu(string parameterName, int index)
         {

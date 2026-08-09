@@ -34,6 +34,10 @@ namespace Yozolab.DaerD
             /// <summary>Existing DBT (or empty) layer to add the gadget to, or -1 to create one.</summary>
             public int layerIndex = -1;
             public string newLayerName = "DBT";
+            /// <summary>Set when this request regenerates a saved gadget — see
+            /// <see cref="AapGadgets.Request.replaces"/>. The old gadget's own names are then
+            /// not a collision: they are swept before this run builds anything.</summary>
+            public GraphFrameData.AapGadgetConfig replaces;
         }
 
         /// <summary>Human-readable reason the request can't run, or null when it can.</summary>
@@ -48,7 +52,8 @@ namespace Yozolab.DaerD
 
             if (string.IsNullOrEmpty(r.output) || r.output == r.source)
                 return L.Tr("The output parameter needs a name different from the source.");
-            if (DbtBuilder.FindParameter(controller, r.output) != null)
+            if (DbtBuilder.FindParameter(controller, r.output) != null
+                && !(r.replaces != null && r.replaces.Owns(r.output)))
                 return L.Tr("A parameter named '{0}' already exists.", r.output);
 
             if (string.IsNullOrEmpty(r.smoothing) || r.smoothing == r.source || r.smoothing == r.output)
@@ -81,9 +86,18 @@ namespace Yozolab.DaerD
             return null;
         }
 
-        /// <summary>Runs the (pre-validated) request; returns false when validation fails.</summary>
-        public static bool Apply(Request r)
+        /// <summary>Runs the (pre-validated) request; returns false when validation fails.
+        /// <paramref name="commitSubAssets"/> off leaves the flush to the caller — see
+        /// <see cref="AapGadgets.Apply"/>.</summary>
+        public static bool Apply(Request r, bool commitSubAssets = true) =>
+            Apply(r, commitSubAssets, out _);
+
+        /// <summary>As above, additionally handing back the child added to the layer's root
+        /// tree. That child is the handle on everything this built, and what
+        /// <see cref="AapGadgets"/> records the gadget by so it can be regenerated later.</summary>
+        internal static bool Apply(Request r, bool commitSubAssets, out BlendTree gadgetChild)
         {
+            gadgetChild = null;
             if (Validate(r) != null) return false;
             var controller = r.controller;
 
@@ -115,8 +129,11 @@ namespace Yozolab.DaerD
                 smoothTree.AddChild(feedbackTree, 1f);
 
                 DbtBuilder.AddDirectChild(root, smoothTree, weightParam);
+                gadgetChild = smoothTree;
                 EditorUtility.SetDirty(controller);
             }
+            // The clips and trees above are sub-assets; one flush shows the whole batch.
+            if (commitSubAssets) DbtBuilder.CommitSubAssets(controller);
             return true;
         }
     }

@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using UnityEditor;
 using UnityEditor.Animations;
@@ -61,9 +62,10 @@ namespace Yozolab.DaerD
                 foreach (var layer in ir.layers)
                     built.Add(BuildLayer(layer, controller, exclusive, oldMachineIds, warnings));
 
+                bool persisted = !string.IsNullOrEmpty(AssetDatabase.GetAssetPath(controller));
                 for (int i = 0; i < ir.layers.Count; i++)
                     if (ir.layers[i].syncedLayerIndex >= 0)
-                        ApplySyncedMotions(ir.layers[i], built[i], controller, warnings);
+                        ApplySyncedOverrides(ir.layers[i], built[i], controller, warnings, persisted);
 
                 EditorUtility.SetDirty(controller);
             }
@@ -230,6 +232,10 @@ namespace Yozolab.DaerD
             sm.anyStatePosition = ir.anyStatePosition;
             sm.parentStateMachinePosition = ir.parentPosition;
 
+            foreach (var behaviourIr in ir.behaviours)
+                BuildBehaviour(behaviourIr, string.IsNullOrEmpty(prefix) ? ir.name : prefix,
+                    sm.AddStateMachineBehaviour, context);
+
             foreach (var stateIr in ir.states)
             {
                 var state = sm.AddState(stateIr.name, stateIr.position);
@@ -268,7 +274,7 @@ namespace Yozolab.DaerD
                 state.motion = ir.motionAsset;
 
             foreach (var behaviour in ir.behaviours)
-                BuildBehaviour(state, behaviour, context);
+                BuildBehaviour(behaviour, state.name, state.AddStateMachineBehaviour, context);
             EditorUtility.SetDirty(state);
         }
 
@@ -327,18 +333,30 @@ namespace Yozolab.DaerD
             if (found != null) found.boolValue = value;
         }
 
-        static void BuildBehaviour(AnimatorState state, ControllerIR.Behaviour ir, Context context)
+        /// <summary>
+        /// Adds one behaviour to whatever owns it. States and state machines both take
+        /// behaviours (and a synced layer takes them per overridden state), and only the
+        /// "how do I get an instance" step differs — hence <paramref name="add"/>;
+        /// <paramref name="owner"/> is only there to name the skipped one in a warning.
+        /// </summary>
+        static void BuildBehaviour(ControllerIR.Behaviour ir, string owner,
+            Func<Type, StateMachineBehaviour> add, Context context)
         {
             var type = VrcBehaviours.Find(ir.typeName);
             if (type == null)
             {
-                context.warnings.Add(L.Tr("Behaviour type '{0}' was not found (SDK missing?) — skipped on state '{1}'.",
-                    ir.typeName, state.name));
+                context.warnings.Add(L.Tr("Behaviour type '{0}' was not found (SDK missing?) — skipped on '{1}'.",
+                    ir.typeName, owner));
                 return;
             }
-            var behaviour = state.AddStateMachineBehaviour(type);
+            var behaviour = add(type);
             if (behaviour == null) return;
+            FillBehaviour(behaviour, ir);
+        }
 
+        /// <summary>Pours the snapshot (or the typed driver spec) into a fresh instance.</summary>
+        static void FillBehaviour(StateMachineBehaviour behaviour, ControllerIR.Behaviour ir)
+        {
             if (!string.IsNullOrEmpty(ir.json))
                 EditorJsonUtility.FromJsonOverwrite(ir.json, behaviour);
             else if (ir.driver != null)
@@ -496,8 +514,8 @@ namespace Yozolab.DaerD
 
         // ---- synced layers -----------------------------------------------------
 
-        static void ApplySyncedMotions(ControllerIR.Layer ir, int layerIndex,
-            AnimatorController controller, List<string> warnings)
+        static void ApplySyncedOverrides(ControllerIR.Layer ir, int layerIndex,
+            AnimatorController controller, List<string> warnings, bool persisted)
         {
             var layers = controller.layers;
             if (layerIndex < 0 || layerIndex >= layers.Length) return;
@@ -524,8 +542,46 @@ namespace Yozolab.DaerD
                 else
                     warnings.Add(L.Tr("Synced-layer override target '{0}' was not found in the source layer.", entry.statePath));
             }
+
+            // Behaviour overrides are instances of their own — a synced layer runs these
+            // instead of the source state's, so they have to be created here rather than
+            // borrowed from the source.
+            var context = new Context { controller = controller, persisted = persisted };
+            foreach (var entry in ir.syncedBehaviours)
+            {
+                if (!byPath.TryGetValue(entry.statePath, out var state))
+                {
+                    warnings.Add(L.Tr("Synced-layer override target '{0}' was not found in the source layer.", entry.statePath));
+                    continue;
+                }
+                var made = new List<StateMachineBehaviour>();
+                foreach (var behaviourIr in entry.behaviours)
+                    BuildBehaviour(behaviourIr, ir.name + " / " + entry.statePath,
+                        type => CreateLooseBehaviour(type, context, made), context);
+                warnings.AddRange(context.warnings);
+                context.warnings.Clear();
+                if (made.Count == 0) continue;
+                layers[layerIndex].SetOverrideBehaviours(state, made.ToArray());
+                changed = true;
+            }
+
             if (changed)
                 controller.layers = layers;
+        }
+
+        /// <summary>A behaviour with no owner to add it: created by hand and stored in the
+        /// controller itself, the way AddStateMachineBehaviour would have.</summary>
+        static StateMachineBehaviour CreateLooseBehaviour(Type type, Context context,
+            List<StateMachineBehaviour> into)
+        {
+            var behaviour = ScriptableObject.CreateInstance(type) as StateMachineBehaviour;
+            if (behaviour == null) return null;
+            behaviour.name = type.Name;
+            Undo.RegisterCreatedObjectUndo(behaviour, UndoName);
+            if (context.persisted)
+                AssetDatabase.AddObjectToAsset(behaviour, context.controller);
+            into.Add(behaviour);
+            return behaviour;
         }
     }
 }

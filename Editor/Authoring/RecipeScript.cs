@@ -263,6 +263,49 @@ namespace Yozolab.DaerD.Authoring
 
         public static string B(bool value) => value ? "true" : "false";
 
+        /// <summary>
+        /// A curve as a literal: <c>new AnimationCurve(new Keyframe(t, v, in, out), …)</c>. The
+        /// four-argument Keyframe is everything C# source can carry of a key — tangent
+        /// *weights* have no constructor to travel in, so a weighted curve comes out flat and
+        /// the caller says so (<see cref="HasWeightedTangents"/>).
+        /// </summary>
+        public static string Curve(UnityEngine.AnimationCurve curve)
+        {
+            if (curve == null) return "null";
+            var builder = new StringBuilder("new AnimationCurve(");
+            var keys = curve.keys;
+            for (int i = 0; i < keys.Length; i++)
+            {
+                if (i > 0) builder.Append(", ");
+                builder.Append("new Keyframe(").Append(F(keys[i].time)).Append(", ")
+                    .Append(F(keys[i].value)).Append(", ").Append(Tangent(keys[i].inTangent))
+                    .Append(", ").Append(Tangent(keys[i].outTangent)).Append(')');
+            }
+            return builder.Append(')').ToString();
+        }
+
+        /// <summary>A tangent as source. A Constant key — the flat step the curve editor's
+        /// right-click menu writes, and the ordinary way to draw a stepped LUT — carries an
+        /// infinite tangent, which C# has no literal for: <see cref="F"/> would round-trip it
+        /// as "Infinityf" and the exported file would not compile. Times and values are always
+        /// finite, so only the tangents come through here.</summary>
+        static string Tangent(float value)
+        {
+            if (float.IsPositiveInfinity(value)) return "float.PositiveInfinity";
+            if (float.IsNegativeInfinity(value)) return "float.NegativeInfinity";
+            return F(value);
+        }
+
+        /// <summary>Whether any key carries a tangent weight — the one thing
+        /// <see cref="Curve"/> cannot write down.</summary>
+        public static bool HasWeightedTangents(UnityEngine.AnimationCurve curve)
+        {
+            if (curve == null) return false;
+            foreach (var key in curve.keys)
+                if (key.weightedMode != UnityEngine.WeightedMode.None) return true;
+            return false;
+        }
+
         public static string E<T>(T value) where T : System.Enum =>
             typeof(T).Name + "." + value;
     }
