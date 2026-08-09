@@ -199,64 +199,77 @@ namespace Yozolab.DaerD
 
         public List<AnimatorTransitionBase> Chain(IList<TransitionEnd> nodes, bool seeded)
         {
-            var created = new List<AnimatorTransitionBase>();
-            if (nodes == null || nodes.Count < 2) return created;
-            var sm = _context.CurrentStateMachine;
-            if (sm == null) return created;
-            using (new UndoScope("Chain Transitions"))
-            {
-                for (int i = 0; i < nodes.Count - 1; i++)
-                    AddBatchTransition(nodes[i], nodes[i + 1], sm, created);
-                if (seeded) SeedCreated(created);
-            }
-            return created;
+            if (nodes == null || nodes.Count < 2) return new List<AnimatorTransitionBase>();
+            return Batch("Chain Transitions", ChainPairs(nodes), seeded);
         }
 
         public List<AnimatorTransitionBase> FanOut(TransitionEnd source, IEnumerable<TransitionEnd> targets, bool seeded)
         {
-            var created = new List<AnimatorTransitionBase>();
-            if (targets == null) return created;
-            var sm = _context.CurrentStateMachine;
-            if (sm == null) return created;
-            using (new UndoScope("Fan-Out Transitions"))
-            {
-                foreach (var target in targets)
-                    AddBatchTransition(source, target, sm, created);
-                if (seeded) SeedCreated(created);
-            }
-            return created;
+            if (targets == null) return new List<AnimatorTransitionBase>();
+            return Batch("Fan-Out Transitions", FanOutPairs(source, targets), seeded);
         }
 
         public List<AnimatorTransitionBase> FanIn(IEnumerable<TransitionEnd> sources, TransitionEnd target, bool seeded)
         {
-            var created = new List<AnimatorTransitionBase>();
-            if (sources == null) return created;
-            var sm = _context.CurrentStateMachine;
-            if (sm == null) return created;
-            using (new UndoScope("Fan-In Transitions"))
-            {
-                foreach (var source in sources)
-                    AddBatchTransition(source, target, sm, created);
-                if (seeded) SeedCreated(created);
-            }
-            return created;
+            if (sources == null) return new List<AnimatorTransitionBase>();
+            return Batch("Fan-In Transitions", FanInPairs(sources, target), seeded);
         }
 
         public List<AnimatorTransitionBase> CrossProduct(IList<TransitionEnd> sources, IList<TransitionEnd> targets,
             bool seeded)
         {
+            if (sources == null || targets == null || sources.Count == 0 || targets.Count == 0)
+                return new List<AnimatorTransitionBase>();
+            return Batch("Multi Transition", CrossPairs(sources, targets), seeded);
+        }
+
+        /// <summary>
+        /// The shared skeleton of chain / fan-out / fan-in / multi: one undo step named for the
+        /// command, one transition per valid pair, and — when <paramref name="seeded"/> — the
+        /// copied transition's settings stamped over the whole batch. The pair sequences are lazy
+        /// on purpose, so each pair is still visited inside the undo scope, in the original order.
+        /// </summary>
+        List<AnimatorTransitionBase> Batch(string undoLabel,
+            IEnumerable<(TransitionEnd source, TransitionEnd destination)> pairs, bool seeded)
+        {
             var created = new List<AnimatorTransitionBase>();
-            if (sources == null || targets == null || sources.Count == 0 || targets.Count == 0) return created;
             var sm = _context.CurrentStateMachine;
             if (sm == null) return created;
-            using (new UndoScope("Multi Transition"))
+            using (new UndoScope(undoLabel))
             {
-                foreach (var source in sources)
-                    foreach (var target in targets)
-                        AddBatchTransition(source, target, sm, created);
+                foreach (var pair in pairs)
+                    AddBatchTransition(pair.source, pair.destination, sm, created);
                 if (seeded) SeedCreated(created);
             }
             return created;
+        }
+
+        static IEnumerable<(TransitionEnd, TransitionEnd)> ChainPairs(IList<TransitionEnd> nodes)
+        {
+            for (int i = 0; i < nodes.Count - 1; i++)
+                yield return (nodes[i], nodes[i + 1]);
+        }
+
+        static IEnumerable<(TransitionEnd, TransitionEnd)> FanOutPairs(TransitionEnd source,
+            IEnumerable<TransitionEnd> targets)
+        {
+            foreach (var target in targets)
+                yield return (source, target);
+        }
+
+        static IEnumerable<(TransitionEnd, TransitionEnd)> FanInPairs(IEnumerable<TransitionEnd> sources,
+            TransitionEnd target)
+        {
+            foreach (var source in sources)
+                yield return (source, target);
+        }
+
+        static IEnumerable<(TransitionEnd, TransitionEnd)> CrossPairs(IList<TransitionEnd> sources,
+            IList<TransitionEnd> targets)
+        {
+            foreach (var source in sources)
+                foreach (var target in targets)
+                    yield return (source, target);
         }
 
         /// <summary>Seeded batch creation: the first copied transition's settings and
