@@ -278,10 +278,22 @@ namespace Yozolab.DaerD.Authoring
             {
                 if (i > 0) builder.Append(", ");
                 builder.Append("new Keyframe(").Append(F(keys[i].time)).Append(", ")
-                    .Append(F(keys[i].value)).Append(", ").Append(F(keys[i].inTangent))
-                    .Append(", ").Append(F(keys[i].outTangent)).Append(')');
+                    .Append(F(keys[i].value)).Append(", ").Append(Tangent(keys[i].inTangent))
+                    .Append(", ").Append(Tangent(keys[i].outTangent)).Append(')');
             }
             return builder.Append(')').ToString();
+        }
+
+        /// <summary>A tangent as source. A Constant key — the flat step the curve editor's
+        /// right-click menu writes, and the ordinary way to draw a stepped LUT — carries an
+        /// infinite tangent, which C# has no literal for: <see cref="F"/> would round-trip it
+        /// as "Infinityf" and the exported file would not compile. Times and values are always
+        /// finite, so only the tangents come through here.</summary>
+        static string Tangent(float value)
+        {
+            if (float.IsPositiveInfinity(value)) return "float.PositiveInfinity";
+            if (float.IsNegativeInfinity(value)) return "float.NegativeInfinity";
+            return F(value);
         }
 
         /// <summary>Whether any key carries a tangent weight — the one thing

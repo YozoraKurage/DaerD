@@ -429,6 +429,31 @@ namespace Yozolab.DaerD.Tests
             });
         }
 
+        /// <summary>A Constant key holds its value until the next one — the stepped LUT the
+        /// curve editor's right-click menu draws — and Unity spells that as an infinite
+        /// tangent. "Infinityf" is not C#, so the named fields have to stand in.</summary>
+        [Test]
+        public void Export_Lut1DGadgetWithConstantTangents_WritesTheInfinitiesAsFields()
+        {
+            WithSavedController(controller =>
+            {
+                ApplyGadget(controller, AapGadgets.Kind.Lut1D, r =>
+                {
+                    r.output = "A/Lut";
+                    r.curve = new AnimationCurve(
+                        new Keyframe(0f, 0f, 0f, float.PositiveInfinity),
+                        new Keyframe(0.5f, 0.5f, float.PositiveInfinity, float.NegativeInfinity),
+                        new Keyframe(1f, 1f, float.PositiveInfinity, 0f));
+                });
+
+                var result = RecipeExporter.Export(controller, null, "GadgetRecipe", null);
+                Assert.IsEmpty(result.warnings, string.Join("\n", result.warnings));
+                StringAssert.Contains("float.PositiveInfinity", result.code);
+                StringAssert.Contains("float.NegativeInfinity", result.code);
+                StringAssert.DoesNotContain("Infinityf", result.code);
+            });
+        }
+
         /// <summary>Tangent weights have no place in a four-argument Keyframe, so a curve that
         /// carries them comes out flat — quietly changing the values the LUT bakes unless the
         /// export says so.</summary>
