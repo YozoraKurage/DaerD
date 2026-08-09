@@ -43,6 +43,13 @@ namespace Yozolab.DaerD
         string _search = string.Empty;
         Vector2 _pickScroll;
         bool _timelineOpen = true;
+        /// <summary>The cycle spelled out step by step, as target names. Empty means the pass
+        /// is derived from the rates, so this list doubles as the manual/automatic mode.</summary>
+        readonly List<string> _schedule = new List<string>();
+        /// <summary>Set by anything that can reshape the slots the schedule refers to. The
+        /// repair runs once per such edit rather than every repaint: it is stable on a valid
+        /// cycle, but running it unprompted still invites steps to move on their own.</summary>
+        bool _scheduleStale;
 
         // ×1 is "no rate" — the popup only offers meaningful multipliers beyond it.
         static readonly int[] RateValues = { 1, 2, 3, 4 };
@@ -66,6 +73,7 @@ namespace Yozolab.DaerD
             _controller = controller;
             _rows.Clear();
             _order.Clear();
+            _schedule.Clear();
             if (controller == null) return;
             foreach (var parameter in controller.parameters)
             {
@@ -94,6 +102,9 @@ namespace Yozolab.DaerD
             _stepSeconds = config.stepSeconds;
             _floatChannels = Mathf.Clamp(config.FloatChannelsOrDefault, 1, 8);
             _boolChannels = Mathf.Clamp(config.BoolChannelsOrDefault, 1, 8);
+            _schedule.Clear();
+            if (config.schedule != null) _schedule.AddRange(config.schedule);
+            _scheduleStale = true;
 
             var rates = config.RateMap();
             foreach (var row in _rows)
@@ -139,6 +150,18 @@ namespace Yozolab.DaerD
                 if (row.rate > 1) request.rates[row.name] = row.rate;
                 if (row.request) request.requestTargets.Add(row.name);
             }
+
+            // The repair needs the slots, which need the request — hence here, once the
+            // targets are in and before the override goes on. A cycle it cannot settle comes
+            // back empty, which is exactly how this form spells "use the rates".
+            if (_scheduleStale && _schedule.Count > 0)
+            {
+                var repaired = AsyncSyncBuilder.RepairScheduleOverride(request, _schedule);
+                _schedule.Clear();
+                _schedule.AddRange(repaired);
+            }
+            _scheduleStale = false;
+            request.scheduleOverride.AddRange(_schedule);
             return request;
         }
 
@@ -189,6 +212,8 @@ namespace Yozolab.DaerD
                 else if (row.type == AnimatorControllerParameterType.Bool) hasBool = true;
             }
 
+            // Channel counts regroup the slots a hand-timed cycle refers to.
+            EditorGUI.BeginChangeCheck();
             if (hasFloat)
                 _floatChannels = EditorGUILayout.IntSlider(
                     new GUIContent(hasBool ? L.Tr("Float Channels") : L.Tr("Channels"),
@@ -199,6 +224,7 @@ namespace Yozolab.DaerD
                     new GUIContent(hasFloat ? L.Tr("Bool Channels") : L.Tr("Channels"),
                         L.Tr("Synced Bool channels. Each step carries up to this many Bool parameters at once — fewer slots and a faster cycle, at 1 synced bit per extra channel.")),
                     _boolChannels, 1, 8);
+            if (EditorGUI.EndChangeCheck()) _scheduleStale = true;
         }
 
         /// <summary>The tick list with its search filter. Ticking appends the parameter to
@@ -249,6 +275,7 @@ namespace Yozolab.DaerD
                 row.rate = 1;
                 row.request = false;
             }
+            _scheduleStale = true;
         }
 
         /// <summary>
@@ -268,10 +295,13 @@ namespace Yozolab.DaerD
                 return;
             }
             EditorGUILayout.LabelField(
-                L.Tr("Top to bottom is the cycle order. ×N syncs a parameter N times per pass; everything else shares the steps in between."),
+                Manual
+                    ? L.Tr("Top to bottom is the cycle order. The timing itself is set by hand in the timeline below.")
+                    : L.Tr("Top to bottom is the cycle order. ×N syncs a parameter N times per pass; everything else shares the steps in between."),
                 EditorStyles.miniLabel);
 
             var intervals = AsyncSyncBuilder.RefreshIntervals(request);
+            var visits = Manual ? VisitCounts(request) : null;
 
             _reorder.Begin();
             foreach (var row in _order)
@@ -281,9 +311,24 @@ namespace Yozolab.DaerD
 
                 EditorGUILayout.LabelField(row.name + "  (" + row.type + ")");
 
-                int rateIndex = Mathf.Max(0, Array.IndexOf(RateValues, row.rate));
-                rateIndex = EditorGUILayout.Popup(rateIndex, RateLabels, GUILayout.Width(48));
-                row.rate = RateValues[rateIndex];
+                if (Manual)
+                {
+                    // A count, not a control: under a hand-written cycle the rate no longer
+                    // decides how often a slot comes round, so showing it as an input would
+                    // be a lie. (It still decides which targets batch together, which is why
+                    // changing it means leaving manual timing first.)
+                    visits.TryGetValue(row.name, out int times);
+                    EditorGUILayout.LabelField(
+                        new GUIContent("×" + times,
+                            L.Tr("Steps in the pass that send this parameter. Set it by clicking the timeline; go back to rates to have it worked out for you.")),
+                        EditorStyles.miniLabel, GUILayout.Width(48));
+                }
+                else
+                {
+                    int rateIndex = Mathf.Max(0, Array.IndexOf(RateValues, row.rate));
+                    rateIndex = EditorGUILayout.Popup(rateIndex, RateLabels, GUILayout.Width(48));
+                    row.rate = RateValues[rateIndex];
+                }
 
                 row.request = GUILayout.Toggle(row.request,
                     new GUIContent("Req",
@@ -304,6 +349,8 @@ namespace Yozolab.DaerD
                 var moved = _order[from];
                 _order.RemoveAt(from);
                 _order.Insert(to, moved);
+                // Batches fill in listed order, so reordering can regroup the slots.
+                _scheduleStale = true;
             });
 
             DrawCycleTimeline(request);
@@ -312,8 +359,53 @@ namespace Yozolab.DaerD
         // ---- cycle timeline --------------------------------------------------
 
         const float TimelineRowHeight = 13f;
+        /// <summary>Rows are click targets once the timing is set by hand, and 13 px is a
+        /// thin thing to hit.</summary>
+        const float ManualRowHeight = 17f;
         const float TimelineLabelWidth = 116f;
         const float TimelineLabelGap = 4f;
+        const int MaxManualSteps = 64;
+
+        /// <summary>True while the cycle is spelled out step by step rather than derived from
+        /// the rates — the two are the same switch, an explicit cycle being what overrides.</summary>
+        bool Manual => _schedule.Count > 0;
+
+        /// <summary>How many steps of the pass send each target, by name.</summary>
+        Dictionary<string, int> VisitCounts(AsyncSyncBuilder.Request request)
+        {
+            var counts = new Dictionary<string, int>();
+            var slots = AsyncSyncBuilder.BuildSlots(request);
+            var schedule = CurrentSchedule(request, slots, out _);
+            var visits = new int[slots.Count];
+            foreach (var step in schedule) visits[step]++;
+            for (int i = 0; i < slots.Count; i++)
+                foreach (var name in slots[i].targets)
+                    counts[name] = visits[i];
+            return counts;
+        }
+
+        /// <summary>
+        /// The pass as slot indices, plus the name→slot map the rows are drawn against. A
+        /// hand-written cycle is read straight from <see cref="_schedule"/> rather than through
+        /// <see cref="AsyncSyncBuilder.EffectiveSchedule"/>: that one falls back to the rates
+        /// the moment the cycle stops being runnable, and an editor that redrew someone else's
+        /// pass the instant an edit went wrong would be unusable.
+        /// </summary>
+        List<int> CurrentSchedule(AsyncSyncBuilder.Request request,
+            List<AsyncSyncBuilder.Slot> slots, out Dictionary<string, int> slotOf)
+        {
+            slotOf = new Dictionary<string, int>();
+            for (int i = 0; i < slots.Count; i++)
+                foreach (var name in slots[i].targets)
+                    slotOf[name] = i;
+
+            var schedule = new List<int>();
+            if (!Manual) return AsyncSyncBuilder.EffectiveSchedule(request, slots);
+            foreach (var name in _schedule)
+                if (slotOf.TryGetValue(name, out int slot))
+                    schedule.Add(slot);
+            return schedule;
+        }
 
         /// <summary>
         /// One pass as a small timeline: a row per parameter, a mark wherever the cycle sends
@@ -325,8 +417,15 @@ namespace Yozolab.DaerD
         void DrawCycleTimeline(AsyncSyncBuilder.Request request)
         {
             var slots = AsyncSyncBuilder.BuildSlots(request);
-            var schedule = AsyncSyncBuilder.EffectiveSchedule(request, slots);
-            if (schedule.Count < 2) return;
+            var schedule = CurrentSchedule(request, slots, out var slotOf);
+            if (schedule.Count < 2)
+            {
+                // Too little left to draw, and in manual mode that would take the way back to
+                // the rates down with it. Ask for a repair instead: one that finds nothing
+                // schedulable returns empty, which is the way back.
+                if (Manual) _scheduleStale = true;
+                return;
+            }
 
             _timelineOpen = EditorGUILayout.Foldout(_timelineOpen,
                 L.Tr("Cycle Timeline ({0} steps, {1:0.#} s)",
@@ -334,14 +433,24 @@ namespace Yozolab.DaerD
                 true);
             if (!_timelineOpen) return;
 
-            var slotOf = new Dictionary<string, int>();
-            for (int i = 0; i < slots.Count; i++)
-                foreach (var name in slots[i].targets)
-                    slotOf[name] = i;
+            DrawTimingMode(slots, schedule);
+
+            // A step beside itself, and a parameter the pass never sends, are both refused by
+            // Validate — which says so under the form. Colouring the cells says WHERE, which
+            // is the part a sentence cannot carry.
+            var clashing = new bool[schedule.Count];
+            for (int k = 0; k < schedule.Count; k++)
+                if (schedule[k] == schedule[(k + 1) % schedule.Count])
+                    clashing[k] = clashing[(k + 1) % schedule.Count] = true;
+
             var intervals = AsyncSyncBuilder.RefreshIntervals(request);
+            float rowHeight = Manual ? ManualRowHeight : TimelineRowHeight;
             var mark = EditorGUIUtility.isProSkin
                 ? new Color(0.35f, 0.65f, 0.95f)
                 : new Color(0.20f, 0.45f, 0.80f);
+            var clash = EditorGUIUtility.isProSkin
+                ? new Color(0.85f, 0.35f, 0.30f)
+                : new Color(0.75f, 0.20f, 0.15f);
             var track = EditorGUIUtility.isProSkin
                 ? new Color(1f, 1f, 1f, 0.06f)
                 : new Color(0f, 0f, 0f, 0.06f);
@@ -351,12 +460,14 @@ namespace Yozolab.DaerD
                 if (!slotOf.TryGetValue(row.name, out int slot)) continue;
                 // One control per row whatever the width — the layout and repaint passes
                 // must agree on how many there are.
-                var line = EditorGUILayout.GetControlRect(false, TimelineRowHeight);
+                var line = EditorGUILayout.GetControlRect(false, rowHeight);
                 var lane = new Rect(line.x + TimelineLabelWidth + TimelineLabelGap, line.y,
                     Mathf.Max(1f, line.width - TimelineLabelWidth - TimelineLabelGap), line.height);
 
+                bool sent = schedule.Contains(slot);
                 GUI.Label(new Rect(line.x, line.y, TimelineLabelWidth, line.height),
-                    new GUIContent(row.name, RowTooltip(row, intervals)), TimelineLabelStyle());
+                    new GUIContent(row.name, RowTooltip(row, intervals, sent)),
+                    TimelineLabelStyle(sent ? (Color?)null : clash));
                 EditorGUI.DrawRect(lane, track);
 
                 float cell = lane.width / schedule.Count;
@@ -366,11 +477,102 @@ namespace Yozolab.DaerD
                     EditorGUI.DrawRect(
                         new Rect(lane.x + k * cell, lane.y + 1f,
                             Mathf.Max(2f, cell - 1f), lane.height - 2f),
-                        mark);
+                        clashing[k] ? clash : mark);
                 }
+
+                if (Manual) HandleLaneClick(lane, cell, schedule.Count, row);
             }
 
             DrawTimelineAxis(schedule.Count * request.stepSeconds);
+            if (Manual)
+                EditorGUILayout.LabelField(
+                    L.Tr("Click a row to make that step send it. Every step sends exactly one slot, so a click moves the step rather than adding one."),
+                    WrappedMiniLabel());
+        }
+
+        /// <summary>
+        /// Assigning a step to a row, by click or by dragging across several. Nothing here
+        /// enforces the two rules a cycle has to keep — a repair that moved steps out from
+        /// under the pointer would be worse than the red cells that say what is wrong.
+        /// </summary>
+        void HandleLaneClick(Rect lane, float cell, int steps, Row row)
+        {
+            var e = Event.current;
+            if (e.type != EventType.MouseDown && e.type != EventType.MouseDrag) return;
+            if (e.button != 0 || !lane.Contains(e.mousePosition)) return;
+
+            int step = Mathf.Clamp((int)((e.mousePosition.x - lane.x) / Mathf.Max(1f, cell)),
+                0, Mathf.Min(steps, _schedule.Count) - 1);
+            if (_schedule[step] != row.name)
+            {
+                _schedule[step] = row.name;
+                GUI.changed = true;
+            }
+            e.Use();
+        }
+
+        /// <summary>The switch between a pass worked out from the rates and one written out
+        /// step by step, plus the length of the hand-written one.</summary>
+        void DrawTimingMode(List<AsyncSyncBuilder.Slot> slots, List<int> schedule)
+        {
+            EditorGUILayout.BeginHorizontal();
+            if (!Manual)
+            {
+                if (GUILayout.Button(new GUIContent(L.Tr("Set Timing By Hand"),
+                        L.Tr("Write the pass out step by step instead of deriving it from the rates. It starts as the pass shown here, so nothing changes until you move something.")),
+                        EditorStyles.miniButton, GUILayout.Width(150)))
+                {
+                    foreach (var step in schedule) _schedule.Add(slots[step].targets[0]);
+                    _scheduleStale = false;
+                    // Switching modes changes which controls the rest of this pass draws, and
+                    // IMGUI counts those across the layout and repaint passes both.
+                    GUIUtility.ExitGUI();
+                }
+            }
+            else
+            {
+                int max = Mathf.Max(MaxManualSteps, _schedule.Count);
+                int steps = EditorGUILayout.IntSlider(L.Tr("Steps"), _schedule.Count,
+                    Mathf.Max(2, slots.Count), max);
+                if (steps != _schedule.Count) SetStepCount(steps, slots);
+                if (GUILayout.Button(new GUIContent(L.Tr("Back To Rates"),
+                        L.Tr("Discard the hand-written pass and let the ×N rates lay the cycle out again.")),
+                        EditorStyles.miniButton, GUILayout.Width(110)))
+                {
+                    _schedule.Clear();
+                    GUIUtility.ExitGUI();
+                }
+            }
+            EditorGUILayout.EndHorizontal();
+        }
+
+        /// <summary>Lengthens or shortens the hand-written pass. Growing hands each new step
+        /// to the slot that has waited longest; shrinking takes them off the end and leaves
+        /// the repair to put back any slot that lost its last visit.</summary>
+        void SetStepCount(int steps, List<AsyncSyncBuilder.Slot> slots)
+        {
+            while (_schedule.Count > steps && _schedule.Count > 2)
+                _schedule.RemoveAt(_schedule.Count - 1);
+
+            var slotOf = new Dictionary<string, int>();
+            for (int i = 0; i < slots.Count; i++)
+                foreach (var name in slots[i].targets)
+                    slotOf[name] = i;
+
+            while (_schedule.Count < steps)
+            {
+                var indices = new List<int>();
+                foreach (var name in _schedule)
+                    if (slotOf.TryGetValue(name, out int slot)) indices.Add(slot);
+
+                // Two slots can only alternate, so there is no slot free of both ends and the
+                // pass can only grow in pairs; NextStepSlot gives up the far end for that case
+                // and the repair settles the wrap afterwards.
+                int picked = AsyncSyncBuilder.NextStepSlot(indices, slots.Count);
+                if (picked < 0) break;
+                _schedule.Add(slots[picked].targets[0]);
+            }
+            _scheduleStale = true;
         }
 
         /// <summary>Both ends of the pass, so the marks have a scale to read against.</summary>
@@ -384,14 +586,24 @@ namespace Yozolab.DaerD
             GUI.Label(lane, L.Tr("{0:0.#} s ⟳", cycleSeconds), end);
         }
 
-        static GUIStyle TimelineLabelStyle() => new GUIStyle(EditorStyles.miniLabel)
+        static GUIStyle TimelineLabelStyle(Color? textColor = null)
         {
-            alignment = TextAnchor.MiddleRight,
-            clipping = TextClipping.Clip,
-        };
+            var style = new GUIStyle(EditorStyles.miniLabel)
+            {
+                alignment = TextAnchor.MiddleRight,
+                clipping = TextClipping.Clip,
+            };
+            if (textColor.HasValue) style.normal.textColor = textColor.Value;
+            return style;
+        }
 
-        static string RowTooltip(Row row, Dictionary<string, float> intervals)
+        static GUIStyle WrappedMiniLabel() =>
+            new GUIStyle(EditorStyles.miniLabel) { wordWrap = true };
+
+        static string RowTooltip(Row row, Dictionary<string, float> intervals, bool sent)
         {
+            if (!sent)
+                return L.Tr("'{0}' is never sent — no step of the pass carries it.", row.name);
             string tooltip = row.name;
             if (intervals.TryGetValue(row.name, out float seconds))
                 tooltip += " — " + L.Tr("every {0:0.##} s", seconds);

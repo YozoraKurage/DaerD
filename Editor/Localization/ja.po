@@ -1949,6 +1949,33 @@ msgstr "{0:0.##} 秒ごと"
 msgid "(requestable)"
 msgstr "（リクエスト可）"
 
+msgid "Top to bottom is the cycle order. The timing itself is set by hand in the timeline below."
+msgstr "上から下が巡回の順序です。タイミングそのものは下のタイムラインで手動指定しています。"
+
+msgid "Steps in the pass that send this parameter. Set it by clicking the timeline; go back to rates to have it worked out for you."
+msgstr "1 周のうちこのパラメーターを送るステップ数です。タイムラインをクリックして決めます。自動で決めさせたい場合はレートに戻してください。"
+
+msgid "Click a row to make that step send it. Every step sends exactly one slot, so a click moves the step rather than adding one."
+msgstr "行をクリックすると、そのステップがその行を送るようになります。1 ステップが送るスロットは常にちょうど 1 つなので、クリックはステップの追加ではなく置き換えです。"
+
+msgid "Set Timing By Hand"
+msgstr "タイミングを手動指定"
+
+msgid "Write the pass out step by step instead of deriving it from the rates. It starts as the pass shown here, so nothing changes until you move something."
+msgstr "レートから 1 周を導出するのをやめ、ステップごとに書き下します。開始時点はいま表示されている 1 周と同じなので、動かすまで何も変わりません。"
+
+msgid "Steps"
+msgstr "ステップ数"
+
+msgid "Back To Rates"
+msgstr "レートに戻す"
+
+msgid "Discard the hand-written pass and let the ×N rates lay the cycle out again."
+msgstr "手動で書いた 1 周を破棄し、×N レートから巡回を組み直します。"
+
+msgid "'{0}' is never sent — no step of the pass carries it."
+msgstr "'{0}' は送信されません — 1 周のどのステップもこのパラメーターを運んでいません。"
+
 msgid "Cycle Timeline ({0} steps, {1:0.#} s)"
 msgstr "巡回タイムライン（{0} ステップ / {1:0.#} 秒）"
 
