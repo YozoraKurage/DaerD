@@ -9,18 +9,6 @@ namespace Yozolab.DaerD
     /// <summary>Context-sensitive inspector for the currently selected graph element.</summary>
     class InspectorPanel : PanelBase
     {
-        static readonly string[] BoolValueLabels = { "true", "false" };
-        static readonly string[] GestureValueLabels = BuildGestureValueLabels();
-
-        static string[] BuildGestureValueLabels()
-        {
-            var names = VrcParameters.GestureNames;
-            var labels = new string[names.Length];
-            for (int i = 0; i < names.Length; i++)
-                labels[i] = i + ": " + names[i];
-            return labels;
-        }
-
         readonly AnimatorGraphView _graphView;
         readonly List<AnimatorTransitionBase> _selectedTransitions = new List<AnimatorTransitionBase>();
         readonly TransitionClipboard.ConditionData _newCondition =
@@ -2146,7 +2134,7 @@ namespace Yozolab.DaerD
             }
             var typeByName = PanelGui.ParameterTypeMap(controller);
 
-            var working = ToDataList(transition);
+            var working = ConditionGui.ToDataList(transition);
             bool changed = false;
             int removeIndex = -1;
             EditorGUI.BeginChangeCheck();
@@ -2161,7 +2149,7 @@ namespace Yozolab.DaerD
                 condition.parameter = paramNames[paramIndex];
 
                 var type = typeByName.TryGetValue(condition.parameter, out var t) ? t : AnimatorControllerParameterType.Float;
-                DrawConditionValue(condition, type);
+                ConditionGui.DrawConditionValue(condition, type);
 
                 if (GUILayout.Button("X", EditorStyles.miniButton, GUILayout.Width(22)))
                     removeIndex = i;
@@ -2237,7 +2225,7 @@ namespace Yozolab.DaerD
             EditorGUILayout.LabelField(L.Tr("Shared Conditions"), EditorStyles.boldLabel);
 
             int total = _selectedTransitions.Count;
-            var shared = SharedConditions(_selectedTransitions);
+            var shared = ConditionGui.SharedConditions(_selectedTransitions);
             if (shared.Count == 0)
             {
                 EditorGUILayout.LabelField(L.Tr("(the selected transitions have no conditions)"), EditorStyles.miniLabel);
@@ -2275,7 +2263,7 @@ namespace Yozolab.DaerD
                 paramIndex = EditorGUILayout.Popup(paramIndex, paramNames);
                 working.parameter = paramNames[paramIndex];
                 var type = typeByName.TryGetValue(working.parameter, out var ty) ? ty : AnimatorControllerParameterType.Float;
-                DrawConditionValue(working, type, delayed: true);
+                ConditionGui.DrawConditionValue(working, type, delayed: true);
                 bool edited = EditorGUI.EndChangeCheck();
 
                 bool remove = GUILayout.Button("X", EditorStyles.miniButton, GUILayout.Width(22));
@@ -2314,7 +2302,7 @@ namespace Yozolab.DaerD
             paramIndex = EditorGUILayout.Popup(paramIndex, paramNames);
             _newCondition.parameter = paramNames[paramIndex];
             var type = typeByName.TryGetValue(_newCondition.parameter, out var ty) ? ty : AnimatorControllerParameterType.Float;
-            DrawConditionValue(_newCondition, type);
+            ConditionGui.DrawConditionValue(_newCondition, type);
             if (GUILayout.Button(L.Tr("Add"), EditorStyles.miniButton, GUILayout.Width(46)))
             {
                 AddConditionToAll(_newCondition);
@@ -2329,10 +2317,10 @@ namespace Yozolab.DaerD
             {
                 foreach (var transition in _selectedTransitions)
                 {
-                    var list = ToDataList(transition);
+                    var list = ConditionGui.ToDataList(transition);
                     bool changed = false;
                     foreach (var data in list)
-                        if (Same(data, oldData))
+                        if (ConditionGui.Same(data, oldData))
                         {
                             data.mode = newData.mode;
                             data.parameter = newData.parameter;
@@ -2355,8 +2343,8 @@ namespace Yozolab.DaerD
             {
                 foreach (var transition in _selectedTransitions)
                 {
-                    var list = ToDataList(transition);
-                    if (list.RemoveAll(d => Same(d, data)) > 0)
+                    var list = ConditionGui.ToDataList(transition);
+                    if (list.RemoveAll(d => ConditionGui.Same(d, data)) > 0)
                     {
                         Undo.RegisterCompleteObjectUndo(transition, "Remove Common Condition");
                         TransitionClipboard.SetConditions(transition, list);
@@ -2372,7 +2360,7 @@ namespace Yozolab.DaerD
             {
                 foreach (var transition in _selectedTransitions)
                 {
-                    var list = ToDataList(transition);
+                    var list = ConditionGui.ToDataList(transition);
                     list.Add(new TransitionClipboard.ConditionData
                     {
                         mode = data.mode,
@@ -2411,111 +2399,6 @@ namespace Yozolab.DaerD
         {
             foreach (var edge in _graphView.Sync.Edges)
                 edge.Refresh();
-        }
-
-        // ---- condition / value helpers ---------------------------------------
-
-        /// <summary>Draws the value control for one condition. Bool shows true/false; Trigger shows nothing.</summary>
-        static void DrawConditionValue(TransitionClipboard.ConditionData condition, AnimatorControllerParameterType type,
-            bool delayed = false)
-        {
-            switch (type)
-            {
-                case AnimatorControllerParameterType.Bool:
-                {
-                    int index = condition.mode == AnimatorConditionMode.IfNot ? 1 : 0;
-                    index = EditorGUILayout.Popup(index, BoolValueLabels, GUILayout.Width(80));
-                    condition.mode = index == 1 ? AnimatorConditionMode.IfNot : AnimatorConditionMode.If;
-                    GUILayout.Space(56);
-                    break;
-                }
-                case AnimatorControllerParameterType.Trigger:
-                {
-                    condition.mode = AnimatorConditionMode.If;
-                    EditorGUILayout.LabelField(L.Tr("(set)"), EditorStyles.miniLabel, GUILayout.Width(80));
-                    GUILayout.Space(56);
-                    break;
-                }
-                default:
-                {
-                    var modes = PanelGui.ModesFor(type);
-                    // GestureLeft / GestureRight thresholds read as an enum ("1: Fist"…), so
-                    // give the value popup the wider slot and shrink the mode popup — the
-                    // row's total width stays aligned with the plain numeric layout.
-                    bool gesture = type == AnimatorControllerParameterType.Int
-                        && VrcParameters.IsGestureParameter(condition.parameter)
-                        && VrcParameters.GestureLabel(condition.threshold) != null;
-                    int modeIndex = Mathf.Max(0, Array.IndexOf(modes, condition.mode));
-                    modeIndex = EditorGUILayout.Popup(modeIndex, PanelGui.ModeLabels(modes), GUILayout.Width(gesture ? 56 : 80));
-                    condition.mode = modes[modeIndex];
-                    if (gesture)
-                    {
-                        int current = (int)Math.Round(condition.threshold);
-                        condition.threshold = EditorGUILayout.Popup(current, GestureValueLabels, GUILayout.Width(80));
-                    }
-                    else
-                    {
-                        condition.threshold = delayed
-                            ? EditorGUILayout.DelayedFloatField(condition.threshold, GUILayout.Width(56))
-                            : EditorGUILayout.FloatField(condition.threshold, GUILayout.Width(56));
-                    }
-                    break;
-                }
-            }
-        }
-
-        static List<TransitionClipboard.ConditionData> ToDataList(AnimatorTransitionBase transition)
-        {
-            var list = new List<TransitionClipboard.ConditionData>();
-            foreach (var c in transition.conditions)
-                list.Add(new TransitionClipboard.ConditionData { mode = c.mode, parameter = c.parameter, threshold = c.threshold });
-            return list;
-        }
-
-        struct SharedConditionEntry
-        {
-            public TransitionClipboard.ConditionData data;
-            public int count;
-            public int order;
-        }
-
-        /// <summary>
-        /// Every distinct condition across the selected transitions, with how many of them contain
-        /// it. Conditions present in every transition are listed first; ties keep first-seen order.
-        /// </summary>
-        static List<SharedConditionEntry> SharedConditions(List<AnimatorTransitionBase> transitions)
-        {
-            var result = new List<SharedConditionEntry>();
-            foreach (var t in transitions)
-            {
-                if (t == null) continue;
-                foreach (var c in t.conditions)
-                {
-                    var data = new TransitionClipboard.ConditionData { mode = c.mode, parameter = c.parameter, threshold = c.threshold };
-                    int idx = result.FindIndex(e => Same(e.data, data));
-                    if (idx >= 0)
-                    {
-                        var e = result[idx];
-                        e.count++;
-                        result[idx] = e;
-                    }
-                    else
-                    {
-                        result.Add(new SharedConditionEntry { data = data, count = 1, order = result.Count });
-                    }
-                }
-            }
-            result.Sort((a, b) =>
-            {
-                int byCount = b.count.CompareTo(a.count);
-                return byCount != 0 ? byCount : a.order.CompareTo(b.order);
-            });
-            return result;
-        }
-
-        static bool Same(TransitionClipboard.ConditionData a, TransitionClipboard.ConditionData b)
-        {
-            return a.parameter == b.parameter && a.mode == b.mode && Mathf.Approximately(a.threshold, b.threshold);
         }
     }
 }
