@@ -226,6 +226,15 @@ msgstr "レシピが生成したレイヤーはありません。"
 msgid "Tools"
 msgstr "ツール"
 
+msgid "Window"
+msgstr "ウィンドウ"
+
+msgid "Open this tool in a window of its own, so it stays visible while you edit the graph."
+msgstr "このツールを独立したウィンドウで開きます。グラフを編集している間も表示したままにできます。"
+
+msgid "Clips"
+msgstr "クリップ"
+
 # ---- overview / analysis UI ----
 
 msgid "Controller"

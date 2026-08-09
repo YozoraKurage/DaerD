@@ -45,19 +45,40 @@ namespace Yozolab.DaerD
         const float RowButtonWidth = 56f;
 
         readonly CleanupInspector _cleanup = new CleanupInspector();
+        readonly ClipsForm _clips = new ClipsForm();
 
         // The three lists start expanded: seeing what the controller carries is the reason to
         // open this screen at all, so folding them away is the exception, not the default.
         bool _gadgetsOpen = true;
         bool _syncsOpen = true;
         bool _recipesOpen = true;
+        bool _clipsOpen;
+        bool _cleanupOpen;
+
+        // Bumped whenever the controller changed in a way a tool's collected data could care
+        // about. Each embedded tool remembers the revision it was filled at, so opening one
+        // re-collects exactly once instead of walking the controller on every repaint.
+        int _revision;
+        int _clipsRevision = -1;
 
         public HomePanel(DaerDContext context) : base(context, "Home")
         {
             context.ControllerChanged += OnControllerChanged;
-            context.LayersChanged += Refresh;
+            context.LayersChanged += OnStructureChanged;
             context.ParametersChanged += Refresh;
-            context.GraphStructureChanged += Refresh;
+            context.GraphStructureChanged += OnStructureChanged;
+
+            // The embedded clip index has no window to fall back on: a Jump is a request to go
+            // and look at the state, so home gives way to the layer it lives in — even when
+            // that layer is the one already selected underneath.
+            _clips.JumpRequested = usage =>
+            {
+                if (Context.IsHomeSelected)
+                    Context.SetLayer(usage.layerIndex);
+                Context.NavigateTo(usage.layerIndex, usage.stateMachinePath, usage.state);
+            };
+            // A bulk replace rewrote motions; node labels carry their names.
+            _clips.ControllerModified = () => Context.NotifyGraphStructureChanged();
         }
 
         /// <summary>The leftover scan (and the object references captured in it) belongs to the
@@ -65,6 +86,12 @@ namespace Yozolab.DaerD
         void OnControllerChanged()
         {
             _cleanup.Clear();
+            OnStructureChanged();
+        }
+
+        void OnStructureChanged()
+        {
+            _revision++;
             Refresh();
         }
 
@@ -169,6 +196,24 @@ namespace Yozolab.DaerD
 
         static bool BeginFoldCard(string title, int count, bool open) =>
             BeginFoldCard(title + " (" + count + ")", open);
+
+        /// <summary>
+        /// A tool's card: a folding heading with a Window button on its right. The tool is
+        /// usable right here, but a report worth keeping beside the graph still wants a window
+        /// of its own — and that route has to keep working anyway, since the menus and the
+        /// layer settings popup open these tools that way.
+        /// </summary>
+        static bool BeginToolCard(string title, bool open, out bool windowRequested)
+        {
+            EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+            EditorGUILayout.BeginHorizontal();
+            bool now = EditorGUILayout.Foldout(open, title, true, CardTitleStyle);
+            windowRequested = GUILayout.Button(new GUIContent(L.Tr("Window"),
+                    L.Tr("Open this tool in a window of its own, so it stays visible while you edit the graph.")),
+                EditorStyles.miniButton, GUILayout.Width(RowButtonWidth));
+            EditorGUILayout.EndHorizontal();
+            return now;
+        }
 
         static void EndCard() => EditorGUILayout.EndVertical();
 
@@ -424,11 +469,47 @@ namespace Yozolab.DaerD
 
         // ---- tools -------------------------------------------------------------
 
-        /// <summary>The reports and editors that act on the whole controller. Two to a row: they
-        /// are short labels, and a stack of full-width buttons reads as the most important thing
-        /// in the column when it is the least. Each opens in its own window, so the explanations
-        /// live in tooltips rather than in labels here.</summary>
+        /// <summary>One folding card per tool, so a tool can be worked in without leaving the
+        /// screen — and every one of them keeps the window it used to open, one button away.
+        /// They start folded: each is a working surface of its own, and several unfolded at once
+        /// would bury everything else in the column.</summary>
         void DrawTools(AnimatorController controller)
+        {
+            DrawClipsTool(controller);
+            EditorGUILayout.Space(8);
+            DrawWindowTools(controller);
+            EditorGUILayout.Space(8);
+            DrawCleanupTool(controller);
+        }
+
+        /// <summary>The clip index, inline. The form is bound lazily and only re-collected when
+        /// something could have changed it — walking every clip in the controller is not a
+        /// per-repaint price.</summary>
+        void DrawClipsTool(AnimatorController controller)
+        {
+            _clipsOpen = BeginToolCard(L.Tr("Clips"), _clipsOpen, out bool window);
+            if (window)
+            {
+                ClipsWindow.Open(controller);
+                GUIUtility.ExitGUI();   // the focus moved to another window under this layout pass
+            }
+            if (_clipsOpen)
+            {
+                if (_clips.Controller != controller || _clipsRevision != _revision)
+                {
+                    _clips.SetController(controller);
+                    _clipsRevision = _revision;
+                }
+                _clips.DrawHeader(withControllerSlot: false);
+                _clips.DrawList();
+            }
+            EndCard();
+        }
+
+        /// <summary>The tools that still only open in a window. Two to a row: they are short
+        /// labels, and a stack of full-width buttons reads as the most important thing in the
+        /// column when it is the least.</summary>
+        void DrawWindowTools(AnimatorController controller)
         {
             BeginCard(L.Tr("Tools"));
 
@@ -439,31 +520,30 @@ namespace Yozolab.DaerD
                 AnalyzerWindow.Open(controller);
                 GUIUtility.ExitGUI();   // the focus moved to another window under this layout pass
             }
-            if (GUILayout.Button(new GUIContent(L.Tr("List Clips"),
-                    L.Tr("List every AnimationClip this controller references and the states that use it."))))
-            {
-                ClipsWindow.Open(controller);
-                GUIUtility.ExitGUI();   // the focus moved to another window under this layout pass
-            }
-            EditorGUILayout.EndHorizontal();
-
-            EditorGUILayout.BeginHorizontal();
             if (GUILayout.Button(new GUIContent(L.Tr("Export C# Recipe"),
                     L.Tr("Convert this controller (or chosen layers) into editable C# that rebuilds it — clips stay assignable by drag & drop on the recipe asset."))))
             {
                 RecipeExportWindow.Open(controller);
                 GUIUtility.ExitGUI();   // the focus moved to another window under this layout pass
             }
+            EditorGUILayout.EndHorizontal();
+
             if (GUILayout.Button(new GUIContent(L.Tr("Expressions Menu"),
                     L.Tr("Edit the avatar's VRC Expressions Menu (auto-detected from the scene)."))))
             {
                 VrcMenuWindow.Open(controller);
                 GUIUtility.ExitGUI();   // the focus moved to another window under this layout pass
             }
-            EditorGUILayout.EndHorizontal();
+            EndCard();
+        }
 
-            EditorGUILayout.Space(4);
-            _cleanup.DrawCleanupSection(controller);
+        /// <summary>Leftover sub-asset housekeeping. Folded away because it has nothing to say
+        /// until a scan has been run, and no window of its own to offer.</summary>
+        void DrawCleanupTool(AnimatorController controller)
+        {
+            _cleanupOpen = BeginFoldCard(L.Tr("Cleanup"), _cleanupOpen);
+            if (_cleanupOpen)
+                _cleanup.DrawCleanupSection(controller);
             EndCard();
         }
 
