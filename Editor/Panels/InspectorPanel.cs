@@ -1,4 +1,3 @@
-using System;
 using System.Collections.Generic;
 using UnityEditor;
 using UnityEditor.Animations;
@@ -28,6 +27,7 @@ namespace Yozolab.DaerD
         readonly StateInspector _state;
         readonly MultiStateInspector _multiStates;
         readonly NoteInspector _notes;
+        readonly FrameInspector _frames;
 
         public InspectorPanel(DaerDContext context, AnimatorGraphView graphView)
             : base(context, "Inspector")
@@ -44,6 +44,7 @@ namespace Yozolab.DaerD
             _state = new StateInspector(context, graphView.Sync, _syncRequests, _behaviours);
             _multiStates = new MultiStateInspector(context, graphView.Sync, _state, _overview, _multiBehaviours);
             _notes = new NoteInspector(context, graphView.Sync);
+            _frames = new FrameInspector(context, graphView.Sync);
             context.SelectionChanged += OnSelectionChanged;
             // The leftover scan (and the object references captured in it) belongs to the
             // outgoing controller — drop it on a tab switch.
@@ -117,7 +118,7 @@ namespace Yozolab.DaerD
             }
             else if (selection is GraphFrameData.Frame frame)
             {
-                DrawFrame(frame);
+                _frames.DrawFrame(frame);
             }
             else if (selection is GraphFrameData.Note note)
             {
@@ -148,69 +149,6 @@ namespace Yozolab.DaerD
             EditorGUILayout.LabelField("Looping", clip.isLooping ? "Yes" : "No");
             if (GUILayout.Button("Ping in Project"))
                 EditorGUIUtility.PingObject(clip);
-        }
-
-        // ---- frame -----------------------------------------------------------
-
-        void DrawFrame(GraphFrameData.Frame frame)
-        {
-            var frameData = GraphFrameData.Find(Context.Controller);
-            if (frameData == null || !frameData.frames.Contains(frame))
-            {
-                EditorGUILayout.LabelField("This frame no longer exists.");
-                return;
-            }
-
-            EditorGUILayout.LabelField("Frame", EditorStyles.boldLabel);
-
-            EditorGUI.BeginChangeCheck();
-            string frameTitle;
-            Color color;
-            using (new EditorGUI.DisabledScope(frame.locked))
-            {
-                frameTitle = EditorGUILayout.DelayedTextField("Title", frame.title);
-                color = EditorGUILayout.ColorField("Color", frame.color);
-            }
-            bool moveNodes = EditorGUILayout.Toggle(
-                new GUIContent("Move Nodes With Frame", "Dragging the title bar also moves the nodes inside the frame."),
-                frame.moveNodesWithFrame);
-            bool locked = EditorGUILayout.Toggle(
-                new GUIContent("Locked", "A locked frame cannot be moved, resized, renamed or deleted."),
-                frame.locked);
-            if (EditorGUI.EndChangeCheck())
-            {
-                Undo.RecordObject(frameData, "Edit Frame");
-                frame.title = string.IsNullOrEmpty(frameTitle) ? frame.title : frameTitle;
-                frame.color = color;
-                frame.moveNodesWithFrame = moveNodes;
-                frame.locked = locked;
-                EditorUtility.SetDirty(frameData);
-                _graphView.Sync.RefreshFrameVisuals(frame);
-            }
-
-            EditorGUILayout.Space(6);
-            NoteInspector.DrawFrameNoteClipboardRow(_graphView.Sync, L.Tr("Copy Frame"),
-                L.Tr("Copy this frame's box. Open another layer and paste to reuse it there."),
-                () => _graphView.Sync.CopyFrame(frame));
-
-            EditorGUILayout.BeginHorizontal();
-            // Duplicates this frame, the states inside, and the transitions among them — works
-            // even when the frame is locked since the copy is independent.
-            if (GUILayout.Button("Duplicate Frame"))
-            {
-                _graphView.Sync.DuplicateFrame(frame);
-                GUIUtility.ExitGUI();
-            }
-            using (new EditorGUI.DisabledScope(frame.locked))
-            {
-                if (GUILayout.Button("Delete Frame"))
-                {
-                    _graphView.Sync.DeleteFrame(frame);
-                    Context.Select(null);
-                    GUIUtility.ExitGUI();
-                }
-            }
-            EditorGUILayout.EndHorizontal();
         }
     }
 }
