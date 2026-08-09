@@ -453,8 +453,9 @@ namespace Yozolab.DaerD.Tests
             {
                 StringAssert.Contains("'Aap'", issue.message);
                 StringAssert.Contains("2 Parameter Driver", issue.message);
-                // Both directions fail outright in game, and silently — not a matter of taste.
-                Assert.AreEqual(IssueSeverity.Error, issue.severity);
+                // Warning, not Error: a clip on a weight-0 layer counts as "animation writes
+                // it" without ever running, so the finding isn't certain enough to be one.
+                Assert.AreEqual(IssueSeverity.Warning, issue.severity);
             }
 
             Object.DestroyImmediate(controller);

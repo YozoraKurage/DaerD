@@ -597,6 +597,10 @@ namespace Yozolab.DaerD
         /// cannot read the animated value, and anything it writes is overwritten by the
         /// blend tree on the same frame. Both directions are silent failures in game,
         /// which is exactly what an analyzer is for.
+        ///
+        /// Warnings rather than errors while the scan only asks whether SOME reachable clip
+        /// animates the parameter: a clip on a weight-0 layer satisfies that without ever
+        /// running. Reachability would make these certain enough to call errors.
         /// </summary>
         static void AddAapDriverIssues(AnimatorController controller, List<AnalyzerIssue> issues)
         {
@@ -618,7 +622,7 @@ namespace Yozolab.DaerD
             foreach (var name in SortedKeys(reads))
                 issues.Add(new AnalyzerIssue
                 {
-                    severity = IssueSeverity.Error,
+                    severity = IssueSeverity.Warning,
                     kind = IssueKind.AapDriver,
                     message = L.Tr(
                         "Animation writes '{0}' (AAP), and {1} Parameter Driver entr(ies) copy from it. A driver can't read an animated value — the copy carries the animator's own, usually the default.",
@@ -628,7 +632,7 @@ namespace Yozolab.DaerD
             foreach (var name in SortedKeys(writes))
                 issues.Add(new AnalyzerIssue
                 {
-                    severity = IssueSeverity.Error,
+                    severity = IssueSeverity.Warning,
                     kind = IssueKind.AapDriver,
                     message = L.Tr(
                         "Animation writes '{0}' (AAP), and {1} Parameter Driver entr(ies) write it too. The blend tree overwrites the driver every frame, so the driver's value never sticks.",

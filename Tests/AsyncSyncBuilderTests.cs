@@ -390,26 +390,24 @@ namespace Yozolab.DaerD.Tests
         }
 
         [Test]
-        public void Validate_RefusesATargetAnimationWrites()
+        public void Warnings_CallOutATargetAnimationWrites()
         {
             var controller = NewController();
             var request = NewRequest(controller, "F", "B", "I");
-            Assert.IsNull(AsyncSyncBuilder.Validate(request));
+            Assert.IsFalse(AsyncSyncBuilder.Warnings(request).Exists(w => w.Contains("(AAP")));
 
             // A clip animating the parameter on the Animator itself — a DBT gadget output.
-            // The send cycle would copy it with a Parameter Driver, which reads the animator's
-            // own value, so this is refused outright rather than warned about.
             var clip = new AnimationClip { name = "F AAP" };
             AnimationUtility.SetEditorCurve(clip,
                 EditorCurveBinding.FloatCurve(string.Empty, typeof(Animator), "F"),
                 AnimationCurve.Constant(0f, 1f, 1f));
             controller.layers[0].stateMachine.AddState("Write").motion = clip;
 
-            var error = AsyncSyncBuilder.Validate(request);
-            Assert.IsNotNull(error);
-            StringAssert.Contains("'F'", error);
-            StringAssert.Contains("AAP", error);
-            Assert.IsFalse(AsyncSyncBuilder.Apply(request), "a refused request must not build");
+            Assert.IsTrue(AsyncSyncBuilder.Warnings(request)
+                .Exists(w => w.Contains("(AAP") && w.Contains("'F'")));
+            // Said, not refused: the scan can't yet tell a clip that plays from one that
+            // merely exists, so it must not block a setup that may be fine.
+            Assert.IsNull(AsyncSyncBuilder.Validate(request));
 
             Object.DestroyImmediate(controller);
         }
