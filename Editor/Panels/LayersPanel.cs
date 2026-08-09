@@ -187,15 +187,7 @@ namespace Yozolab.DaerD
             DaerDLayerTemplate.Save(controller, index, path);
         }
 
-        void OnLayerStructureChanged(int layerIndex)
-        {
-            var controller = Context.Controller;
-            Context.NotifyParametersChanged();
-            Context.NotifyLayersChanged();
-            Context.NotifyGraphStructureChanged();
-            if (controller != null && layerIndex >= 0 && layerIndex < controller.layers.Length)
-                Context.SetLayer(layerIndex);
-        }
+        void OnLayerStructureChanged(int layerIndex) => Context.NotifyLayerStructureChanged(layerIndex);
 
         /// <summary>Editable settings for one layer, anchored to its row's gear button.</summary>
         class LayerSettingsPopup : PopupWindowContent

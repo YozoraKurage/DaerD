@@ -2612,15 +2612,7 @@ namespace Yozolab.DaerD
 
         /// <summary>The toggle wizard added a parameter, clips and possibly a layer — let
         /// every panel and the graph pick that up, and show the layer it landed in.</summary>
-        void OnToggleApplied(int layerIndex)
-        {
-            var controller = Context.Controller;
-            Context.NotifyParametersChanged();
-            Context.NotifyLayersChanged();
-            Context.NotifyGraphStructureChanged();
-            if (controller != null && layerIndex >= 0 && layerIndex < controller.layers.Length)
-                Context.SetLayer(layerIndex);
-        }
+        void OnToggleApplied(int layerIndex) => Context.NotifyLayerStructureChanged(layerIndex);
 
         void BulkSetWriteDefaults(AnimatorController controller, bool value)
         {
