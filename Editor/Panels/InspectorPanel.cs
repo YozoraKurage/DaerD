@@ -9,12 +9,6 @@ namespace Yozolab.DaerD
     /// <summary>Context-sensitive inspector for the currently selected graph element.</summary>
     class InspectorPanel : PanelBase
     {
-        static readonly AnimatorConditionMode[] IntModes =
-        {
-            AnimatorConditionMode.Greater, AnimatorConditionMode.Less,
-            AnimatorConditionMode.Equals, AnimatorConditionMode.NotEqual,
-        };
-        static readonly AnimatorConditionMode[] FloatModes = { AnimatorConditionMode.Greater, AnimatorConditionMode.Less };
         static readonly string[] BoolValueLabels = { "true", "false" };
         static readonly string[] GestureValueLabels = BuildGestureValueLabels();
 
@@ -348,11 +342,11 @@ namespace Yozolab.DaerD
             DrawMultiStateParameterOverrides(alive, controller);
 
             EditorGUILayout.Space(6);
-            HorizontalLine();
+            PanelGui.HorizontalLine();
             DrawMultiStateBehaviours(alive);
 
             EditorGUILayout.Space(6);
-            HorizontalLine();
+            PanelGui.HorizontalLine();
             EditorGUILayout.LabelField("Bulk Actions", EditorStyles.boldLabel);
             EditorGUILayout.BeginHorizontal();
             if (GUILayout.Button("Set Default State to First"))
@@ -372,8 +366,8 @@ namespace Yozolab.DaerD
 
         void DrawMultiStateParameterOverrides(List<AnimatorState> states, AnimatorController controller)
         {
-            var floatParams = ParameterNamesOfType(controller, AnimatorControllerParameterType.Float);
-            var boolParams = ParameterNamesOfType(controller, AnimatorControllerParameterType.Bool);
+            var floatParams = PanelGui.ParameterNamesOfType(controller, AnimatorControllerParameterType.Float);
+            var boolParams = PanelGui.ParameterNamesOfType(controller, AnimatorControllerParameterType.Bool);
 
             EditorGUILayout.LabelField("Parameter Overrides (applied to all)", EditorStyles.boldLabel);
 
@@ -718,8 +712,8 @@ namespace Yozolab.DaerD
         /// </summary>
         void DrawStateParameters(AnimatorState state, AnimatorController controller)
         {
-            var floatParams = ParameterNamesOfType(controller, AnimatorControllerParameterType.Float);
-            var boolParams = ParameterNamesOfType(controller, AnimatorControllerParameterType.Bool);
+            var floatParams = PanelGui.ParameterNamesOfType(controller, AnimatorControllerParameterType.Float);
+            var boolParams = PanelGui.ParameterNamesOfType(controller, AnimatorControllerParameterType.Bool);
 
             EditorGUILayout.Space(4);
             EditorGUILayout.LabelField("Parameter Overrides", EditorStyles.boldLabel);
@@ -801,13 +795,13 @@ namespace Yozolab.DaerD
                 bool selected = _selectedBehaviours.Contains(behaviour);
 
                 var boxBackground = GUI.backgroundColor;
-                if (selected) GUI.backgroundColor = SelectionTint;
+                if (selected) GUI.backgroundColor = PanelGui.SelectionTint;
                 EditorGUILayout.BeginVertical(EditorStyles.helpBox);
                 GUI.backgroundColor = boxBackground;
 
                 EditorGUILayout.BeginHorizontal();
                 var titleBackground = GUI.backgroundColor;
-                if (selected) GUI.backgroundColor = SelectionTint;
+                if (selected) GUI.backgroundColor = PanelGui.SelectionTint;
                 if (GUILayout.Button(BehaviourTitle(behaviour), BehaviourTitleStyle))
                     HandleBehaviourRowClick(behaviours, i);
                 GUI.backgroundColor = titleBackground;
@@ -858,8 +852,6 @@ namespace Yozolab.DaerD
         }
 
         // ---- behaviour selection ---------------------------------------------
-
-        static readonly Color SelectionTint = new Color(0.40f, 0.60f, 0.90f);
 
         static GUIStyle s_behaviourTitleStyle;
 
@@ -1050,13 +1042,13 @@ namespace Yozolab.DaerD
             int missing = states.Count - slot.instances.Count;
 
             var boxBackground = GUI.backgroundColor;
-            if (selected) GUI.backgroundColor = SelectionTint;
+            if (selected) GUI.backgroundColor = PanelGui.SelectionTint;
             EditorGUILayout.BeginVertical(EditorStyles.helpBox);
             GUI.backgroundColor = boxBackground;
 
             EditorGUILayout.BeginHorizontal();
             var titleBackground = GUI.backgroundColor;
-            if (selected) GUI.backgroundColor = SelectionTint;
+            if (selected) GUI.backgroundColor = PanelGui.SelectionTint;
             if (GUILayout.Button(BehaviourTitle(representative), BehaviourTitleStyle))
                 HandleBehaviourRowClick(representatives, index);
             GUI.backgroundColor = titleBackground;
@@ -1882,7 +1874,7 @@ namespace Yozolab.DaerD
             PruneSelection(pool);
             HandleCopyPasteShortcuts();
             DrawTransitionList(pool);
-            HorizontalLine();
+            PanelGui.HorizontalLine();
 
             if (_selectedTransitions.Count >= 2)
                 DrawMultiTransitionEditor(controller);
@@ -1947,7 +1939,7 @@ namespace Yozolab.DaerD
 
                 bool selected = _selectedTransitions.Contains(t);
                 var prevBackground = GUI.backgroundColor;
-                if (selected) GUI.backgroundColor = new Color(0.40f, 0.60f, 0.90f);
+                if (selected) GUI.backgroundColor = PanelGui.SelectionTint;
                 if (GUILayout.Button((i + 1) + ".  " + ParameterConverter.DescribeTransition(t), EditorStyles.miniButton))
                     HandleRowClick(pool, i);
                 GUI.backgroundColor = prevBackground;
@@ -2101,7 +2093,7 @@ namespace Yozolab.DaerD
                 EditorStyles.boldLabel);
             DrawTransitionSettings(transition);
 
-            HorizontalLine();
+            PanelGui.HorizontalLine();
             DrawConditions(transition, controller);
         }
 
@@ -2145,13 +2137,13 @@ namespace Yozolab.DaerD
         {
             EditorGUILayout.LabelField(L.Tr("Conditions"), EditorStyles.boldLabel);
 
-            var paramNames = AllParameterNames(controller);
+            var paramNames = PanelGui.AllParameterNames(controller);
             if (paramNames.Length == 0)
             {
                 EditorGUILayout.HelpBox(L.Tr("Add parameters before building conditions."), MessageType.Info);
                 return;
             }
-            var typeByName = ParameterTypeMap(controller);
+            var typeByName = PanelGui.ParameterTypeMap(controller);
 
             var working = ToDataList(transition);
             bool changed = false;
@@ -2186,7 +2178,7 @@ namespace Yozolab.DaerD
             if (GUILayout.Button(L.Tr("+ Add Condition")))
             {
                 var type = typeByName.TryGetValue(paramNames[0], out var t) ? t : AnimatorControllerParameterType.Float;
-                working.Add(new TransitionClipboard.ConditionData { parameter = paramNames[0], mode = ModesFor(type)[0] });
+                working.Add(new TransitionClipboard.ConditionData { parameter = paramNames[0], mode = PanelGui.ModesFor(type)[0] });
                 changed = true;
             }
 
@@ -2211,7 +2203,7 @@ namespace Yozolab.DaerD
             }
 
             DrawMultiSettings();
-            HorizontalLine();
+            PanelGui.HorizontalLine();
             DrawSharedConditions(controller);
             EditorGUILayout.Space(4);
             DrawAddConditionToAll(controller);
@@ -2251,13 +2243,13 @@ namespace Yozolab.DaerD
                 return;
             }
 
-            var paramNames = AllParameterNames(controller);
+            var paramNames = PanelGui.AllParameterNames(controller);
             if (paramNames.Length == 0)
             {
                 EditorGUILayout.HelpBox(L.Tr("Add parameters before editing conditions."), MessageType.Info);
                 return;
             }
-            var typeByName = ParameterTypeMap(controller);
+            var typeByName = PanelGui.ParameterTypeMap(controller);
 
             foreach (var entry in shared)
             {
@@ -2308,13 +2300,13 @@ namespace Yozolab.DaerD
         {
             EditorGUILayout.LabelField(L.Tr("Add The Same Condition To Every Selected Transition"), EditorStyles.boldLabel);
 
-            var paramNames = AllParameterNames(controller);
+            var paramNames = PanelGui.AllParameterNames(controller);
             if (paramNames.Length == 0)
             {
                 EditorGUILayout.HelpBox(L.Tr("Add parameters before building conditions."), MessageType.Info);
                 return;
             }
-            var typeByName = ParameterTypeMap(controller);
+            var typeByName = PanelGui.ParameterTypeMap(controller);
 
             EditorGUILayout.BeginHorizontal();
             int paramIndex = Mathf.Max(0, Array.IndexOf(paramNames, _newCondition.parameter));
@@ -2445,7 +2437,7 @@ namespace Yozolab.DaerD
                 }
                 default:
                 {
-                    var modes = ModesFor(type);
+                    var modes = PanelGui.ModesFor(type);
                     // GestureLeft / GestureRight thresholds read as an enum ("1: Fist"…), so
                     // give the value popup the wider slot and shrink the mode popup — the
                     // row's total width stays aligned with the plain numeric layout.
@@ -2453,7 +2445,7 @@ namespace Yozolab.DaerD
                         && VrcParameters.IsGestureParameter(condition.parameter)
                         && VrcParameters.GestureLabel(condition.threshold) != null;
                     int modeIndex = Mathf.Max(0, Array.IndexOf(modes, condition.mode));
-                    modeIndex = EditorGUILayout.Popup(modeIndex, ModeLabels(modes), GUILayout.Width(gesture ? 56 : 80));
+                    modeIndex = EditorGUILayout.Popup(modeIndex, PanelGui.ModeLabels(modes), GUILayout.Width(gesture ? 56 : 80));
                     condition.mode = modes[modeIndex];
                     if (gesture)
                     {
@@ -2734,65 +2726,6 @@ namespace Yozolab.DaerD
                 return;
             ControllerCleanup.DeleteSubAssets(controller, _leftovers);
             _leftovers = ControllerCleanup.FindLeftoverSubAssets(controller);
-        }
-
-        // ---- helpers ---------------------------------------------------------
-
-        static void HorizontalLine()
-        {
-            EditorGUILayout.Space(5);
-            var rect = EditorGUILayout.GetControlRect(false, 1);
-            EditorGUI.DrawRect(rect, new Color(0f, 0f, 0f, 0.35f));
-            EditorGUILayout.Space(5);
-        }
-
-        static AnimatorConditionMode[] ModesFor(AnimatorControllerParameterType type)
-        {
-            switch (type)
-            {
-                case AnimatorControllerParameterType.Bool:
-                case AnimatorControllerParameterType.Trigger:
-                    return new[] { AnimatorConditionMode.If, AnimatorConditionMode.IfNot };
-                case AnimatorControllerParameterType.Int:
-                    return IntModes;
-                default:
-                    return FloatModes;
-            }
-        }
-
-        static string[] ModeLabels(AnimatorConditionMode[] modes)
-        {
-            var labels = new string[modes.Length];
-            for (int i = 0; i < modes.Length; i++)
-                labels[i] = L.Tr(modes[i].ToString());
-            return labels;
-        }
-
-        static string[] AllParameterNames(AnimatorController controller)
-        {
-            var parameters = controller.parameters;
-            var names = new string[parameters.Length];
-            for (int i = 0; i < parameters.Length; i++)
-                names[i] = parameters[i].name;
-            return names;
-        }
-
-        static string[] ParameterNamesOfType(AnimatorController controller, AnimatorControllerParameterType type)
-        {
-            var names = new List<string>();
-            foreach (var p in controller.parameters)
-                if (p.type == type)
-                    names.Add(p.name);
-            if (names.Count == 0) names.Add(string.Empty);
-            return names.ToArray();
-        }
-
-        static Dictionary<string, AnimatorControllerParameterType> ParameterTypeMap(AnimatorController controller)
-        {
-            var map = new Dictionary<string, AnimatorControllerParameterType>();
-            foreach (var p in controller.parameters)
-                map[p.name] = p.type;
-            return map;
         }
     }
 }

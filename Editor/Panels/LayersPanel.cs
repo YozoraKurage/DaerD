@@ -43,7 +43,7 @@ namespace Yozolab.DaerD
 
                 bool isCurrent = i == Context.LayerIndex;
                 var prev = GUI.backgroundColor;
-                if (isCurrent) GUI.backgroundColor = new Color(0.40f, 0.60f, 0.90f);
+                if (isCurrent) GUI.backgroundColor = PanelGui.SelectionTint;
                 if (GUILayout.Button(layers[i].name, EditorStyles.miniButton))
                     Context.SetLayer(i);
                 GUI.backgroundColor = prev;
