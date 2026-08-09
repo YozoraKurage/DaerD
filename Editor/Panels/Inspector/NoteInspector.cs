@@ -53,7 +53,7 @@ namespace Yozolab.DaerD
                     EditorStyles.textArea, GUILayout.MinHeight(40));
             if (GUILayout.Button(L.Tr("Edit Text in Graph")))
             {
-                _sync.FindNoteNode(note)?.BeginEdit();
+                _context.NotifyNoteEditRequested(note);
                 GUIUtility.ExitGUI();
             }
             EditorGUILayout.LabelField(L.Tr("Tip: double-click the note (or press F2) to edit text in place."),
@@ -71,7 +71,7 @@ namespace Yozolab.DaerD
                 note.color = color;
                 note.fontSize = NoteFontSizes[sizeIndex];
                 EditorUtility.SetDirty(frameData);
-                _sync.RefreshNoteVisuals(note);
+                _context.NotifyGraphVisualsChanged(note);
             }
 
             EditorGUILayout.Space(6);

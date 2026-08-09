@@ -50,7 +50,7 @@ namespace Yozolab.DaerD
                 frame.moveNodesWithFrame = moveNodes;
                 frame.locked = locked;
                 EditorUtility.SetDirty(frameData);
-                _sync.RefreshFrameVisuals(frame);
+                _context.NotifyGraphVisualsChanged(frame);
             }
 
             EditorGUILayout.Space(6);

@@ -58,7 +58,7 @@ namespace Yozolab.DaerD
                 if (visualChange) _context.NotifyGraphStructureChanged();
                 // The WD badge lives on the graph node; repaint it right away rather than
                 // waiting for the next full rebuild.
-                else if (badgeChange) _sync.RefreshStateNode(state);
+                else if (badgeChange) _context.NotifyGraphVisualsChanged(state);
             }
 
             DrawStateParameters(state, controller);

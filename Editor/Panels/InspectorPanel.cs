@@ -33,14 +33,14 @@ namespace Yozolab.DaerD
             : base(context, "Inspector")
         {
             _graphView = graphView;
-            _overview = new OverviewInspector(context, graphView.Sync, _cleanup);
+            _overview = new OverviewInspector(context, _cleanup);
             _stateMachine = new StateMachineInspector(context);
             _multiTransition = new MultiTransitionInspector(context, graphView.Sync, _selectedTransitions);
             _transitions = new TransitionInspector(context, graphView, _selectedTransitions, _multiTransition);
-            _vrcDrawers = new VrcBehaviourDrawers(context, graphView.Sync, Refresh);
-            _behaviours = new BehaviourInspector(graphView.Sync, _selectedBehaviours, _vrcDrawers);
-            _multiBehaviours = new MultiStateBehaviourInspector(graphView.Sync, _selectedBehaviours, _behaviours, _vrcDrawers);
-            _syncRequests = new SyncRequestInspector(context, graphView.Sync);
+            _vrcDrawers = new VrcBehaviourDrawers(context, Refresh);
+            _behaviours = new BehaviourInspector(context, _selectedBehaviours, _vrcDrawers);
+            _multiBehaviours = new MultiStateBehaviourInspector(context, _selectedBehaviours, _behaviours, _vrcDrawers);
+            _syncRequests = new SyncRequestInspector(context);
             _state = new StateInspector(context, graphView.Sync, _syncRequests, _behaviours);
             _multiStates = new MultiStateInspector(context, graphView.Sync, _state, _overview, _multiBehaviours);
             _notes = new NoteInspector(context, graphView.Sync);

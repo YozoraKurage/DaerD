@@ -61,13 +61,13 @@ namespace Yozolab.DaerD
 
             MultiEditGui.ObjectField<AnimatorState, Motion>(L.Tr("Motion"), alive,
                 x => x.motion, (x, v) => x.motion = v,
-                undoName: "Edit States", postApply: s => _sync.RefreshStateNode(s));
+                undoName: "Edit States", postApply: s => _context.NotifyGraphVisualsChanged(s));
             MultiEditGui.Float(L.Tr("Speed"), alive, x => x.speed, (x, v) => x.speed = v, undoName: "Edit States");
             MultiEditGui.Float(L.Tr("Cycle Offset"), alive, x => x.cycleOffset, (x, v) => x.cycleOffset = v, undoName: "Edit States");
             MultiEditGui.Bool(L.Tr("Mirror"), alive, x => x.mirror, (x, v) => x.mirror = v, undoName: "Edit States");
             MultiEditGui.Bool(L.Tr("Foot IK"), alive, x => x.iKOnFeet, (x, v) => x.iKOnFeet = v, undoName: "Edit States");
             MultiEditGui.Bool(L.Tr("Write Defaults"), alive, x => x.writeDefaultValues, (x, v) => x.writeDefaultValues = v,
-                undoName: "Edit States", postApply: s => _sync.RefreshStateNode(s));
+                undoName: "Edit States", postApply: s => _context.NotifyGraphVisualsChanged(s));
             MultiEditGui.Text(L.Tr("Tag"), alive, x => x.tag, (x, v) => x.tag = v, undoName: "Edit States");
 
             EditorGUILayout.Space(4);

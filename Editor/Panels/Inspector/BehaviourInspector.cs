@@ -13,16 +13,16 @@ namespace Yozolab.DaerD
     /// </summary>
     class BehaviourInspector
     {
-        readonly GraphSync _sync;
+        readonly DaerDContext _context;
         readonly List<StateMachineBehaviour> _selectedBehaviours;
         readonly VrcBehaviourDrawers _vrcDrawers;
 
         int _behaviourRangeAnchor = -1;
 
-        public BehaviourInspector(GraphSync sync, List<StateMachineBehaviour> selectedBehaviours,
+        public BehaviourInspector(DaerDContext context, List<StateMachineBehaviour> selectedBehaviours,
             VrcBehaviourDrawers vrcDrawers)
         {
-            _sync = sync;
+            _context = context;
             _selectedBehaviours = selectedBehaviours;
             _vrcDrawers = vrcDrawers;
         }
@@ -95,7 +95,7 @@ namespace Yozolab.DaerD
                     _selectedBehaviours.Remove(behaviour);
                     _behaviourRangeAnchor = -1;
                     VrcBehaviourDrawers.RemoveBehaviour(state, behaviour);
-                    _sync.RefreshStateNode(state);   // B badge updates immediately
+                    _context.NotifyGraphVisualsChanged(state);   // B badge updates immediately
                     GUIUtility.ExitGUI();
                 }
                 EditorGUILayout.EndHorizontal();
@@ -242,7 +242,7 @@ namespace Yozolab.DaerD
                 if (after[i] != null)
                     _selectedBehaviours.Add(after[i]);
             _behaviourRangeAnchor = _selectedBehaviours.Count > 0 ? before : -1;
-            _sync.RefreshStateNode(state);   // B badge updates immediately
+            _context.NotifyGraphVisualsChanged(state);   // B badge updates immediately
         }
     }
 }

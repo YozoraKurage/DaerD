@@ -17,15 +17,13 @@ namespace Yozolab.DaerD
         readonly Dictionary<int, int> _vrcDriverSelectedIndex = new Dictionary<int, int>();
 
         readonly DaerDContext _context;
-        readonly GraphSync _sync;
         // Repaints the inspector once the add menu's callback runs, long after the frame that
         // opened it.
         readonly System.Action _refresh;
 
-        public VrcBehaviourDrawers(DaerDContext context, GraphSync sync, System.Action refresh)
+        public VrcBehaviourDrawers(DaerDContext context, System.Action refresh)
         {
             _context = context;
-            _sync = sync;
             _refresh = refresh;
         }
 
@@ -532,7 +530,7 @@ namespace Yozolab.DaerD
                                 if (VrcBehaviours.IsSingleton(captured) && VrcBehaviours.Has(s, captured))
                                     continue;
                                 VrcBehaviours.Add(s, captured);
-                                _sync.RefreshStateNode(s);   // B badge updates immediately
+                                _context.NotifyGraphVisualsChanged(s);   // B badge updates immediately
                             }
                         _refresh();
                     });
@@ -555,7 +553,7 @@ namespace Yozolab.DaerD
                             Undo.RegisterCompleteObjectUndo(s, "Add Behaviour");
                             s.AddStateMachineBehaviour(captured);
                             EditorUtility.SetDirty(s);
-                            _sync.RefreshStateNode(s);   // B badge updates immediately
+                            _context.NotifyGraphVisualsChanged(s);   // B badge updates immediately
                         }
                     _refresh();
                 });

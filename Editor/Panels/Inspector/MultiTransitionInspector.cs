@@ -255,10 +255,9 @@ namespace Yozolab.DaerD
             if (last != null) _context.Select(last);
         }
 
-        public void RefreshEdges()
-        {
-            foreach (var edge in _sync.Edges)
-                edge.Refresh();
-        }
+        /// <summary>Repaints every edge: mute / solo and the condition text are drawn on the edge
+        /// labels, and an edit here can touch transitions spread over several of them.</summary>
+        public void RefreshEdges() =>
+            _context.NotifyGraphVisualsChanged(DaerDContext.GraphVisuals.AllEdges);
     }
 }
