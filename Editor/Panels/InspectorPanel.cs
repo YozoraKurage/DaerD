@@ -35,6 +35,7 @@ namespace Yozolab.DaerD
         bool _showBlendTree = true;
         readonly CleanupInspector _cleanup = new CleanupInspector();
         readonly OverviewInspector _overview;
+        readonly StateMachineInspector _stateMachine;
         // VRC Parameter Driver: remembered "selected row" per behaviour so the Add/Up/Down/Delete
         // buttons know which entry they act on. Keyed by StateMachineBehaviour instance ID; stale
         // entries are harmless (Unity domain reload clears them) so we don't bother pruning.
@@ -45,6 +46,7 @@ namespace Yozolab.DaerD
         {
             _graphView = graphView;
             _overview = new OverviewInspector(context, graphView.Sync, _cleanup);
+            _stateMachine = new StateMachineInspector(context);
             context.SelectionChanged += OnSelectionChanged;
             // The leftover scan (and the object references captured in it) belongs to the
             // outgoing controller — drop it on a tab switch.
@@ -106,7 +108,7 @@ namespace Yozolab.DaerD
             }
             else if (selection is AnimatorStateMachine stateMachine)
             {
-                DrawStateMachine(stateMachine);
+                _stateMachine.DrawStateMachine(stateMachine);
             }
             else if (selection is BlendTree blendTree)
             {
@@ -2514,28 +2516,6 @@ namespace Yozolab.DaerD
         static bool Same(TransitionClipboard.ConditionData a, TransitionClipboard.ConditionData b)
         {
             return a.parameter == b.parameter && a.mode == b.mode && Mathf.Approximately(a.threshold, b.threshold);
-        }
-
-        // ---- state machine ---------------------------------------------------
-
-        void DrawStateMachine(AnimatorStateMachine stateMachine)
-        {
-            EditorGUILayout.LabelField("Sub-State Machine", EditorStyles.boldLabel);
-
-            EditorGUI.BeginChangeCheck();
-            string name = EditorGUILayout.DelayedTextField("Name", stateMachine.name);
-            if (EditorGUI.EndChangeCheck() && !string.IsNullOrEmpty(name))
-            {
-                Undo.RegisterCompleteObjectUndo(stateMachine, "Rename State Machine");
-                stateMachine.name = name;
-                EditorUtility.SetDirty(stateMachine);
-                Context.NotifyGraphStructureChanged();
-            }
-
-            EditorGUILayout.LabelField("States", stateMachine.states.Length.ToString());
-            EditorGUILayout.LabelField("Sub-State Machines", stateMachine.stateMachines.Length.ToString());
-            if (GUILayout.Button("Open"))
-                Context.EnterStateMachine(stateMachine);
         }
     }
 }
