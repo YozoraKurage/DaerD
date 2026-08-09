@@ -302,6 +302,8 @@ namespace Yozolab.DaerD
                 requests = RequestableTargets(r),
                 schedule = r.scheduleOverride != null
                     ? new List<string>(r.scheduleOverride) : new List<string>(),
+                slotBreaks = r.slotBreaks != null
+                    ? new List<string>(r.slotBreaks) : new List<string>(),
             });
         }
 

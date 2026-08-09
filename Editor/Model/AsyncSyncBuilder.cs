@@ -93,6 +93,16 @@ namespace Yozolab.DaerD
             /// </summary>
             public List<string> requestTargets = new List<string>();
 
+            /// <summary>
+            /// Targets that start a slot of their own instead of joining the batch the target
+            /// before them opened. Batched targets ride one Parameter Driver copy in one step,
+            /// so they are sent together by construction and no schedule can separate them —
+            /// this is how two of them are told to occupy different steps instead. Entries for
+            /// names that are not targets are ignored (same contract as
+            /// <see cref="rates"/>), so a stale saved setup doesn't block regeneration.
+            /// </summary>
+            public List<string> slotBreaks = new List<string>();
+
             public int RateOf(string name) =>
                 rates != null && rates.TryGetValue(name, out int rate)
                     ? Mathf.Clamp(rate, 1, MaxRate) : 1;
@@ -559,6 +569,8 @@ namespace Yozolab.DaerD
                 request.requestTargets.AddRange(config.requests);
             if (config.schedule != null)
                 request.scheduleOverride.AddRange(config.schedule);
+            if (config.slotBreaks != null)
+                request.slotBreaks.AddRange(config.slotBreaks);
             return request;
         }
 

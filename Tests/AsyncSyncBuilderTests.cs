@@ -807,6 +807,72 @@ namespace Yozolab.DaerD.Tests
             Assert.IsNotNull(AsyncSyncBuilder.Validate(badChannels));
         }
 
+        // ---- slot breaks ------------------------------------------------------
+
+        static AnimatorController FloatController(int count)
+        {
+            var controller = new AnimatorController();
+            controller.AddLayer("Base");
+            for (int i = 1; i <= count; i++)
+                controller.AddParameter("F" + i, AnimatorControllerParameterType.Float);
+            return controller;
+        }
+
+        [Test]
+        public void SlotBreaks_LetABatchedTargetTakeAStepOfItsOwn()
+        {
+            var controller = FloatController(4);
+            var request = NewRequest(controller, "F1", "F2", "F3", "F4");
+            request.floatChannels = 2;
+            CollectionAssert.AreEqual(new[] { "F1", "F2" },
+                AsyncSyncBuilder.BuildSlots(request)[0].targets);
+
+            // F2 declines the batch F1 opened — and opens one F3 may still join, so the
+            // author says where the groups begin rather than giving batching up entirely.
+            request.slotBreaks.Add("F2");
+            var slots = AsyncSyncBuilder.BuildSlots(request);
+            Assert.AreEqual(3, slots.Count);
+            CollectionAssert.AreEqual(new[] { "F1" }, slots[0].targets);
+            CollectionAssert.AreEqual(new[] { "F2", "F3" }, slots[1].targets);
+            CollectionAssert.AreEqual(new[] { "F4" }, slots[2].targets);
+
+            // A name that is not multiplexed is ignored, same contract as a stale rate.
+            request.slotBreaks.Add("Gone");
+            Assert.AreEqual(3, AsyncSyncBuilder.BuildSlots(request).Count);
+        }
+
+        [Test]
+        public void SlotBreaks_OnEveryTarget_LeaveTheSpareChannelUnbilled()
+        {
+            var controller = FloatController(4);
+            var request = NewRequest(controller, "F1", "F2", "F3", "F4");
+            request.floatChannels = 2;
+            request.slotBreaks.AddRange(new[] { "F2", "F3", "F4" });
+
+            Assert.AreEqual(4, AsyncSyncBuilder.BuildSlots(request).Count);
+            // Nothing batches any more, so the second channel is neither generated nor paid
+            // for — splitting costs steps, not synced bits.
+            Assert.AreEqual(1, AsyncSyncBuilder.FloatChannelsUsed(request));
+            Assert.IsFalse(AsyncSyncBuilder.GeneratedParameters(request)
+                .Exists(g => g.name == "Async/Float2"));
+        }
+
+        [Test]
+        public void SlotBreaks_SurviveTheSavedSetup()
+        {
+            var controller = FloatController(2);
+            var restored = AsyncSyncBuilder.FromConfig(controller,
+                new GraphFrameData.AsyncSyncConfig
+                {
+                    baseName = "Async",
+                    targets = new List<string> { "F1", "F2" },
+                    slotBreaks = new List<string> { "F2" },
+                });
+            CollectionAssert.AreEqual(new[] { "F2" }, restored.slotBreaks);
+
+            Object.DestroyImmediate(controller);
+        }
+
         // ---- explicit schedule -----------------------------------------------
 
         [Test]

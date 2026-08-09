@@ -24,6 +24,8 @@ namespace Yozolab.DaerD
             public int rate = 1;
             /// <summary>Accept on-demand sync requests for this target.</summary>
             public bool request;
+            /// <summary>Start a slot rather than share channels with the row above.</summary>
+            public bool split;
         }
 
         AnimatorController _controller;
@@ -112,6 +114,7 @@ namespace Yozolab.DaerD
                 row.selected = false;
                 row.rate = 1;
                 row.request = false;
+                row.split = false;
             }
             _order.Clear();
             // The saved target list is ordered — restoring it restores the cycle order.
@@ -123,6 +126,7 @@ namespace Yozolab.DaerD
                         if (rates.TryGetValue(name, out int rate))
                             row.rate = Mathf.Clamp(rate, 1, RateValues[RateValues.Length - 1]);
                         row.request = config.requests != null && config.requests.Contains(name);
+                        row.split = config.slotBreaks != null && config.slotBreaks.Contains(name);
                         _order.Add(row);
                         break;
                     }
@@ -149,6 +153,7 @@ namespace Yozolab.DaerD
                 request.targets.Add(row.name);
                 if (row.rate > 1) request.rates[row.name] = row.rate;
                 if (row.request) request.requestTargets.Add(row.name);
+                if (row.split) request.slotBreaks.Add(row.name);
             }
 
             // The repair needs the slots, which need the request — hence here, once the
@@ -274,6 +279,7 @@ namespace Yozolab.DaerD
                 _order.Remove(row);
                 row.rate = 1;
                 row.request = false;
+                row.split = false;
             }
             _scheduleStale = true;
         }
@@ -302,6 +308,16 @@ namespace Yozolab.DaerD
 
             var intervals = AsyncSyncBuilder.RefreshIntervals(request);
             var visits = Manual ? VisitCounts(request) : null;
+            // Batching is why two rows can move as one, and until now nothing said so. The
+            // slot number is shown whenever channels could group anything — a condition that
+            // cannot change mid-draw, unlike "is anything actually grouped", which the Split
+            // buttons below would flip and take the layout's control count with it.
+            var slots = AsyncSyncBuilder.BuildSlots(request);
+            bool grouping = _floatChannels > 1 || _boolChannels > 1;
+            var slotOfRow = new Dictionary<string, int>();
+            for (int i = 0; i < slots.Count; i++)
+                foreach (var name in slots[i].targets)
+                    slotOfRow[name] = i;
 
             _reorder.Begin();
             foreach (var row in _order)
@@ -310,6 +326,30 @@ namespace Yozolab.DaerD
                 _reorder.DrawHandle();
 
                 EditorGUILayout.LabelField(row.name + "  (" + row.type + ")");
+
+                if (grouping)
+                {
+                    slotOfRow.TryGetValue(row.name, out int slot);
+                    EditorGUILayout.LabelField(
+                        new GUIContent("#" + (slot + 1),
+                            L.Tr("The step this parameter rides in. Rows sharing a number share a step, are copied by one driver, and so are always sent together.")),
+                        EditorStyles.miniLabel, GUILayout.Width(26));
+
+                    bool splittable = row.type == AnimatorControllerParameterType.Float
+                        ? _floatChannels > 1 : row.type == AnimatorControllerParameterType.Bool
+                            && _boolChannels > 1;
+                    EditorGUI.BeginDisabledGroup(!splittable);
+                    bool split = GUILayout.Toggle(row.split && splittable,
+                        new GUIContent(L.Tr("Split"),
+                            L.Tr("Give this parameter a step of its own instead of sharing one with the row above. Parameters sharing a step are sent together and cannot be timed apart.")),
+                        EditorStyles.miniButton, GUILayout.Width(40));
+                    if (split != row.split)
+                    {
+                        row.split = split;
+                        _scheduleStale = true;
+                    }
+                    EditorGUI.EndDisabledGroup();
+                }
 
                 if (Manual)
                 {

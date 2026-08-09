@@ -22,7 +22,8 @@ namespace Yozolab.DaerD
         /// each; Float and Bool targets batch up to <see cref="Request.floatChannels"/> /
         /// <see cref="Request.boolChannels"/> per slot, but only with targets of the same
         /// type AND the same rate — a batch is revisited as a whole or not at all, and the
-        /// channels a slot writes are typed.
+        /// channels a slot writes are typed. <see cref="Request.slotBreaks"/> is how a target
+        /// declines the batch it would otherwise have joined.
         /// </summary>
         public static List<Slot> BuildSlots(Request r)
         {
@@ -45,8 +46,15 @@ namespace Yozolab.DaerD
                     : parameter.type == AnimatorControllerParameterType.Bool ? boolChannels
                     : 1;
 
+                // A target marked as starting a slot refuses the open batch and opens its own,
+                // which the targets after it may still join. That is the only say the author
+                // has over which parameters share a step — and they must have one, because a
+                // shared step is one driver copy: batched targets are sent together or not
+                // at all, so no schedule can give them different timings.
+                bool starts = r.slotBreaks != null && r.slotBreaks.Contains(name);
                 var key = (parameter.type, rate);
-                if (!open.TryGetValue(key, out var slot) || slot.targets.Count >= capacity)
+                open.TryGetValue(key, out var slot);
+                if (starts || slot == null || slot.targets.Count >= capacity)
                 {
                     slot = new Slot { rate = rate };
                     slots.Add(slot);

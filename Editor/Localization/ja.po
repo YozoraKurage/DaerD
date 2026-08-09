@@ -1958,6 +1958,15 @@ msgstr "1 周のうちこのパラメーターを送るステップ数です。�
 msgid "Click a row to make that step send it. Every step sends exactly one slot, so a click moves the step rather than adding one."
 msgstr "行をクリックすると、そのステップがその行を送るようになります。1 ステップが送るスロットは常にちょうど 1 つなので、クリックはステップの追加ではなく置き換えです。"
 
+msgid "Split"
+msgstr "分離"
+
+msgid "Give this parameter a step of its own instead of sharing one with the row above. Parameters sharing a step are sent together and cannot be timed apart."
+msgstr "このパラメーターに専用のステップを与え、上の行とステップを共有しないようにします。ステップを共有するパラメーターは常に同時に送信されるため、タイミングを別々にできません。"
+
+msgid "The step this parameter rides in. Rows sharing a number share a step, are copied by one driver, and so are always sent together."
+msgstr "このパラメーターが乗るステップです。同じ番号の行は同じステップを共有し、1 つの Parameter Driver でまとめてコピーされるため、常に同時に送信されます。"
+
 msgid "Set Timing By Hand"
 msgstr "タイミングを手動指定"
 

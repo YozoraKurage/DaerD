@@ -138,6 +138,19 @@ namespace Yozolab.DaerD.Authoring
             return this;
         }
 
+        /// <summary>
+        /// Give these targets a slot of their own instead of letting them share channels with
+        /// the target listed before them. Batched targets are copied by one driver in one
+        /// step, so they always go out together — split them when they need to reach remotes
+        /// at different moments (and leave them batched when they belong together, which is
+        /// what the extra channels are for).
+        /// </summary>
+        public AsyncSyncRecipeBuilder Split(params string[] targets)
+        {
+            _request.slotBreaks.AddRange(targets);
+            return this;
+        }
+
         /// <summary>Synced Bool channels (1–8): each step carries up to this many Bools, at
         /// one synced bit each — the cheapest way to shorten a Bool-heavy pass.</summary>
         public AsyncSyncRecipeBuilder BoolChannels(int channels)

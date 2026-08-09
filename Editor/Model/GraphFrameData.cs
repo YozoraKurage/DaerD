@@ -90,6 +90,10 @@ namespace Yozolab.DaerD
             /// pass is derived from the rates. Absent in data saved before the field existed,
             /// which reads as empty and so as "rates", the behaviour those setups already had.</summary>
             public List<string> schedule = new List<string>();
+            /// <summary>Targets that start a slot of their own rather than sharing channels
+            /// with the target before them. Empty in data saved before the field existed,
+            /// which is the greedy batching those setups already had.</summary>
+            public List<string> slotBreaks = new List<string>();
 
             [Serializable]
             public class SyncRate
