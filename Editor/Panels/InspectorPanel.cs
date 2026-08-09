@@ -12,8 +12,8 @@ namespace Yozolab.DaerD
         readonly AnimatorGraphView _graphView;
         readonly List<AnimatorTransitionBase> _selectedTransitions = new List<AnimatorTransitionBase>();
         readonly MultiTransitionInspector _multiTransition;
+        readonly TransitionInspector _transitions;
 
-        int _rangeAnchor = -1;
         // Behaviour rows selected in the state inspector. Selecting is what tells Ctrl+C/V to
         // act on behaviours instead of the state itself (the graph view owns state copy/paste).
         readonly List<StateMachineBehaviour> _selectedBehaviours = new List<StateMachineBehaviour>();
@@ -35,6 +35,7 @@ namespace Yozolab.DaerD
             _overview = new OverviewInspector(context, graphView.Sync, _cleanup);
             _stateMachine = new StateMachineInspector(context);
             _multiTransition = new MultiTransitionInspector(context, graphView.Sync, _selectedTransitions);
+            _transitions = new TransitionInspector(context, graphView, _selectedTransitions, _multiTransition);
             context.SelectionChanged += OnSelectionChanged;
             // The leftover scan (and the object references captured in it) belongs to the
             // outgoing controller — drop it on a tab switch.
@@ -49,7 +50,7 @@ namespace Yozolab.DaerD
             if (!ReferenceEquals(Context.Selection, _lastSelection))
             {
                 _selectedTransitions.Clear();
-                _rangeAnchor = -1;
+                _transitions.ResetAnchor();
                 _selectedBehaviours.Clear();
                 _behaviourRangeAnchor = -1;
                 if (Context.Selection is AnimatorTransitionBase transition)
@@ -57,7 +58,7 @@ namespace Yozolab.DaerD
                 _lastSelection = Context.Selection;
                 // Any in-flight condition edit was for the old selection — drop the focus so the
                 // next IMGUI repaint redraws the controls fresh against the new transition(s).
-                EndConditionInput();
+                TransitionInspector.EndConditionInput();
             }
             Refresh();
         }
@@ -92,7 +93,7 @@ namespace Yozolab.DaerD
             }
             else if (selection is TransitionEdge || selection is AnimatorTransitionBase)
             {
-                DrawTransitionContext();
+                _transitions.DrawTransitionContext();
             }
             else if (selection is AnimatorStateMachine stateMachine)
             {
@@ -1842,329 +1843,6 @@ namespace Yozolab.DaerD
                 EditorGUILayout.PropertyField(iterator, true);
             }
             serialized.ApplyModifiedProperties();
-        }
-
-        // ---- transition ------------------------------------------------------
-
-        void DrawTransitionContext()
-        {
-            var controller = Context.Controller;
-            var pool = GatherTransitionPool();
-            if (pool.Count == 0)
-            {
-                if (Context.Selection is TransitionEdge edge && edge.IsDefaultEdge)
-                    EditorGUILayout.HelpBox(L.Tr("Default-state link. Set a different default state from a state's context menu."),
-                        MessageType.Info);
-                else
-                    EditorGUILayout.LabelField(L.Tr("No transitions to edit."));
-                return;
-            }
-
-            PruneSelection(pool);
-            HandleCopyPasteShortcuts();
-            DrawTransitionList(pool);
-            PanelGui.HorizontalLine();
-
-            if (_selectedTransitions.Count >= 2)
-                _multiTransition.DrawMultiTransitionEditor(controller);
-            else
-                DrawSingleTransition(_selectedTransitions[0], controller);
-        }
-
-        /// <summary>All transitions of every currently selected (non-default) edge.</summary>
-        List<AnimatorTransitionBase> GatherTransitionPool()
-        {
-            var pool = new List<AnimatorTransitionBase>();
-            var edges = _graphView.GetSelectedEdges();
-            if (edges.Count == 0)
-            {
-                var fallback = Context.Selection as TransitionEdge
-                    ?? (Context.Selection is AnimatorTransitionBase tb ? _graphView.Sync.FindEdge(tb) : null);
-                if (fallback != null) edges.Add(fallback);
-            }
-            foreach (var edge in edges)
-            {
-                if (edge.IsDefaultEdge) continue;
-                foreach (var t in edge.Transitions)
-                    if (t != null && !pool.Contains(t)) pool.Add(t);
-            }
-            return pool;
-        }
-
-        void PruneSelection(List<AnimatorTransitionBase> pool)
-        {
-            _selectedTransitions.RemoveAll(t => t == null || !pool.Contains(t));
-            if (_selectedTransitions.Count == 0)
-                _selectedTransitions.Add(pool[0]);
-        }
-
-        /// <summary>Unity-style vertical transition list with Solo / Mute columns and multi-select.</summary>
-        void DrawTransitionList(List<AnimatorTransitionBase> pool)
-        {
-            EditorGUILayout.LabelField(L.Tr("Transitions") + " (" + pool.Count + ")", EditorStyles.boldLabel);
-
-            EditorGUILayout.BeginHorizontal();
-            EditorGUILayout.LabelField(L.Tr("Solo"), EditorStyles.miniLabel, GUILayout.Width(34));
-            EditorGUILayout.LabelField(L.Tr("Mute"), EditorStyles.miniLabel, GUILayout.Width(36));
-            EditorGUILayout.LabelField(L.Tr("Transition"), EditorStyles.miniLabel);
-            EditorGUILayout.EndHorizontal();
-
-            for (int i = 0; i < pool.Count; i++)
-            {
-                var t = pool[i];
-                EditorGUILayout.BeginHorizontal();
-
-                EditorGUI.BeginChangeCheck();
-                bool solo = EditorGUILayout.Toggle(t.solo, GUILayout.Width(34));
-                bool mute = EditorGUILayout.Toggle(t.mute, GUILayout.Width(36));
-                if (EditorGUI.EndChangeCheck())
-                {
-                    Undo.RegisterCompleteObjectUndo(t, "Edit Transition");
-                    t.solo = solo;
-                    t.mute = mute;
-                    EditorUtility.SetDirty(t);
-                    _multiTransition.RefreshEdges();
-                }
-
-                bool selected = _selectedTransitions.Contains(t);
-                var prevBackground = GUI.backgroundColor;
-                if (selected) GUI.backgroundColor = PanelGui.SelectionTint;
-                if (GUILayout.Button((i + 1) + ".  " + ParameterConverter.DescribeTransition(t), EditorStyles.miniButton))
-                    HandleRowClick(pool, i);
-                GUI.backgroundColor = prevBackground;
-
-                if (GUILayout.Button("X", EditorStyles.miniButton, GUILayout.Width(24)))
-                {
-                    DeleteTransitionRow(t, pool);
-                    GUIUtility.ExitGUI();
-                }
-
-                EditorGUILayout.EndHorizontal();
-            }
-
-            EditorGUILayout.BeginHorizontal();
-            if (GUILayout.Button(L.Tr("+ Add Transition")))
-            {
-                AddTransitionToAnchorEdge(pool);
-                GUIUtility.ExitGUI();
-            }
-            if (pool.Count > 1 && GUILayout.Button(L.Tr("Select All"), GUILayout.Width(80)))
-            {
-                _selectedTransitions.Clear();
-                _selectedTransitions.AddRange(pool);
-            }
-            EditorGUILayout.EndHorizontal();
-        }
-
-        void HandleRowClick(List<AnimatorTransitionBase> pool, int index)
-        {
-            var t = pool[index];
-            var e = Event.current;
-            bool additive = e != null && (e.control || e.command);
-            bool range = e != null && e.shift;
-
-            var previous = new List<AnimatorTransitionBase>(_selectedTransitions);
-
-            if (range && _rangeAnchor >= 0 && _rangeAnchor < pool.Count)
-            {
-                _selectedTransitions.Clear();
-                int lo = Mathf.Min(_rangeAnchor, index);
-                int hi = Mathf.Max(_rangeAnchor, index);
-                for (int i = lo; i <= hi; i++)
-                    _selectedTransitions.Add(pool[i]);
-            }
-            else if (additive)
-            {
-                if (_selectedTransitions.Contains(t)) _selectedTransitions.Remove(t);
-                else _selectedTransitions.Add(t);
-                _rangeAnchor = index;
-            }
-            else
-            {
-                _selectedTransitions.Clear();
-                _selectedTransitions.Add(t);
-                _rangeAnchor = index;
-            }
-
-            // If the selection actually changed, force the in-flight condition input (FloatField,
-            // delayed text field, popup) to end before its value gets attributed to the newly
-            // selected transition. Without this, a value typed for transition X leaks into Y.
-            if (!SameSet(previous, _selectedTransitions))
-                EndConditionInput();
-        }
-
-        static bool SameSet(List<AnimatorTransitionBase> a, List<AnimatorTransitionBase> b)
-        {
-            if (a.Count != b.Count) return false;
-            for (int i = 0; i < a.Count; i++)
-                if (!ReferenceEquals(a[i], b[i])) return false;
-            return true;
-        }
-
-        /// <summary>
-        /// Drops keyboard focus and resets the editor's internal hot/keyboard control so any
-        /// FloatField / DelayedFloatField currently being typed in stops being the active
-        /// control — the next layout pass redraws it fresh for the new selected transition.
-        /// </summary>
-        static void EndConditionInput()
-        {
-            GUI.FocusControl(null);
-            GUIUtility.keyboardControl = 0;
-            EditorGUIUtility.editingTextField = false;
-        }
-
-        void DeleteTransitionRow(AnimatorTransitionBase transition, List<AnimatorTransitionBase> pool)
-        {
-            var edge = _graphView.Sync.FindEdge(transition);
-            if (edge == null) return;
-
-            AnimatorTransitionBase remaining = null;
-            foreach (var t in pool)
-                if (!ReferenceEquals(t, transition)) { remaining = t; break; }
-
-            _selectedTransitions.Remove(transition);
-            _graphView.Sync.DeleteTransition(edge, transition);
-            Context.Select(remaining);
-        }
-
-        void AddTransitionToAnchorEdge(List<AnimatorTransitionBase> pool)
-        {
-            var anchor = _selectedTransitions.Count > 0 ? _selectedTransitions[0] : pool[0];
-            var edge = _graphView.Sync.FindEdge(anchor);
-            if (edge == null) return;
-            var created = _graphView.Sync.CreateTransition(
-                edge.output?.node as GraphNodeBase, edge.input?.node as GraphNodeBase);
-            _graphView.Sync.Rebuild();
-            if (created != null) Context.Select(created);
-        }
-
-        /// <summary>
-        /// Ctrl+C copies the selected transition(s); Ctrl+V pastes the copy onto every selected one;
-        /// Ctrl+Shift+V pastes it as a new transition alongside each selected one.
-        /// </summary>
-        void HandleCopyPasteShortcuts()
-        {
-            var e = Event.current;
-            if (e == null || e.type != EventType.KeyDown || !(e.control || e.command))
-                return;
-
-            if (e.keyCode == KeyCode.C && _selectedTransitions.Count >= 1)
-            {
-                TransitionClipboard.Copy(_selectedTransitions);
-                e.Use();
-            }
-            else if (e.keyCode == KeyCode.V && TransitionClipboard.HasData && _selectedTransitions.Count >= 1)
-            {
-                if (e.shift) _multiTransition.PasteSelectedAsNew();
-                else _multiTransition.PasteOntoSelected();
-                e.Use();
-                GUIUtility.ExitGUI();
-            }
-        }
-
-        // ---- single transition ----------------------------------------------
-
-        void DrawSingleTransition(AnimatorTransitionBase transition, AnimatorController controller)
-        {
-            EditorGUILayout.LabelField(L.Tr("Transition") + "  " + ParameterConverter.DescribeTransition(transition),
-                EditorStyles.boldLabel);
-            DrawTransitionSettings(transition);
-
-            PanelGui.HorizontalLine();
-            DrawConditions(transition, controller);
-        }
-
-        void DrawTransitionSettings(AnimatorTransitionBase transition)
-        {
-            var stateTransition = transition as AnimatorStateTransition;
-            if (stateTransition == null)
-            {
-                EditorGUILayout.LabelField(L.Tr("(Entry / state-machine transition — no timing settings.)"),
-                    EditorStyles.miniLabel);
-                return;
-            }
-
-            EditorGUI.BeginChangeCheck();
-            bool hasExitTime = EditorGUILayout.Toggle(L.Tr("Has Exit Time"), stateTransition.hasExitTime);
-            float exitTime;
-            using (new EditorGUI.DisabledScope(!hasExitTime))
-                exitTime = EditorGUILayout.FloatField(L.Tr("Exit Time"), stateTransition.exitTime);
-            bool fixedDuration = EditorGUILayout.Toggle(L.Tr("Fixed Duration"), stateTransition.hasFixedDuration);
-            float duration = EditorGUILayout.FloatField(L.Tr("Duration"), stateTransition.duration);
-            float offset = EditorGUILayout.FloatField(L.Tr("Offset"), stateTransition.offset);
-            var interruption = (TransitionInterruptionSource)EditorGUILayout.EnumPopup(L.Tr("Interruption"), stateTransition.interruptionSource);
-            bool ordered = EditorGUILayout.Toggle(L.Tr("Ordered Interruption"), stateTransition.orderedInterruption);
-            bool toSelf = EditorGUILayout.Toggle(L.Tr("Can Transition To Self"), stateTransition.canTransitionToSelf);
-            if (EditorGUI.EndChangeCheck())
-            {
-                Undo.RegisterCompleteObjectUndo(stateTransition, "Edit Transition");
-                stateTransition.hasExitTime = hasExitTime;
-                stateTransition.exitTime = exitTime;
-                stateTransition.hasFixedDuration = fixedDuration;
-                stateTransition.duration = duration;
-                stateTransition.offset = offset;
-                stateTransition.interruptionSource = interruption;
-                stateTransition.orderedInterruption = ordered;
-                stateTransition.canTransitionToSelf = toSelf;
-                EditorUtility.SetDirty(stateTransition);
-            }
-        }
-
-        void DrawConditions(AnimatorTransitionBase transition, AnimatorController controller)
-        {
-            EditorGUILayout.LabelField(L.Tr("Conditions"), EditorStyles.boldLabel);
-
-            var paramNames = PanelGui.AllParameterNames(controller);
-            if (paramNames.Length == 0)
-            {
-                EditorGUILayout.HelpBox(L.Tr("Add parameters before building conditions."), MessageType.Info);
-                return;
-            }
-            var typeByName = PanelGui.ParameterTypeMap(controller);
-
-            var working = ConditionGui.ToDataList(transition);
-            bool changed = false;
-            int removeIndex = -1;
-            EditorGUI.BeginChangeCheck();
-
-            for (int i = 0; i < working.Count; i++)
-            {
-                var condition = working[i];
-                EditorGUILayout.BeginHorizontal();
-
-                int paramIndex = Mathf.Max(0, Array.IndexOf(paramNames, condition.parameter));
-                paramIndex = EditorGUILayout.Popup(paramIndex, paramNames);
-                condition.parameter = paramNames[paramIndex];
-
-                var type = typeByName.TryGetValue(condition.parameter, out var t) ? t : AnimatorControllerParameterType.Float;
-                ConditionGui.DrawConditionValue(condition, type);
-
-                if (GUILayout.Button("X", EditorStyles.miniButton, GUILayout.Width(22)))
-                    removeIndex = i;
-
-                EditorGUILayout.EndHorizontal();
-            }
-
-            if (EditorGUI.EndChangeCheck())
-                changed = true;
-            if (removeIndex >= 0)
-            {
-                working.RemoveAt(removeIndex);
-                changed = true;
-            }
-            if (GUILayout.Button(L.Tr("+ Add Condition")))
-            {
-                var type = typeByName.TryGetValue(paramNames[0], out var t) ? t : AnimatorControllerParameterType.Float;
-                working.Add(new TransitionClipboard.ConditionData { parameter = paramNames[0], mode = PanelGui.ModesFor(type)[0] });
-                changed = true;
-            }
-
-            if (changed)
-            {
-                Undo.RegisterCompleteObjectUndo(transition, "Edit Conditions");
-                TransitionClipboard.SetConditions(transition, working);
-                EditorUtility.SetDirty(transition);
-            }
         }
     }
 }
