@@ -13,8 +13,8 @@ namespace Yozolab.DaerD
     {
         readonly DaerDContext _context;
         readonly GraphSync _sync;
-        // Fewer than two states survive the null filter below, so the editor hands the draw
-        // back to the single-state form or the overview.
+        // Held because a selection can thin out to one live state (or none) under the null
+        // filter, and the draw is then handed back to the single-state form or the overview.
         readonly StateInspector _stateInspector;
         readonly OverviewInspector _overviewInspector;
         readonly MultiStateBehaviourInspector _multiBehaviours;
