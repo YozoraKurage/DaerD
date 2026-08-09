@@ -20,7 +20,7 @@ namespace Yozolab.DaerD
         [SerializeField] List<int> _openControllerLayers = new List<int>();
 
         DaerDContext _context;
-        VisualElement _tabBar;
+        TabStrip _tabs;
         // Kept so a language change can restamp their labels in place. Rebuilding the toolbar
         // instead would re-fire the toggle callbacks (opening the Animation window as a side
         // effect) and reset toggle state.
@@ -72,11 +72,8 @@ namespace Yozolab.DaerD
                 RefreshTabBar();
                 return;
             }
-            if (!_openControllers.Contains(controller))
-            {
-                _openControllers.Add(controller);
-                _openControllerLayers.Add(0);
-            }
+            if (!_tabs.Contains(controller))
+                _tabs.Add(controller);
             // Re-opening the already-active controller must not reset layer / selection / drill-down.
             if (controller != _controller)
                 ActivateController(controller);
@@ -99,7 +96,7 @@ namespace Yozolab.DaerD
             // Save the outgoing tab's current layer so we can return to it next time.
             RememberCurrentLayer();
 
-            int restoredLayer = LookupRememberedLayer(controller);
+            int restoredLayer = _tabs.Lookup(controller);
             SetController(controller);
             if (restoredLayer > 0)
                 _context?.SetLayer(restoredLayer);
@@ -108,18 +105,14 @@ namespace Yozolab.DaerD
 
         void CloseController(AnimatorController controller)
         {
-            int index = _openControllers.IndexOf(controller);
+            int index = _tabs.Remove(controller);
             if (index < 0) return;
-            _openControllers.RemoveAt(index);
-            if (index < _openControllerLayers.Count) _openControllerLayers.RemoveAt(index);
             if (controller == _controller)
             {
-                var next = _openControllers.Count > 0
-                    ? _openControllers[Mathf.Clamp(index, 0, _openControllers.Count - 1)]
-                    : null;
+                var next = _tabs.NextAfter(index);
                 if (next != null)
                 {
-                    int restoredLayer = LookupRememberedLayer(next);
+                    int restoredLayer = _tabs.Lookup(next);
                     SetController(next);
                     if (restoredLayer > 0)
                         _context?.SetLayer(restoredLayer);
@@ -132,89 +125,15 @@ namespace Yozolab.DaerD
             RefreshTabBar();
         }
 
-        /// <summary>Writes the active layer index back to the per-tab memory.</summary>
-        void RememberCurrentLayer()
-        {
-            if (_controller == null) return;
-            int index = _openControllers.IndexOf(_controller);
-            if (index < 0) return;
-            while (_openControllerLayers.Count <= index)
-                _openControllerLayers.Add(0);
-            _openControllerLayers[index] = _layerIndex;
-        }
+        void RememberCurrentLayer() => _tabs.Remember(_controller, _layerIndex);
 
-        int LookupRememberedLayer(AnimatorController controller)
-        {
-            int index = _openControllers.IndexOf(controller);
-            if (index < 0 || index >= _openControllerLayers.Count) return 0;
-            return _openControllerLayers[index];
-        }
-
-        /// <summary>Rebuilds the tab strip from the open-controller list, highlighting the active one.</summary>
-        void RefreshTabBar()
-        {
-            if (_tabBar == null) return;
-
-            // Drop the parallel layer entry for any controller that's been removed (deleted asset
-            // or null reference) so the two lists stay aligned by index.
-            for (int i = _openControllers.Count - 1; i >= 0; i--)
-            {
-                if (_openControllers[i] != null) continue;
-                _openControllers.RemoveAt(i);
-                if (i < _openControllerLayers.Count) _openControllerLayers.RemoveAt(i);
-            }
-            if (_controller != null && !_openControllers.Contains(_controller))
-            {
-                _openControllers.Add(_controller);
-                _openControllerLayers.Add(_layerIndex);
-            }
-            while (_openControllerLayers.Count < _openControllers.Count)
-                _openControllerLayers.Add(0);
-
-            _tabBar.Clear();
-            _tabBar.style.display = _openControllers.Count > 0 ? DisplayStyle.Flex : DisplayStyle.None;
-
-            foreach (var controller in _openControllers)
-            {
-                var captured = controller;
-                var tab = new VisualElement();
-                tab.AddToClassList("dd-tab");
-                if (controller == _controller) tab.AddToClassList("dd-tab--active");
-
-                var label = new Label(controller.name) { tooltip = AssetDatabase.GetAssetPath(controller) };
-                label.AddToClassList("dd-tab__label");
-                tab.Add(label);
-
-                var close = new Label("×") { tooltip = L.Tr("Close tab") };   // U+00D7, widely available
-                close.AddToClassList("dd-tab__close");
-                tab.Add(close);
-
-                tab.RegisterCallback<MouseDownEvent>(evt =>
-                {
-                    if (evt.button == 0)
-                    {
-                        // The first click activates the tab (and rebuilds this bar); the second
-                        // still arrives with clickCount 2 because UI Toolkit tracks click count
-                        // per pointer, not per element.
-                        if (evt.clickCount == 2) EditorGUIUtility.PingObject(captured);
-                        else ActivateController(captured);
-                        evt.StopPropagation();
-                    }
-                    else if (evt.button == 2) { CloseController(captured); evt.StopPropagation(); }   // middle-click
-                });
-                close.RegisterCallback<MouseDownEvent>(evt =>
-                {
-                    if (evt.button != 0) return;
-                    CloseController(captured);
-                    evt.StopPropagation();   // don't also activate the tab
-                });
-
-                _tabBar.Add(tab);
-            }
-        }
+        void RefreshTabBar() => _tabs.Refresh(_controller, _layerIndex);
 
         void OnEnable()
         {
+            // Built here, not in CreateGUI: the serialized tab lists are restored just before
+            // this runs, and a controller can be opened into the window before its UI exists.
+            _tabs = new TabStrip(_openControllers, _openControllerLayers, ActivateController, CloseController);
             Undo.undoRedoPerformed += OnUndoRedo;
             EditorApplication.update += PollRuntime;
             EditorApplication.playModeStateChanged += OnPlayModeChanged;
@@ -250,9 +169,7 @@ namespace Yozolab.DaerD
             L.LanguageChanged -= OnLanguageChanged;   // CreateGUI can run again after a reload
             L.LanguageChanged += OnLanguageChanged;
 
-            _tabBar = new VisualElement();
-            _tabBar.AddToClassList("dd-tabbar");
-            rootVisualElement.Add(_tabBar);
+            rootVisualElement.Add(_tabs.Bar);
 
             _graphView = new AnimatorGraphView(_context) { Owner = new EditorWindowOwner { Window = this } };
             _blendTreeView = new BlendTreeGraphView(_context);

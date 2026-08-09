@@ -43,7 +43,7 @@ namespace Yozolab.DaerD
 
                 bool isCurrent = i == Context.LayerIndex;
                 var prev = GUI.backgroundColor;
-                if (isCurrent) GUI.backgroundColor = new Color(0.40f, 0.60f, 0.90f);
+                if (isCurrent) GUI.backgroundColor = PanelGui.SelectionTint;
                 if (GUILayout.Button(layers[i].name, EditorStyles.miniButton))
                     Context.SetLayer(i);
                 GUI.backgroundColor = prev;
@@ -187,15 +187,7 @@ namespace Yozolab.DaerD
             DaerDLayerTemplate.Save(controller, index, path);
         }
 
-        void OnLayerStructureChanged(int layerIndex)
-        {
-            var controller = Context.Controller;
-            Context.NotifyParametersChanged();
-            Context.NotifyLayersChanged();
-            Context.NotifyGraphStructureChanged();
-            if (controller != null && layerIndex >= 0 && layerIndex < controller.layers.Length)
-                Context.SetLayer(layerIndex);
-        }
+        void OnLayerStructureChanged(int layerIndex) => Context.NotifyLayerStructureChanged(layerIndex);
 
         /// <summary>Editable settings for one layer, anchored to its row's gear button.</summary>
         class LayerSettingsPopup : PopupWindowContent
