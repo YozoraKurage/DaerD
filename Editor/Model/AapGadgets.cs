@@ -20,12 +20,12 @@ namespace Yozolab.DaerD
     ///
     /// A second family gets there by interpolation instead of arithmetic: a tree's own
     /// blending IS a lookup table, so sampling a function onto the children's thresholds
-    /// (Lut1D) or onto a ring of directions (Atan2) evaluates it without leaving the tree.
+    /// (Lut1D, the trigonometric kinds, the sub-1 half of division) or onto a ring of
+    /// directions (Atan2) evaluates it without leaving the tree.
     ///
-    /// Three gadget families need more than a blend tree child, and add a layer of their own
-    /// at the end of the controller: division (a curve covers the half a Direct weight cannot
-    /// reach), frame time (a clock clip to subtract from itself) and the trigonometric curves
-    /// (played by motion time, which no blend tree can drive). Reference:
+    /// One gadget still needs more than a blend tree child, and adds a layer of its own at the
+    /// end of the controller: frame time, whose clock is a clip played against the wall clock
+    /// — the one thing a blend tree has no way to read. Reference:
     /// https://vrc.school/docs/Other/Advanced-BlendTrees
     /// </summary>
     static class AapGadgets
@@ -72,18 +72,18 @@ namespace Yozolab.DaerD
         /// <summary>FrameTime reads the animator's own clock, so it has no input parameter.</summary>
         public static bool NeedsInput(Kind kind) => kind != Kind.FrameTime;
 
-        /// <summary>False for the kinds that are nothing but a layer: a curve played by motion
-        /// time cannot live inside a blend tree, so they need neither a Direct tree nor the
-        /// layer choice that comes with it.</summary>
-        public static bool UsesDbtLayer(Kind kind) =>
-            kind != Kind.Sine && kind != Kind.Cosine && kind != Kind.Tangent;
+        /// <summary>Kinds that compute inside a Direct blend tree, and so want a target layer
+        /// to be added to. Constant since the trigonometric curves became 1D lookup trees:
+        /// nothing is a layer and nothing else any more. It stays as a predicate because it is
+        /// the question the callers actually ask — the wizard before it offers a layer choice,
+        /// a recipe before it creates the layer — and a kind that cannot be expressed as a
+        /// tree would be back to answering false.</summary>
+        public static bool UsesDbtLayer(Kind kind) => true;
 
-        /// <summary>Kinds that add a layer of their own — either instead of a blend tree child
-        /// or on top of one. Layer order carries meaning here (see the builders), which the
-        /// wizard says out loud.</summary>
-        public static bool CreatesSupportingLayer(Kind kind) =>
-            kind == Kind.Reciprocal || kind == Kind.Divide || kind == Kind.FrameTime
-            || !UsesDbtLayer(kind);
+        /// <summary>Kinds that add a layer of their own on top of their blend tree child. Only
+        /// the frame clock is left, and its layer has to stay after the blend tree layer to
+        /// read as one, which the wizard says out loud.</summary>
+        public static bool CreatesSupportingLayer(Kind kind) => kind == Kind.FrameTime;
 
         public class Request
         {
@@ -151,11 +151,18 @@ namespace Yozolab.DaerD
         public static string BufferStage(string output, int stage) => output + "/" + stage;
 
         /// <summary>
-        /// The layers this request adds beside the blend tree child, under the exact names it
-        /// gives them. Anything that regenerates — a recipe rebuilds its gadget layer on every
-        /// Generate — needs them by name: the builders take a free name when one is taken, so
-        /// a leftover copy wouldn't be replaced but joined by a numbered twin still writing
-        /// the same output.
+        /// The layers this request has to claim, under the exact names the builders give them.
+        /// Anything that regenerates — a recipe rebuilds its gadget layer on every Generate —
+        /// needs them by name: the builders take a free name when one is taken, so a leftover
+        /// copy wouldn't be replaced but joined by a numbered twin still writing the same
+        /// output.
+        ///
+        /// Only FrameTime still builds one. Reciprocal, Divide and the trigonometric kinds
+        /// carried a motion-time layer each in earlier versions and now compute inside the
+        /// blend tree; their old names stay listed here so that regenerating a recipe — or the
+        /// caller sweeping before it applies a gadget — reclaims the layer such a controller is
+        /// still carrying instead of stranding it beside the new tree, both writing the same
+        /// output. Removing a layer that isn't there is a no-op, so listing costs nothing.
         /// </summary>
         public static string[] SupportingLayerNames(Request r)
         {
@@ -227,8 +234,6 @@ namespace Yozolab.DaerD
                 && (r.bufferFrames < MinBufferFrames || r.bufferFrames > MaxBufferFrames))
                 return L.Tr("Frames must be between 1 and 8.");
 
-            // The layer-only kinds bring their own layer; there is no target to check.
-            if (!UsesDbtLayer(r.kind)) return null;
             return AapSmoothing.ValidateLayerChoice(controller, r.layerIndex, r.newLayerName);
         }
 
@@ -268,16 +273,11 @@ namespace Yozolab.DaerD
                 if (r.kind == Kind.SmoothLinear)
                     DbtBuilder.EnsureFloatParameter(controller, r.smoothing, Mathf.Max(0f, r.smoothingDefault));
 
-                if (UsesDbtLayer(r.kind))
-                {
-                    string one = DbtBuilder.EnsureConstantOneParameter(controller);
-                    var root = DbtBuilder.EnsureDirectBlendTreeLayer(controller, r.layerIndex, r.newLayerName);
-                    DbtBuilder.AddDirectChild(root, Build(r, controller, one), one);
-                }
-                else
-                {
-                    BuildTrigonometryLayer(controller, r.kind, r.inputA, r.output);
-                }
+                // Every kind is a blend tree child; the one builder that still wants a layer of
+                // its own (FrameTime's clock) adds it on the way.
+                string one = DbtBuilder.EnsureConstantOneParameter(controller);
+                var root = DbtBuilder.EnsureDirectBlendTreeLayer(controller, r.layerIndex, r.newLayerName);
+                DbtBuilder.AddDirectChild(root, Build(r, controller, one), one);
                 EditorUtility.SetDirty(controller);
             }
             // Everything the gadget built is a sub-asset; one flush shows the whole batch.
@@ -306,6 +306,9 @@ namespace Yozolab.DaerD
                 case Kind.SmoothLinear:
                     return SmoothLinear(c, a, output, one, r.smoothing, r.rangeMin, r.rangeMax);
                 case Kind.SeparateDigits: return SeparateDigits(c, a, output, one);
+                case Kind.Sine:
+                case Kind.Cosine:
+                case Kind.Tangent: return Trigonometry(c, r.kind, a, output);
                 case Kind.Lut1D: return Lut1D(c, a, output, r.curve, r.lutSamples);
                 // Input A is the numerator of atan2 and input B the denominator, so the
                 // wizard's A/B pair reads in the order the function's arguments do.
@@ -459,22 +462,32 @@ namespace Yozolab.DaerD
 
         // ---- reciprocal and division -------------------------------------------
 
-        /// <summary>Samples on the 1/x curve, and the span its times are spread over. Both are
-        /// only a resolution: the curve is read by motion time, which normalizes it away.</summary>
-        const int ReciprocalSamples = 240;
-        const float ReciprocalSpan = 100f;
+        /// <summary>The smallest input the sub-1 lookup table covers, and how many rungs its
+        /// ladder takes to get there. 1/240 caps the output at 240, the same ceiling the curve
+        /// this table replaced was drawn to.</summary>
+        const float ReciprocalFloor = 1f / 240f;
+        const int ReciprocalSteps = 96;
 
         /// <summary>
-        /// output = 1 / input, for positive inputs, in two halves.
+        /// output = 1 / input, for positive inputs, in two halves that add up inside one Direct
+        /// tree — Direct children animating the same AAP stack, so the tree's sum IS the sum.
         ///
-        /// Above 1 a normalized Direct tree does it: normalizing divides every weight by the
-        /// weight sum, so a motion that writes nothing weighing (input - 1) next to an
+        /// From 1 up the core half is exact: a normalized Direct tree divides every weight by
+        /// the weight sum, so a motion that writes nothing weighing (input - 1) next to an
         /// "output = 1" clip weighing 1 leaves the clip at 1 / ((input - 1) + 1). The shift is
-        /// computed by a sibling tree, which costs the result one extra frame of lag.
+        /// computed by a sibling child, which costs the result one extra frame of lag. Below 1
+        /// that trick is out of reach — the shift would have to weigh negative, and Direct
+        /// weights stop at 0 — so the core holds still at exactly 1 over the whole half.
         ///
-        /// Below 1 the same trick is out of reach — the shift would need a negative weight, and
-        /// Direct weights stop at 0 — so a supporting layer takes over there
-        /// (<see cref="BuildReciprocalLayer"/>).
+        /// Which is what the other half is for: a 1D lookup table holding (1/u - 1), so core
+        /// plus table is 1 + (1/u - 1) = 1/u. Its top threshold is input 1 holding 0, and a 1D
+        /// tree clamps to its last child above it, so from 1 up the table adds nothing at all
+        /// and the exact half stands alone (<see cref="ReciprocalBelowOne"/>).
+        ///
+        /// One frame of a crossing is wrong: the core reads last frame's shift while the table
+        /// reads this frame's input, so for one frame after the input crosses 1 the two halves
+        /// are describing different inputs. The layer this replaced handed over with the same
+        /// class of artifact.
         /// Reference: https://vrc.school/docs/Other/Advanced-BlendTrees
         /// </summary>
         public static BlendTree Reciprocal(AnimatorController c, string input, string output, string one)
@@ -491,46 +504,48 @@ namespace Yozolab.DaerD
             var tree = DbtBuilder.DirectTree(c, name);
             DbtBuilder.AddDirectChild(tree, Sub(c, input, one, shift), one);   // shift = input - 1
             DbtBuilder.AddDirectChild(tree, core, one);
-
-            BuildReciprocalLayer(c, input, output);
+            DbtBuilder.AddDirectChild(tree, ReciprocalBelowOne(c, input, output, name), one);
             return tree;
         }
 
-        static string ReciprocalLayerName(string output) => output + " 1/x";
-
         /// <summary>
-        /// The 0 &lt; x &lt; 1 half of <see cref="Reciprocal"/>. A state whose motion time is the
-        /// input plays a curve that holds span/t; the clip spans exactly that many seconds, so
-        /// normalized time input reads at span × input, where the curve is 1 / input. The state
-        /// only runs below 1 — above it the layer idles and the blend tree's value stands.
+        /// The 0 &lt; x &lt; 1 half of <see cref="Reciprocal"/>, as the amount the core is short
+        /// of 1/x there: a 1D table of (1/u - 1), ending at threshold 1 with value 0.
+        ///
+        /// Its thresholds are a geometric ladder from <see cref="ReciprocalFloor"/> up to 1, not
+        /// an even one. Interpolating 1/u straight between u and r×u overshoots it by at most
+        /// (√r + 1/√r - 2) *relative*, and that figure depends on the ratio alone — so a ladder
+        /// of one ratio is equally accurate on every rung: about 8e-4 for the 240^(1/96) these
+        /// use. Even spacing would spend every sample where 1/u is nearly flat and none where it
+        /// is a cliff, and be worthless approaching 0. Below the floor the tree clamps, which is
+        /// what caps the output at 240.
         /// </summary>
-        static void BuildReciprocalLayer(AnimatorController c, string input, string output)
+        static BlendTree ReciprocalBelowOne(AnimatorController c, string input, string output, string name)
         {
-            var stateMachine = AddSupportingLayer(c, ReciprocalLayerName(output));
-
-            var curve = new AnimationCurve();
-            for (int i = 1; i <= ReciprocalSamples; i++)
-                curve.AddKey(new Keyframe(ReciprocalSpan / i, i));
-            SmoothTangents(curve);
-            // The keys crowd into the first hundredth of the span, so the clip carries a frame
-            // rate fine enough to tell them apart in the curve editor.
-            var clip = DbtBuilder.CurveClip(c, DbtBuilder.Sanitize(output) + " = 1/x",
-                output, curve, 1000f);
-
-            var idle = AddSupportingState(stateMachine, "Idle", new Vector3(300f, 60f, 0f),
-                DbtBuilder.EmptyClip(c, "Idle"));
-            var inverse = AddSupportingState(stateMachine, "1/x", new Vector3(300f, 170f, 0f), clip);
-            inverse.timeParameterActive = true;
-            inverse.timeParameter = input;
-            stateMachine.defaultState = idle;
-
-            InstantTransition(idle, inverse, AnimatorConditionMode.Less, 1f, input);
-            InstantTransition(inverse, idle, AnimatorConditionMode.Greater, 1f, input);
+            var tree = DbtBuilder.Tree1D(c, name + " (Below One)", input);
+            // Counting the ladder down puts the thresholds in ascending order, as a 1D tree
+            // wants them. Sharing clips by value the way Lut1D does costs nothing and is what
+            // the rest of the file does; here every rung is its own value, so it never fires.
+            var clips = new Dictionary<float, AnimationClip>();
+            for (int k = ReciprocalSteps; k >= 0; k--)
+            {
+                float u = Mathf.Pow(ReciprocalFloor, (float)k / ReciprocalSteps);
+                float value = 1f / u - 1f;
+                if (!clips.TryGetValue(value, out var clip))
+                    clips[value] = clip = DbtBuilder.ParameterClip(c, output, value);
+                tree.AddChild(clip, u);
+            }
+            return tree;
         }
 
+        /// <summary>The layer <see cref="Reciprocal"/> used to be half of. Kept for reclaiming
+        /// one from a controller an older version built — see <see cref="SupportingLayerNames"/>.
+        /// </summary>
+        static string ReciprocalLayerName(string output) => output + " 1/x";
+
         /// <summary>output = A / B, for positive inputs: B's reciprocal into a parameter of its
-        /// own, then A × that. Inherits <see cref="Reciprocal"/>'s supporting layer, and one
-        /// more frame of lag on top of its two — the multiply reads last frame's reciprocal.</summary>
+        /// own, then A × that. Inherits one more frame of lag on top of <see cref="Reciprocal"/>'s
+        /// two — the multiply reads last frame's reciprocal.</summary>
         public static BlendTree Divide(AnimatorController c, string a, string b, string output, string one)
         {
             string inverse = InverseParameter(output);
@@ -543,7 +558,7 @@ namespace Yozolab.DaerD
         }
 
         /// <summary>Where <see cref="Divide"/> keeps the divisor's reciprocal — and so the
-        /// output name the supporting layer of that inner gadget is named after.</summary>
+        /// output name the inner gadget's legacy layer was named after.</summary>
         static string InverseParameter(string output) => output + "/Inv";
 
         // ---- frame time --------------------------------------------------------
@@ -731,30 +746,42 @@ namespace Yozolab.DaerD
         static string TrigLabel(Kind kind) =>
             kind == Kind.Sine ? "sin" : kind == Kind.Cosine ? "cos" : "tan";
 
+        /// <summary>The layer these kinds used to be. Kept for reclaiming one from a controller
+        /// an older version built — see <see cref="SupportingLayerNames"/>.</summary>
         static string TrigLayerName(Kind kind, string output) =>
             output + " " + TrigLabel(kind) + "(x)";
 
         /// <summary>
-        /// sin / cos / tan of the input, as a curve read by motion time: the state's normalized
-        /// time IS the input, so 0..1 walks one whole period (0 to 2π) of a one-second clip.
-        /// Nothing here can live in a blend tree — motion time belongs to a state — so these
-        /// kinds are a layer and nothing else.
+        /// sin / cos / tan of the input in turns: 0..1 walks one whole period, 0 to 2π. These
+        /// used to be a curve read by a state's motion time, which no blend tree can drive; a
+        /// 1D tree gets to the same place without leaving the tree, because blending between
+        /// adjacent thresholds IS interpolating a table — children holding f(i/N) at threshold
+        /// i/N are the function, sampled. Same trick as <see cref="Lut1D"/>, with the curve
+        /// fixed and the sample count chosen for it.
+        ///
+        /// <see cref="TrigSamples"/> per period leaves sin and cos within ~1.2e-3 of the true
+        /// value everywhere, comfortably inside the 1/127 a synced float can carry anyway — and
+        /// it is divisible by four, which is what lets <see cref="TrigValue"/> put a sample
+        /// exactly on tan's poles instead of near them.
+        /// Reference: https://vrc.school/docs/Other/Advanced-BlendTrees
         /// </summary>
-        static void BuildTrigonometryLayer(AnimatorController c, Kind kind, string input, string output)
+        public static BlendTree Trigonometry(AnimatorController c, Kind kind, string input, string output)
         {
-            string label = TrigLabel(kind);
-            var stateMachine = AddSupportingLayer(c, TrigLayerName(kind, output));
-
-            var curve = new AnimationCurve();
+            var tree = DbtBuilder.Tree1D(c, Name(TrigLabel(kind), input, null), input);
+            // A period revisits its values: sin and cos mirror around every quarter turn, and
+            // tan's two poles are pinned to the same limit. Sharing clips by value the way
+            // Lut1D does keeps the sub-asset count down to the values that are distinct as
+            // floats — mirrored samples only collide when the arithmetic lands on the same bits,
+            // which is most but not all of them.
+            var clips = new Dictionary<float, AnimationClip>();
             for (int i = 0; i <= TrigSamples; i++)
-                curve.AddKey(new Keyframe((float)i / TrigSamples, TrigValue(kind, i)));
-            SmoothTangents(curve);
-
-            var clip = DbtBuilder.CurveClip(c,
-                DbtBuilder.Sanitize(output) + " = " + label + "(x)", output, curve, TrigSamples);
-            var state = AddSupportingState(stateMachine, label + "(x)", new Vector3(300f, 60f, 0f), clip);
-            state.timeParameterActive = true;
-            state.timeParameter = input;
+            {
+                float value = TrigValue(kind, i);
+                if (!clips.TryGetValue(value, out var clip))
+                    clips[value] = clip = DbtBuilder.ParameterClip(c, output, value);
+                tree.AddChild(clip, (float)i / TrigSamples);
+            }
+            return tree;
         }
 
         static float TrigValue(Kind kind, int sample)
@@ -767,7 +794,7 @@ namespace Yozolab.DaerD
             // meaningless (its sign depends on which side of π/2 the angle rounds to). Pin them
             // to +limit: tan climbs on the way in, so the drop to the negative branch then
             // happens at the pole instead of one sample early. The rest is clamped to the band,
-            // which is what keeps the curve a finite lookup table at all.
+            // which is what keeps the table finite at all.
             if (sample * 4 == TrigSamples || sample * 4 == TrigSamples * 3) return TangentLimit;
             return Mathf.Clamp(Mathf.Tan(angle), -TangentLimit, TangentLimit);
         }
@@ -912,9 +939,9 @@ namespace Yozolab.DaerD
 
         // ---- supporting layers --------------------------------------------------
 
-        /// <summary>Adds a layer at the end of the controller. Last is the point: these layers
-        /// write parameters the blend tree writes too, and only a later layer overrides an
-        /// earlier one.</summary>
+        /// <summary>Adds a layer at the end of the controller. Last is the point: a supporting
+        /// layer feeds the gadget's blend tree and may write over what it computed, and only a
+        /// later layer has the last word on a parameter both touch.</summary>
         static AnimatorStateMachine AddSupportingLayer(AnimatorController controller, string name)
         {
             controller.AddLayer(DbtBuilder.UniqueLayerName(controller, name));
@@ -939,20 +966,10 @@ namespace Yozolab.DaerD
             return state;
         }
 
-        static void InstantTransition(AnimatorState from, AnimatorState to,
-            AnimatorConditionMode mode, float threshold, string parameter)
-        {
-            var transition = from.AddTransition(to);
-            transition.hasExitTime = false;
-            transition.hasFixedDuration = true;
-            transition.duration = 0f;
-            transition.AddCondition(mode, threshold, parameter);
-            EditorUtility.SetDirty(transition);
-        }
-
-        /// <summary>Auto tangents on every key: these curves stand for smooth functions, and the
-        /// flat tangents a bare Keyframe carries would make them ripple between the samples.
-        /// Public because the wizard builds its curve presets the same way.</summary>
+        /// <summary>Auto tangents on every key: a curve like this stands for a smooth function,
+        /// and the flat tangents a bare Keyframe carries would make it ripple between the
+        /// samples. Public — and now only — for the wizard, which draws its curve presets the
+        /// same way before handing them to <see cref="Lut1D"/>.</summary>
         public static void SmoothTangents(AnimationCurve curve)
         {
             for (int i = 0; i < curve.length; i++)

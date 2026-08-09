@@ -500,6 +500,9 @@ msgstr "入力範囲を出力範囲へ線形にリマップします（出力範
 msgid "output = 1 / input, for positive inputs. The result trails the input by two frames."
 msgstr "output = 1 / 入力（正の入力専用）。結果は入力より 2 フレーム遅れます。"
 
+msgid "output = 1 / input, for positive inputs: exact from 1 up, a lookup table below it (capped at 240). The result trails the input by two frames."
+msgstr "output = 1 / 入力（正の入力専用）。1 以上は厳密に、1 未満は LUT で求めます（出力の上限は 240）。結果は入力より 2 フレーム遅れます。"
+
 msgid "output = A / B, for positive inputs. Builds B's reciprocal first, so the result trails by three frames."
 msgstr "output = A / B（正の入力専用）。先に B の逆数を作るため、結果は 3 フレーム遅れます。"
 
@@ -520,6 +523,15 @@ msgstr "output = cos(2π × 入力)。入力 0..1 でちょうど 1 周します
 
 msgid "output = tan(2π × input): 0..1 walks one whole turn, held to ±100 around the poles."
 msgstr "output = tan(2π × 入力)。入力 0..1 でちょうど 1 周し、漸近線の周辺は ±100 に抑えられます。"
+
+msgid "output = sin(2π × input): 0..1 walks one whole turn. A lookup table inside the blend tree layer."
+msgstr "output = sin(2π × 入力)。入力 0..1 でちょうど 1 周します。Blend Tree のレイヤー内の LUT です。"
+
+msgid "output = cos(2π × input): 0..1 walks one whole turn. A lookup table inside the blend tree layer."
+msgstr "output = cos(2π × 入力)。入力 0..1 でちょうど 1 周します。Blend Tree のレイヤー内の LUT です。"
+
+msgid "output = tan(2π × input): 0..1 walks one whole turn, held to ±100 around the poles. A lookup table inside the blend tree layer."
+msgstr "output = tan(2π × 入力)。入力 0..1 でちょうど 1 周し、漸近線の周辺は ±100 に抑えられます。Blend Tree のレイヤー内の LUT です。"
 
 msgid "Bakes the curve into a 1D blend tree lookup table: the curve's time axis is the input, its value the output, linearly interpolated between evenly spaced sample points. Lives entirely inside the blend tree layer."
 msgstr "カーブを 1D Blend Tree の LUT にベイクします。カーブの時間軸が入力、値が出力で、等間隔のサンプル点の間は線形補間されます。Blend Tree のレイヤー内だけで完結します。"
