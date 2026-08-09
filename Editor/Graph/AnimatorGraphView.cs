@@ -690,10 +690,4 @@ namespace Yozolab.DaerD
         /// <summary>Every entry lives in <see cref="GraphContextMenu"/>; the view only forwards.</summary>
         public override void BuildContextualMenu(ContextualMenuPopulateEvent evt) => _menu.Build(evt);
     }
-
-    /// <summary>Small indirection so the graph view can reach its hosting window for coordinate math.</summary>
-    class EditorWindowOwner
-    {
-        public UnityEditor.EditorWindow Window;
-    }
 }
