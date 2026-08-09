@@ -8,7 +8,6 @@ namespace Yozolab.DaerD
     /// <summary>Context-sensitive inspector for the currently selected graph element.</summary>
     class InspectorPanel : PanelBase
     {
-        readonly AnimatorGraphView _graphView;
         readonly List<AnimatorTransitionBase> _selectedTransitions = new List<AnimatorTransitionBase>();
         readonly MultiTransitionInspector _multiTransition;
         readonly TransitionInspector _transitions;
@@ -29,22 +28,21 @@ namespace Yozolab.DaerD
         readonly NoteInspector _notes;
         readonly FrameInspector _frames;
 
-        public InspectorPanel(DaerDContext context, AnimatorGraphView graphView)
+        public InspectorPanel(DaerDContext context, GraphSync sync)
             : base(context, "Inspector")
         {
-            _graphView = graphView;
             _overview = new OverviewInspector(context, _cleanup);
             _stateMachine = new StateMachineInspector(context);
-            _multiTransition = new MultiTransitionInspector(context, graphView.Sync, _selectedTransitions);
-            _transitions = new TransitionInspector(context, graphView.Sync, _selectedTransitions, _multiTransition);
+            _multiTransition = new MultiTransitionInspector(context, sync, _selectedTransitions);
+            _transitions = new TransitionInspector(context, sync, _selectedTransitions, _multiTransition);
             _vrcDrawers = new VrcBehaviourDrawers(context, Refresh);
             _behaviours = new BehaviourInspector(context, _selectedBehaviours, _vrcDrawers);
             _multiBehaviours = new MultiStateBehaviourInspector(context, _selectedBehaviours, _behaviours, _vrcDrawers);
             _syncRequests = new SyncRequestInspector(context);
-            _state = new StateInspector(context, graphView.Sync, _syncRequests, _behaviours);
-            _multiStates = new MultiStateInspector(context, graphView.Sync, _state, _overview, _multiBehaviours);
-            _notes = new NoteInspector(context, graphView.Sync);
-            _frames = new FrameInspector(context, graphView.Sync);
+            _state = new StateInspector(context, sync, _syncRequests, _behaviours);
+            _multiStates = new MultiStateInspector(context, sync, _state, _overview, _multiBehaviours);
+            _notes = new NoteInspector(context, sync);
+            _frames = new FrameInspector(context, sync);
             context.SelectionChanged += OnSelectionChanged;
             // The leftover scan (and the object references captured in it) belongs to the
             // outgoing controller — drop it on a tab switch.
@@ -89,7 +87,7 @@ namespace Yozolab.DaerD
 
             // Multi-state editing takes precedence when the graph has more than one state
             // selected — mirrors the multi-transition editor behaviour.
-            var selectedStates = _graphView.GetSelectedStates();
+            var selectedStates = Context.GetSelectedStates();
             if (selectedStates.Count >= 2 && MultiStateInspector.AnyStateAlive(selectedStates))
             {
                 _multiStates.DrawMultiStateEditor(selectedStates);
