@@ -123,6 +123,60 @@ namespace Yozolab.DaerD
         public List<AsyncSyncConfig> asyncSyncs = new List<AsyncSyncConfig>();
 
         /// <summary>
+        /// One generated DBT (AAP) gadget: the layer hosting it, the blend tree child it hung
+        /// there, and the wizard inputs. Same reason the async-sync setups are stored — a
+        /// gadget expands into a wall of trees and clips nobody can read back, so the inputs
+        /// are the only description of it that survives. The wizard re-opens a saved gadget to
+        /// edit and regenerate it, and the C# exporter writes it back as the call that made it.
+        /// </summary>
+        [Serializable]
+        public class AapGadgetConfig
+        {
+            /// <summary>Root state machine of the hosting DBT layer (identifies the layer
+            /// across renames and reorders).</summary>
+            public AnimatorStateMachine layer;
+            /// <summary>The child this gadget added to that layer's root Direct tree — a blend
+            /// tree, held as the Motion the root's children compare against, and the handle on
+            /// everything it built: the rest of the gadget hangs off it.</summary>
+            public Motion tree;
+            /// <summary>(int)AapGadgets.Kind, an int for the same reason
+            /// <see cref="AsyncSyncConfig.encoding"/> is one: this holder is saved data and has
+            /// no business depending on the gadget model's enum.</summary>
+            public int kind;
+            public string inputA;
+            /// <summary>Second input; only meaningful for the binary kinds.</summary>
+            public string inputB;
+            /// <summary>Result parameter, and the key this record is saved under: one gadget
+            /// per output name, so regenerating replaces its own entry instead of adding a
+            /// second one describing the same thing.</summary>
+            public string output;
+            public float rangeMin = -1f;
+            public float rangeMax = 1f;
+            public float inMin = 0f;
+            public float inMax = 1f;
+            public float threshold = 0.5f;
+            public string smoothing;
+            public float smoothingDefault = 0.9f;
+            /// <summary>Lut1D only: the baked function. A copy of what the caller passed, so
+            /// editing the curve afterwards can't rewrite the record of what was baked.</summary>
+            public AnimationCurve curve;
+            public int lutSamples = 33;
+            public int bufferFrames = 1;
+            public int atan2Directions = 16;
+
+            /// <summary>Whether <paramref name="name"/> is a parameter this gadget owns — the
+            /// output itself or anything under it ("Out", "Out/Shift", "Out/2"), which is the
+            /// namespace contract the builders keep to. Removing a gadget sweeps exactly that,
+            /// and regenerating one has to see those names as free rather than as collisions.
+            /// </summary>
+            public bool Owns(string name) =>
+                !string.IsNullOrEmpty(output) && !string.IsNullOrEmpty(name)
+                && (name == output || name.StartsWith(output + "/", StringComparison.Ordinal));
+        }
+
+        public List<AapGadgetConfig> aapGadgets = new List<AapGadgetConfig>();
+
+        /// <summary>
         /// One per-state sync request: while the avatar is in <see cref="state"/>, the async
         /// sync setup named <see cref="baseName"/> is asked to send <see cref="targets"/> out
         /// of turn. The record is the authoring side; the runtime side is a Parameter Driver
@@ -195,6 +249,15 @@ namespace Yozolab.DaerD
         {
             bool changed = false;
             foreach (var config in asyncSyncs)
+                if (config != null && !ReferenceEquals(config.layer, null)
+                    && config.layer.GetInstanceID() == oldMachineId)
+                {
+                    config.layer = newMachine;
+                    changed = true;
+                }
+            // Only the layer follows: a gadget's tree died with the machine that held it, and
+            // the entry is pruned on the next read rather than re-pointed at nothing.
+            foreach (var config in aapGadgets)
                 if (config != null && !ReferenceEquals(config.layer, null)
                     && config.layer.GetInstanceID() == oldMachineId)
                 {
@@ -277,6 +340,53 @@ namespace Yozolab.DaerD
                 if (config.baseName == baseName)
                     return config;
             return null;
+        }
+
+        // ---- DBT gadgets ------------------------------------------------------
+
+        /// <summary>Live gadget configs. An entry whose layer or whose tree was deleted
+        /// describes nothing any more — the gadget is gone with it — so it is pruned rather
+        /// than offered for regeneration.</summary>
+        public List<AapGadgetConfig> Gadgets()
+        {
+            aapGadgets.RemoveAll(config => config == null || config.layer == null || config.tree == null);
+            return new List<AapGadgetConfig>(aapGadgets);
+        }
+
+        /// <summary>Adds or replaces the config for its output name.</summary>
+        public void SaveGadget(AapGadgetConfig config)
+        {
+            if (config == null || string.IsNullOrEmpty(config.output)) return;
+            Undo.RegisterCompleteObjectUndo(this, "Save DBT Gadget Config");
+            aapGadgets.RemoveAll(existing => existing == null || existing.output == config.output);
+            aapGadgets.Add(config);
+            EditorUtility.SetDirty(this);
+        }
+
+        public void RemoveGadget(string output)
+        {
+            if (string.IsNullOrEmpty(output)) return;
+            Undo.RegisterCompleteObjectUndo(this, "Remove DBT Gadget Config");
+            aapGadgets.RemoveAll(existing => existing == null || existing.output == output);
+            EditorUtility.SetDirty(this);
+        }
+
+        public static List<AapGadgetConfig> GetGadgets(AnimatorController controller)
+        {
+            var data = Find(controller);
+            return data != null ? data.Gadgets() : new List<AapGadgetConfig>();
+        }
+
+        public static void SaveGadget(AnimatorController controller, AapGadgetConfig config)
+        {
+            var data = GetOrCreate(controller);
+            if (data != null) data.SaveGadget(config);
+        }
+
+        public static void RemoveGadget(AnimatorController controller, string output)
+        {
+            var data = Find(controller);
+            if (data != null) data.RemoveGadget(output);
         }
 
         // ---- per-state sync requests -----------------------------------------

@@ -256,8 +256,7 @@ namespace Yozolab.DaerD
         /// of one per gadget.</summary>
         public static bool Apply(Request r, bool commitSubAssets = true)
         {
-            if (r.kind == Kind.Smooth)
-                return AapSmoothing.Apply(ToSmoothingRequest(r), commitSubAssets);
+            if (r.kind == Kind.Smooth) return ApplySmooth(r, commitSubAssets);
 
             if (Validate(r) != null) return false;
             var controller = r.controller;
@@ -277,12 +276,120 @@ namespace Yozolab.DaerD
                 // its own (FrameTime's clock) adds it on the way.
                 string one = DbtBuilder.EnsureConstantOneParameter(controller);
                 var root = DbtBuilder.EnsureDirectBlendTreeLayer(controller, r.layerIndex, r.newLayerName);
-                DbtBuilder.AddDirectChild(root, Build(r, controller, one), one);
+                var child = Build(r, controller, one);
+                DbtBuilder.AddDirectChild(root, child, one);
+                SaveConfig(r, DbtBuilder.HostingMachine(controller, root), child);
                 EditorUtility.SetDirty(controller);
             }
             // Everything the gadget built is a sub-asset; one flush shows the whole batch.
             if (commitSubAssets) DbtBuilder.CommitSubAssets(controller);
             return true;
+        }
+
+        /// <summary>The <see cref="Kind.Smooth"/> branch of <see cref="Apply"/>. Smoothing has
+        /// parameter rules of its own and builds its own tree, so the request is handed over
+        /// whole — but the record of what was built belongs here, with every other kind's.</summary>
+        static bool ApplySmooth(Request r, bool commitSubAssets)
+        {
+            var smoothing = ToSmoothingRequest(r);
+            BlendTree child = null;
+            bool applied;
+            using (new UndoScope("DBT Gadget"))
+            {
+                applied = AapSmoothing.Apply(smoothing, commitSubAssets: false, out child);
+                if (applied)
+                    SaveConfig(r, DbtBuilder.HostingMachine(r.controller, child), child);
+            }
+            if (applied && commitSubAssets) DbtBuilder.CommitSubAssets(r.controller);
+            return applied;
+        }
+
+        // ---- saved configuration -----------------------------------------------
+
+        /// <summary>
+        /// Records what was just built with the controller. Every route into a gadget lands
+        /// here — the wizard and <c>GadgetRecipeBuilder</c> alike go through
+        /// <see cref="Apply"/> — so a recipe that destroys and rebuilds its gadget layer
+        /// re-records every gadget on the way, and the entries heal themselves instead of
+        /// going stale.
+        ///
+        /// An in-memory controller has no asset to keep the holder in, so the record falls on
+        /// the floor there; that is the same fate the async-sync config has, for the same
+        /// reason, and the gadget itself is built either way.
+        /// </summary>
+        static void SaveConfig(Request r, AnimatorStateMachine machine, Motion tree)
+        {
+            if (machine == null || tree == null) return;
+            GraphFrameData.SaveGadget(r.controller, ToConfig(r, machine, tree));
+        }
+
+        internal static GraphFrameData.AapGadgetConfig ToConfig(Request r,
+            AnimatorStateMachine machine, Motion tree) =>
+            new GraphFrameData.AapGadgetConfig
+            {
+                layer = machine,
+                tree = tree,
+                kind = (int)r.kind,
+                inputA = r.inputA,
+                inputB = r.inputB,
+                output = r.output,
+                rangeMin = r.rangeMin,
+                rangeMax = r.rangeMax,
+                inMin = r.inMin,
+                inMax = r.inMax,
+                threshold = r.threshold,
+                smoothing = r.smoothing,
+                smoothingDefault = r.smoothingDefault,
+                curve = CopyCurve(r.curve),
+                lutSamples = r.lutSamples,
+                bufferFrames = r.bufferFrames,
+                atan2Directions = r.atan2Directions,
+            };
+
+        /// <summary>A saved config back as the request that made it — the wizard prefills its
+        /// form from this, and the exporter reads the gadget call out of it. The target layer
+        /// is the one the record points at; a record whose layer is gone lands on -1, which
+        /// builds a new one.</summary>
+        internal static Request ToRequest(GraphFrameData.AapGadgetConfig config,
+            AnimatorController controller)
+        {
+            int layerIndex = LayerIndexOf(controller, config.layer);
+            return new Request
+            {
+                controller = controller,
+                kind = (Kind)config.kind,
+                inputA = config.inputA,
+                inputB = config.inputB,
+                output = config.output,
+                rangeMin = config.rangeMin,
+                rangeMax = config.rangeMax,
+                inMin = config.inMin,
+                inMax = config.inMax,
+                threshold = config.threshold,
+                smoothing = config.smoothing,
+                smoothingDefault = config.smoothingDefault,
+                curve = CopyCurve(config.curve),
+                lutSamples = config.lutSamples,
+                bufferFrames = config.bufferFrames,
+                atan2Directions = config.atan2Directions,
+                layerIndex = layerIndex,
+                newLayerName = layerIndex >= 0 ? controller.layers[layerIndex].name : "DBT",
+            };
+        }
+
+        /// <summary>An AnimationCurve is a reference: shared between the request and the saved
+        /// record, an edit on either side would rewrite the other. Only the keys travel — the
+        /// wrap modes decide nothing, since the LUT samples strictly inside the key span.</summary>
+        static AnimationCurve CopyCurve(AnimationCurve curve) =>
+            curve == null ? null : new AnimationCurve(curve.keys);
+
+        static int LayerIndexOf(AnimatorController controller, AnimatorStateMachine machine)
+        {
+            if (controller == null || machine == null) return -1;
+            var layers = controller.layers;
+            for (int i = 0; i < layers.Length; i++)
+                if (layers[i].stateMachine == machine) return i;
+            return -1;
         }
 
         static BlendTree Build(Request r, AnimatorController c, string one)

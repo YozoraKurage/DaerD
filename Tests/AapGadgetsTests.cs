@@ -856,6 +856,92 @@ namespace Yozolab.DaerD.Tests
             }
         }
 
+        /// <summary>Runs the body against a controller that really exists on disk. The saved
+        /// gadget records live in a hidden sub-asset of the .controller, and an in-memory
+        /// controller has nowhere to keep one — the gadget is still built, the record is not.
+        /// </summary>
+        static void WithSavedController(System.Action<AnimatorController> body)
+        {
+            const string path = "Assets/DaerDAapGadgetConfigTest.controller";
+            AssetDatabase.CreateAsset(new AnimatorController(), path);
+            try
+            {
+                var controller = AssetDatabase.LoadAssetAtPath<AnimatorController>(path);
+                controller.AddLayer("Base");
+                body(controller);
+            }
+            finally
+            {
+                AssetDatabase.DeleteAsset(path);
+            }
+        }
+
+        /// <summary>What the wizard needs to re-open a gadget: which layer it landed in, which
+        /// child of that layer's root tree it is, and the inputs it was built from. Smoothing
+        /// is delegated to another builder entirely, so it gets its own half of this.</summary>
+        [Test]
+        public void Apply_RecordsEveryGadgetWithTheController()
+        {
+            WithSavedController(controller =>
+            {
+                controller.AddParameter("A", AnimatorControllerParameterType.Float);
+                controller.AddParameter("B", AnimatorControllerParameterType.Float);
+
+                Assert.IsTrue(AapGadgets.Apply(NewRequest(controller, AapGadgets.Kind.Multiply)));
+
+                var smooth = NewRequest(controller, AapGadgets.Kind.Smooth);
+                smooth.inputB = null;
+                smooth.output = "A/Smoothed";
+                smooth.smoothing = "A/Smoothing";
+                smooth.layerIndex = 1;   // the layer the multiply just created
+                Assert.IsTrue(AapGadgets.Apply(smooth));
+
+                var machine = controller.layers[1].stateMachine;
+                var root = (BlendTree)machine.states[0].state.motion;
+                Assert.AreEqual(2, root.children.Length);
+
+                var configs = GraphFrameData.GetGadgets(controller);
+                Assert.AreEqual(2, configs.Count);
+
+                Assert.AreEqual((int)AapGadgets.Kind.Multiply, configs[0].kind);
+                Assert.AreEqual("Out", configs[0].output);
+                Assert.AreEqual("A", configs[0].inputA);
+                Assert.AreEqual("B", configs[0].inputB);
+                Assert.AreSame(machine, configs[0].layer);
+                Assert.AreSame(root.children[0].motion, configs[0].tree);
+
+                Assert.AreEqual((int)AapGadgets.Kind.Smooth, configs[1].kind);
+                Assert.AreEqual("A/Smoothed", configs[1].output);
+                Assert.AreEqual("A/Smoothing", configs[1].smoothing);
+                Assert.AreSame(machine, configs[1].layer);
+                Assert.AreSame(root.children[1].motion, configs[1].tree);
+            });
+        }
+
+        /// <summary>The record has to describe what was baked, not what the wizard's curve
+        /// field happens to hold later — the two must not be the same object.</summary>
+        [Test]
+        public void Apply_RecordsACopyOfTheLutCurve()
+        {
+            WithSavedController(controller =>
+            {
+                controller.AddParameter("A", AnimatorControllerParameterType.Float);
+                var request = NewRequest(controller, AapGadgets.Kind.Lut1D);
+                request.inputB = null;
+                request.curve = AnimationCurve.Linear(0f, 0f, 1f, 1f);
+                request.lutSamples = 5;
+                Assert.IsTrue(AapGadgets.Apply(request));
+
+                var saved = GraphFrameData.GetGadgets(controller)[0];
+                Assert.AreEqual(5, saved.lutSamples);
+                Assert.AreNotSame(request.curve, saved.curve);
+                Assert.AreEqual(request.curve.length, saved.curve.length);
+
+                request.curve.AddKey(new Keyframe(0.5f, 0.9f));
+                Assert.AreEqual(2, saved.curve.length, "editing the request cannot rewrite it");
+            });
+        }
+
         [Test]
         public void SetNormalizedBlendValues_FlipsTheHiddenFlag()
         {

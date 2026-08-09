@@ -84,8 +84,15 @@ namespace Yozolab.DaerD
         /// <summary>Runs the (pre-validated) request; returns false when validation fails.
         /// <paramref name="commitSubAssets"/> off leaves the flush to the caller — see
         /// <see cref="AapGadgets.Apply"/>.</summary>
-        public static bool Apply(Request r, bool commitSubAssets = true)
+        public static bool Apply(Request r, bool commitSubAssets = true) =>
+            Apply(r, commitSubAssets, out _);
+
+        /// <summary>As above, additionally handing back the child added to the layer's root
+        /// tree. That child is the handle on everything this built, and what
+        /// <see cref="AapGadgets"/> records the gadget by so it can be regenerated later.</summary>
+        internal static bool Apply(Request r, bool commitSubAssets, out BlendTree gadgetChild)
         {
+            gadgetChild = null;
             if (Validate(r) != null) return false;
             var controller = r.controller;
 
@@ -117,6 +124,7 @@ namespace Yozolab.DaerD
                 smoothTree.AddChild(feedbackTree, 1f);
 
                 DbtBuilder.AddDirectChild(root, smoothTree, weightParam);
+                gadgetChild = smoothTree;
                 EditorUtility.SetDirty(controller);
             }
             // The clips and trees above are sub-assets; one flush shows the whole batch.
