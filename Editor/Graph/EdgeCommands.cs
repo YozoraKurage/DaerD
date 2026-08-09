@@ -99,27 +99,17 @@ namespace Yozolab.DaerD
             var sm = _context.CurrentStateMachine;
             if (sm == null) return null;
 
-            var snapshots = new List<TransitionClipboard.Snapshot>();
-            foreach (var t in transitions)
-                if (t != null) snapshots.Add(TransitionClipboard.Capture(t));
+            var snapshots = CaptureAll(transitions);
             var originals = new List<AnimatorTransitionBase>(transitions);
 
-            var created = new List<AnimatorTransitionBase>();
+            List<AnimatorTransitionBase> created;
             using (new UndoScope("Reverse Transition"))
             {
                 RegisterRemoveUndo(source, sm, "Reverse Transition");
                 foreach (var t in originals)
                     RemoveTransitionFrom(source, t, sm);
 
-                foreach (var snap in snapshots)
-                {
-                    var t = CreateTransition(destination, source);
-                    if (t != null)
-                    {
-                        TransitionClipboard.Apply(t, snap);
-                        created.Add(t);
-                    }
-                }
+                created = Recreate(snapshots, destination, source);
                 EditorUtility.SetDirty(sm);
             }
             return created;
@@ -146,21 +136,40 @@ namespace Yozolab.DaerD
         public List<AnimatorTransitionBase> Replicate(TransitionEnd source, TransitionEnd destination,
             IList<AnimatorTransitionBase> transitions)
         {
+            var snapshots = CaptureAll(transitions);
+
+            List<AnimatorTransitionBase> created;
+            using (new UndoScope("Replicate Transition"))
+                created = Recreate(snapshots, source, destination);
+            return created;
+        }
+
+        /// <summary>Snapshots every transition on an edge, skipping the null slots.</summary>
+        static List<TransitionClipboard.Snapshot> CaptureAll(IEnumerable<AnimatorTransitionBase> transitions)
+        {
             var snapshots = new List<TransitionClipboard.Snapshot>();
             foreach (var t in transitions)
                 if (t != null) snapshots.Add(TransitionClipboard.Capture(t));
+            return snapshots;
+        }
 
+        /// <summary>
+        /// Adds one transition per snapshot from <paramref name="source"/> to
+        /// <paramref name="destination"/> and stamps the captured settings back on. Reverse and
+        /// replicate differ only in which way round the two ends go; the caller opens the undo
+        /// scope so its name wins over the per-transition "Create Transition" label.
+        /// </summary>
+        public List<AnimatorTransitionBase> Recreate(IEnumerable<TransitionClipboard.Snapshot> snapshots,
+            TransitionEnd source, TransitionEnd destination)
+        {
             var created = new List<AnimatorTransitionBase>();
-            using (new UndoScope("Replicate Transition"))
+            foreach (var snap in snapshots)
             {
-                foreach (var snap in snapshots)
+                var t = CreateTransition(source, destination);
+                if (t != null)
                 {
-                    var t = CreateTransition(source, destination);
-                    if (t != null)
-                    {
-                        TransitionClipboard.Apply(t, snap);
-                        created.Add(t);
-                    }
+                    TransitionClipboard.Apply(t, snap);
+                    created.Add(t);
                 }
             }
             return created;
