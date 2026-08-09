@@ -183,6 +183,12 @@ namespace Yozolab.DaerD
         public static List<int> EffectiveSchedule(Request r, List<Slot> slots) =>
             AsyncSyncSchedule.EffectiveSchedule(r, slots);
 
+        public static List<string> RepairScheduleOverride(Request r, List<string> schedule) =>
+            AsyncSyncSchedule.RepairScheduleOverride(r, schedule);
+
+        public static int NextStepSlot(List<int> steps, int slotCount) =>
+            AsyncSyncSchedule.NextStepSlot(steps, slotCount);
+
         // ---- resolution and cost ---------------------------------------------
 
         // Worked out in AsyncSyncCost; the facade stays the single entry point.

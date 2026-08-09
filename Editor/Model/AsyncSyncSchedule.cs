@@ -217,6 +217,90 @@ namespace Yozolab.DaerD
             return schedule;
         }
 
+        /// <summary>
+        /// A saved explicit cycle brought back into line with the request's current slots:
+        /// steps naming a parameter that is no longer a target are dropped, slots nothing
+        /// visits are given one, and a slot left beside itself is moved. Returns the repaired
+        /// cycle as target names, or an empty list when there is nothing schedulable — which
+        /// the caller reads as "fall back to the rates".
+        ///
+        /// Deliberately not folded into <see cref="ResolveScheduleOverride"/>: a recipe must
+        /// keep being told about a cycle it cannot run (its author typed it), while the wizard
+        /// must not dead-end on one the user is halfway through editing. Strict in the model,
+        /// forgiving in the editor.
+        /// </summary>
+        public static List<string> RepairScheduleOverride(Request r, List<string> schedule)
+        {
+            var repaired = new List<string>();
+            var slots = BuildSlots(r);
+            if (slots.Count < 2 || schedule == null) return repaired;
+
+            var slotOf = new Dictionary<string, int>();
+            for (int i = 0; i < slots.Count; i++)
+                foreach (var name in slots[i].targets)
+                    slotOf[name] = i;
+
+            var steps = new List<int>();
+            foreach (var name in schedule)
+                if (slotOf.TryGetValue(name, out int slot))
+                    steps.Add(slot);
+            if (steps.Count == 0) return repaired;
+
+            // An unvisited slot is appended rather than woven in: the tick list appends too,
+            // so a parameter that was just added turns up where the eye already looks for it.
+            // Appending cannot create a repeat either — the slot is absent by definition, so
+            // neither the step before it nor the one it wraps onto can be it.
+            var visited = new HashSet<int>(steps);
+            for (int i = 0; i < slots.Count; i++)
+                if (!visited.Contains(i))
+                    steps.Add(i);
+
+            // Only repeats that were already there can remain, and RepairAdjacency cannot
+            // uncover a slot: the occurrence it drops as a last resort is by construction one
+            // of two adjacent equals, so a second one is always left behind.
+            RepairAdjacency(steps);
+
+            // Dropping is how RepairAdjacency gives up, so a cycle it could not settle comes
+            // back here still broken. Rates are a better answer than a layer that won't decode.
+            if (steps.Count < 2) return repaired;
+            for (int i = 0; i < steps.Count; i++)
+                if (steps[i] == steps[(i + 1) % steps.Count])
+                    return repaired;
+
+            foreach (var step in steps) repaired.Add(slots[step].targets[0]);
+            return repaired;
+        }
+
+        /// <summary>
+        /// The slot to hand the next step to when a cycle is lengthened by hand: the
+        /// least-visited one that touches neither end, so the step is valid where it lands.
+        /// With only two slots no such slot exists — their cycle can only be even — and the
+        /// fallback ignores the far end, leaving the wrap to
+        /// <see cref="RepairScheduleOverride"/>. -1 when even that finds nothing.
+        /// </summary>
+        public static int NextStepSlot(List<int> steps, int slotCount)
+        {
+            if (slotCount <= 0) return -1;
+            var visits = new int[slotCount];
+            foreach (var step in steps)
+                if (step >= 0 && step < slotCount) visits[step]++;
+            int last = steps.Count > 0 ? steps[steps.Count - 1] : -1;
+            int first = steps.Count > 0 ? steps[0] : -1;
+            int picked = LeastVisited(visits, last, first);
+            return picked >= 0 ? picked : LeastVisited(visits, last, -1);
+        }
+
+        static int LeastVisited(int[] visits, int avoid, int alsoAvoid)
+        {
+            int best = -1;
+            for (int i = 0; i < visits.Length; i++)
+            {
+                if (i == avoid || i == alsoAvoid) continue;
+                if (best < 0 || visits[i] < visits[best]) best = i;
+            }
+            return best;
+        }
+
         /// <summary>The schedule a request actually runs: the explicit override when given
         /// (and valid), the rate-based automatic one otherwise.</summary>
         public static List<int> EffectiveSchedule(Request r, List<Slot> slots)

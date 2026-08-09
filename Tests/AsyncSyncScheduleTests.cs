@@ -146,6 +146,128 @@ namespace Yozolab.DaerD.Tests
             CollectionAssert.AreEqual(new[] { 0, 1, 2 }, schedule);
         }
 
+        // ---- repairing a hand-timed cycle ------------------------------------
+
+        static AnimatorController Floats(params string[] names)
+        {
+            var controller = new AnimatorController();
+            controller.AddLayer("Base");
+            foreach (var name in names)
+                controller.AddParameter(name, AnimatorControllerParameterType.Float);
+            return controller;
+        }
+
+        static AsyncSyncBuilder.Request Multiplexing(AnimatorController controller,
+            params string[] targets)
+        {
+            var request = new AsyncSyncBuilder.Request { controller = controller };
+            request.targets.AddRange(targets);
+            return request;
+        }
+
+        /// <summary>What every repair must be able to promise: whatever comes back, if it is
+        /// not empty, is a cycle the decoder can actually run.</summary>
+        static List<string> Repair(AsyncSyncBuilder.Request request, params string[] schedule)
+        {
+            var repaired = AsyncSyncSchedule.RepairScheduleOverride(request,
+                new List<string>(schedule));
+            if (repaired.Count == 0) return repaired;
+
+            var errors = new List<string>();
+            request.scheduleOverride.Clear();
+            request.scheduleOverride.AddRange(repaired);
+            Assert.IsNotNull(
+                AsyncSyncSchedule.ResolveScheduleOverride(request,
+                    AsyncSyncSchedule.BuildSlots(request), errors),
+                "a repaired cycle must resolve: " + string.Join(", ", errors));
+            return repaired;
+        }
+
+        [Test]
+        public void RepairScheduleOverride_LeavesAValidCycleAlone()
+        {
+            // The one that matters most: the wizard repairs on every edit, so a repair that
+            // shuffled a cycle it had no quarrel with would move steps under the user's hand.
+            var controller = Floats("A", "B", "C");
+            var request = Multiplexing(controller, "A", "B", "C");
+
+            CollectionAssert.AreEqual(new[] { "A", "B", "A", "C" },
+                Repair(request, "A", "B", "A", "C"));
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void RepairScheduleOverride_DropsStepsForParametersThatAreGone()
+        {
+            var controller = Floats("A", "B", "C", "D");
+            // D was unticked since the cycle was written; its step goes with it.
+            var request = Multiplexing(controller, "A", "B", "C");
+
+            CollectionAssert.AreEqual(new[] { "A", "B", "A", "C" },
+                Repair(request, "A", "B", "A", "C", "D"));
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void RepairScheduleOverride_GivesANewlyTickedParameterAStep()
+        {
+            var controller = Floats("A", "B", "C");
+            var request = Multiplexing(controller, "A", "B", "C");
+
+            // C joined after the cycle was written. Appending matches the tick list, which
+            // also appends — and a slot nothing visits cannot land beside itself.
+            CollectionAssert.AreEqual(new[] { "A", "B", "C" }, Repair(request, "A", "B"));
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void RepairScheduleOverride_SettlesASlotThatBatchingMerged()
+        {
+            var controller = Floats("A", "B", "C");
+            var request = Multiplexing(controller, "A", "B", "C");
+            // Two channels put A and B in one slot, so a cycle that alternated them is now
+            // asking for the same slot three times over, twice in a row.
+            request.floatChannels = 2;
+
+            var repaired = Repair(request, "A", "B", "A", "C");
+
+            Assert.AreEqual(2, repaired.Count);
+            CollectionAssert.AreEqual(new[] { "A", "C" }, repaired);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void RepairScheduleOverride_WithNothingToSchedule_FallsBackToTheRates()
+        {
+            var controller = Floats("A", "B");
+            // One slot has no cycle to speak of; an empty result is how the caller is told
+            // to stop overriding.
+            Assert.AreEqual(0,
+                AsyncSyncSchedule.RepairScheduleOverride(Multiplexing(controller, "A"),
+                    new List<string> { "A" }).Count);
+            // Nothing recognisable left either.
+            Assert.AreEqual(0,
+                AsyncSyncSchedule.RepairScheduleOverride(Multiplexing(controller, "A", "B"),
+                    new List<string> { "Gone" }).Count);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void NextStepSlot_PicksTheLeastVisitedSlotThatTouchesNeitherEnd()
+        {
+            // 1 and 3 are free of both ends; 3 has been visited least.
+            Assert.AreEqual(3, AsyncSyncSchedule.NextStepSlot(new List<int> { 0, 1, 0, 2 }, 4));
+            Assert.AreEqual(1, AsyncSyncSchedule.NextStepSlot(new List<int> { 0, 1, 2 }, 3));
+            // Two slots have no such slot — their cycle can only be even — so the far end is
+            // given up and the wrap is left for the repair to settle.
+            Assert.AreEqual(0, AsyncSyncSchedule.NextStepSlot(new List<int> { 0, 1 }, 2));
+        }
+
         // ---- explicit schedules ----------------------------------------------
 
         [Test]
