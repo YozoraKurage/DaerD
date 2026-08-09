@@ -49,11 +49,13 @@ namespace Yozolab.DaerD
         readonly AnalyzerForm _analyzer = new AnalyzerForm();
         readonly RecipeExportForm _recipeExport = new RecipeExportForm();
 
-        // The three lists start expanded: seeing what the controller carries is the reason to
-        // open this screen at all, so folding them away is the exception, not the default.
+        // The lists start expanded: seeing what the controller carries is the reason to open
+        // this screen at all, so folding them away is the exception, not the default.
         bool _gadgetsOpen = true;
         bool _syncsOpen = true;
         bool _recipesOpen = true;
+        // The tools start folded, for the opposite reason: each is a working surface of its
+        // own, and several unfolded at once would bury everything else in the column.
         bool _clipsOpen;
         bool _analyzerOpen;
         bool _recipeExportOpen;
@@ -519,7 +521,7 @@ namespace Yozolab.DaerD
             EditorGUILayout.Space(8);
             DrawRecipeExportTool(controller);
             EditorGUILayout.Space(8);
-            DrawWindowTools(controller);
+            DrawMenuTool(controller);
             EditorGUILayout.Space(8);
             DrawCleanupTool(controller);
         }
@@ -607,12 +609,19 @@ namespace Yozolab.DaerD
             EndCard();
         }
 
-        /// <summary>The tools that still only open in a window. A full-width button each, since
-        /// only the menu editor is left here.</summary>
-        void DrawWindowTools(AnimatorController controller)
+        /// <summary>
+        /// The one tool that is still only a window. It edits a different asset — the menu
+        /// tree, not this controller — through a breadcrumb, a control list and an inspector
+        /// for the selected control, which wants a pane of its own rather than a card in a
+        /// column beside four others.
+        /// </summary>
+        void DrawMenuTool(AnimatorController controller)
         {
-            BeginCard(L.Tr("Tools"));
-            if (GUILayout.Button(new GUIContent(L.Tr("Expressions Menu"),
+            BeginCard(L.Tr("Expressions Menu"));
+            EditorGUILayout.LabelField(
+                L.Tr("The menu editor works on the avatar's menu tree, in a window of its own."),
+                EditorStyles.miniLabel);
+            if (GUILayout.Button(new GUIContent(L.Tr("Open Menu Editor"),
                     L.Tr("Edit the avatar's VRC Expressions Menu (auto-detected from the scene)."))))
             {
                 VrcMenuWindow.Open(controller);

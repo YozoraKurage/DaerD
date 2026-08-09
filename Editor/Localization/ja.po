@@ -241,6 +241,12 @@ msgstr "解析"
 msgid "Recipe Export"
 msgstr "レシピ書き出し"
 
+msgid "The menu editor works on the avatar's menu tree, in a window of its own."
+msgstr "メニューエディターはアバターのメニュー階層を編集するため、独立したウィンドウで開きます。"
+
+msgid "Open Menu Editor"
+msgstr "メニューエディターを開く"
+
 # ---- overview / analysis UI ----
 
 msgid "Controller"
