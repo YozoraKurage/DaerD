@@ -1930,8 +1930,14 @@ msgstr "上から下が巡回の順序です。×N を指定すると 1 周に N
 msgid "every {0:0.##} s"
 msgstr "{0:0.##} 秒ごと"
 
-msgid "Cycle:"
-msgstr "巡回:"
+msgid "{0} — every {1:0.##} s"
+msgstr "{0} — {1:0.##} 秒ごと"
+
+msgid "(requestable)"
+msgstr "（リクエスト可）"
+
+msgid "…and {0} more step(s) in the pass."
+msgstr "…1 周にはさらに {0} ステップあります。"
 
 msgid "Sync rates must be between 1 and {0} ('{1}')."
 msgstr "同期レートは 1〜{0} の範囲で指定してください（'{1}'）。"

@@ -41,6 +41,10 @@ namespace Yozolab.DaerD
         bool _assignEmptyClip = true;
         string _search = string.Empty;
         Vector2 _pickScroll;
+        /// <summary>Width of the schedule strip as of the last repaint. The cell grid is laid
+        /// out by hand, and deriving the row count from a rect measured in the current pass
+        /// would change it between layout and repaint — IMGUI counts controls across both.</summary>
+        float _stripWidth = 400f;
 
         // ×1 is "no rate" — the popup only offers meaningful multipliers beyond it.
         static readonly int[] RateValues = { 1, 2, 3, 4 };
@@ -279,31 +283,108 @@ namespace Yozolab.DaerD
                 _order.Insert(to, moved);
             });
 
-            DrawCyclePreview(request);
+            DrawScheduleStrip(request);
         }
 
-        /// <summary>One line spelling out the pass: "F → B → F → I". Long cycles truncate —
-        /// the point is to see the interleaving, not to read all 60 steps.</summary>
-        void DrawCyclePreview(AsyncSyncBuilder.Request request)
+        // ---- schedule strip --------------------------------------------------
+
+        const float MinCellWidth = 46f;
+        const float CellHeight = 20f;
+        const float CellGap = 2f;
+        /// <summary>Cells drawn before the strip gives up and says how many are left. The
+        /// point is to see the interleaving, not to read all 120 steps of a long pass.</summary>
+        const int MaxStripCells = 64;
+
+        /// <summary>
+        /// One pass drawn left to right, one cell per step, coloured by slot: the ×N rates
+        /// are meant to be read as spacing, and a line of names can't show spacing. Wraps to
+        /// as many rows as the pane's width needs.
+        /// </summary>
+        void DrawScheduleStrip(AsyncSyncBuilder.Request request)
         {
             var slots = AsyncSyncBuilder.BuildSlots(request);
-            var schedule = AsyncSyncBuilder.BuildSchedule(slots);
+            var schedule = AsyncSyncBuilder.EffectiveSchedule(request, slots);
             if (schedule.Count < 2) return;
 
-            const int maxShown = 24;
-            var labels = new List<string>();
-            for (int i = 0; i < schedule.Count && i < maxShown; i++)
+            var intervals = AsyncSyncBuilder.RefreshIntervals(request);
+            var requestable = AsyncSyncBuilder.RequestableTargets(request);
+            int shown = Mathf.Min(schedule.Count, MaxStripCells);
+            int perRow = Mathf.Max(1, Mathf.FloorToInt(_stripWidth / MinCellWidth));
+            int rows = Mathf.CeilToInt(shown / (float)perRow);
+
+            var area = GUILayoutUtility.GetRect(MinCellWidth, rows * (CellHeight + CellGap) - CellGap,
+                GUILayout.ExpandWidth(true));
+            if (Event.current.type == EventType.Repaint) _stripWidth = area.width;
+
+            float cellWidth = (area.width - (perRow - 1) * CellGap) / perRow;
+            var label = CellStyle();
+            for (int i = 0; i < shown; i++)
             {
                 var slot = slots[schedule[i]];
-                labels.Add(slot.targets.Count > 1
-                    ? slot.targets[0] + "+" + (slot.targets.Count - 1)
-                    : slot.targets[0]);
+                var cell = new Rect(
+                    area.x + i % perRow * (cellWidth + CellGap),
+                    area.y + i / perRow * (CellHeight + CellGap),
+                    cellWidth, CellHeight);
+
+                EditorGUI.DrawRect(cell, SlotColor(schedule[i]));
+                // A glyph would be at the mercy of the editor font; a bar under the cell
+                // reads the same everywhere.
+                if (SlotIsRequestable(slot, requestable))
+                    EditorGUI.DrawRect(new Rect(cell.x, cell.yMax - 2f, cell.width, 2f),
+                        EditorGUIUtility.isProSkin ? Color.white : Color.black);
+                GUI.Label(cell, new GUIContent(CellLabel(slot), CellTooltip(slot, intervals, requestable)),
+                    label);
             }
-            string text = string.Join(" → ", labels);
-            if (schedule.Count > maxShown)
-                text += " → …(" + schedule.Count + ")";
-            var style = new GUIStyle(EditorStyles.miniLabel) { wordWrap = true };
-            EditorGUILayout.LabelField(L.Tr("Cycle:") + "  " + text + "  ⟳", style);
+
+            if (schedule.Count > shown)
+                EditorGUILayout.LabelField(
+                    L.Tr("…and {0} more step(s) in the pass.", schedule.Count - shown),
+                    EditorStyles.miniLabel);
+        }
+
+        /// <summary>Hue stepped by the golden ratio: neighbouring slots land far apart on the
+        /// wheel however many there are, so adjacent cells never read as one block.</summary>
+        static Color SlotColor(int slot)
+        {
+            float hue = slot * 0.618034f % 1f;
+            return EditorGUIUtility.isProSkin
+                ? Color.HSVToRGB(hue, 0.42f, 0.52f)
+                : Color.HSVToRGB(hue, 0.30f, 0.94f);
+        }
+
+        static GUIStyle CellStyle() => new GUIStyle(EditorStyles.miniLabel)
+        {
+            alignment = TextAnchor.MiddleCenter,
+            clipping = TextClipping.Clip,
+            normal = { textColor = EditorGUIUtility.isProSkin ? Color.white : Color.black },
+        };
+
+        static bool SlotIsRequestable(AsyncSyncBuilder.Slot slot, List<string> requestable)
+        {
+            foreach (var name in slot.targets)
+                if (requestable.Contains(name)) return true;
+            return false;
+        }
+
+        /// <summary>"+n" for a batch, matching the generated state names.</summary>
+        static string CellLabel(AsyncSyncBuilder.Slot slot) =>
+            slot.targets.Count > 1
+                ? slot.targets[0] + "+" + (slot.targets.Count - 1)
+                : slot.targets[0];
+
+        static string CellTooltip(AsyncSyncBuilder.Slot slot, Dictionary<string, float> intervals,
+            List<string> requestable)
+        {
+            var lines = new List<string>();
+            foreach (var name in slot.targets)
+            {
+                string line = intervals.TryGetValue(name, out float seconds)
+                    ? L.Tr("{0} — every {1:0.##} s", name, seconds)
+                    : name;
+                if (requestable.Contains(name)) line += "  " + L.Tr("(requestable)");
+                lines.Add(line);
+            }
+            return string.Join("\n", lines);
         }
 
         public void DrawPreview(AsyncSyncBuilder.Request request)
