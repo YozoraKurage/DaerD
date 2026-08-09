@@ -46,7 +46,7 @@ https://github.com/YozoraKurage/DaerD.git
 特定のバージョンに固定したい場合は、末尾にタグを付けます。
 
 ```
-https://github.com/YozoraKurage/DaerD.git#0.7.2
+https://github.com/YozoraKurage/DaerD.git#0.10.0
 ```
 
 ## 方法 3: unitypackage / zip

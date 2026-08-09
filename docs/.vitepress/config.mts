@@ -30,6 +30,7 @@ export default defineConfig({
     nav: [
       { text: 'ガイド', link: '/guide/', activeMatch: '/guide/' },
       { text: '機能', link: '/features/', activeMatch: '/features/' },
+      { text: '注意事項', link: '/notice', activeMatch: '/notice' },
       { text: `v${pkg.version}`, link: 'https://github.com/YozoraKurage/DaerD/releases' }
     ],
 
@@ -47,6 +48,7 @@ export default defineConfig({
           text: '使い方',
           items: [
             { text: '画面構成', link: '/guide/interface' },
+            { text: 'ホーム画面', link: '/guide/home' },
             { text: '設定 (Preferences)', link: '/guide/settings' },
             { text: 'よくある質問', link: '/guide/faq' }
           ]
@@ -55,15 +57,46 @@ export default defineConfig({
       '/features/': [
         {
           text: '機能一覧',
+          items: [{ text: '概要', link: '/features/' }]
+        },
+        {
+          text: '編集',
           items: [
-            { text: '概要', link: '/features/' },
             { text: 'グラフ編集', link: '/features/graph-editing' },
-            { text: 'パラメータ型の自動変換', link: '/features/parameter-conversion' },
-            { text: 'トランジションのコピー＆ペースト', link: '/features/transitions' },
-            { text: 'カスケードリネーム', link: '/features/rename' },
-            { text: 'フレームとメモ', link: '/features/frames' },
             { text: 'BlendTree 編集', link: '/features/blendtree' },
-            { text: 'コントローラー解析', link: '/features/analysis' }
+            { text: 'レイヤー操作', link: '/features/layers' },
+            { text: 'フレームとメモ', link: '/features/frames' }
+          ]
+        },
+        {
+          text: 'リファクタリング',
+          items: [
+            { text: 'パラメータ型の自動変換', link: '/features/parameter-conversion' },
+            { text: 'カスケードリネーム', link: '/features/rename' },
+            { text: 'トランジションのコピー＆ペースト', link: '/features/transitions' },
+            { text: 'クリップとリパス', link: '/features/clips' }
+          ]
+        },
+        {
+          text: '検証と整理',
+          items: [
+            { text: 'コントローラー解析', link: '/features/analysis' },
+            { text: 'クリーンアップ', link: '/features/cleanup' }
+          ]
+        },
+        {
+          text: '生成ツール',
+          items: [
+            { text: 'DBT ガジェット', link: '/features/dbt-gadgets' },
+            { text: 'オブジェクトトグル', link: '/features/object-toggle' },
+            { text: '巡回同期', link: '/features/async-sync' },
+            { text: 'C# Recipe', link: '/features/recipe' }
+          ]
+        },
+        {
+          text: 'VRChat',
+          items: [
+            { text: 'VRC / NDMF 連携', link: '/features/vrchat' }
           ]
         }
       ]
@@ -109,7 +142,10 @@ export default defineConfig({
     },
 
     footer: {
-      message: 'MIT License のもとで公開されています。',
+      message:
+        'MIT License のもとで公開されています。動作・互換性の保証はありません — '
+        + '<a href="/notice">注意事項</a>。'
+        + 'このドキュメントは AI によって更新・保守されており、最新でない場合があります。',
       copyright: 'Copyright © 2026 Yozolab'
     }
   }
