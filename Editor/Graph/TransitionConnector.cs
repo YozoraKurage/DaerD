@@ -9,38 +9,13 @@ namespace Yozolab.DaerD
     static class TransitionConnect
     {
         /// <summary>
-        /// Names both nodes as transition ends and asks <see cref="TransitionEnd.CanConnect"/>,
-        /// which is the single copy of the rule — the graph accepts exactly what the transition
-        /// commands accept, by construction rather than by two lists kept in step.
+        /// Names both nodes as transition ends (via <see cref="GraphNodeBase.EndOf"/>, the single
+        /// node-to-end conversion) and asks <see cref="TransitionEnd.CanConnect"/>, the single copy
+        /// of the rule — the graph accepts exactly what the transition commands accept, by
+        /// construction rather than by two lists kept in step.
         /// </summary>
         public static bool CanConnect(GraphNodeBase source, GraphNodeBase destination) =>
-            TransitionEnd.CanConnect(EndOf(source), EndOf(destination));
-
-        /// <summary>
-        /// The end a graph node stands for. A null or unrecognised node becomes
-        /// <see cref="TransitionEnd.None"/>, which nothing may connect to — the old explicit null
-        /// check, expressed in the model's own vocabulary. GraphSync converts the same way for the
-        /// nodes the commands are handed.
-        /// </summary>
-        static TransitionEnd EndOf(GraphNodeBase node)
-        {
-            switch (node)
-            {
-                case StateNode sn:
-                    return TransitionEnd.Of(sn.State);
-                case SubStateMachineNode mn:
-                    return TransitionEnd.Of(mn.StateMachine);
-                case SpecialNode spn:
-                    switch (spn.Kind)
-                    {
-                        case SpecialNodeKind.Entry: return TransitionEnd.Entry;
-                        case SpecialNodeKind.Exit: return TransitionEnd.Exit;
-                        default: return TransitionEnd.AnyState;
-                    }
-                default:
-                    return TransitionEnd.None;
-            }
-        }
+            TransitionEnd.CanConnect(GraphNodeBase.EndOf(source), GraphNodeBase.EndOf(destination));
     }
 
     /// <summary>

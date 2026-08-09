@@ -522,29 +522,8 @@ namespace Yozolab.DaerD
             return _transitions.CreateTransition(EndOf(source), EndOf(destination));
         }
 
-        /// <summary>
-        /// The model behind a graph node, as the transition commands see it. Unknown nodes map to
-        /// <see cref="TransitionEnd.None"/>, which nothing may connect to.
-        /// </summary>
-        static TransitionEnd EndOf(GraphNodeBase node)
-        {
-            switch (node)
-            {
-                case StateNode sn:
-                    return TransitionEnd.Of(sn.State);
-                case SubStateMachineNode mn:
-                    return TransitionEnd.Of(mn.StateMachine);
-                case SpecialNode spn:
-                    switch (spn.Kind)
-                    {
-                        case SpecialNodeKind.Entry: return TransitionEnd.Entry;
-                        case SpecialNodeKind.Exit: return TransitionEnd.Exit;
-                        default: return TransitionEnd.AnyState;
-                    }
-                default:
-                    return TransitionEnd.None;
-            }
-        }
+        /// <summary>Shorthand for <see cref="GraphNodeBase.EndOf"/>, the single node-to-end conversion.</summary>
+        static TransitionEnd EndOf(GraphNodeBase node) => GraphNodeBase.EndOf(node);
 
         static List<TransitionEnd> EndsOf(IEnumerable<GraphNodeBase> nodes)
         {
