@@ -238,6 +238,9 @@ msgstr "クリップ"
 msgid "Analyzer"
 msgstr "解析"
 
+msgid "Recipe Export"
+msgstr "レシピ書き出し"
+
 # ---- overview / analysis UI ----
 
 msgid "Controller"

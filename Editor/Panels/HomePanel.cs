@@ -47,6 +47,7 @@ namespace Yozolab.DaerD
         readonly CleanupInspector _cleanup = new CleanupInspector();
         readonly ClipsForm _clips = new ClipsForm();
         readonly AnalyzerForm _analyzer = new AnalyzerForm();
+        readonly RecipeExportForm _recipeExport = new RecipeExportForm();
 
         // The three lists start expanded: seeing what the controller carries is the reason to
         // open this screen at all, so folding them away is the exception, not the default.
@@ -55,6 +56,7 @@ namespace Yozolab.DaerD
         bool _recipesOpen = true;
         bool _clipsOpen;
         bool _analyzerOpen;
+        bool _recipeExportOpen;
         bool _cleanupOpen;
 
         // Bumped whenever the controller changed in a way a tool's collected data could care
@@ -63,6 +65,7 @@ namespace Yozolab.DaerD
         int _revision;
         int _clipsRevision = -1;
         int _analyzerRevision = -1;
+        int _recipeExportRevision = -1;
 
         public HomePanel(DaerDContext context) : base(context, "Home")
         {
@@ -91,6 +94,14 @@ namespace Yozolab.DaerD
                 Context.ValidatePath();
                 Context.NotifyParametersChanged();
                 Context.NotifyGraphStructureChanged();
+            };
+
+            // Nothing to close here, so a finished export starts the form over — the defaults
+            // it comes back with describe the controller as it is now.
+            _recipeExport.Exported = () =>
+            {
+                _recipeExport.SetController(Context.Controller);
+                _recipeExportRevision = _revision;
             };
         }
 
@@ -506,6 +517,8 @@ namespace Yozolab.DaerD
             EditorGUILayout.Space(8);
             DrawClipsTool(controller);
             EditorGUILayout.Space(8);
+            DrawRecipeExportTool(controller);
+            EditorGUILayout.Space(8);
             DrawWindowTools(controller);
             EditorGUILayout.Space(8);
             DrawCleanupTool(controller);
@@ -559,22 +572,46 @@ namespace Yozolab.DaerD
             EndCard();
         }
 
-        /// <summary>The tools that still only open in a window. Two to a row: they are short
-        /// labels, and a stack of full-width buttons reads as the most important thing in the
-        /// column when it is the least.</summary>
-        void DrawWindowTools(AnimatorController controller)
+        /// <summary>
+        /// The recipe exporter, inline. Only its layer list is re-read when the controller
+        /// changes — the class name, folder and toggles are typed by the user and must survive
+        /// an edit made elsewhere while the card is open.
+        /// </summary>
+        void DrawRecipeExportTool(AnimatorController controller)
         {
-            BeginCard(L.Tr("Tools"));
-
-            EditorGUILayout.BeginHorizontal();
-            if (GUILayout.Button(new GUIContent(L.Tr("Export C# Recipe"),
-                    L.Tr("Convert this controller (or chosen layers) into editable C# that rebuilds it — clips stay assignable by drag & drop on the recipe asset."))))
+            _recipeExportOpen = BeginToolCard(L.Tr("Recipe Export"), _recipeExportOpen, out bool window);
+            if (window)
             {
                 RecipeExportWindow.Open(controller);
                 GUIUtility.ExitGUI();   // the focus moved to another window under this layout pass
             }
-            EditorGUILayout.EndHorizontal();
+            if (_recipeExportOpen)
+            {
+                if (_recipeExport.Controller != controller)
+                {
+                    _recipeExport.SetController(controller);
+                    _recipeExportRevision = _revision;
+                }
+                else if (_recipeExportRevision != _revision)
+                {
+                    _recipeExport.RefreshLayers();
+                    _recipeExportRevision = _revision;
+                }
+                _recipeExport.DrawForm();
+                EditorGUILayout.Space(4);
+                EditorGUILayout.BeginHorizontal();
+                GUILayout.FlexibleSpace();
+                _recipeExport.DrawExportButton();
+                EditorGUILayout.EndHorizontal();
+            }
+            EndCard();
+        }
 
+        /// <summary>The tools that still only open in a window. A full-width button each, since
+        /// only the menu editor is left here.</summary>
+        void DrawWindowTools(AnimatorController controller)
+        {
+            BeginCard(L.Tr("Tools"));
             if (GUILayout.Button(new GUIContent(L.Tr("Expressions Menu"),
                     L.Tr("Edit the avatar's VRC Expressions Menu (auto-detected from the scene)."))))
             {
