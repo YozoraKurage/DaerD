@@ -304,7 +304,7 @@ namespace Yozolab.DaerD
             // With one slot the index never changes, and the decoder — which fires on the
             // index changing — would copy exactly once and then go deaf.
             if (slotCount < 2)
-                return L.Tr("Everything fits into a single slot, so the index would never change and remotes would stop decoding. Lower Float / Bool Channels, or add parameters.");
+                return L.Tr("Everything fits into a single slot, so the index would never change and remotes would stop decoding. Lower the channel count, or add parameters.");
 
             if (r.scheduleOverride != null && r.scheduleOverride.Count > 0)
             {
