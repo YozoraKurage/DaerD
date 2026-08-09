@@ -29,12 +29,20 @@ namespace Yozolab.DaerD
             _refresh = refresh;
         }
 
+        /// <summary>Draws a behaviour's fields: its own VRC drawer when there is one, the generic
+        /// renderer otherwise.</summary>
+        public void DrawBehaviourBody(StateMachineBehaviour behaviour)
+        {
+            if (!TryDrawKnownVrcBehaviour(behaviour))
+                DrawSerializedFields(behaviour);
+        }
+
         /// <summary>
         /// Render VRC SDK behaviours (Tracking Control, Parameter Driver) with a UI matching
         /// their native inspector. Detected by type name, so we don't need to reference VRCSDK.
         /// Returns true if the behaviour was drawn — caller should skip the generic renderer.
         /// </summary>
-        public bool TryDrawKnownVrcBehaviour(StateMachineBehaviour behaviour)
+        bool TryDrawKnownVrcBehaviour(StateMachineBehaviour behaviour)
         {
             switch (behaviour.GetType().Name)
             {
@@ -580,7 +588,7 @@ namespace Yozolab.DaerD
             Undo.DestroyObjectImmediate(behaviour);
         }
 
-        public static void DrawSerializedFields(UnityEngine.Object target)
+        static void DrawSerializedFields(UnityEngine.Object target)
         {
             var serialized = new SerializedObject(target);
             serialized.Update();

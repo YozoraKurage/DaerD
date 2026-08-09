@@ -101,20 +101,9 @@ namespace Yozolab.DaerD
         {
             var representative = slot.Representative;
             if (representative == null) return;
-            bool selected = _selectedBehaviours.Contains(representative);
             int missing = states.Count - slot.instances.Count;
 
-            var boxBackground = GUI.backgroundColor;
-            if (selected) GUI.backgroundColor = PanelGui.SelectionTint;
-            EditorGUILayout.BeginVertical(EditorStyles.helpBox);
-            GUI.backgroundColor = boxBackground;
-
-            EditorGUILayout.BeginHorizontal();
-            var titleBackground = GUI.backgroundColor;
-            if (selected) GUI.backgroundColor = PanelGui.SelectionTint;
-            if (GUILayout.Button(BehaviourInspector.BehaviourTitle(representative), BehaviourInspector.BehaviourTitleStyle))
-                _behaviours.HandleBehaviourRowClick(representatives, index);
-            GUI.backgroundColor = titleBackground;
+            _behaviours.BeginBehaviourBox(representative, representatives, index);
 
             // Repeatable VRC types are matched by instance name, so renaming here has to reach
             // every peer or the slot would split apart on the next repaint.
@@ -158,8 +147,7 @@ namespace Yozolab.DaerD
             // flatten values that only differ between states.
             string before = slot.instances.Count > 1 ? EditorJsonUtility.ToJson(representative) : null;
             EditorGUI.BeginChangeCheck();
-            if (!_vrcDrawers.TryDrawKnownVrcBehaviour(representative))
-                VrcBehaviourDrawers.DrawSerializedFields(representative);
+            _vrcDrawers.DrawBehaviourBody(representative);
             if (EditorGUI.EndChangeCheck() && before != null && EditorJsonUtility.ToJson(representative) != before)
                 PropagateSlot(slot);
 

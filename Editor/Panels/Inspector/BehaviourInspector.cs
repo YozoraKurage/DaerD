@@ -67,19 +67,8 @@ namespace Yozolab.DaerD
             {
                 var behaviour = behaviours[i];
                 if (behaviour == null) continue;
-                bool selected = _selectedBehaviours.Contains(behaviour);
 
-                var boxBackground = GUI.backgroundColor;
-                if (selected) GUI.backgroundColor = PanelGui.SelectionTint;
-                EditorGUILayout.BeginVertical(EditorStyles.helpBox);
-                GUI.backgroundColor = boxBackground;
-
-                EditorGUILayout.BeginHorizontal();
-                var titleBackground = GUI.backgroundColor;
-                if (selected) GUI.backgroundColor = PanelGui.SelectionTint;
-                if (GUILayout.Button(BehaviourTitle(behaviour), BehaviourTitleStyle))
-                    HandleBehaviourRowClick(behaviours, i);
-                GUI.backgroundColor = titleBackground;
+                BeginBehaviourBox(behaviour, behaviours, i);
 
                 // Repeatable VRC types get a per-instance name so multiple rows stay
                 // distinguishable (drivers named "Network" by the sync generator, etc.).
@@ -110,8 +99,7 @@ namespace Yozolab.DaerD
                     GUIUtility.ExitGUI();
                 }
                 EditorGUILayout.EndHorizontal();
-                if (!_vrcDrawers.TryDrawKnownVrcBehaviour(behaviour))
-                    VrcBehaviourDrawers.DrawSerializedFields(behaviour);
+                _vrcDrawers.DrawBehaviourBody(behaviour);
                 EditorGUILayout.EndVertical();
             }
 
@@ -119,7 +107,30 @@ namespace Yozolab.DaerD
                 _vrcDrawers.ShowAddBehaviourMenu(state);
         }
 
-        public static string BehaviourTitle(StateMachineBehaviour behaviour)
+        /// <summary>
+        /// Opens one behaviour's box and draws its title row, the same way in the single- and
+        /// multi-state lists: box and title are tinted while the row is selected, and the title
+        /// doubles as the button that selects it. The caller closes both the horizontal row and
+        /// the vertical box it leaves open.
+        /// </summary>
+        public void BeginBehaviourBox(StateMachineBehaviour behaviour, StateMachineBehaviour[] rows, int index)
+        {
+            bool selected = _selectedBehaviours.Contains(behaviour);
+
+            var boxBackground = GUI.backgroundColor;
+            if (selected) GUI.backgroundColor = PanelGui.SelectionTint;
+            EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+            GUI.backgroundColor = boxBackground;
+
+            EditorGUILayout.BeginHorizontal();
+            var titleBackground = GUI.backgroundColor;
+            if (selected) GUI.backgroundColor = PanelGui.SelectionTint;
+            if (GUILayout.Button(BehaviourTitle(behaviour), BehaviourTitleStyle))
+                HandleBehaviourRowClick(rows, index);
+            GUI.backgroundColor = titleBackground;
+        }
+
+        static string BehaviourTitle(StateMachineBehaviour behaviour)
         {
             string typeName = behaviour.GetType().Name;
             // The VRC prefix is noise inside an already VRC-labeled box; keep titles short.
@@ -131,7 +142,7 @@ namespace Yozolab.DaerD
         static GUIStyle s_behaviourTitleStyle;
 
         /// <summary>Header of a behaviour box: reads as a title, behaves as a selectable row.</summary>
-        public static GUIStyle BehaviourTitleStyle => s_behaviourTitleStyle ??= new GUIStyle(EditorStyles.miniButton)
+        static GUIStyle BehaviourTitleStyle => s_behaviourTitleStyle ??= new GUIStyle(EditorStyles.miniButton)
         {
             alignment = TextAnchor.MiddleLeft,
             fontStyle = FontStyle.Bold,
