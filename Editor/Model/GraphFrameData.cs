@@ -74,6 +74,9 @@ namespace Yozolab.DaerD
             /// <summary>Synced Float channels. 0 in data saved before the field existed —
             /// read it through <see cref="FloatChannelsOrDefault"/>.</summary>
             public int floatChannels = 1;
+            /// <summary>Synced Bool channels. 0 in data saved before the field existed —
+            /// read it through <see cref="BoolChannelsOrDefault"/>.</summary>
+            public int boolChannels = 1;
             public List<string> targets = new List<string>();
             /// <summary>Legacy boolean priority marks (data saved before rates existed);
             /// superseded by <see cref="rates"/>, kept so old setups still load.</summary>
@@ -92,6 +95,8 @@ namespace Yozolab.DaerD
             }
 
             public int FloatChannelsOrDefault => floatChannels < 1 ? 1 : floatChannels;
+
+            public int BoolChannelsOrDefault => boolChannels < 1 ? 1 : boolChannels;
 
             /// <summary>Rates as a lookup. Old configs carry boolean priority marks
             /// instead; those map to ×2 — the closest match to what they used to do.</summary>

@@ -44,14 +44,24 @@ namespace Yozolab.DaerD
 
         /// <summary>Float channels the request actually uses — capped by how many Floats any
         /// one slot really carries, so unused channels are neither created nor billed.</summary>
-        public static int FloatChannelsUsed(Request r)
+        public static int FloatChannelsUsed(Request r) =>
+            ChannelsUsed(r, AnimatorControllerParameterType.Float);
+
+        /// <summary>Bool channels the request actually uses. Same accounting as
+        /// <see cref="FloatChannelsUsed"/>, one synced bit each instead of eight.</summary>
+        public static int BoolChannelsUsed(Request r) =>
+            ChannelsUsed(r, AnimatorControllerParameterType.Bool);
+
+        /// <summary>The widest batch of one type across the slots — a slot only ever holds
+        /// targets of a single type, so its first target names the type of all of them.</summary>
+        static int ChannelsUsed(Request r, AnimatorControllerParameterType type)
         {
             int used = 0;
             foreach (var slot in BuildSlots(r))
             {
                 if (slot.targets.Count == 0) continue;
                 var parameter = DbtBuilder.FindParameter(r.controller, slot.targets[0]);
-                if (parameter != null && parameter.type == AnimatorControllerParameterType.Float)
+                if (parameter != null && parameter.type == type)
                     used = Mathf.Max(used, slot.targets.Count);
             }
             return used;
@@ -107,7 +117,7 @@ namespace Yozolab.DaerD
                 ? 8
                 : NetworkSyncBuilder.BitsRequired(Mathf.Max(2, BuildSlots(r).Count));
             foreach (var type in ChannelTypes(r))
-                bits += type == AnimatorControllerParameterType.Bool ? 1
+                bits += type == AnimatorControllerParameterType.Bool ? BoolChannelsUsed(r)
                     : type == AnimatorControllerParameterType.Float ? FloatChannelsUsed(r) * 8
                     : 8;
             return bits;

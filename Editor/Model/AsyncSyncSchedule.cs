@@ -18,41 +18,41 @@ namespace Yozolab.DaerD
     {
         /// <summary>
         /// Groups the targets into slots, in listed order — the order IS the cycle order,
-        /// which is why the wizard lets it be arranged by hand. Bool / Int targets get one
-        /// slot each; Float targets batch up to <see cref="Request.floatChannels"/> per slot,
-        /// but only with Floats of the same rate — a batch is revisited as a whole or not
-        /// at all.
+        /// which is why the wizard lets it be arranged by hand. Int targets get one slot
+        /// each; Float and Bool targets batch up to <see cref="Request.floatChannels"/> /
+        /// <see cref="Request.boolChannels"/> per slot, but only with targets of the same
+        /// type AND the same rate — a batch is revisited as a whole or not at all, and the
+        /// channels a slot writes are typed.
         /// </summary>
         public static List<Slot> BuildSlots(Request r)
         {
             var slots = new List<Slot>();
             if (r?.targets == null || r.controller == null) return slots;
 
-            int channels = Mathf.Clamp(r.floatChannels, 1, 8);
-            var openFloats = new Dictionary<int, Slot>();
+            int floatChannels = Mathf.Clamp(r.floatChannels, 1, 8);
+            int boolChannels = Mathf.Clamp(r.boolChannels, 1, 8);
+            // Keyed by (type, rate): one open batch per kind of slot. An Int's capacity of 1
+            // fills its batch immediately, which is how it keeps a slot to itself.
+            var open = new Dictionary<(AnimatorControllerParameterType, int), Slot>();
 
             foreach (var name in r.targets)
             {
                 var parameter = DbtBuilder.FindParameter(r.controller, name);
                 if (parameter == null) continue;
                 int rate = r.RateOf(name);
+                int capacity =
+                    parameter.type == AnimatorControllerParameterType.Float ? floatChannels
+                    : parameter.type == AnimatorControllerParameterType.Bool ? boolChannels
+                    : 1;
 
-                if (parameter.type != AnimatorControllerParameterType.Float)
+                var key = (parameter.type, rate);
+                if (!open.TryGetValue(key, out var slot) || slot.targets.Count >= capacity)
                 {
-                    var slot = new Slot { rate = rate };
-                    slot.targets.Add(name);
+                    slot = new Slot { rate = rate };
                     slots.Add(slot);
-                    continue;
+                    open[key] = slot;
                 }
-
-                if (!openFloats.TryGetValue(rate, out var open)
-                    || open.targets.Count >= channels)
-                {
-                    open = new Slot { rate = rate };
-                    slots.Add(open);
-                    openFloats[rate] = open;
-                }
-                open.targets.Add(name);
+                slot.targets.Add(name);
             }
             return slots;
         }

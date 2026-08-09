@@ -296,6 +296,7 @@ namespace Yozolab.DaerD
                 encoding = (int)r.encoding,
                 stepSeconds = r.stepSeconds,
                 floatChannels = r.floatChannels,
+                boolChannels = r.boolChannels,
                 targets = new List<string>(r.targets),
                 rates = GraphFrameData.AsyncSyncConfig.ToRateEntries(r.rates),
                 requests = RequestableTargets(r),
@@ -312,8 +313,10 @@ namespace Yozolab.DaerD
             return name;
         }
 
-        /// <summary>Adds the copy entries for one slot: each Float target pairs with its
-        /// channel by position; Bool / Int slots hold one target on the type's channel.</summary>
+        /// <summary>Adds the copy entries for one slot: each batched Float or Bool target
+        /// pairs with the channel at its own position in the slot (a slot never mixes types,
+        /// so the position IS the channel number); an Int slot holds one target on the type's
+        /// channel.</summary>
         static void AddChannelCopies(StateMachineBehaviour driver, Request r, Slot slot, bool toChannels)
         {
             for (int j = 0; j < slot.targets.Count; j++)
@@ -322,7 +325,9 @@ namespace Yozolab.DaerD
                 var type = DbtBuilder.FindParameter(r.controller, target).type;
                 string channel = type == AnimatorControllerParameterType.Float
                     ? FloatChannelParameter(r.baseName, j)
-                    : ChannelParameter(r.baseName, type);
+                    : type == AnimatorControllerParameterType.Bool
+                        ? BoolChannelParameter(r.baseName, j)
+                        : ChannelParameter(r.baseName, type);
                 if (toChannels)
                     VrcParameterDriver.AddCopyEntry(driver, target, channel);
                 else

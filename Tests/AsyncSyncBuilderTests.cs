@@ -412,11 +412,12 @@ namespace Yozolab.DaerD.Tests
         // ---- float channels ---------------------------------------------------
 
         [Test]
-        public void RequestDefaults_AutoEncoding_OneFloatChannel()
+        public void RequestDefaults_AutoEncoding_OneChannelPerType()
         {
             var request = new AsyncSyncBuilder.Request();
             Assert.AreEqual(AsyncSyncBuilder.IndexEncoding.Auto, request.encoding);
             Assert.AreEqual(1, request.floatChannels);
+            Assert.AreEqual(1, request.boolChannels);
         }
 
         [Test]
@@ -479,6 +480,154 @@ namespace Yozolab.DaerD.Tests
 
             Assert.AreEqual(AnimatorControllerParameterType.Float,
                 DbtBuilder.FindParameter(controller, "Async/Float2").type);
+        }
+
+        // ---- bool channels ----------------------------------------------------
+
+        static AnimatorController BoolController(int count)
+        {
+            var controller = new AnimatorController();
+            controller.AddLayer("Base");
+            for (int i = 1; i <= count; i++)
+                controller.AddParameter("B" + i, AnimatorControllerParameterType.Bool);
+            return controller;
+        }
+
+        static string[] BoolNames(int count)
+        {
+            var names = new string[count];
+            for (int i = 0; i < count; i++) names[i] = "B" + (i + 1);
+            return names;
+        }
+
+        [Test]
+        public void BoolChannels_BatchBoolsIntoSharedSlots()
+        {
+            var controller = BoolController(5);
+            var request = NewRequest(controller, BoolNames(5));
+            request.boolChannels = 2;
+
+            var slots = AsyncSyncBuilder.BuildSlots(request);
+            Assert.AreEqual(3, slots.Count, "5 bools over 2 channels = 3 slots");
+            CollectionAssert.AreEqual(new[] { "B1", "B2" }, slots[0].targets);
+            CollectionAssert.AreEqual(new[] { "B3", "B4" }, slots[1].targets);
+            CollectionAssert.AreEqual(new[] { "B5" }, slots[2].targets);
+
+            Assert.AreEqual(2, AsyncSyncBuilder.BoolChannelsUsed(request));
+        }
+
+        [Test]
+        public void BoolChannels_TradeOneSyncedBitForAShorterPass()
+        {
+            var controller = BoolController(16);
+            var slow = NewRequest(controller, BoolNames(16));
+            slow.encoding = AsyncSyncBuilder.IndexEncoding.Bool;
+            // 16 slots -> 4 index bits + 1 channel; one pass is 16 steps.
+            Assert.AreEqual(5, AsyncSyncBuilder.CompressedBits(slow));
+            Assert.AreEqual(16, AsyncSyncBuilder.BuildSchedule(AsyncSyncBuilder.BuildSlots(slow)).Count);
+
+            var fast = NewRequest(controller, BoolNames(16));
+            fast.encoding = AsyncSyncBuilder.IndexEncoding.Bool;
+            fast.boolChannels = 4;
+            // 4 slots -> 2 index bits + 4 channels: one more bit, a quarter of the pass.
+            Assert.AreEqual(6, AsyncSyncBuilder.CompressedBits(fast));
+            Assert.AreEqual(4, AsyncSyncBuilder.BuildSchedule(AsyncSyncBuilder.BuildSlots(fast)).Count);
+        }
+
+        [Test]
+        public void BoolChannels_Channel0_KeepsTheNameOlderSetupsAlreadySync()
+        {
+            var controller = BoolController(4);
+            var request = NewRequest(controller, BoolNames(4));
+            request.boolChannels = 2;
+
+            var generated = AsyncSyncBuilder.GeneratedParameters(request);
+            // Renaming channel 0 would strand the store entry an existing setup syncs.
+            Assert.IsTrue(generated.Exists(g => g.name == "Async/Bool"));
+            Assert.IsTrue(generated.Exists(g => g.name == "Async/Bool2"));
+            Assert.AreEqual(AsyncSyncBuilder.ChannelParameter("Async", AnimatorControllerParameterType.Bool),
+                AsyncSyncBuilder.BoolChannelParameter("Async", 0));
+        }
+
+        [Test]
+        public void BoolChannels_UnusedChannelsAreNotCreated()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "B", "F", "I");
+            request.boolChannels = 4;
+
+            Assert.AreEqual(1, AsyncSyncBuilder.BoolChannelsUsed(request));
+            Assert.IsFalse(AsyncSyncBuilder.GeneratedParameters(request)
+                .Exists(g => g.name == "Async/Bool2"));
+        }
+
+        [Test]
+        public void BoolChannels_DoNotBatchAcrossRatesOrTypes()
+        {
+            var controller = BoolController(3);
+            controller.AddParameter("I", AnimatorControllerParameterType.Int);
+            controller.AddParameter("I2", AnimatorControllerParameterType.Int);
+            var request = NewRequest(controller, "B1", "B2", "B3", "I", "I2");
+            request.boolChannels = 4;
+            request.rates["B3"] = 2;    // a different rate is a different batch
+
+            var slots = AsyncSyncBuilder.BuildSlots(request);
+            CollectionAssert.AreEqual(new[] { "B1", "B2" }, slots[0].targets);
+            CollectionAssert.AreEqual(new[] { "B3" }, slots[1].targets);
+            // Ints never batch: one channel, one target.
+            CollectionAssert.AreEqual(new[] { "I" }, slots[2].targets);
+            CollectionAssert.AreEqual(new[] { "I2" }, slots[3].targets);
+        }
+
+        [Test]
+        public void Apply_WithBoolChannels_SendsAndDecodesTheBatch()
+        {
+            var controller = BoolController(4);
+            controller.AddParameter("F", AnimatorControllerParameterType.Float);
+            var request = NewRequest(controller, "B1", "B2", "B3", "F");
+            request.boolChannels = 2;
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var sm = controller.layers[1].stateMachine;
+            // 3 slots ({B1,B2}, {B3}, {F}) -> 3 send + idle + 3 recv.
+            Assert.AreEqual(7, sm.states.Length);
+            Assert.IsNotNull(FindState(sm, "Send B1 +1"));
+            Assert.IsNotNull(FindState(sm, "Recv B1 +1"));
+            Assert.AreEqual(3, sm.anyStateTransitions.Length);
+
+            Assert.AreEqual(AnimatorControllerParameterType.Bool,
+                DbtBuilder.FindParameter(controller, "Async/Bool2").type);
+        }
+
+        [Test]
+        public void BoolChannels_SurviveTheSavedSetup()
+        {
+            var controller = BoolController(4);
+            var config = new GraphFrameData.AsyncSyncConfig
+            {
+                baseName = "Async",
+                boolChannels = 2,
+                targets = new List<string>(BoolNames(4)),
+            };
+            Assert.AreEqual(2, AsyncSyncBuilder.FromConfig(controller, config).boolChannels);
+
+            // Setups saved before the field existed deserialize to 0 and must read as 1.
+            var legacy = new GraphFrameData.AsyncSyncConfig { boolChannels = 0 };
+            Assert.AreEqual(1, legacy.BoolChannelsOrDefault);
+            Assert.AreEqual(1, AsyncSyncBuilder.FromConfig(controller, legacy).boolChannels);
+        }
+
+        [Test]
+        public void BoolChannels_OutOfRange_IsRefused()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B");
+            request.boolChannels = 0;
+            Assert.IsNotNull(AsyncSyncBuilder.Validate(request));
+            request.boolChannels = 9;
+            Assert.IsNotNull(AsyncSyncBuilder.Validate(request));
+            request.boolChannels = 8;
+            Assert.IsNull(AsyncSyncBuilder.Validate(request));
         }
 
         // ---- rate scheduling --------------------------------------------------

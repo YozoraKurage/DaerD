@@ -138,6 +138,14 @@ namespace Yozolab.DaerD.Authoring
             return this;
         }
 
+        /// <summary>Synced Bool channels (1–8): each step carries up to this many Bools, at
+        /// one synced bit each — the cheapest way to shorten a Bool-heavy pass.</summary>
+        public AsyncSyncRecipeBuilder BoolChannels(int channels)
+        {
+            _request.boolChannels = channels;
+            return this;
+        }
+
         /// <summary>Dwell per step in seconds (VRChat syncs roughly every 0.3 s).</summary>
         public AsyncSyncRecipeBuilder Step(float seconds)
         {

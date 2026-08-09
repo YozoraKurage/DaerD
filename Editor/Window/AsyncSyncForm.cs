@@ -37,6 +37,7 @@ namespace Yozolab.DaerD
         AsyncSyncBuilder.IndexEncoding _encoding = AsyncSyncBuilder.IndexEncoding.Auto;
         float _stepSeconds = 0.3f;
         int _floatChannels = 1;
+        int _boolChannels = 1;
         bool _addToStore = true;
         bool _assignEmptyClip = true;
         string _search = string.Empty;
@@ -95,6 +96,7 @@ namespace Yozolab.DaerD
             _encoding = (AsyncSyncBuilder.IndexEncoding)config.encoding;
             _stepSeconds = config.stepSeconds;
             _floatChannels = Mathf.Clamp(config.FloatChannelsOrDefault, 1, 8);
+            _boolChannels = Mathf.Clamp(config.BoolChannelsOrDefault, 1, 8);
 
             var rates = config.RateMap();
             foreach (var row in _rows)
@@ -127,6 +129,7 @@ namespace Yozolab.DaerD
                 encoding = _encoding,
                 stepSeconds = _stepSeconds,
                 floatChannels = _floatChannels,
+                boolChannels = _boolChannels,
                 store = ParameterStore.Of(_controller),
                 addToStore = _addToStore,
                 assignEmptyClip = _assignEmptyClip,
@@ -154,6 +157,10 @@ namespace Yozolab.DaerD
                 new GUIContent(L.Tr("Float Channels"),
                     L.Tr("Synced Float channels. Each step carries up to this many Float parameters at once — fewer slots and a faster cycle, at 8 synced bits per extra channel.")),
                 _floatChannels, 1, 8);
+            _boolChannels = EditorGUILayout.IntSlider(
+                new GUIContent(L.Tr("Bool Channels"),
+                    L.Tr("Synced Bool channels. Each step carries up to this many Bool parameters at once — fewer slots and a faster cycle, at 1 synced bit per extra channel.")),
+                _boolChannels, 1, 8);
             _stepSeconds = EditorGUILayout.FloatField(
                 new GUIContent(L.Tr("Step Interval (s)"),
                     L.Tr("Dwell per slot. VRChat syncs roughly every 0.3 s — shorter steps risk remotes skipping slots.")),

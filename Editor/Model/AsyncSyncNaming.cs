@@ -27,6 +27,15 @@ namespace Yozolab.DaerD
                 ? baseName + "/" + AnimatorControllerParameterType.Float
                 : baseName + "/" + AnimatorControllerParameterType.Float + (channel + 1);
 
+        /// <summary>Channel 0 keeps the plain "/Bool" name — the one every setup built before
+        /// Bool batching existed already syncs — and extras are "/Bool2", "/Bool3"… Renaming
+        /// channel 0 would leave that parameter behind in the store, still synced, while the
+        /// regenerated layer talked to a new one.</summary>
+        public static string BoolChannelParameter(string baseName, int channel) =>
+            channel == 0
+                ? baseName + "/" + AnimatorControllerParameterType.Bool
+                : baseName + "/" + AnimatorControllerParameterType.Bool + (channel + 1);
+
         /// <summary>The local request flag for one target. Lives under the base namespace, so
         /// <see cref="AsyncSyncBuilder.IsReservedName"/> keeps it out of the multiplexed set automatically.</summary>
         public static string RequestParameter(string baseName, string target) =>

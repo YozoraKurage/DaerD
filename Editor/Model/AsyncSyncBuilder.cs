@@ -14,9 +14,10 @@ namespace Yozolab.DaerD
     /// cadence, where an Any-State decoder (IsLocal == false, index == i) copies the
     /// channels back. The targets themselves stay unsynced.
     ///
-    /// A slot carries one Bool or Int target, or up to <see cref="Request.floatChannels"/>
-    /// Float targets at once — more Float channels mean fewer slots and a shorter cycle,
-    /// at 8 synced bits per extra channel. Each target has a sync rate: a ×N slot is
+    /// A slot carries one Int target, up to <see cref="Request.floatChannels"/> Float targets
+    /// or up to <see cref="Request.boolChannels"/> Bool targets at once — more channels mean
+    /// fewer slots and a shorter cycle, at 8 synced bits per extra Float channel and 1 per
+    /// extra Bool channel. Each target has a sync rate: a ×N slot is
     /// placed N times per pass, spread as evenly as the other slots allow, so it
     /// refreshes N times as often as a ×1 slot. Rates sharing a common factor are
     /// normalized away (all-×2 is the same cycle as all-×1), and a rate the other slots
@@ -74,6 +75,10 @@ namespace Yozolab.DaerD
             /// <summary>Synced Float channels (1–8). Each slot carries up to this many Float
             /// targets at once: fewer slots and a shorter cycle, 8 more synced bits each.</summary>
             public int floatChannels = 1;
+            /// <summary>Synced Bool channels (1–8). Each slot carries up to this many Bool
+            /// targets at once, at 1 more synced bit each — the cheapest speed-up there is:
+            /// four channels quarter the pass for a single extra bit.</summary>
+            public int boolChannels = 1;
             /// <summary>Per-target sync rate (times per pass), 1 when absent. Entries for
             /// names not present in <see cref="targets"/> are ignored, so a stale saved
             /// setup doesn't block regeneration.</summary>
@@ -146,6 +151,9 @@ namespace Yozolab.DaerD
         public static string FloatChannelParameter(string baseName, int channel) =>
             AsyncSyncNaming.FloatChannelParameter(baseName, channel);
 
+        public static string BoolChannelParameter(string baseName, int channel) =>
+            AsyncSyncNaming.BoolChannelParameter(baseName, channel);
+
         public static string RequestParameter(string baseName, string target) =>
             AsyncSyncNaming.RequestParameter(baseName, target);
 
@@ -184,6 +192,8 @@ namespace Yozolab.DaerD
         public static AnimationClip ResolveEmptyClip(Request r) => AsyncSyncCost.ResolveEmptyClip(r);
 
         public static int FloatChannelsUsed(Request r) => AsyncSyncCost.FloatChannelsUsed(r);
+
+        public static int BoolChannelsUsed(Request r) => AsyncSyncCost.BoolChannelsUsed(r);
 
         public static float CycleSeconds(Request r) => AsyncSyncCost.CycleSeconds(r);
 
@@ -262,6 +272,8 @@ namespace Yozolab.DaerD
                 return L.Tr("The step interval must be greater than zero.");
             if (r.floatChannels < 1 || r.floatChannels > 8)
                 return L.Tr("Float channels must be between 1 and 8.");
+            if (r.boolChannels < 1 || r.boolChannels > 8)
+                return L.Tr("Bool channels must be between 1 and 8.");
             if (r.layerIndex >= controller.layers.Length)
                 return L.Tr("The target layer no longer exists.");
 
@@ -292,7 +304,7 @@ namespace Yozolab.DaerD
             // With one slot the index never changes, and the decoder — which fires on the
             // index changing — would copy exactly once and then go deaf.
             if (slotCount < 2)
-                return L.Tr("Everything fits into a single slot, so the index would never change and remotes would stop decoding. Lower Float Channels or add parameters.");
+                return L.Tr("Everything fits into a single slot, so the index would never change and remotes would stop decoding. Lower Float / Bool Channels, or add parameters.");
 
             if (r.scheduleOverride != null && r.scheduleOverride.Count > 0)
             {
@@ -461,6 +473,12 @@ namespace Yozolab.DaerD
                     for (int i = 0; i < channels; i++)
                         generated.Add((FloatChannelParameter(r.baseName, i), type));
                 }
+                else if (type == AnimatorControllerParameterType.Bool)
+                {
+                    int channels = BoolChannelsUsed(r);
+                    for (int i = 0; i < channels; i++)
+                        generated.Add((BoolChannelParameter(r.baseName, i), type));
+                }
                 else
                 {
                     generated.Add((ChannelParameter(r.baseName, type), type));
@@ -517,6 +535,7 @@ namespace Yozolab.DaerD
                 encoding = (IndexEncoding)config.encoding,
                 stepSeconds = config.stepSeconds,
                 floatChannels = Mathf.Clamp(config.FloatChannelsOrDefault, 1, 8),
+                boolChannels = Mathf.Clamp(config.BoolChannelsOrDefault, 1, 8),
                 store = ParameterStore.Of(controller),
                 emptyClip = GraphFrameData.GetEmptyClip(controller),
                 layerIndex = LayerIndexOf(controller, config),
