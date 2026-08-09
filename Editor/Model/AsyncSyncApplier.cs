@@ -300,6 +300,8 @@ namespace Yozolab.DaerD
                 targets = new List<string>(r.targets),
                 rates = GraphFrameData.AsyncSyncConfig.ToRateEntries(r.rates),
                 requests = RequestableTargets(r),
+                schedule = r.scheduleOverride != null
+                    ? new List<string>(r.scheduleOverride) : new List<string>(),
             });
         }
 

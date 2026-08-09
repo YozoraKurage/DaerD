@@ -527,9 +527,9 @@ namespace Yozolab.DaerD
         /// A runnable request rebuilt from a saved setup — what regenerating outside the
         /// wizard (per-state sync requests, the layer panel) starts from. Mirrors the wizard's
         /// own restore: layer resolved through the config's state machine, store and Empty
-        /// clip from the controller's current associations. An explicit recipe schedule is
-        /// not persisted, so a recipe-authored layer regenerated this way falls back to
-        /// rates until the recipe's next Generate.
+        /// clip from the controller's current associations, and the explicit cycle when the
+        /// setup has one — without that last part, adding a sync request to a state would
+        /// quietly rebuild a hand-timed (or recipe-timed) layer on the rate-derived pass.
         /// </summary>
         public static Request FromConfig(AnimatorController controller,
             GraphFrameData.AsyncSyncConfig config)
@@ -551,6 +551,8 @@ namespace Yozolab.DaerD
                 request.rates[rate.Key] = rate.Value;
             if (config.requests != null)
                 request.requestTargets.AddRange(config.requests);
+            if (config.schedule != null)
+                request.scheduleOverride.AddRange(config.schedule);
             return request;
         }
 

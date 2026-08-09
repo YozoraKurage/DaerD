@@ -86,6 +86,10 @@ namespace Yozolab.DaerD
             /// <summary>Targets that accept an on-demand sync request (a "base/Req/target"
             /// Bool plus redirect transitions in the generated layer).</summary>
             public List<string> requests = new List<string>();
+            /// <summary>Explicit cycle, as target names, one entry per step — empty when the
+            /// pass is derived from the rates. Absent in data saved before the field existed,
+            /// which reads as empty and so as "rates", the behaviour those setups already had.</summary>
+            public List<string> schedule = new List<string>();
 
             [Serializable]
             public class SyncRate

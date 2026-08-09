@@ -852,6 +852,41 @@ namespace Yozolab.DaerD.Tests
                 "the last and first step are adjacent too — the cycle wraps");
         }
 
+        [Test]
+        public void ScheduleOverride_SurvivesTheSavedSetup()
+        {
+            var controller = NewController();
+            var config = new GraphFrameData.AsyncSyncConfig
+            {
+                baseName = "Async",
+                targets = new List<string> { "F", "B", "I" },
+                schedule = new List<string> { "F", "B", "F", "I" },
+            };
+
+            var request = AsyncSyncBuilder.FromConfig(controller, config);
+            CollectionAssert.AreEqual(config.schedule, request.scheduleOverride);
+
+            // The regression this closes: SyncRequestBuilder rebuilds a layer through
+            // FromConfig, and a schedule that did not survive the trip meant adding one sync
+            // request silently re-timed a hand-written (or recipe-written) cycle to the rates.
+            var slots = AsyncSyncBuilder.BuildSlots(request);
+            CollectionAssert.AreEqual(new[] { 0, 1, 0, 2 },
+                AsyncSyncBuilder.EffectiveSchedule(request, slots));
+
+            // Saved before the field existed: no schedule, so the pass comes from the rates.
+            var legacy = AsyncSyncBuilder.FromConfig(controller, new GraphFrameData.AsyncSyncConfig
+            {
+                baseName = "Async",
+                targets = new List<string> { "F", "B", "I" },
+            });
+            Assert.AreEqual(0, legacy.scheduleOverride.Count);
+            CollectionAssert.AreEqual(
+                AsyncSyncBuilder.BuildSchedule(AsyncSyncBuilder.BuildSlots(legacy)),
+                AsyncSyncBuilder.EffectiveSchedule(legacy, AsyncSyncBuilder.BuildSlots(legacy)));
+
+            Object.DestroyImmediate(controller);
+        }
+
         // ---- sync requests ---------------------------------------------------
 
         [Test]
