@@ -176,6 +176,11 @@ msgstr "このコントローラーの Empty クリップを割り当てます"
 msgid "Fill the empty child slots with this controller's Empty clip"
 msgstr "モーション未設定の子スロットにこのコントローラーの Empty クリップを割り当てます"
 
+# ---- home screen ----
+
+msgid "Home"
+msgstr "ホーム"
+
 # ---- overview / analysis UI ----
 
 msgid "Controller"
