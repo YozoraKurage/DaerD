@@ -34,6 +34,7 @@ namespace Yozolab.DaerD
 
         readonly NodeCommands _nodes;
         readonly FrameCommands _frames;
+        readonly EdgeCommands _transitions;
 
         public GraphSync(DaerDContext context, AnimatorGraphView graphView)
         {
@@ -41,6 +42,7 @@ namespace Yozolab.DaerD
             _graphView = graphView;
             _nodes = new NodeCommands(context);
             _frames = new FrameCommands(context);
+            _transitions = new EdgeCommands(context);
         }
 
         public IReadOnlyList<TransitionEdge> Edges => _edges;
@@ -496,7 +498,7 @@ namespace Yozolab.DaerD
             var sm = _context.CurrentStateMachine;
             Undo.RegisterCompleteObjectUndo(sm, "Delete Transition");
             foreach (var t in edge.Transitions)
-                RemoveTransitionFrom(source, t, sm);
+                EdgeCommands.RemoveTransitionFrom(EndOf(source), t, sm);
             EditorUtility.SetDirty(sm);
         }
 
@@ -507,76 +509,47 @@ namespace Yozolab.DaerD
             if (source == null || transition == null) return;
             var sm = _context.CurrentStateMachine;
             Undo.RegisterCompleteObjectUndo(sm, "Delete Transition");
-            RemoveTransitionFrom(source, transition, sm);
+            EdgeCommands.RemoveTransitionFrom(EndOf(source), transition, sm);
             EditorUtility.SetDirty(sm);
             Rebuild();
-        }
-
-        static void RemoveTransitionFrom(GraphNodeBase source, AnimatorTransitionBase t, AnimatorStateMachine sm)
-        {
-            if (t == null) return;
-            if (source is StateNode sn && sn.State != null && t is AnimatorStateTransition stateTransition)
-                sn.State.RemoveTransition(stateTransition);
-            else if (source is SpecialNode spn && spn.Kind == SpecialNodeKind.AnyState && t is AnimatorStateTransition anyTransition)
-                sm.RemoveAnyStateTransition(anyTransition);
-            else if (source is SpecialNode entrySpn && entrySpn.Kind == SpecialNodeKind.Entry && t is AnimatorTransition entryTransition)
-                sm.RemoveEntryTransition(entryTransition);
-            else if (source is SubStateMachineNode mn && t is AnimatorTransition smTransition)
-                sm.RemoveStateMachineTransition(mn.StateMachine, smTransition);
         }
 
         public AnimatorTransitionBase CreateTransition(GraphNodeBase source, GraphNodeBase destination)
         {
             if (source == null || destination == null) return null;
-            var sm = _context.CurrentStateMachine;
-            AnimatorTransitionBase created;
-            using (new UndoScope("Create Transition"))
-                created = CreateTransitionCore(source, destination, sm);
-            return created;
+            return _transitions.CreateTransition(EndOf(source), EndOf(destination));
         }
 
         /// <summary>
-        /// Inner shared by single and batch transition creation. The caller is responsible for
-        /// opening an <see cref="UndoScope"/> so the batch name (e.g. "Chain Transitions") wins
-        /// over the per-pair undo label.
+        /// The model behind a graph node, as the transition commands see it. Unknown nodes map to
+        /// <see cref="TransitionEnd.None"/>, which nothing may connect to.
         /// </summary>
-        AnimatorTransitionBase CreateTransitionCore(GraphNodeBase source, GraphNodeBase destination,
-            AnimatorStateMachine sm)
+        static TransitionEnd EndOf(GraphNodeBase node)
         {
-            AnimatorTransitionBase created = null;
-            if (source is StateNode sn)
+            switch (node)
             {
-                Undo.RegisterCompleteObjectUndo(sn.State, "Create Transition");
-                if (destination is StateNode dn) created = sn.State.AddTransition(dn.State);
-                else if (destination is SubStateMachineNode dm) created = sn.State.AddTransition(dm.StateMachine);
-                else if (destination is SpecialNode dsp && dsp.Kind == SpecialNodeKind.Exit) created = sn.State.AddExitTransition();
+                case StateNode sn:
+                    return TransitionEnd.Of(sn.State);
+                case SubStateMachineNode mn:
+                    return TransitionEnd.Of(mn.StateMachine);
+                case SpecialNode spn:
+                    switch (spn.Kind)
+                    {
+                        case SpecialNodeKind.Entry: return TransitionEnd.Entry;
+                        case SpecialNodeKind.Exit: return TransitionEnd.Exit;
+                        default: return TransitionEnd.AnyState;
+                    }
+                default:
+                    return TransitionEnd.None;
             }
-            else if (source is SpecialNode ssp && ssp.Kind == SpecialNodeKind.AnyState)
-            {
-                Undo.RegisterCompleteObjectUndo(sm, "Create Transition");
-                if (destination is StateNode dn) created = sm.AddAnyStateTransition(dn.State);
-                else if (destination is SubStateMachineNode dm) created = sm.AddAnyStateTransition(dm.StateMachine);
-            }
-            else if (source is SpecialNode esp && esp.Kind == SpecialNodeKind.Entry)
-            {
-                Undo.RegisterCompleteObjectUndo(sm, "Create Transition");
-                if (destination is StateNode dn) created = sm.AddEntryTransition(dn.State);
-                else if (destination is SubStateMachineNode dm) created = sm.AddEntryTransition(dm.StateMachine);
-            }
-            else if (source is SubStateMachineNode smn)
-            {
-                Undo.RegisterCompleteObjectUndo(sm, "Create Transition");
-                if (destination is StateNode dn) created = sm.AddStateMachineTransition(smn.StateMachine, dn.State);
-                else if (destination is SubStateMachineNode dm) created = sm.AddStateMachineTransition(smn.StateMachine, dm.StateMachine);
-                else if (destination is SpecialNode dsp && dsp.Kind == SpecialNodeKind.Exit) created = sm.AddStateMachineExitTransition(smn.StateMachine);
-            }
+        }
 
-            if (created is AnimatorStateTransition newStateTransition)
-                DaerDSettings.ApplyTransitionDefaultsTo(newStateTransition);
-
-            if (created != null && _context.Controller != null)
-                EditorUtility.SetDirty(_context.Controller);
-            return created;
+        static List<TransitionEnd> EndsOf(IEnumerable<GraphNodeBase> nodes)
+        {
+            var ends = new List<TransitionEnd>();
+            foreach (var node in nodes)
+                ends.Add(EndOf(node));
+            return ends;
         }
 
         // ---- reverse / redirect / replicate ----------------------------------
@@ -598,32 +571,9 @@ namespace Yozolab.DaerD
             if (!CanReverseEdge(edge)) return;
             var source = edge.output?.node as GraphNodeBase;
             var destination = edge.input?.node as GraphNodeBase;
-            var sm = _context.CurrentStateMachine;
-            if (sm == null) return;
 
-            var snapshots = new List<TransitionClipboard.Snapshot>();
-            foreach (var t in edge.Transitions)
-                if (t != null) snapshots.Add(TransitionClipboard.Capture(t));
-            var originals = new List<AnimatorTransitionBase>(edge.Transitions);
-
-            var created = new List<AnimatorTransitionBase>();
-            using (new UndoScope("Reverse Transition"))
-            {
-                RegisterRemoveUndo(source, sm, "Reverse Transition");
-                foreach (var t in originals)
-                    RemoveTransitionFrom(source, t, sm);
-
-                foreach (var snap in snapshots)
-                {
-                    var t = CreateTransition(destination, source);
-                    if (t != null)
-                    {
-                        TransitionClipboard.Apply(t, snap);
-                        created.Add(t);
-                    }
-                }
-                EditorUtility.SetDirty(sm);
-            }
+            var created = _transitions.Reverse(EndOf(source), EndOf(destination), edge.Transitions);
+            if (created == null) return;
 
             Rebuild();
             if (created.Count > 0) _context.Select(created[0]);
@@ -659,18 +609,7 @@ namespace Yozolab.DaerD
             if (edge.Transitions.Count == 0) return;
             var anchor = edge.Transitions[0];
 
-            using (new UndoScope("Redirect Transition"))
-            {
-                foreach (var t in edge.Transitions)
-                {
-                    if (t == null) continue;
-                    Undo.RegisterCompleteObjectUndo(t, "Redirect Transition");
-                    AssignDestination(t, newDestination);
-                    EditorUtility.SetDirty(t);
-                }
-                if (_context.Controller != null)
-                    EditorUtility.SetDirty(_context.Controller);
-            }
+            _transitions.Redirect(edge.Transitions, EndOf(newDestination));
 
             Rebuild();
             _context.Select(anchor);
@@ -684,23 +623,7 @@ namespace Yozolab.DaerD
             var destination = edge.input?.node as GraphNodeBase;
             if (source == null || destination == null) return;
 
-            var snapshots = new List<TransitionClipboard.Snapshot>();
-            foreach (var t in edge.Transitions)
-                if (t != null) snapshots.Add(TransitionClipboard.Capture(t));
-
-            var created = new List<AnimatorTransitionBase>();
-            using (new UndoScope("Replicate Transition"))
-            {
-                foreach (var snap in snapshots)
-                {
-                    var t = CreateTransition(source, destination);
-                    if (t != null)
-                    {
-                        TransitionClipboard.Apply(t, snap);
-                        created.Add(t);
-                    }
-                }
-            }
+            var created = _transitions.Replicate(EndOf(source), EndOf(destination), edge.Transitions);
 
             Rebuild();
             if (created.Count > 0) _context.Select(created[0]);
@@ -708,35 +631,6 @@ namespace Yozolab.DaerD
 
         static bool IsConnectableState(GraphNodeBase node) =>
             node is StateNode || node is SubStateMachineNode;
-
-        static void AssignDestination(AnimatorTransitionBase transition, GraphNodeBase destination)
-        {
-            switch (destination)
-            {
-                case StateNode sn:
-                    transition.destinationStateMachine = null;
-                    transition.isExit = false;
-                    transition.destinationState = sn.State;
-                    break;
-                case SubStateMachineNode mn:
-                    transition.destinationState = null;
-                    transition.isExit = false;
-                    transition.destinationStateMachine = mn.StateMachine;
-                    break;
-                case SpecialNode spn when spn.Kind == SpecialNodeKind.Exit:
-                    transition.destinationState = null;
-                    transition.destinationStateMachine = null;
-                    transition.isExit = true;
-                    break;
-            }
-        }
-
-        static void RegisterRemoveUndo(GraphNodeBase source, AnimatorStateMachine sm, string name)
-        {
-            Undo.RegisterCompleteObjectUndo(sm, name);
-            if (source is StateNode sn && sn.State != null)
-                Undo.RegisterCompleteObjectUndo(sn.State, name);
-        }
 
         /// <summary>Human-readable name of a node, used for menu labels and sorting.</summary>
         public static string NodeLabel(GraphNodeBase node)
@@ -1032,94 +926,33 @@ namespace Yozolab.DaerD
         public void ChainNodes(IList<GraphNodeBase> nodes, bool seeded = false)
         {
             if (nodes == null || nodes.Count < 2) return;
-            var sm = _context.CurrentStateMachine;
-            if (sm == null) return;
-            var created = new List<AnimatorTransitionBase>();
-            using (new UndoScope("Chain Transitions"))
-            {
-                for (int i = 0; i < nodes.Count - 1; i++)
-                    AddBatchTransition(nodes[i], nodes[i + 1], sm, created);
-                if (seeded) SeedCreated(created);
-            }
-            if (created.Count == 0) return;
-            Rebuild();
-            _context.Select(created[0]);
+            SelectBatch(_transitions.Chain(EndsOf(nodes), seeded));
         }
 
         public void FanOutNodes(GraphNodeBase source, IEnumerable<GraphNodeBase> targets, bool seeded = false)
         {
             if (source == null || targets == null) return;
-            var sm = _context.CurrentStateMachine;
-            if (sm == null) return;
-            var created = new List<AnimatorTransitionBase>();
-            using (new UndoScope("Fan-Out Transitions"))
-            {
-                foreach (var target in targets)
-                    AddBatchTransition(source, target, sm, created);
-                if (seeded) SeedCreated(created);
-            }
-            if (created.Count == 0) return;
-            Rebuild();
-            _context.Select(created[0]);
+            SelectBatch(_transitions.FanOut(EndOf(source), EndsOf(targets), seeded));
         }
 
         public void FanInNodes(IEnumerable<GraphNodeBase> sources, GraphNodeBase target, bool seeded = false)
         {
             if (sources == null || target == null) return;
-            var sm = _context.CurrentStateMachine;
-            if (sm == null) return;
-            var created = new List<AnimatorTransitionBase>();
-            using (new UndoScope("Fan-In Transitions"))
-            {
-                foreach (var source in sources)
-                    AddBatchTransition(source, target, sm, created);
-                if (seeded) SeedCreated(created);
-            }
-            if (created.Count == 0) return;
-            Rebuild();
-            _context.Select(created[0]);
+            SelectBatch(_transitions.FanIn(EndsOf(sources), EndOf(target), seeded));
         }
 
         public void CrossProductNodes(IList<GraphNodeBase> sources, IList<GraphNodeBase> targets, bool seeded = false)
         {
             if (sources == null || targets == null || sources.Count == 0 || targets.Count == 0) return;
-            var sm = _context.CurrentStateMachine;
-            if (sm == null) return;
-            var created = new List<AnimatorTransitionBase>();
-            using (new UndoScope("Multi Transition"))
-            {
-                foreach (var source in sources)
-                    foreach (var target in targets)
-                        AddBatchTransition(source, target, sm, created);
-                if (seeded) SeedCreated(created);
-            }
+            SelectBatch(_transitions.CrossProduct(EndsOf(sources), EndsOf(targets), seeded));
+        }
+
+        /// <summary>Shows the result of a chain / fan batch: nothing created means nothing to redraw.</summary>
+        void SelectBatch(List<AnimatorTransitionBase> created)
+        {
             if (created.Count == 0) return;
             Rebuild();
             _context.Select(created[0]);
-        }
-
-        /// <summary>Seeded batch creation: the first copied transition's settings and
-        /// conditions stamp every created transition.</summary>
-        static void SeedCreated(List<AnimatorTransitionBase> created)
-        {
-            if (!TransitionClipboard.HasData) return;
-            var snapshot = TransitionClipboard.Snapshots[0];
-            foreach (var transition in created)
-                TransitionClipboard.Apply(transition, snapshot);
-        }
-
-        /// <summary>
-        /// One step of a chain / fan / cross batch. Skips invalid pairs (per
-        /// <see cref="TransitionConnect.CanConnect"/>) and self-loops on plain states, so
-        /// overlapping selections never produce nonsense transitions.
-        /// </summary>
-        void AddBatchTransition(GraphNodeBase source, GraphNodeBase destination, AnimatorStateMachine sm,
-            List<AnimatorTransitionBase> created)
-        {
-            if (source == null || destination == null || source == destination) return;
-            if (!TransitionConnect.CanConnect(source, destination)) return;
-            var transition = CreateTransitionCore(source, destination, sm);
-            if (transition != null) created.Add(transition);
         }
 
         // ---- copy / paste ----------------------------------------------------
