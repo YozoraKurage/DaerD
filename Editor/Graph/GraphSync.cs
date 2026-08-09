@@ -35,6 +35,7 @@ namespace Yozolab.DaerD
         readonly NodeCommands _nodes;
         readonly FrameCommands _frames;
         readonly EdgeCommands _transitions;
+        readonly GraphClipboard _clipboard;
 
         public GraphSync(DaerDContext context, AnimatorGraphView graphView)
         {
@@ -43,6 +44,7 @@ namespace Yozolab.DaerD
             _nodes = new NodeCommands(context);
             _frames = new FrameCommands(context);
             _transitions = new EdgeCommands(context);
+            _clipboard = new GraphClipboard(context, _transitions, _frames);
         }
 
         public IReadOnlyList<TransitionEdge> Edges => _edges;
@@ -957,29 +959,12 @@ namespace Yozolab.DaerD
 
         // ---- copy / paste ----------------------------------------------------
 
-        public void CopySelectedStates()
-        {
-            var states = new GraphSelectionSet(_graphView.selection).States;
-            if (states.Count == 0) return;
-            StateClipboard.Copy(states, StateNodePosition, null, _context.Controller, _context.CurrentStateMachine);
-            // States and frames/notes paste together, so a fresh copy of one kind has to drop the
-            // other — otherwise the next paste would also drop whatever was copied before it.
-            FrameNoteClipboard.Clear();
-        }
+        public void CopySelectedStates() =>
+            _clipboard.CopyStates(new GraphSelectionSet(_graphView.selection).States, StateNodePosition);
 
-        /// <summary>
-        /// Pastes into the state machine currently on screen, so switching layers between the
-        /// copy and the paste is what moves states from one layer to another. Parameters the
-        /// states reference are recreated when the destination controller lacks them.
-        /// </summary>
         public void PasteStates(Vector2 position)
         {
-            if (!StateClipboard.HasData) return;
-            var controller = _context.Controller;
-            int parametersBefore = controller != null ? controller.parameters.Length : 0;
-            StateClipboard.Paste(_context.CurrentStateMachine, position, controller);
-            if (controller != null && controller.parameters.Length != parametersBefore)
-                _context.NotifyParametersChanged();
+            if (!_clipboard.PasteStates(position)) return;
             RequestRebuild();
         }
 
@@ -990,65 +975,21 @@ namespace Yozolab.DaerD
 
         // ---- frame / note copy / paste ---------------------------------------
 
-        /// <summary>
-        /// Ctrl+C over the canvas: the states, frames and notes in the selection all go to their
-        /// clipboards in one gesture, sharing a single anchor so a mixed selection keeps its
-        /// relative layout when it is pasted — including into a different layer.
-        /// </summary>
         public void CopySelectedElements()
         {
             var selected = new GraphSelectionSet(_graphView.selection);
-            var states = selected.States;
-            var frames = selected.Frames;
-            var notes = selected.Notes;
-            int subStateMachines = selected.StateMachines.Count;
-            // Sub-state machines aren't part of the state clipboard. Say so instead of copying a
-            // silently incomplete selection — "select all" in a layer that has them looks like it
-            // worked until the paste comes up short.
-            if (subStateMachines > 0)
-                Debug.Log("DaerD: " + subStateMachines + " sub-state machine(s) were left out of the copy"
-                    + " — copy the whole layer (layer settings > Copy Layer) to move those too.");
-
-            if (states.Count == 0 && frames.Count == 0 && notes.Count == 0) return;
-
-            var anchor = new Vector2(float.MaxValue, float.MaxValue);
-            foreach (var state in states) anchor = Vector2.Min(anchor, StateNodePosition(state));
-            foreach (var frame in frames) anchor = Vector2.Min(anchor, frame.bounds.position);
-            foreach (var note in notes) anchor = Vector2.Min(anchor, note.bounds.position);
-
-            StateClipboard.Copy(states, StateNodePosition, anchor, _context.Controller, _context.CurrentStateMachine);
-            FrameNoteClipboard.Copy(frames, notes, anchor);
+            _clipboard.CopyElements(selected.States, selected.Frames, selected.Notes,
+                selected.StateMachines.Count, StateNodePosition);
         }
 
-        /// <summary>Copies one frame (from its context menu), dropping any copied states.</summary>
-        public void CopyFrame(GraphFrameData.Frame frame)
-        {
-            if (frame == null) return;
-            StateClipboard.Clear();
-            FrameNoteClipboard.Copy(new List<GraphFrameData.Frame> { frame }, null);
-        }
+        public void CopyFrame(GraphFrameData.Frame frame) => _clipboard.CopyFrame(frame);
 
-        /// <summary>Copies one note (from its context menu), dropping any copied states.</summary>
-        public void CopyNote(GraphFrameData.Note note)
-        {
-            if (note == null) return;
-            StateClipboard.Clear();
-            FrameNoteClipboard.Copy(null, new List<GraphFrameData.Note> { note });
-        }
+        public void CopyNote(GraphFrameData.Note note) => _clipboard.CopyNote(note);
 
-        /// <summary>
-        /// Pastes the copied frames and notes into the state machine currently on screen — the
-        /// clipboard holds no state machine reference, so this is what makes the copy land in
-        /// whichever layer the user has open.
-        /// </summary>
         public void PasteFramesAndNotes(Vector2 position)
         {
-            if (!FrameNoteClipboard.HasData || _context.Controller == null) return;
-            var sm = _context.CurrentStateMachine;
-            if (sm == null) return;
-
-            var created = FrameNoteClipboard.Paste(_frames.Ensure(), sm, position);
-            if (created.Count == 0) return;
+            var created = _clipboard.PasteFramesAndNotes(position);
+            if (created == null || created.Count == 0) return;
 
             RequestRebuild();
             _context.Select(created[0]);
@@ -1061,201 +1002,54 @@ namespace Yozolab.DaerD
 
         // ---- transition copy / paste -----------------------------------------
 
-        /// <summary>
-        /// Copies every (non-default) transition reachable from the given edges, recording each
-        /// transition's source kind / source node and its destination so the snapshots can later
-        /// be pasted onto a different state either as the new source or as the new destination.
-        /// </summary>
         public void CopyTransitionsFromEdges(IEnumerable<TransitionEdge> edges)
         {
-            var snapshots = new List<TransitionClipboard.Snapshot>();
+            var content = new List<(TransitionEnd, IList<AnimatorTransitionBase>)>();
             foreach (var edge in edges)
             {
                 if (edge == null || edge.IsDefaultEdge) continue;
-                var sourceNode = edge.output?.node as GraphNodeBase;
-                ResolveSourceContext(sourceNode,
-                    out var kind, out var sourceState, out var sourceSm);
-                foreach (var t in edge.Transitions)
-                {
-                    if (t == null) continue;
-                    snapshots.Add(TransitionClipboard.CaptureWithContext(t, kind, sourceState, sourceSm));
-                }
+                content.Add((EndOf(edge.output?.node as GraphNodeBase), edge.Transitions));
             }
-            if (snapshots.Count > 0)
-                TransitionClipboard.CopySnapshots(snapshots);
+            _clipboard.CopyTransitions(content);
         }
 
-        /// <summary>
-        /// Applies the first copied transition's settings (timing, conditions, mute/solo) onto every
-        /// transition of the given edges — the "paste onto" behaviour, driven from Ctrl+V.
-        /// </summary>
         public void PasteTransitionSettingsOntoEdges(IEnumerable<TransitionEdge> edges)
         {
-            if (!TransitionClipboard.HasData) return;
-            var snapshot = TransitionClipboard.Snapshots[0];
-            bool any = false;
-            using (new UndoScope("Paste Transition Settings"))
+            var transitions = new List<AnimatorTransitionBase>();
+            foreach (var edge in edges)
             {
-                foreach (var edge in edges)
-                {
-                    if (edge == null || edge.IsDefaultEdge) continue;
-                    foreach (var t in edge.Transitions)
-                        if (t != null) { TransitionClipboard.Apply(t, snapshot); any = true; }
-                }
+                if (edge == null || edge.IsDefaultEdge) continue;
+                transitions.AddRange(edge.Transitions);
             }
-            if (any) Rebuild();
+            if (_clipboard.PasteTransitionSettingsOnto(transitions)) Rebuild();
         }
 
-        /// <summary>
-        /// Adds a new transition alongside the existing ones on each given edge for every copied
-        /// snapshot, applying its settings — the "paste as new" behaviour, driven from Ctrl+Shift+V.
-        /// </summary>
         public void PasteTransitionsAsNewOnEdges(IEnumerable<TransitionEdge> edges)
         {
-            if (!TransitionClipboard.HasData) return;
-            var snapshots = TransitionClipboard.Snapshots;
-            AnimatorTransitionBase last = null;
-            using (new UndoScope("Paste Transition As New"))
+            var pairs = new List<(TransitionEnd, TransitionEnd)>();
+            foreach (var edge in edges)
             {
-                foreach (var edge in edges)
-                {
-                    if (edge == null || edge.IsDefaultEdge) continue;
-                    var source = edge.output?.node as GraphNodeBase;
-                    var destination = edge.input?.node as GraphNodeBase;
-                    if (source == null || destination == null) continue;
-                    foreach (var snap in snapshots)
-                    {
-                        var created = CreateTransition(source, destination);
-                        if (created != null) { TransitionClipboard.Apply(created, snap); last = created; }
-                    }
-                }
+                if (edge == null || edge.IsDefaultEdge) continue;
+                var source = edge.output?.node as GraphNodeBase;
+                var destination = edge.input?.node as GraphNodeBase;
+                if (source == null || destination == null) continue;
+                pairs.Add((EndOf(source), EndOf(destination)));
             }
+            if (!_clipboard.PasteTransitionsAsNewOn(pairs, out var last)) return;
             Rebuild();
             if (last != null) _context.Select(last);
         }
 
-        static void ResolveSourceContext(GraphNodeBase node,
-            out TransitionClipboard.SourceKind kind,
-            out AnimatorState state,
-            out AnimatorStateMachine stateMachine)
+        public void PasteTransitionsWithStateAsSource(AnimatorState state) =>
+            SelectPasted(_clipboard.PasteTransitionsWithStateAsSource(state));
+
+        public void PasteTransitionsWithStateAsDestination(AnimatorState state) =>
+            SelectPasted(_clipboard.PasteTransitionsWithStateAsDestination(state));
+
+        /// <summary>Shows the result of a transition paste; null means the paste never ran.</summary>
+        void SelectPasted(List<AnimatorTransitionBase> created)
         {
-            kind = TransitionClipboard.SourceKind.None;
-            state = null;
-            stateMachine = null;
-            switch (node)
-            {
-                case StateNode sn:
-                    kind = TransitionClipboard.SourceKind.State;
-                    state = sn.State;
-                    break;
-                case SubStateMachineNode mn:
-                    kind = TransitionClipboard.SourceKind.SubStateMachine;
-                    stateMachine = mn.StateMachine;
-                    break;
-                case SpecialNode spn when spn.Kind == SpecialNodeKind.AnyState:
-                    kind = TransitionClipboard.SourceKind.AnyState;
-                    break;
-                case SpecialNode spn when spn.Kind == SpecialNodeKind.Entry:
-                    kind = TransitionClipboard.SourceKind.Entry;
-                    break;
-            }
-        }
-
-        /// <summary>
-        /// Pastes the clipboard transitions onto <paramref name="state"/>, using it as the source
-        /// for every new transition. Each new transition's destination is the snapshot's recorded
-        /// destination (state, sub-state machine, or Exit). Snapshots whose destination cannot be
-        /// resolved inside the current state machine are skipped.
-        /// </summary>
-        public void PasteTransitionsWithStateAsSource(AnimatorState state)
-        {
-            if (state == null) return;
-            var sm = _context.CurrentStateMachine;
-            if (sm == null) return;
-            var snapshots = TransitionClipboard.Snapshots;
-            if (snapshots.Count == 0) return;
-
-            var created = new List<AnimatorTransitionBase>();
-            using (new UndoScope("Paste Transition (As Source)"))
-            {
-                Undo.RegisterCompleteObjectUndo(state, "Paste Transition");
-                foreach (var snap in snapshots)
-                {
-                    AnimatorTransitionBase t = null;
-                    if (snap.isExit)
-                    {
-                        t = state.AddExitTransition();
-                    }
-                    else if (snap.destinationState != null && sm.ContainsState(snap.destinationState))
-                    {
-                        if (snap.destinationState == state) continue;
-                        t = state.AddTransition(snap.destinationState);
-                    }
-                    else if (snap.destinationStateMachine != null && sm.ContainsStateMachine(snap.destinationStateMachine))
-                    {
-                        t = state.AddTransition(snap.destinationStateMachine);
-                    }
-                    if (t == null) continue;
-                    TransitionClipboard.Apply(t, snap);
-                    created.Add(t);
-                }
-                if (_context.Controller != null)
-                    EditorUtility.SetDirty(_context.Controller);
-            }
-
-            Rebuild();
-            if (created.Count > 0) _context.Select(created[0]);
-        }
-
-        /// <summary>
-        /// Pastes the clipboard transitions onto <paramref name="state"/>, using it as the
-        /// destination for every new transition. Each new transition is added at the snapshot's
-        /// original source (state, sub-state machine, AnyState, or Entry of the current state
-        /// machine). Snapshots whose source cannot be resolved are skipped.
-        /// </summary>
-        public void PasteTransitionsWithStateAsDestination(AnimatorState state)
-        {
-            if (state == null) return;
-            var sm = _context.CurrentStateMachine;
-            if (sm == null) return;
-            var snapshots = TransitionClipboard.Snapshots;
-            if (snapshots.Count == 0) return;
-
-            var created = new List<AnimatorTransitionBase>();
-            using (new UndoScope("Paste Transition (As Destination)"))
-            {
-                Undo.RegisterCompleteObjectUndo(sm, "Paste Transition");
-                foreach (var snap in snapshots)
-                {
-                    AnimatorTransitionBase t = null;
-                    switch (snap.sourceKind)
-                    {
-                        case TransitionClipboard.SourceKind.State:
-                            if (snap.sourceState == null || snap.sourceState == state) break;
-                            if (!sm.ContainsState(snap.sourceState)) break;
-                            Undo.RegisterCompleteObjectUndo(snap.sourceState, "Paste Transition");
-                            t = snap.sourceState.AddTransition(state);
-                            break;
-                        case TransitionClipboard.SourceKind.SubStateMachine:
-                            if (snap.sourceStateMachine == null) break;
-                            if (!sm.ContainsStateMachine(snap.sourceStateMachine)) break;
-                            t = sm.AddStateMachineTransition(snap.sourceStateMachine, state);
-                            break;
-                        case TransitionClipboard.SourceKind.AnyState:
-                            t = sm.AddAnyStateTransition(state);
-                            break;
-                        case TransitionClipboard.SourceKind.Entry:
-                            t = sm.AddEntryTransition(state);
-                            break;
-                    }
-                    if (t == null) continue;
-                    TransitionClipboard.Apply(t, snap);
-                    created.Add(t);
-                }
-                if (_context.Controller != null)
-                    EditorUtility.SetDirty(_context.Controller);
-            }
-
+            if (created == null) return;
             Rebuild();
             if (created.Count > 0) _context.Select(created[0]);
         }
