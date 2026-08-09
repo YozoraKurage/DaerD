@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using UnityEditor;
 using UnityEditor.Animations;
@@ -32,6 +33,22 @@ namespace Yozolab.DaerD
 
         /// <summary>Finds or creates the holder — every command that adds a frame or note goes through it.</summary>
         public GraphFrameData Ensure() => _data = GraphFrameData.GetOrCreate(_context.Controller);
+
+        /// <summary>
+        /// The shared body of every frame / note field edit: one undo step recorded on the holder,
+        /// the change, and the dirty flag. <paramref name="undoLabel"/> stays per-command so the
+        /// undo history keeps reading "Rename Frame", "Lock Frame", "Note Color" and so on.
+        /// Returns false when there is no holder to write to, so the caller can skip the visual
+        /// refresh that normally follows.
+        /// </summary>
+        bool Mutate(string undoLabel, Action apply)
+        {
+            if (_data == null) return false;
+            Undo.RecordObject(_data, undoLabel);
+            apply();
+            EditorUtility.SetDirty(_data);
+            return true;
+        }
 
         // ---- frames ------------------------------------------------------------
 
@@ -69,58 +86,41 @@ namespace Yozolab.DaerD
 
         public bool ToggleFrameMoveNodes(GraphFrameData.Frame frame)
         {
-            if (frame == null || _data == null) return false;
-            Undo.RecordObject(_data, "Edit Frame");
-            frame.moveNodesWithFrame = !frame.moveNodesWithFrame;
-            EditorUtility.SetDirty(_data);
-            return true;
+            if (frame == null) return false;
+            return Mutate("Edit Frame", () => frame.moveNodesWithFrame = !frame.moveNodesWithFrame);
         }
 
         public bool RenameFrame(GraphFrameData.Frame frame, string title)
         {
-            if (frame == null || _data == null || string.IsNullOrEmpty(title)) return false;
-            Undo.RecordObject(_data, "Rename Frame");
-            frame.title = title;
-            EditorUtility.SetDirty(_data);
-            return true;
+            if (frame == null || string.IsNullOrEmpty(title)) return false;
+            return Mutate("Rename Frame", () => frame.title = title);
         }
 
         public bool ToggleFrameLock(GraphFrameData.Frame frame)
         {
-            if (frame == null || _data == null) return false;
-            Undo.RecordObject(_data, frame.locked ? "Unlock Frame" : "Lock Frame");
-            frame.locked = !frame.locked;
-            EditorUtility.SetDirty(_data);
-            return true;
+            if (frame == null) return false;
+            // Read before the flip, so the step is named for what the user asked for.
+            return Mutate(frame.locked ? "Unlock Frame" : "Lock Frame", () => frame.locked = !frame.locked);
         }
 
         public bool SetFrameColor(GraphFrameData.Frame frame, Color color)
         {
-            if (frame == null || _data == null) return false;
-            Undo.RecordObject(_data, "Frame Color");
-            frame.color = color;
-            EditorUtility.SetDirty(_data);
-            return true;
+            if (frame == null) return false;
+            return Mutate("Frame Color", () => frame.color = color);
         }
 
         /// <summary>Writes the snug bounds the caller measured from the frame's contents.</summary>
         public bool FitFrame(GraphFrameData.Frame frame, Rect bounds)
         {
-            if (frame == null || _data == null) return false;
-            Undo.RecordObject(_data, "Fit Frame To Contents");
-            frame.bounds = bounds;
-            EditorUtility.SetDirty(_data);
-            return true;
+            if (frame == null) return false;
+            return Mutate("Fit Frame To Contents", () => frame.bounds = bounds);
         }
 
         /// <summary>Writes a frame's new box back to the asset after the resize handle changed it.</summary>
         public bool ResizeFrame(GraphFrameData.Frame frame, Rect bounds)
         {
-            if (frame == null || _data == null) return false;
-            Undo.RecordObject(_data, "Resize Frame");
-            frame.bounds = bounds;
-            EditorUtility.SetDirty(_data);
-            return true;
+            if (frame == null) return false;
+            return Mutate("Resize Frame", () => frame.bounds = bounds);
         }
 
         // ---- notes -------------------------------------------------------------
@@ -142,39 +142,27 @@ namespace Yozolab.DaerD
 
         public bool SetNoteText(GraphFrameData.Note note, string text)
         {
-            if (note == null || _data == null) return false;
-            Undo.RecordObject(_data, "Edit Note");
-            note.text = text ?? string.Empty;
-            EditorUtility.SetDirty(_data);
-            return true;
+            if (note == null) return false;
+            return Mutate("Edit Note", () => note.text = text ?? string.Empty);
         }
 
         public bool SetNoteColor(GraphFrameData.Note note, Color color)
         {
-            if (note == null || _data == null) return false;
-            Undo.RecordObject(_data, "Note Color");
-            note.color = color;
-            EditorUtility.SetDirty(_data);
-            return true;
+            if (note == null) return false;
+            return Mutate("Note Color", () => note.color = color);
         }
 
         public bool SetNoteFontSize(GraphFrameData.Note note, int fontSize)
         {
-            if (note == null || _data == null) return false;
-            Undo.RecordObject(_data, "Note Font Size");
-            note.fontSize = fontSize;
-            EditorUtility.SetDirty(_data);
-            return true;
+            if (note == null) return false;
+            return Mutate("Note Font Size", () => note.fontSize = fontSize);
         }
 
         /// <summary>Writes a note's new box back to the asset after the resize handle changed it.</summary>
         public bool ResizeNote(GraphFrameData.Note note, Rect bounds)
         {
-            if (note == null || _data == null) return false;
-            Undo.RecordObject(_data, "Resize Note");
-            note.bounds = bounds;
-            EditorUtility.SetDirty(_data);
-            return true;
+            if (note == null) return false;
+            return Mutate("Resize Note", () => note.bounds = bounds);
         }
     }
 }
