@@ -1109,6 +1109,16 @@ namespace Yozolab.DaerD.Tests
         }
 
         [Test]
+        public void KindLabels_HaveOneEntryPerKind()
+        {
+            // The labels are indexed by the enum — the wizard's popup writes the picked index
+            // straight back as a Kind, and a saved gadget stores its kind as an int — so a kind
+            // added without its label would silently mislabel everything after it.
+            Assert.AreEqual(System.Enum.GetValues(typeof(AapGadgets.Kind)).Length,
+                AapGadgets.KindLabels.Length);
+        }
+
+        [Test]
         public void SetNormalizedBlendValues_FlipsTheHiddenFlag()
         {
             var tree = new BlendTree { blendType = BlendTreeType.Direct };

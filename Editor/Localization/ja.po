@@ -181,6 +181,48 @@ msgstr "モーション未設定の子スロットにこのコントローラー
 msgid "Home"
 msgstr "ホーム"
 
+msgid "Open Home"
+msgstr "ホームを開く"
+
+msgid "Gadgets, sync setups and tools for this controller live in the Home screen."
+msgstr "ガジェット・巡回同期の設定・各種ツールはホーム画面にまとまっています。"
+
+msgid "The VRC Expressions Menu this controller belongs to, opened by the menu editor. Assigned explicitly — DaerD never guesses it from the scene."
+msgstr "このコントローラーが属する VRC Expressions Menu。メニューエディターが開く対象です。明示的に指定するもので、DaerD がシーンから推測することはありません。"
+
+msgid "DBT Gadgets"
+msgstr "DBT ガジェット"
+
+msgid "No gadgets yet."
+msgstr "ガジェットはまだありません。"
+
+msgid "Edit"
+msgstr "編集"
+
+msgid "+ Add Gadget"
+msgstr "+ ガジェットを追加"
+
+msgid "Add a Direct blend tree gadget that computes a float operation every frame."
+msgstr "Float 演算を毎フレーム計算する Direct Blend Tree ガジェットを追加します。"
+
+msgid "No async sync setups yet."
+msgstr "巡回同期の設定はまだありません。"
+
+msgid "{0} target(s), {1}s step"
+msgstr "対象 {0} 件 / ステップ間隔 {1} 秒"
+
+msgid "+ New Async Sync"
+msgstr "+ 巡回同期を新規作成"
+
+msgid "C# Recipes"
+msgstr "C# レシピ"
+
+msgid "No recipe-owned layers."
+msgstr "レシピが生成したレイヤーはありません。"
+
+msgid "Tools"
+msgstr "ツール"
+
 # ---- overview / analysis UI ----
 
 msgid "Controller"
