@@ -297,23 +297,17 @@ namespace Yozolab.DaerD
             _syncingSelection = false;
         }
 
-        public List<TransitionEdge> GetSelectedEdges()
-        {
-            var edges = new List<TransitionEdge>();
-            foreach (var s in selection)
-                if (s is TransitionEdge te)
-                    edges.Add(te);
-            return edges;
-        }
+        /// <summary>
+        /// The current selection sorted into model buckets — one pass over the selection instead of
+        /// a type switch per accessor. Accessors that need the graph elements themselves (rather
+        /// than the animator objects behind them), or that reject a node by its type regardless of
+        /// whether its model still exists, keep walking the raw selection instead.
+        /// </summary>
+        GraphSelectionSet SelectionSet() => new GraphSelectionSet(selection);
 
-        public List<AnimatorState> GetSelectedStates()
-        {
-            var states = new List<AnimatorState>();
-            foreach (var s in selection)
-                if (s is StateNode sn && sn.State != null)
-                    states.Add(sn.State);
-            return states;
-        }
+        public List<TransitionEdge> GetSelectedEdges() => SelectionSet().TransitionEdges;
+
+        public List<AnimatorState> GetSelectedStates() => SelectionSet().States;
 
         /// <summary>
         /// Every selected node that can take part in transitions: plain states, sub-state machines,
@@ -454,8 +448,8 @@ namespace Yozolab.DaerD
         List<TransitionEdge> GetSelectedTransitionEdges()
         {
             var result = new List<TransitionEdge>();
-            foreach (var s in selection)
-                if (s is TransitionEdge te && !te.IsDefaultEdge && te.Transitions.Count > 0)
+            foreach (var te in SelectionSet().TransitionEdges)
+                if (!te.IsDefaultEdge && te.Transitions.Count > 0)
                     result.Add(te);
             return result;
         }
