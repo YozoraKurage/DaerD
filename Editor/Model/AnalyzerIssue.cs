@@ -22,6 +22,7 @@ namespace Yozolab.DaerD
         DirectBlendTree,
         VrcParameters,
         ClipBindings,
+        AapDriver,
     }
 
     class AnalyzerIssue

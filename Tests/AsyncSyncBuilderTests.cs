@@ -389,6 +389,26 @@ namespace Yozolab.DaerD.Tests
             Assert.IsFalse(AsyncSyncBuilder.Warnings(worthwhile).Exists(w => w.Contains("saves nothing")));
         }
 
+        [Test]
+        public void Warnings_CallOutATargetAnimationWrites()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            Assert.IsFalse(AsyncSyncBuilder.Warnings(request).Exists(w => w.Contains("(AAP")));
+
+            // A clip animating the parameter on the Animator itself — a DBT gadget output.
+            var clip = new AnimationClip { name = "F AAP" };
+            AnimationUtility.SetEditorCurve(clip,
+                EditorCurveBinding.FloatCurve(string.Empty, typeof(Animator), "F"),
+                AnimationCurve.Constant(0f, 1f, 1f));
+            controller.layers[0].stateMachine.AddState("Write").motion = clip;
+
+            Assert.IsTrue(AsyncSyncBuilder.Warnings(request)
+                .Exists(w => w.Contains("(AAP") && w.Contains("'F'")));
+
+            Object.DestroyImmediate(controller);
+        }
+
         // ---- float channels ---------------------------------------------------
 
         [Test]

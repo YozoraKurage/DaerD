@@ -28,6 +28,7 @@ namespace Yozolab.DaerD
                 case IssueKind.DirectBlendTree: return L.Tr("Direct Blend Tree");
                 case IssueKind.VrcParameters: return L.Tr("VRC Parameters");
                 case IssueKind.ClipBindings: return L.Tr("Clip Bindings");
+                case IssueKind.AapDriver: return L.Tr("AAP / Driver");
             }
             return kind.ToString();
         }
@@ -95,6 +96,7 @@ namespace Yozolab.DaerD
             AddLayerIssues(controller, issues);
             AddMissingBehaviourIssues(controller, issues);
             AddDirectBlendTreeIssues(controller, issues);
+            AddAapDriverIssues(controller, issues);
 
             // Parameter-store checks only run against the store the user explicitly
             // associated with this controller (never a scene guess — DaerD is also used on
@@ -587,6 +589,90 @@ namespace Yozolab.DaerD
                     }
                 }
             }
+        }
+
+        /// <summary>
+        /// Parameter Drivers that touch a parameter animation writes (an AAP — see
+        /// <see cref="AapWriteScan"/>). A driver lives outside the animation system: it
+        /// cannot read the animated value, and anything it writes is overwritten by the
+        /// blend tree on the same frame. Both directions are silent failures in game,
+        /// which is exactly what an analyzer is for.
+        /// </summary>
+        static void AddAapDriverIssues(AnimatorController controller, List<AnalyzerIssue> issues)
+        {
+            var written = AapWriteScan.CollectWrittenParameters(controller);
+            if (written.Count == 0) return;
+
+            // Collected per parameter and direction rather than per driver: one async-sync
+            // layer holds a structurally identical driver on every send state, and a row
+            // each would bury the rest of the report under the same sentence.
+            var reads = new Dictionary<string, Hit>();
+            var writes = new Dictionary<string, Hit>();
+            foreach (var state in controller.AllStates())
+                foreach (var behaviour in state.behaviours)
+                    TallyAapDriver(behaviour, state, written, reads, writes);
+            foreach (var sm in controller.AllStateMachines())
+                foreach (var behaviour in sm.behaviours)
+                    TallyAapDriver(behaviour, sm, written, reads, writes);
+
+            foreach (var name in SortedKeys(reads))
+                issues.Add(new AnalyzerIssue
+                {
+                    severity = IssueSeverity.Warning,
+                    kind = IssueKind.AapDriver,
+                    message = L.Tr(
+                        "Animation writes '{0}' (AAP), and {1} Parameter Driver entr(ies) copy from it. A driver can't read an animated value — the copy carries the animator's own, usually the default.",
+                        name, reads[name].count),
+                    context = reads[name].context,
+                });
+            foreach (var name in SortedKeys(writes))
+                issues.Add(new AnalyzerIssue
+                {
+                    severity = IssueSeverity.Warning,
+                    kind = IssueKind.AapDriver,
+                    message = L.Tr(
+                        "Animation writes '{0}' (AAP), and {1} Parameter Driver entr(ies) write it too. The blend tree overwrites the driver every frame, so the driver's value never sticks.",
+                        name, writes[name].count),
+                    context = writes[name].context,
+                });
+        }
+
+        /// <summary>How many driver entries hit one parameter, and the first place to jump to.</summary>
+        class Hit
+        {
+            public int count;
+            public Object context;
+        }
+
+        static void TallyAapDriver(StateMachineBehaviour behaviour, Object owner,
+            HashSet<string> written, Dictionary<string, Hit> reads, Dictionary<string, Hit> writes)
+        {
+            if (!VrcParameterDriver.Is(behaviour)) return;
+            foreach (var entry in VrcParameterDriver.ReadSpec(behaviour).entries)
+            {
+                // `source` only means something on a Copy entry (kind 3); the other kinds
+                // may carry a stale clone value there.
+                if (entry.kind == 3 && written.Contains(entry.source ?? string.Empty))
+                    Count(reads, entry.source, owner);
+                if (written.Contains(entry.name ?? string.Empty))
+                    Count(writes, entry.name, owner);
+            }
+        }
+
+        static void Count(Dictionary<string, Hit> into, string name, Object context)
+        {
+            if (!into.TryGetValue(name, out var hit))
+                into[name] = hit = new Hit { context = context };
+            hit.count++;
+        }
+
+        /// <summary>Report order must not depend on hash iteration order — the analyzer list
+        /// is compared between runs by eye.</summary>
+        static List<string> SortedKeys(Dictionary<string, Hit> hits)
+        {
+            var names = new List<string>(hits.Keys);
+            names.Sort(System.StringComparer.Ordinal);
+            return names;
         }
 
         /// <summary>True when the motion tree contains a Direct blend tree at any depth.</summary>

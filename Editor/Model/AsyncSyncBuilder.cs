@@ -381,6 +381,18 @@ namespace Yozolab.DaerD
                     "Puppet controls drive {0}. A puppet drag streams continuously, so multiplexing it makes remotes see the drag one step per pass — those are better left synced directly.",
                     string.Join(", ", puppeted)));
 
+            // The send ring copies each target into its channel with a Parameter Driver, and a
+            // driver cannot read a value that animation writes: an AAP target would send the
+            // animator's own field (usually the default) rather than what the tree computed.
+            var animated = new List<string>();
+            var written = AapWriteScan.CollectWrittenParameters(r.controller);
+            foreach (var name in r.targets)
+                if (written.Contains(name)) animated.Add("'" + name + "'");
+            if (animated.Count > 0)
+                warnings.Add(L.Tr(
+                    "Animation writes {0} (AAP — a DBT gadget output or a hand-made AAP clip). The send cycle copies targets with a Parameter Driver, which can't read an animated value, so those never reach remotes.",
+                    string.Join(", ", animated)));
+
             if (r.assignEmptyClip)
             {
                 var clip = r.emptyClip != null ? r.emptyClip : GraphFrameData.GetEmptyClip(r.controller);

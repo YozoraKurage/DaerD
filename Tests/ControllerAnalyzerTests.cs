@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using NUnit.Framework;
+using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
 
@@ -405,6 +406,70 @@ namespace Yozolab.DaerD.Tests
             p.AddTransition(a);         // ...and P returns to the main loop
 
             Assert.AreEqual(0, Terminal(controller).Count);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        // ---- AAP vs Parameter Driver ------------------------------------------
+
+        static List<AnalyzerIssue> AapDriverIssues(AnimatorController controller)
+        {
+            var issues = ControllerAnalyzer.Analyze(controller);
+            return issues.FindAll(i => i.kind == IssueKind.AapDriver);
+        }
+
+        [Test]
+        public void DriverTouchingAnAnimatedParameter_IsFlaggedOncePerDirection()
+        {
+            // The driver is a VRChat SDK behaviour; without it there is nothing to read.
+            if (!VrcParameterDriver.SdkAvailable)
+                Assert.Ignore("The VRChat SDK is not present in this project.");
+
+            var controller = NewController(out var sm);
+            controller.AddParameter("Aap", AnimatorControllerParameterType.Float);
+            controller.AddParameter("Plain", AnimatorControllerParameterType.Float);
+
+            var clip = new AnimationClip { name = "Aap" };
+            AnimationUtility.SetEditorCurve(clip,
+                EditorCurveBinding.FloatCurve(string.Empty, typeof(Animator), "Aap"),
+                AnimationCurve.Constant(0f, 1f, 1f));
+            sm.AddState("Write").motion = clip;
+
+            // Two states driving the same parameter the same way collapse into one issue —
+            // an async-sync layer holds dozens of these.
+            foreach (var name in new[] { "A", "B" })
+            {
+                var driver = VrcParameterDriver.AddTo(sm.AddState(name));
+                VrcParameterDriver.AddCopyEntry(driver, "Aap", "Plain");   // reads the AAP
+                VrcParameterDriver.AddSetEntry(driver, "Aap", 1f);         // writes over it
+            }
+
+            var issues = AapDriverIssues(controller);
+
+            Assert.AreEqual(2, issues.Count, "one for the reads, one for the writes");
+            Assert.IsTrue(issues.Exists(i => i.message.Contains("copy from it")));
+            Assert.IsTrue(issues.Exists(i => i.message.Contains("write it too")));
+            foreach (var issue in issues)
+            {
+                StringAssert.Contains("'Aap'", issue.message);
+                StringAssert.Contains("2 Parameter Driver", issue.message);
+            }
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void DriverOnAPlainParameter_IsNotFlagged()
+        {
+            if (!VrcParameterDriver.SdkAvailable)
+                Assert.Ignore("The VRChat SDK is not present in this project.");
+
+            var controller = NewController(out var sm);
+            controller.AddParameter("Plain", AnimatorControllerParameterType.Float);
+            var driver = VrcParameterDriver.AddTo(sm.AddState("Drive"));
+            VrcParameterDriver.AddSetEntry(driver, "Plain", 1f);
+
+            Assert.AreEqual(0, AapDriverIssues(controller).Count);
 
             Object.DestroyImmediate(controller);
         }

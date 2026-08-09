@@ -1412,6 +1412,15 @@ msgstr "Transition をコピー"
 msgid "Clip Bindings"
 msgstr "クリップバインディング"
 
+msgid "AAP / Driver"
+msgstr "AAP / Driver"
+
+msgid "Animation writes '{0}' (AAP), and {1} Parameter Driver entr(ies) copy from it. A driver can't read an animated value — the copy carries the animator's own, usually the default."
+msgstr "'{0}' はアニメーションが書き込むパラメーター（AAP）ですが、Parameter Driver の {1} 個のエントリがこれをコピー元にしています。Driver はアニメーションの値を読めないため、コピーされるのは Animator 自身が保持する値（多くの場合は初期値）です。"
+
+msgid "Animation writes '{0}' (AAP), and {1} Parameter Driver entr(ies) write it too. The blend tree overwrites the driver every frame, so the driver's value never sticks."
+msgstr "'{0}' はアニメーションが書き込むパラメーター（AAP）ですが、Parameter Driver の {1} 個のエントリも書き込んでいます。ブレンドツリーが毎フレーム上書きするため、Driver の書き込みは残りません。"
+
 msgid "Clip '{0}' has {1} binding(s) whose path no longer exists under '{2}'."
 msgstr "クリップ '{0}' に、'{2}' 配下に存在しないパスのバインディングが {1} 件あります。"
 
@@ -1880,6 +1889,9 @@ msgstr "リモート側の Float は -1..1 を 8 bit の固定小数点で扱い
 
 msgid "Puppet controls drive {0}. A puppet drag streams continuously, so multiplexing it makes remotes see the drag one step per pass — those are better left synced directly."
 msgstr "{0} は Expressions Menu のパペット操作で駆動されています。パペットのドラッグは連続的に送信されるため、多重化するとリモート側では 1 周につき 1 段階ずつしか動きません。直接同期のままにするのをおすすめします。"
+
+msgid "Animation writes {0} (AAP — a DBT gadget output or a hand-made AAP clip). The send cycle copies targets with a Parameter Driver, which can't read an animated value, so those never reach remotes."
+msgstr "{0} はアニメーションが書き込むパラメーター（AAP — DBT ガジェットの出力か手書きの AAP クリップ）です。送信サイクルは Parameter Driver のコピーでターゲットを写しますが、Driver はアニメーションの値を読めないため、これらはリモートに届きません。"
 
 # ---- async sync (float channels / priority) ----
 
