@@ -507,9 +507,12 @@ namespace Yozolab.DaerD
             bool inBlendTree = _context != null && _context.IsViewingBlendTree;
 
             // Only the layer ROOT swaps to the settings panel — a generated layer has no sub
-            // machines, so a drilled-down path means the user is somewhere hand-made.
+            // machines, so a drilled-down path means the user is somewhere hand-made. The path
+            // always carries the layer's root machine at index 0, so "not drilled" is one entry
+            // and not none: at zero the layer has no state machine at all, and there would be
+            // nothing to match a saved setup against anyway.
             var syncConfig = !inBlendTree && _context != null
-                && _context.StateMachinePath.Count == 0
+                && _context.StateMachinePath.Count <= 1
                 ? AsyncSyncPanel.ConfigOf(_context.Controller, _context.CurrentLayer?.stateMachine)
                 : null;
             bool showSyncPanel = syncConfig != null && !_showSyncGraph;
