@@ -13,6 +13,32 @@ namespace Yozolab.DaerD
         /// <summary>The underlying animator object (AnimatorState, AnimatorStateMachine, ...).</summary>
         public abstract object Model { get; }
 
+        /// <summary>
+        /// The transition end a graph node stands for — the model behind the node, as the
+        /// transition commands see it. A null or unrecognised node becomes
+        /// <see cref="TransitionEnd.None"/>, which nothing may connect to. This is the single
+        /// node-to-end conversion; GraphSync and the drag connect rule both go through it.
+        /// </summary>
+        public static TransitionEnd EndOf(GraphNodeBase node)
+        {
+            switch (node)
+            {
+                case StateNode sn:
+                    return TransitionEnd.Of(sn.State);
+                case SubStateMachineNode mn:
+                    return TransitionEnd.Of(mn.StateMachine);
+                case SpecialNode spn:
+                    switch (spn.Kind)
+                    {
+                        case SpecialNodeKind.Entry: return TransitionEnd.Entry;
+                        case SpecialNodeKind.Exit: return TransitionEnd.Exit;
+                        default: return TransitionEnd.AnyState;
+                    }
+                default:
+                    return TransitionEnd.None;
+            }
+        }
+
         // One shared listener for every port. It reproduces Unity's stock port-to-port drop
         // behaviour and additionally completes a drop that lands anywhere on a destination
         // node's body — not only on its small input port. See NodeBodyEdgeConnectorListener.
