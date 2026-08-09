@@ -39,6 +39,11 @@ namespace Yozolab.DaerD
         int _layerChoice;
         string _newLayerName = "DBT";
         readonly List<int> _layerCandidates = new List<int>();
+        // The gadgets already saved with this controller. 0 = create a new one; 1.. edits and
+        // regenerates _gadgets[index - 1] in place.
+        readonly List<GraphFrameData.AapGadgetConfig> _gadgets =
+            new List<GraphFrameData.AapGadgetConfig>();
+        int _gadgetChoice;
 
         public static void Open(AnimatorController controller, Action onApplied)
         {
@@ -72,6 +77,10 @@ namespace Yozolab.DaerD
                         _layerCandidates.Add(i);
             }
             _layerChoice = _layerCandidates.Count > 0 ? 1 : 0;
+
+            _gadgets.Clear();
+            _gadgets.AddRange(GraphFrameData.GetGadgets(_controller));
+            _gadgetChoice = 0;
         }
 
         string ParamAt(int index) =>
@@ -230,6 +239,8 @@ namespace Yozolab.DaerD
                 L.Tr("Adds a Direct blend tree gadget that computes the picked operation every frame. The generated clips and trees are stored as sub-assets of this controller."),
                 MessageType.Info);
 
+            DrawGadgetChoice();
+
             EditorGUI.BeginChangeCheck();
             _kind = (AapGadgets.Kind)EditorGUILayout.Popup(L.Tr("Operation"), (int)_kind, KindLabels);
             // Atan2's inputs are a vector, not an A/B pair, and naming them after the axes is
@@ -313,9 +324,104 @@ namespace Yozolab.DaerD
             GUILayout.FlexibleSpace();
             if (GUILayout.Button(L.Tr("Cancel"), GUILayout.Width(100)))
                 Close();
-            if (GUILayout.Button(L.Tr("Create"), GUILayout.Width(100)))
+            if (_gadgetChoice > 0 && GUILayout.Button(L.Tr("Delete"), GUILayout.Width(100)))
+                TryDelete();
+            if (GUILayout.Button(_gadgetChoice > 0 ? L.Tr("Regenerate") : L.Tr("Create"),
+                GUILayout.Width(100)))
                 TryApply();
             EditorGUILayout.EndHorizontal();
+        }
+
+        /// <summary>Saved gadgets double as the form's subject: "create a new one", or load one
+        /// of them back and rebuild it in place with the (editable) inputs it was made from.
+        /// Same shape as the async-sync wizard's layer choice, for the same reason — a
+        /// generated thing nobody can read back needs its inputs kept somewhere.</summary>
+        void DrawGadgetChoice()
+        {
+            if (_gadgets.Count == 0) return;
+
+            var labels = new string[_gadgets.Count + 1];
+            labels[0] = L.Tr("Create new gadget");
+            for (int i = 0; i < _gadgets.Count; i++)
+                labels[i + 1] = GadgetLabel(_gadgets[i]);
+            int picked = EditorGUILayout.Popup(L.Tr("Gadget"),
+                Mathf.Clamp(_gadgetChoice, 0, labels.Length - 1), labels);
+            if (picked != _gadgetChoice)
+            {
+                _gadgetChoice = picked;
+                if (picked > 0) LoadConfig(_gadgets[picked - 1]);
+            }
+            if (_gadgetChoice == 0) return;
+
+            EditorGUILayout.HelpBox(
+                L.Tr("Applying regenerates this gadget in place (its trees are rebuilt)."),
+                MessageType.None);
+            string missing = MissingInput(_gadgets[_gadgetChoice - 1]);
+            if (missing != null)
+                EditorGUILayout.HelpBox(
+                    L.Tr("Parameter '{0}' referenced by this gadget no longer exists.", missing),
+                    MessageType.Warning);
+        }
+
+        /// <summary>"Hue*Gain (Multiply)": the output names the gadget, the operation says what
+        /// it does. <see cref="KindLabels"/> is indexed by the enum the config stores as an int.
+        /// </summary>
+        static string GadgetLabel(GraphFrameData.AapGadgetConfig config)
+        {
+            string kind = config.kind >= 0 && config.kind < KindLabels.Length
+                ? KindLabels[config.kind] : "?";
+            return config.output + " (" + kind + ")";
+        }
+
+        /// <summary>An input this saved gadget names that the controller no longer declares, or
+        /// null. Renaming or deleting a parameter leaves the record pointing at nothing, and the
+        /// form then shows the first parameter instead — which is rarely what was meant, so say
+        /// so. Applying is refused by Validate either way.</summary>
+        string MissingInput(GraphFrameData.AapGadgetConfig config)
+        {
+            var kind = (AapGadgets.Kind)config.kind;
+            if (AapGadgets.NeedsInput(kind) && Missing(config.inputA)) return config.inputA;
+            if (AapGadgets.IsBinary(kind) && Missing(config.inputB)) return config.inputB;
+            return null;
+        }
+
+        bool Missing(string name) =>
+            !string.IsNullOrEmpty(name) && Array.IndexOf(_floatParams, name) < 0;
+
+        /// <summary>Fills the whole form from a saved gadget, so Regenerate starts from what
+        /// was built rather than from the defaults.</summary>
+        void LoadConfig(GraphFrameData.AapGadgetConfig config)
+        {
+            var request = AapGadgets.ToRequest(config, _controller);
+            _kind = request.kind;
+            _inputAIndex = IndexOfParam(request.inputA);
+            _inputBIndex = IndexOfParam(request.inputB);
+            _output = request.output;
+            _smoothing = request.smoothing;
+            // The two live in separate fields, so only the one this kind means is written.
+            if (_kind == AapGadgets.Kind.SmoothLinear) _stepSize = request.smoothingDefault;
+            else _smoothingDefault = request.smoothingDefault;
+            _rangeMin = request.rangeMin;
+            _rangeMax = request.rangeMax;
+            _inMin = request.inMin;
+            _inMax = request.inMax;
+            _threshold = request.threshold;
+            // Already a copy — editing the field can't rewrite the record behind it.
+            if (request.curve != null) _curve = request.curve;
+            _lutSamples = request.lutSamples;
+            _bufferFrames = request.bufferFrames;
+            _atan2Directions = request.atan2Directions;
+
+            int candidate = _layerCandidates.IndexOf(request.layerIndex);
+            _layerChoice = candidate >= 0 ? candidate + 1 : 0;
+        }
+
+        /// <summary>The parameter's place in the popup, or 0 when the controller no longer has
+        /// it — <see cref="MissingInput"/> is what tells the user about that.</summary>
+        int IndexOfParam(string name)
+        {
+            int index = string.IsNullOrEmpty(name) ? -1 : Array.IndexOf(_floatParams, name);
+            return index >= 0 ? index : 0;
         }
 
         void DrawCurveField()
@@ -377,6 +483,10 @@ namespace Yozolab.DaerD
                 layerIndex = _layerChoice > 0 && _layerChoice - 1 < _layerCandidates.Count
                     ? _layerCandidates[_layerChoice - 1] : -1,
                 newLayerName = _newLayerName != null ? _newLayerName.Trim() : string.Empty,
+                // Regenerating: the gadget on screen is swept before the new one is built, and
+                // its own output names don't count as taken while it is being replaced.
+                replaces = _gadgetChoice > 0 && _gadgetChoice <= _gadgets.Count
+                    ? _gadgets[_gadgetChoice - 1] : null,
             };
 
             var error = AapGadgets.Validate(request);
@@ -388,6 +498,25 @@ namespace Yozolab.DaerD
             AapGadgets.Apply(request);
             _onApplied?.Invoke();
             Close();
+        }
+
+        /// <summary>Deletes the selected gadget outright and stays open on "create new" — the
+        /// window is where the controller's gadgets are listed, so it is also where one is
+        /// taken off the list.</summary>
+        void TryDelete()
+        {
+            if (_gadgetChoice <= 0 || _gadgetChoice > _gadgets.Count) return;
+            var config = _gadgets[_gadgetChoice - 1];
+            if (!EditorUtility.DisplayDialog(L.Tr("DBT Gadget"),
+                L.Tr("Delete this gadget? Its trees, clips and parameters are removed."),
+                L.Tr("Delete"), L.Tr("Cancel")))
+                return;
+
+            AapGadgets.RemoveGadget(_controller, config);
+            // No build follows this one, so the sub-assets it freed are flushed here.
+            DbtBuilder.CommitSubAssets(_controller);
+            _onApplied?.Invoke();
+            RefreshChoices();
         }
     }
 }

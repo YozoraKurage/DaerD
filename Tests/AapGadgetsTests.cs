@@ -942,6 +942,172 @@ namespace Yozolab.DaerD.Tests
             });
         }
 
+        /// <summary>Trees and clips stored inside the .controller file. A gadget that is rebuilt
+        /// without its predecessor being swept strands the old ones there.</summary>
+        static int CountSubAssets(string path)
+        {
+            int count = 0;
+            foreach (var asset in AssetDatabase.LoadAllAssetsAtPath(path))
+                if (asset is BlendTree || asset is AnimationClip) count++;
+            return count;
+        }
+
+        /// <summary>Removing a gadget takes everything it owns — its child of the layer's root
+        /// tree, its parameters, its supporting layer — and nothing anybody else's.</summary>
+        [Test]
+        public void RemoveGadget_TakesOutOneGadget_AndLeavesTheSharedPiecesAlone()
+        {
+            WithSavedController(controller =>
+            {
+                controller.AddParameter("A", AnimatorControllerParameterType.Float);
+                controller.AddParameter("B", AnimatorControllerParameterType.Float);
+
+                Assert.IsTrue(AapGadgets.Apply(NewRequest(controller, AapGadgets.Kind.Multiply)));
+
+                var smooth = NewRequest(controller, AapGadgets.Kind.Smooth);
+                smooth.inputB = null;
+                smooth.output = "A/Smoothed";
+                smooth.smoothing = "A/Smoothing";
+                smooth.layerIndex = 1;
+                Assert.IsTrue(AapGadgets.Apply(smooth));
+
+                // The one kind that still brings a layer of its own.
+                var frameTime = NewRequest(controller, AapGadgets.Kind.FrameTime);
+                frameTime.inputA = null;
+                frameTime.inputB = null;
+                frameTime.output = "FrameTime";
+                frameTime.layerIndex = 1;
+                Assert.IsTrue(AapGadgets.Apply(frameTime));
+
+                var configs = GraphFrameData.GetGadgets(controller);
+                Assert.AreEqual(3, configs.Count);
+                Assert.AreEqual(3,
+                    ((BlendTree)controller.layers[1].stateMachine.states[0].state.motion).children.Length);
+                Assert.IsTrue(HasLayer(controller, "FrameTime Clock"));
+
+                AapGadgets.RemoveGadget(controller, configs[2]);
+                DbtBuilder.CommitSubAssets(controller);
+
+                var root = (BlendTree)controller.layers[1].stateMachine.states[0].state.motion;
+                Assert.AreEqual(2, root.children.Length, "one child fewer in the layer");
+                Assert.IsFalse(HasLayer(controller, "FrameTime Clock"),
+                    "and the layer it brought went with it");
+                foreach (var name in new[] { "FrameTime", "FrameTime/Clock", "FrameTime/Last" })
+                    Assert.IsNull(DbtBuilder.FindParameter(controller, name), name);
+
+                // Shared machinery lives outside any gadget's namespace, and survives.
+                Assert.IsNotNull(DbtBuilder.FindParameter(controller, "One"));
+                Assert.IsNotNull(DbtBuilder.FindParameter(controller, "A/Smoothing"));
+                // So do the other gadgets, whole.
+                Assert.IsNotNull(DbtBuilder.FindParameter(controller, "Out"));
+                Assert.IsNotNull(DbtBuilder.FindParameter(controller, "A/Smoothed"));
+                Assert.AreEqual(2, GraphFrameData.GetGadgets(controller).Count);
+            });
+        }
+
+        /// <summary>Regenerating replaces a gadget instead of joining it: one child in the
+        /// layer, one record, and no orphaned trees or clips left inside the .controller.</summary>
+        [Test]
+        public void Apply_WithReplaces_RebuildsInPlace_WithoutStrandingTheOldTrees()
+        {
+            WithSavedController(controller =>
+            {
+                controller.AddParameter("A", AnimatorControllerParameterType.Float);
+                controller.AddParameter("B", AnimatorControllerParameterType.Float);
+                Assert.IsTrue(AapGadgets.Apply(NewRequest(controller, AapGadgets.Kind.Multiply)));
+
+                string path = AssetDatabase.GetAssetPath(controller);
+                int before = CountSubAssets(path);
+
+                // What the wizard does: the saved config back as a request, marked as the one
+                // being replaced.
+                var config = GraphFrameData.GetGadgets(controller)[0];
+                var again = AapGadgets.ToRequest(config, controller);
+                again.replaces = config;
+                Assert.IsNull(AapGadgets.Validate(again),
+                    "a gadget's own output is not a collision with itself");
+                Assert.IsTrue(AapGadgets.Apply(again));
+
+                var root = (BlendTree)controller.layers[1].stateMachine.states[0].state.motion;
+                Assert.AreEqual(1, root.children.Length, "the layer holds one gadget, not two");
+                Assert.AreEqual(2, controller.layers.Length, "and one layer, not two");
+                var saved = GraphFrameData.GetGadgets(controller);
+                Assert.AreEqual(1, saved.Count);
+                Assert.AreSame(root.children[0].motion, saved[0].tree, "the record points at the new tree");
+                Assert.AreEqual(before, CountSubAssets(path), "the old trees and clips went with it");
+            });
+        }
+
+        /// <summary>Regenerating under a different output name has to take the old namespace
+        /// with it — otherwise every rename leaves a dead parameter behind.</summary>
+        [Test]
+        public void Apply_WithReplaces_SweepsTheOldOutputNamespace()
+        {
+            WithSavedController(controller =>
+            {
+                controller.AddParameter("A", AnimatorControllerParameterType.Float);
+                var request = NewRequest(controller, AapGadgets.Kind.Buffer);
+                request.inputB = null;
+                request.bufferFrames = 2;
+                Assert.IsTrue(AapGadgets.Apply(request));
+                Assert.IsNotNull(DbtBuilder.FindParameter(controller, "Out/1"), "the buffer's stage");
+
+                var config = GraphFrameData.GetGadgets(controller)[0];
+                var renamed = AapGadgets.ToRequest(config, controller);
+                renamed.replaces = config;
+                renamed.output = "A/Late";
+                Assert.IsTrue(AapGadgets.Apply(renamed));
+
+                Assert.IsNull(DbtBuilder.FindParameter(controller, "Out"));
+                Assert.IsNull(DbtBuilder.FindParameter(controller, "Out/1"));
+                Assert.IsNotNull(DbtBuilder.FindParameter(controller, "A/Late"));
+                Assert.IsNotNull(DbtBuilder.FindParameter(controller, "A/Late/1"));
+                var saved = GraphFrameData.GetGadgets(controller);
+                Assert.AreEqual(1, saved.Count, "the record is filed under the new name only");
+                Assert.AreEqual("A/Late", saved[0].output);
+            });
+        }
+
+        /// <summary>The regeneration exemption is exactly the replaced gadget's own namespace:
+        /// wide enough for its intermediates, narrow enough that everything else still collides.
+        /// Smoothing is validated by another builder and needs the same exemption there.</summary>
+        [Test]
+        public void Validate_WithReplaces_ReclaimsTheOldNamespace_ButNotOtherNames()
+        {
+            var controller = NewController("A", "B");
+            controller.AddParameter("Taken", AnimatorControllerParameterType.Float);
+
+            var request = NewRequest(controller, AapGadgets.Kind.Buffer);
+            request.inputB = null;
+            request.bufferFrames = 2;
+            Assert.IsTrue(AapGadgets.Apply(request));
+
+            var again = NewRequest(controller, AapGadgets.Kind.Buffer);
+            again.inputB = null;
+            again.bufferFrames = 2;
+            again.layerIndex = 1;
+            Assert.IsNotNull(AapGadgets.Validate(again), "with nothing to replace, 'Out' is taken");
+
+            again.replaces = new GraphFrameData.AapGadgetConfig { output = "Out" };
+            Assert.IsNull(AapGadgets.Validate(again),
+                "the stage parameter under the old output is reclaimed too");
+
+            again.output = "Taken";
+            Assert.IsNotNull(AapGadgets.Validate(again), "a name it never owned is still taken");
+
+            var smooth = NewRequest(controller, AapGadgets.Kind.Smooth);
+            smooth.inputB = null;
+            smooth.output = "A/Smoothed";
+            smooth.smoothing = "A/Smoothing";
+            smooth.layerIndex = 1;
+            Assert.IsTrue(AapGadgets.Apply(smooth));
+            Assert.IsNotNull(AapGadgets.Validate(smooth), "'A/Smoothed' exists now");
+            smooth.replaces = new GraphFrameData.AapGadgetConfig { output = "A/Smoothed" };
+            Assert.IsNull(AapGadgets.Validate(smooth), "…except for the gadget that wrote it");
+
+            Object.DestroyImmediate(controller);
+        }
+
         [Test]
         public void SetNormalizedBlendValues_FlipsTheHiddenFlag()
         {

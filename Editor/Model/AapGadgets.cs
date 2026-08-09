@@ -121,6 +121,11 @@ namespace Yozolab.DaerD
             /// <summary>Existing DBT (or empty) layer to add the gadget to, or -1 to create one.</summary>
             public int layerIndex = -1;
             public string newLayerName = "DBT";
+            /// <summary>The saved gadget this request regenerates, or null for a new one. It
+            /// buys the request two things: the names that gadget owns don't read as taken
+            /// during validation, and everything it built is swept just before this one is —
+            /// so regenerating lands in the same place instead of beside itself.</summary>
+            public GraphFrameData.AapGadgetConfig replaces;
         }
 
         /// <summary>
@@ -200,7 +205,7 @@ namespace Yozolab.DaerD
             if (string.IsNullOrEmpty(r.output) || r.output == r.inputA || r.output == r.inputB)
                 return L.Tr("The output parameter needs a name different from the inputs.");
             foreach (var name in OutputParameters(r))
-                if (DbtBuilder.FindParameter(controller, name) != null)
+                if (DbtBuilder.FindParameter(controller, name) != null && !Reclaims(r, name))
                     return L.Tr("A parameter named '{0}' already exists.", name);
 
             if (UsesSmoothing(r.kind))
@@ -237,8 +242,15 @@ namespace Yozolab.DaerD
             return AapSmoothing.ValidateLayerChoice(controller, r.layerIndex, r.newLayerName);
         }
 
+        /// <summary>Whether the name is one the gadget being regenerated already owns. Those
+        /// parameters exist because the previous run of this very request created them, and
+        /// they are swept before the new ones are built — reading them as a collision would
+        /// make a gadget impossible to regenerate under its own name.</summary>
+        static bool Reclaims(Request r, string name) => r.replaces != null && r.replaces.Owns(name);
+
         static AapSmoothing.Request ToSmoothingRequest(Request r) => new AapSmoothing.Request
         {
+            replaces = r.replaces,
             controller = r.controller,
             source = r.inputA,
             output = r.output,
@@ -265,6 +277,17 @@ namespace Yozolab.DaerD
             {
                 Undo.RegisterCompleteObjectUndo(controller, "DBT Gadget");
 
+                // Every kind is a blend tree child; the one builder that still wants a layer of
+                // its own (FrameTime's clock) adds it on the way. The host is resolved before
+                // the sweep below, which may drop layers and shift every index after them.
+                string one = DbtBuilder.EnsureConstantOneParameter(controller);
+                var root = DbtBuilder.EnsureDirectBlendTreeLayer(controller, r.layerIndex, r.newLayerName);
+                // A regenerate clears the old gadget out here: after Validate (so a refused
+                // request leaves it standing) and before anything is created, because the sweep
+                // takes the whole output namespace with it — including, when the name is
+                // unchanged, the parameters this run is about to add.
+                if (r.replaces != null) RemoveGadget(controller, r.replaces);
+
                 foreach (var name in OutputParameters(r))
                     DbtBuilder.EnsureFloatParameter(controller, name, 0f);
                 // A step size below zero would drive the output away from the input; the
@@ -272,10 +295,6 @@ namespace Yozolab.DaerD
                 if (r.kind == Kind.SmoothLinear)
                     DbtBuilder.EnsureFloatParameter(controller, r.smoothing, Mathf.Max(0f, r.smoothingDefault));
 
-                // Every kind is a blend tree child; the one builder that still wants a layer of
-                // its own (FrameTime's clock) adds it on the way.
-                string one = DbtBuilder.EnsureConstantOneParameter(controller);
-                var root = DbtBuilder.EnsureDirectBlendTreeLayer(controller, r.layerIndex, r.newLayerName);
                 var child = Build(r, controller, one);
                 DbtBuilder.AddDirectChild(root, child, one);
                 SaveConfig(r, DbtBuilder.HostingMachine(controller, root), child);
@@ -292,16 +311,133 @@ namespace Yozolab.DaerD
         static bool ApplySmooth(Request r, bool commitSubAssets)
         {
             var smoothing = ToSmoothingRequest(r);
+            // Validated up front rather than left to AapSmoothing.Apply's own check: the sweep
+            // must not run for a request that was going to be refused anyway.
+            if (AapSmoothing.Validate(smoothing) != null) return false;
+
             BlendTree child = null;
             bool applied;
             using (new UndoScope("DBT Gadget"))
             {
+                if (r.replaces != null)
+                {
+                    // The target layer is an index, and the sweep can drop layers before it.
+                    // Hold it by its machine over the removal and look the index up again.
+                    var target = LayerMachineAt(r.controller, smoothing.layerIndex);
+                    RemoveGadget(r.controller, r.replaces);
+                    if (target != null) smoothing.layerIndex = LayerIndexOf(r.controller, target);
+                }
                 applied = AapSmoothing.Apply(smoothing, commitSubAssets: false, out child);
                 if (applied)
                     SaveConfig(r, DbtBuilder.HostingMachine(r.controller, child), child);
             }
             if (applied && commitSubAssets) DbtBuilder.CommitSubAssets(r.controller);
             return applied;
+        }
+
+        // ---- removing a gadget --------------------------------------------------
+
+        /// <summary>
+        /// Takes one saved gadget back out: the child it hung off the layer's root tree, the
+        /// sub-assets under that child, the parameters in its output namespace, the layers it
+        /// brought with it, and the record itself.
+        ///
+        /// Sub-assets are left unflushed on purpose — <see cref="Apply"/> calls this on the way
+        /// to building the replacement and pays for one reimport, not two. A caller that only
+        /// deletes finishes with <see cref="DbtBuilder.CommitSubAssets"/>.
+        /// </summary>
+        public static void RemoveGadget(AnimatorController controller,
+            GraphFrameData.AapGadgetConfig config)
+        {
+            if (controller == null || config == null) return;
+            Undo.RegisterCompleteObjectUndo(controller, "Remove DBT Gadget");
+
+            var root = HostRootTree(controller, config.layer);
+            if (root != null && config.tree != null)
+            {
+                var kept = new List<ChildMotion>();
+                foreach (var child in root.children)
+                    if (child.motion != config.tree) kept.Add(child);
+                if (kept.Count != root.children.Length)
+                {
+                    Undo.RegisterCompleteObjectUndo(root, "Remove DBT Gadget");
+                    root.children = kept.ToArray();
+                    EditorUtility.SetDirty(root);
+                }
+            }
+            DestroySubtree(config.tree);
+            RemoveOwnedParameters(controller, config);
+            RemoveSupportingLayers(controller, ToRequest(config, controller));
+            GraphFrameData.RemoveGadget(controller, config.output);
+            EditorUtility.SetDirty(controller);
+        }
+
+        /// <summary>The root Direct tree of the layer a saved gadget lives in, or null when the
+        /// layer (or its tree) is already gone — the gadget's own pieces are then unreachable
+        /// and only its parameters and record are left to clean up.</summary>
+        static BlendTree HostRootTree(AnimatorController controller, AnimatorStateMachine machine)
+        {
+            if (machine == null) return null;
+            foreach (var layer in controller.layers)
+            {
+                if (layer.stateMachine != machine) continue;
+                foreach (var child in machine.states)
+                    if (child.state != null && child.state.motion is BlendTree root
+                        && root.blendType == BlendTreeType.Direct)
+                        return root;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Destroys the trees and clips hanging off one gadget's child. Gathered into a set
+        /// first because a gadget shares assets with itself: <see cref="AddRanged"/>'s two range
+        /// clips hang under both of its 1D trees, and the lookup kinds mint one clip per
+        /// distinct value and hand it to every sample that lands on it.
+        ///
+        /// Across gadgets nothing is shared — <see cref="DbtBuilder.ParameterClip"/> makes a new
+        /// clip on every call and no builder passes a tree to a second gadget — so the whole
+        /// sub-tree is this gadget's to delete.
+        /// </summary>
+        static void DestroySubtree(Motion tree)
+        {
+            if (tree == null) return;
+            var doomed = new HashSet<Object>();
+            void Collect(Motion motion)
+            {
+                if (motion == null || !doomed.Add(motion)) return;
+                if (motion is BlendTree branch)
+                    foreach (var child in branch.children)
+                        Collect(child.motion);
+            }
+            Collect(tree);
+            foreach (var asset in doomed)
+                Undo.DestroyObjectImmediate(asset);
+        }
+
+        /// <summary>Drops the parameters this gadget owns: the output and the namespace under
+        /// it. The smoothing amount and the constant One sit outside that namespace on purpose —
+        /// they are shared with the other gadgets and have to survive.</summary>
+        static void RemoveOwnedParameters(AnimatorController controller,
+            GraphFrameData.AapGadgetConfig config)
+        {
+            var kept = new List<AnimatorControllerParameter>();
+            foreach (var parameter in controller.parameters)
+                if (!config.Owns(parameter.name)) kept.Add(parameter);
+            if (kept.Count != controller.parameters.Length)
+                controller.parameters = kept.ToArray();
+        }
+
+        /// <summary>Removes the layers this gadget claims by name — FrameTime's clock, and the
+        /// layers older versions of the other kinds left behind. Removing one that isn't there
+        /// is a no-op, which is what makes listing the legacy names free.</summary>
+        static void RemoveSupportingLayers(AnimatorController controller, Request r)
+        {
+            var claimed = new List<string>(SupportingLayerNames(r));
+            if (claimed.Count == 0) return;
+            for (int i = controller.layers.Length - 1; i >= 0; i--)
+                if (claimed.Contains(controller.layers[i].name))
+                    controller.RemoveLayer(i);
         }
 
         // ---- saved configuration -----------------------------------------------
@@ -382,6 +518,10 @@ namespace Yozolab.DaerD
         /// wrap modes decide nothing, since the LUT samples strictly inside the key span.</summary>
         static AnimationCurve CopyCurve(AnimationCurve curve) =>
             curve == null ? null : new AnimationCurve(curve.keys);
+
+        static AnimatorStateMachine LayerMachineAt(AnimatorController controller, int index) =>
+            controller != null && index >= 0 && index < controller.layers.Length
+                ? controller.layers[index].stateMachine : null;
 
         static int LayerIndexOf(AnimatorController controller, AnimatorStateMachine machine)
         {

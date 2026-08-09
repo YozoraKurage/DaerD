@@ -425,6 +425,24 @@ msgstr "DBT ガジェット"
 msgid "Adds a Direct blend tree gadget that computes the picked operation every frame. The generated clips and trees are stored as sub-assets of this controller."
 msgstr "選択した演算を毎フレーム計算する Direct Blend Tree の仕掛けを追加します。生成されるクリップとツリーはこのコントローラーのサブアセットとして保存されます。"
 
+msgid "Gadget"
+msgstr "ガジェット"
+
+msgid "Create new gadget"
+msgstr "新規ガジェットを作成"
+
+msgid "Applying regenerates this gadget in place (its trees are rebuilt)."
+msgstr "適用するとこのガジェットをその場で再生成します（ツリーは作り直されます）。"
+
+msgid "Parameter '{0}' referenced by this gadget no longer exists."
+msgstr "このガジェットが参照するパラメーター '{0}' は既に存在しません。"
+
+msgid "Regenerate"
+msgstr "再生成"
+
+msgid "Delete this gadget? Its trees, clips and parameters are removed."
+msgstr "このガジェットを削除しますか？ ツリー・クリップ・パラメーターも一緒に削除されます。"
+
 msgid "Operation"
 msgstr "演算"
 
