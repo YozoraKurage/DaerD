@@ -16,18 +16,28 @@ namespace Yozolab.DaerD
     /// clips and states nobody can read back, so the record saved with the controller is the
     /// only description of it there is, and this is where those records are shown.
     ///
-    /// Laid out as one centred column of cards rather than as full-width rows: this pane is as
-    /// wide as the window, and a row stretched across all of it puts a two-word label at one
-    /// end and its buttons at the other with nothing in between.
+    /// Laid out as centred cards rather than as full-width rows: this pane is as wide as the
+    /// window, and a row stretched across all of it puts a two-word label at one end and its
+    /// buttons at the other with nothing in between. Wide enough, and the cards split into two
+    /// columns — what the controller IS on the left, the generated things it carries on the
+    /// right — so neither half has to be scrolled past to reach the other.
     /// </summary>
     class HomePanel : PanelBase
     {
-        /// <summary>How wide the column of cards is allowed to grow. A cap, not a size — a pane
-        /// narrower than this gets the whole width instead.</summary>
-        const float ColumnWidth = 560f;
+        /// <summary>How wide the single column of cards is allowed to grow. A cap, not a size —
+        /// a pane narrower than this gets the whole width instead.</summary>
+        const float SingleColumnWidth = 560f;
+
+        /// <summary>Cap for each half of the two-column layout.</summary>
+        const float SplitColumnWidth = 460f;
+
+        /// <summary>Pane width from which the cards split into two columns. Below it two columns
+        /// would each be narrower than one card wants, and the rows inside them start wrapping
+        /// their buttons off the edge — one column reads better than two cramped ones.</summary>
+        const float TwoColumnMinWidth = 720f;
 
         /// <summary>Prefix width inside the cards. The default is sized for an inspector column
-        /// and would eat half of <see cref="ColumnWidth"/>.</summary>
+        /// and would eat half of a card's width.</summary>
         const float FieldLabelWidth = 110f;
 
         /// <summary>One width for every row action across the three lists, so the buttons line
@@ -35,6 +45,12 @@ namespace Yozolab.DaerD
         const float RowButtonWidth = 56f;
 
         readonly CleanupInspector _cleanup = new CleanupInspector();
+
+        // The three lists start expanded: seeing what the controller carries is the reason to
+        // open this screen at all, so folding them away is the exception, not the default.
+        bool _gadgetsOpen = true;
+        bool _syncsOpen = true;
+        bool _recipesOpen = true;
 
         public HomePanel(DaerDContext context) : base(context, "Home")
         {
@@ -56,11 +72,55 @@ namespace Yozolab.DaerD
         {
             var controller = Context.Controller;
 
+            // The pane's own width: IMGUI inside a UIElements host stretches to whatever it is
+            // given, so the layout has to ask the element. It is NaN until the first layout pass
+            // has run, which reads as "not wide enough" and settles on the next repaint.
+            float width = contentRect.width;
+            if (!float.IsNaN(width) && width >= TwoColumnMinWidth)
+            {
+                DrawTwoColumns(controller);
+                return;
+            }
+            DrawOneColumn(controller);
+        }
+
+        /// <summary>What the controller is on the left, what it carries on the right. Splitting
+        /// this way keeps the lists — the part that grows without bound — in one column, so the
+        /// settings above them don't scroll away as gadgets pile up.</summary>
+        void DrawTwoColumns(AnimatorController controller)
+        {
+            EditorGUILayout.BeginHorizontal();
+            GUILayout.FlexibleSpace();
+
+            EditorGUILayout.BeginVertical(GUILayout.MaxWidth(SplitColumnWidth));
+            DrawController(controller);
+            EditorGUILayout.Space(8);
+            DrawTools(controller);
+            EditorGUILayout.EndVertical();
+
+            GUILayout.Space(8);
+
+            EditorGUILayout.BeginVertical(GUILayout.MaxWidth(SplitColumnWidth));
+            DrawGadgets(controller);
+            EditorGUILayout.Space(8);
+            DrawAsyncSyncs(controller);
+            EditorGUILayout.Space(8);
+            DrawRecipes(controller);
+            EditorGUILayout.EndVertical();
+
+            GUILayout.FlexibleSpace();
+            EditorGUILayout.EndHorizontal();
+        }
+
+        /// <summary>The narrow fallback: the same cards in one centred column, tools last —
+        /// reading order rather than column balance decides here.</summary>
+        void DrawOneColumn(AnimatorController controller)
+        {
             // Flexible space on both sides centres the column; the cap is a MaxWidth so the
             // group still collapses with a narrow pane, which a fixed Width would not.
             EditorGUILayout.BeginHorizontal();
             GUILayout.FlexibleSpace();
-            EditorGUILayout.BeginVertical(GUILayout.MaxWidth(ColumnWidth));
+            EditorGUILayout.BeginVertical(GUILayout.MaxWidth(SingleColumnWidth));
 
             DrawController(controller);
             EditorGUILayout.Space(8);
@@ -79,6 +139,14 @@ namespace Yozolab.DaerD
 
         // ---- cards -------------------------------------------------------------
 
+        static GUIStyle s_cardTitleStyle;
+
+        /// <summary>Foldout arrow with a card's heading weight behind it.</summary>
+        static GUIStyle CardTitleStyle => s_cardTitleStyle ??= new GUIStyle(EditorStyles.foldout)
+        {
+            fontStyle = FontStyle.Bold,
+        };
+
         /// <summary>Opens one section's card. Every section is a box with its name in bold at
         /// the top, so the column reads as a stack of things rather than as one long list.
         /// </summary>
@@ -88,9 +156,19 @@ namespace Yozolab.DaerD
             EditorGUILayout.LabelField(title, EditorStyles.boldLabel);
         }
 
-        /// <summary>The count belongs in the heading of a list card: it is the first thing worth
-        /// knowing about a list, and it is still there when the list itself is empty.</summary>
-        static void BeginCard(string title, int count) => BeginCard(title + " (" + count + ")");
+        /// <summary>
+        /// A card whose body folds away, for the sections long enough to be worth hiding. The
+        /// heading stays visible either way — with its count, which is the one thing about a
+        /// list worth reading while it is closed.
+        /// </summary>
+        static bool BeginFoldCard(string title, bool open)
+        {
+            EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+            return EditorGUILayout.Foldout(open, title, true, CardTitleStyle);
+        }
+
+        static bool BeginFoldCard(string title, int count, bool open) =>
+            BeginFoldCard(title + " (" + count + ")", open);
 
         static void EndCard() => EditorGUILayout.EndVertical();
 
@@ -174,7 +252,12 @@ namespace Yozolab.DaerD
         void DrawGadgets(AnimatorController controller)
         {
             var gadgets = GraphFrameData.GetGadgets(controller);
-            BeginCard(L.Tr("DBT Gadgets"), gadgets.Count);
+            _gadgetsOpen = BeginFoldCard(L.Tr("DBT Gadgets"), gadgets.Count, _gadgetsOpen);
+            if (!_gadgetsOpen)
+            {
+                EndCard();
+                return;
+            }
             if (gadgets.Count == 0)
                 EditorGUILayout.LabelField(L.Tr("No gadgets yet."), EditorStyles.centeredGreyMiniLabel);
 
@@ -244,7 +327,12 @@ namespace Yozolab.DaerD
         void DrawAsyncSyncs(AnimatorController controller)
         {
             var configs = GraphFrameData.GetAsyncSyncs(controller);
-            BeginCard(L.Tr("Async Sync"), configs.Count);
+            _syncsOpen = BeginFoldCard(L.Tr("Async Sync"), configs.Count, _syncsOpen);
+            if (!_syncsOpen)
+            {
+                EndCard();
+                return;
+            }
             if (configs.Count == 0)
                 EditorGUILayout.LabelField(L.Tr("No async sync setups yet."),
                     EditorStyles.centeredGreyMiniLabel);
@@ -298,7 +386,12 @@ namespace Yozolab.DaerD
                 machines.Add(entry.Key);
             }
 
-            BeginCard(L.Tr("C# Recipes"), recipes.Count);
+            _recipesOpen = BeginFoldCard(L.Tr("C# Recipes"), recipes.Count, _recipesOpen);
+            if (!_recipesOpen)
+            {
+                EndCard();
+                return;
+            }
             if (recipes.Count == 0)
                 EditorGUILayout.LabelField(L.Tr("No recipe-owned layers."),
                     EditorStyles.centeredGreyMiniLabel);
