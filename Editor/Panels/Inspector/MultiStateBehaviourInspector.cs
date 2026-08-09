@@ -58,8 +58,8 @@ namespace Yozolab.DaerD
             bool hasSelection = _selectedBehaviours.Count > 0;
             EditorGUILayout.BeginHorizontal();
             EditorGUILayout.LabelField(hasSelection
-                    ? "Behaviours (" + _selectedBehaviours.Count + "/" + slots.Count + ")"
-                    : "Behaviours (" + slots.Count + ")",
+                    ? L.Tr("Behaviours") + " (" + _selectedBehaviours.Count + "/" + slots.Count + ")"
+                    : L.Tr("Behaviours") + " (" + slots.Count + ")",
                 EditorStyles.boldLabel);
             using (new EditorGUI.DisabledScope(slots.Count == 0))
                 if (GUILayout.Button(new GUIContent(L.Tr("Copy"), hasSelection
@@ -92,7 +92,7 @@ namespace Yozolab.DaerD
             for (int i = 0; i < slots.Count; i++)
                 DrawBehaviourSlot(slots[i], states, representatives, i);
 
-            if (GUILayout.Button("+ Add Behaviour to All " + states.Count))
+            if (GUILayout.Button(L.Tr("+ Add Behaviour to All {0}", states.Count)))
                 _vrcDrawers.ShowAddBehaviourMenu(states);
         }
 

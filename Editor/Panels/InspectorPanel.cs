@@ -126,7 +126,7 @@ namespace Yozolab.DaerD
             }
             else if (selection is SpecialNodeKind kind)
             {
-                EditorGUILayout.HelpBox(kind + " node. Drag from its port to create transitions.", MessageType.Info);
+                EditorGUILayout.HelpBox(L.Tr("{0} node. Drag from its port to create transitions.", kind), MessageType.Info);
             }
             else
             {
@@ -136,18 +136,18 @@ namespace Yozolab.DaerD
 
         void DrawBlendTreeSelection(BlendTree blendTree)
         {
-            EditorGUILayout.LabelField("Blend Tree", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField(L.Tr("Blend Tree"), EditorStyles.boldLabel);
             BlendTreePanel.Draw(blendTree, Context);
         }
 
         void DrawClipSelection(AnimationClip clip)
         {
-            EditorGUILayout.LabelField("Animation Clip", EditorStyles.boldLabel);
-            EditorGUILayout.ObjectField("Clip", clip, typeof(AnimationClip), false);
-            EditorGUILayout.LabelField("Length", clip.length.ToString("0.###") + "s");
-            EditorGUILayout.LabelField("Frame Rate", clip.frameRate.ToString("0.#") + " fps");
-            EditorGUILayout.LabelField("Looping", clip.isLooping ? "Yes" : "No");
-            if (GUILayout.Button("Ping in Project"))
+            EditorGUILayout.LabelField(L.Tr("Animation Clip"), EditorStyles.boldLabel);
+            EditorGUILayout.ObjectField(L.Tr("Clip"), clip, typeof(AnimationClip), false);
+            EditorGUILayout.LabelField(L.Tr("Length"), clip.length.ToString("0.###") + "s");
+            EditorGUILayout.LabelField(L.Tr("Frame Rate"), clip.frameRate.ToString("0.#") + " fps");
+            EditorGUILayout.LabelField(L.Tr("Looping"), clip.isLooping ? L.Tr("Yes") : L.Tr("No"));
+            if (GUILayout.Button(L.Tr("Ping in Project")))
                 EditorGUIUtility.PingObject(clip);
         }
     }

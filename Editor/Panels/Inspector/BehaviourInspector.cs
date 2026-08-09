@@ -40,8 +40,8 @@ namespace Yozolab.DaerD
             bool hasSelection = _selectedBehaviours.Count > 0;
             EditorGUILayout.BeginHorizontal();
             EditorGUILayout.LabelField(hasSelection
-                    ? "Behaviours (" + _selectedBehaviours.Count + "/" + behaviours.Length + ")"
-                    : "Behaviours (" + behaviours.Length + ")",
+                    ? L.Tr("Behaviours") + " (" + _selectedBehaviours.Count + "/" + behaviours.Length + ")"
+                    : L.Tr("Behaviours") + " (" + behaviours.Length + ")",
                 EditorStyles.boldLabel);
             using (new EditorGUI.DisabledScope(behaviours.Length == 0))
                 if (GUILayout.Button(new GUIContent(L.Tr("Copy"), hasSelection
@@ -90,7 +90,7 @@ namespace Yozolab.DaerD
                 using (new EditorGUI.DisabledScope(i == behaviours.Length - 1))
                     if (GUILayout.Button("↓", EditorStyles.miniButton, GUILayout.Width(22)))
                     { VrcBehaviours.Move(state, i, +1); GUIUtility.ExitGUI(); }
-                if (GUILayout.Button("Remove", EditorStyles.miniButton, GUILayout.Width(60)))
+                if (GUILayout.Button(L.Tr("Remove"), EditorStyles.miniButton, GUILayout.Width(60)))
                 {
                     _selectedBehaviours.Remove(behaviour);
                     _behaviourRangeAnchor = -1;
@@ -103,7 +103,7 @@ namespace Yozolab.DaerD
                 EditorGUILayout.EndVertical();
             }
 
-            if (GUILayout.Button("+ Add Behaviour"))
+            if (GUILayout.Button(L.Tr("+ Add Behaviour")))
                 _vrcDrawers.ShowAddBehaviourMenu(state);
         }
 

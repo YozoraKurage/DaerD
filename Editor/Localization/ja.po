@@ -1998,3 +1998,265 @@ msgstr "Assembly Definition（コンパイル高速化）"
 
 msgid "Put the recipe folder in its own small assembly, so an export recompiles only the recipes instead of your whole editor assembly. Skipped when the folder already belongs to an asmdef or contains scripts DaerD didn't generate."
 msgstr "Recipe フォルダを専用の小さなアセンブリに分離し、エクスポート時の再コンパイルをエディタアセンブリ全体ではなく Recipe だけに抑えます。フォルダが既に asmdef 管理下にある場合や、DaerD 以外のスクリプトを含む場合はスキップします。"
+
+# ---- state inspector ----
+
+msgid "Motion"
+msgstr "モーション"
+
+msgid "Speed"
+msgstr "速度"
+
+msgid "Cycle Offset"
+msgstr "サイクルオフセット"
+
+msgid "Mirror"
+msgstr "ミラー"
+
+msgid "Foot IK"
+msgstr "Foot IK"
+
+msgid "Tag"
+msgstr "タグ"
+
+msgid "Parameter Overrides"
+msgstr "パラメーター上書き"
+
+msgid "Speed Multiplier"
+msgstr "速度の倍率"
+
+msgid "Motion Time"
+msgstr "モーション時間"
+
+msgid "States"
+msgstr "State 数"
+
+msgid "Sub-State Machines"
+msgstr "Sub-State Machine 数"
+
+# ---- multi-state inspector ----
+
+msgid "{0} states selected"
+msgstr "{0} 件の State を選択中"
+
+msgid "Parameter Overrides (applied to all)"
+msgstr "パラメーター上書き（すべてに適用）"
+
+msgid "Bulk Actions"
+msgstr "一括操作"
+
+msgid "Set Default State to First"
+msgstr "先頭を Default State に設定"
+
+msgid "Delete All {0}"
+msgstr "{0} 件すべて削除"
+
+msgid "Delete States"
+msgstr "State の削除"
+
+msgid "Delete the {0} selected states? Their transitions will be removed too."
+msgstr "選択中の State {0} 件を削除しますか？ 関連する Transition も削除されます。"
+
+# ---- behaviour list ----
+
+msgid "+ Add Behaviour"
+msgstr "+ Behaviour を追加"
+
+msgid "+ Add Behaviour to All {0}"
+msgstr "+ Behaviour を {0} 件すべてに追加"
+
+# ---- frame / note inspector ----
+
+msgid "This frame no longer exists."
+msgstr "この Frame は既に存在しません。"
+
+msgid "Frame"
+msgstr "Frame"
+
+msgid "Title"
+msgstr "タイトル"
+
+msgid "Color"
+msgstr "色"
+
+msgid "Dragging the title bar also moves the nodes inside the frame."
+msgstr "タイトルバーをドラッグすると、Frame 内のノードも一緒に移動します。"
+
+msgid "Locked"
+msgstr "ロック"
+
+msgid "A locked frame cannot be moved, resized, renamed or deleted."
+msgstr "ロック中の Frame は移動・サイズ変更・名前変更・削除ができません。"
+
+msgid "This note no longer exists."
+msgstr "この Note は既に存在しません。"
+
+msgid "Note"
+msgstr "Note"
+
+msgid "Text"
+msgstr "本文"
+
+msgid "(empty)"
+msgstr "(空)"
+
+msgid "Edit Text in Graph"
+msgstr "グラフ上で本文を編集"
+
+msgid "Tip: double-click the note (or press F2) to edit text in place."
+msgstr "ヒント: Note をダブルクリック（または F2）すると、その場で本文を編集できます。"
+
+# ---- blend tree / clip selection ----
+
+msgid "{0} node. Drag from its port to create transitions."
+msgstr "{0} ノードです。ポートからドラッグすると Transition を作成できます。"
+
+msgid "Blend Tree"
+msgstr "Blend Tree"
+
+msgid "Animation Clip"
+msgstr "Animation クリップ"
+
+msgid "Clip"
+msgstr "クリップ"
+
+msgid "Length"
+msgstr "長さ"
+
+msgid "Frame Rate"
+msgstr "フレームレート"
+
+msgid "Looping"
+msgstr "ループ"
+
+msgid "Yes"
+msgstr "はい"
+
+msgid "No"
+msgstr "いいえ"
+
+msgid "Ping in Project"
+msgstr "Project で表示"
+
+# ---- VRC behaviour drawers ----
+
+msgid "Debug String"
+msgstr "デバッグ文字列"
+
+msgid "Delay Time"
+msgstr "遅延時間"
+
+msgid "Playable"
+msgstr "Playable"
+
+msgid "Layer"
+msgstr "レイヤー"
+
+msgid "Blend Duration"
+msgstr "ブレンド時間"
+
+msgid "Source Path"
+msgstr "ソースパス"
+
+msgid "Tracking Control"
+msgstr "Tracking Control"
+
+msgid "No Change"
+msgstr "変更なし"
+
+msgid "Tracking"
+msgstr "トラッキング"
+
+msgid "Animation"
+msgstr "アニメーション"
+
+msgid "All"
+msgstr "すべて"
+
+msgid "Head"
+msgstr "頭"
+
+msgid "Left Hand"
+msgstr "左手"
+
+msgid "Right Hand"
+msgstr "右手"
+
+msgid "Hip"
+msgstr "腰"
+
+msgid "Left Foot"
+msgstr "左足"
+
+msgid "Right Foot"
+msgstr "右足"
+
+msgid "Left Fingers"
+msgstr "左手の指"
+
+msgid "Right Fingers"
+msgstr "右手の指"
+
+msgid "Eyes & Eyelids"
+msgstr "目・まぶた"
+
+msgid "Mouth & Jaw"
+msgstr "口・あご"
+
+msgid ""
+"This behaviour modifies parameters on this and all other animation controllers referenced on the avatar descriptor.\n"
+"\n"
+"Keep in mind only parameters defined in your VRCExpressionParameter object will be synced across the network.\n"
+"\n"
+"Additionally, synced parameters are clamped between Int [0,255] and Float [-1,1]. Operations that modify these parameters will be clipped inside those bounds."
+msgstr ""
+"この Behaviour は、このコントローラーとアバターディスクリプターが参照する他のすべてのアニメーションコントローラーのパラメーターを変更します。\n"
+"\n"
+"ネットワーク越しに同期されるのは VRCExpressionParameter オブジェクトに定義したパラメーターだけである点に注意してください。\n"
+"\n"
+"また、同期パラメーターは Int [0,255]・Float [-1,1] にクランプされます。これらを変更する操作の結果も、その範囲内に丸められます。"
+
+msgid "Local Only"
+msgstr "ローカルのみ"
+
+msgid "Up"
+msgstr "上へ"
+
+msgid "Down"
+msgstr "下へ"
+
+msgid "Parameter {0}"
+msgstr "パラメーター {0}"
+
+msgid "Source"
+msgstr "コピー元"
+
+msgid "Destination"
+msgstr "コピー先"
+
+msgid "Parameter '{0}' not found. Make sure you defined it in the Animator window's Parameter list."
+msgstr "パラメーター '{0}' が見つかりません。Animator ウィンドウの Parameters リストに定義されているか確認してください。"
+
+msgid "Value Min"
+msgstr "最小値"
+
+msgid "Value Max"
+msgstr "最大値"
+
+msgid "Chance"
+msgstr "確率"
+
+msgid "Convert Range"
+msgstr "範囲を変換"
+
+msgid "Min"
+msgstr "最小"
+
+msgid "Max"
+msgstr "最大"
+
+msgid "Other"
+msgstr "その他"
+
+msgid "No StateMachineBehaviour types found"
+msgstr "StateMachineBehaviour の型が見つかりません"

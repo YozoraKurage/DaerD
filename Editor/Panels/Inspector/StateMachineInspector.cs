@@ -18,10 +18,10 @@ namespace Yozolab.DaerD
 
         public void DrawStateMachine(AnimatorStateMachine stateMachine)
         {
-            EditorGUILayout.LabelField("Sub-State Machine", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField(L.Tr("Sub-State Machine"), EditorStyles.boldLabel);
 
             EditorGUI.BeginChangeCheck();
-            string name = EditorGUILayout.DelayedTextField("Name", stateMachine.name);
+            string name = EditorGUILayout.DelayedTextField(L.Tr("Name"), stateMachine.name);
             if (EditorGUI.EndChangeCheck() && !string.IsNullOrEmpty(name))
             {
                 Undo.RegisterCompleteObjectUndo(stateMachine, "Rename State Machine");
@@ -30,9 +30,9 @@ namespace Yozolab.DaerD
                 _context.NotifyGraphStructureChanged();
             }
 
-            EditorGUILayout.LabelField("States", stateMachine.states.Length.ToString());
-            EditorGUILayout.LabelField("Sub-State Machines", stateMachine.stateMachines.Length.ToString());
-            if (GUILayout.Button("Open"))
+            EditorGUILayout.LabelField(L.Tr("States"), stateMachine.states.Length.ToString());
+            EditorGUILayout.LabelField(L.Tr("Sub-State Machines"), stateMachine.stateMachines.Length.ToString());
+            if (GUILayout.Button(L.Tr("Open")))
                 _context.EnterStateMachine(stateMachine);
         }
     }
