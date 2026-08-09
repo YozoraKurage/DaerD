@@ -18,7 +18,6 @@ namespace Yozolab.DaerD
         // act on behaviours instead of the state itself (the graph view owns state copy/paste).
         readonly List<StateMachineBehaviour> _selectedBehaviours = new List<StateMachineBehaviour>();
         object _lastSelection;
-        bool _showBlendTree = true;
         readonly CleanupInspector _cleanup = new CleanupInspector();
         readonly OverviewInspector _overview;
         readonly StateMachineInspector _stateMachine;
@@ -26,6 +25,7 @@ namespace Yozolab.DaerD
         readonly BehaviourInspector _behaviours;
         readonly MultiStateBehaviourInspector _multiBehaviours;
         readonly SyncRequestInspector _syncRequests;
+        readonly StateInspector _state;
 
         public InspectorPanel(DaerDContext context, AnimatorGraphView graphView)
             : base(context, "Inspector")
@@ -39,6 +39,7 @@ namespace Yozolab.DaerD
             _behaviours = new BehaviourInspector(graphView.Sync, _selectedBehaviours, _vrcDrawers);
             _multiBehaviours = new MultiStateBehaviourInspector(graphView.Sync, _selectedBehaviours, _behaviours, _vrcDrawers);
             _syncRequests = new SyncRequestInspector(context, graphView.Sync);
+            _state = new StateInspector(context, graphView.Sync, _syncRequests, _behaviours);
             context.SelectionChanged += OnSelectionChanged;
             // The leftover scan (and the object references captured in it) belongs to the
             // outgoing controller — drop it on a tab switch.
@@ -92,7 +93,7 @@ namespace Yozolab.DaerD
 
             if (selection is AnimatorState state)
             {
-                DrawState(state);
+                _state.DrawState(state);
             }
             else if (selection is TransitionEdge || selection is AnimatorTransitionBase)
             {
@@ -311,7 +312,7 @@ namespace Yozolab.DaerD
                 if (s != null) alive.Add(s);
             if (alive.Count < 2)
             {
-                if (alive.Count == 1) DrawState(alive[0]);
+                if (alive.Count == 1) _state.DrawState(alive[0]);
                 else _overview.DrawOverview();
                 return;
             }
@@ -447,128 +448,5 @@ namespace Yozolab.DaerD
             Context.Select(null);
             _graphView.Sync.RequestRebuild();
         }
-
-        // ---- state -----------------------------------------------------------
-
-        void DrawState(AnimatorState state)
-        {
-            var controller = Context.Controller;
-            EditorGUILayout.LabelField("State", EditorStyles.boldLabel);
-
-            EditorGUI.BeginChangeCheck();
-            string name = EditorGUILayout.DelayedTextField("Name", state.name);
-            var motion = (Motion)EditorGUILayout.ObjectField("Motion", state.motion, typeof(Motion), false);
-            float speed = EditorGUILayout.FloatField("Speed", state.speed);
-            float cycleOffset = EditorGUILayout.FloatField("Cycle Offset", state.cycleOffset);
-            bool mirror = EditorGUILayout.Toggle("Mirror", state.mirror);
-            bool ikOnFeet = EditorGUILayout.Toggle("Foot IK", state.iKOnFeet);
-            bool writeDefaults = EditorGUILayout.Toggle("Write Defaults", state.writeDefaultValues);
-            string tag = EditorGUILayout.TextField("Tag", state.tag);
-            if (EditorGUI.EndChangeCheck())
-            {
-                Undo.RegisterCompleteObjectUndo(state, "Edit State");
-                bool visualChange = state.name != name || state.motion != motion;
-                bool badgeChange = state.writeDefaultValues != writeDefaults;
-                if (!string.IsNullOrEmpty(name)) state.name = name;
-                state.motion = motion;
-                state.speed = speed;
-                state.cycleOffset = cycleOffset;
-                state.mirror = mirror;
-                state.iKOnFeet = ikOnFeet;
-                state.writeDefaultValues = writeDefaults;
-                state.tag = tag;
-                EditorUtility.SetDirty(state);
-                if (visualChange) Context.NotifyGraphStructureChanged();
-                // The WD badge lives on the graph node; repaint it right away rather than
-                // waiting for the next full rebuild.
-                else if (badgeChange) _graphView.Sync.RefreshStateNode(state);
-            }
-
-            DrawStateParameters(state, controller);
-
-            EditorGUILayout.Space(4);
-            var transitions = state.transitions;
-            EditorGUILayout.LabelField("Transitions (" + transitions.Length + ")", EditorStyles.boldLabel);
-            foreach (var t in transitions)
-            {
-                EditorGUILayout.BeginHorizontal();
-                EditorGUILayout.LabelField(ParameterConverter.DescribeTransition(t));
-                if (GUILayout.Button("Select", EditorStyles.miniButton, GUILayout.Width(56)))
-                {
-                    var edge = _graphView.Sync.FindEdge(t);
-                    Context.Select((object)edge ?? t);
-                    // Also center the graph view on the edge so the user can see what they
-                    // selected — clicking "Select" without a follow-up frame leaves the user
-                    // hunting for the highlighted edge on a large state machine.
-                    Context.RequestFrameOn((object)edge ?? t);
-                }
-                EditorGUILayout.EndHorizontal();
-            }
-
-            if (state.motion is BlendTree blendTree)
-            {
-                EditorGUILayout.Space(4);
-                _showBlendTree = EditorGUILayout.Foldout(_showBlendTree, "Blend Tree", true);
-                if (_showBlendTree)
-                {
-                    EditorGUI.indentLevel++;
-                    BlendTreePanel.Draw(blendTree, Context);
-                    EditorGUI.indentLevel--;
-                }
-            }
-
-            _syncRequests.DrawSyncRequests(state);
-            _behaviours.DrawBehaviours(state);
-        }
-
-        /// <summary>
-        /// Optional parameter drivers for Speed / Motion Time / Mirror / Cycle Offset.
-        /// Speed, Motion Time and Cycle Offset take a Float parameter; Mirror takes a Bool one.
-        /// </summary>
-        void DrawStateParameters(AnimatorState state, AnimatorController controller)
-        {
-            var floatParams = PanelGui.ParameterNamesOfType(controller, AnimatorControllerParameterType.Float);
-            var boolParams = PanelGui.ParameterNamesOfType(controller, AnimatorControllerParameterType.Bool);
-
-            EditorGUILayout.Space(4);
-            EditorGUILayout.LabelField("Parameter Overrides", EditorStyles.boldLabel);
-
-            DrawParameterOverride(state, "Speed Multiplier", floatParams,
-                state.speedParameterActive, state.speedParameter,
-                (active, param) => { state.speedParameterActive = active; state.speedParameter = param; });
-            DrawParameterOverride(state, "Motion Time", floatParams,
-                state.timeParameterActive, state.timeParameter,
-                (active, param) => { state.timeParameterActive = active; state.timeParameter = param; });
-            DrawParameterOverride(state, "Mirror", boolParams,
-                state.mirrorParameterActive, state.mirrorParameter,
-                (active, param) => { state.mirrorParameterActive = active; state.mirrorParameter = param; });
-            DrawParameterOverride(state, "Cycle Offset", floatParams,
-                state.cycleOffsetParameterActive, state.cycleOffsetParameter,
-                (active, param) => { state.cycleOffsetParameterActive = active; state.cycleOffsetParameter = param; });
-        }
-
-        /// <summary>One "drive this from a parameter" row: a toggle plus a parameter popup.</summary>
-        void DrawParameterOverride(AnimatorState state, string label, string[] parameters,
-            bool currentActive, string currentParam, Action<bool, string> apply)
-        {
-            EditorGUILayout.BeginHorizontal();
-            EditorGUI.BeginChangeCheck();
-            bool active = EditorGUILayout.ToggleLeft(label, currentActive, GUILayout.Width(150));
-            string param = currentParam;
-            using (new EditorGUI.DisabledScope(!active))
-            {
-                int idx = Mathf.Max(0, Array.IndexOf(parameters, param));
-                idx = EditorGUILayout.Popup(idx, parameters);
-                param = parameters[idx];
-            }
-            if (EditorGUI.EndChangeCheck())
-            {
-                Undo.RegisterCompleteObjectUndo(state, "Edit State");
-                apply(active, param);
-                EditorUtility.SetDirty(state);
-            }
-            EditorGUILayout.EndHorizontal();
-        }
-
     }
 }
