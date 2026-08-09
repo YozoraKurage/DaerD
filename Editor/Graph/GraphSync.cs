@@ -27,16 +27,24 @@ namespace Yozolab.DaerD
 
         readonly List<FrameNode> _frameNodes = new List<FrameNode>();
         readonly List<NoteNode> _noteNodes = new List<NoteNode>();
-        GraphFrameData _frameData;
 
         SpecialNode _entryNode, _exitNode, _anyStateNode;
         bool _rebuildScheduled;
         int _runtimeStateHash;
 
+        readonly NodeCommands _nodes;
+        readonly FrameCommands _frames;
+        readonly EdgeCommands _transitions;
+        readonly GraphClipboard _clipboard;
+
         public GraphSync(DaerDContext context, AnimatorGraphView graphView)
         {
             _context = context;
             _graphView = graphView;
+            _nodes = new NodeCommands(context);
+            _frames = new FrameCommands(context);
+            _transitions = new EdgeCommands(context);
+            _clipboard = new GraphClipboard(context, _transitions, _frames);
         }
 
         public IReadOnlyList<TransitionEdge> Edges => _edges;
@@ -59,7 +67,7 @@ namespace Yozolab.DaerD
             // Snapshot the current graph selection by underlying model so we can restore it
             // after the rebuild. Without this, Ctrl+Z and other rebuilds collapse multi-select
             // back to whatever single object Context.Selection points at.
-            var capturedSelection = CaptureGraphSelection();
+            var capturedSelection = new GraphSelectionSet(_graphView.selection);
 
             _stateNodes.Clear();
             _ssmNodes.Clear();
@@ -74,10 +82,10 @@ namespace Yozolab.DaerD
             var sm = _context.CurrentStateMachine;
             if (sm == null) return;
 
-            _frameData = GraphFrameData.Find(_context.Controller);
-            if (_frameData != null)
+            var frameData = _frames.Find();
+            if (frameData != null)
             {
-                foreach (var frame in _frameData.FramesIn(sm))
+                foreach (var frame in frameData.FramesIn(sm))
                 {
                     FrameNode frameNode = null;
                     var capturedFrame = frame;
@@ -88,7 +96,7 @@ namespace Yozolab.DaerD
                     _graphView.AddElement(frameNode);
                     frameNode.SetPosition(frame.bounds);
                 }
-                foreach (var note in _frameData.NotesIn(sm))
+                foreach (var note in frameData.NotesIn(sm))
                 {
                     NoteNode noteNode = null;
                     var capturedNote = note;
@@ -216,53 +224,7 @@ namespace Yozolab.DaerD
 
         // ---- selection -------------------------------------------------------
 
-        /// <summary>
-        /// Per-element identity capture of the current graph selection. We store the
-        /// underlying animator objects (and SpecialNode kinds) so the matching graph
-        /// elements can be found again after a rebuild has replaced every visual node.
-        /// </summary>
-        class CapturedSelection
-        {
-            public readonly List<AnimatorState> States = new List<AnimatorState>();
-            public readonly List<AnimatorStateMachine> StateMachines = new List<AnimatorStateMachine>();
-            public readonly List<SpecialNodeKind> Specials = new List<SpecialNodeKind>();
-            public readonly List<AnimatorTransitionBase> Transitions = new List<AnimatorTransitionBase>();
-            public readonly List<GraphFrameData.Frame> Frames = new List<GraphFrameData.Frame>();
-            public readonly List<GraphFrameData.Note> Notes = new List<GraphFrameData.Note>();
-        }
-
-        CapturedSelection CaptureGraphSelection()
-        {
-            var captured = new CapturedSelection();
-            foreach (var selectable in _graphView.selection)
-            {
-                switch (selectable)
-                {
-                    case StateNode sn when sn.State != null:
-                        captured.States.Add(sn.State);
-                        break;
-                    case SubStateMachineNode mn when mn.StateMachine != null:
-                        captured.StateMachines.Add(mn.StateMachine);
-                        break;
-                    case SpecialNode spn:
-                        captured.Specials.Add(spn.Kind);
-                        break;
-                    case TransitionEdge te:
-                        foreach (var t in te.Transitions)
-                            if (t != null) captured.Transitions.Add(t);
-                        break;
-                    case FrameNode fn when fn.Frame != null:
-                        captured.Frames.Add(fn.Frame);
-                        break;
-                    case NoteNode nn when nn.Note != null:
-                        captured.Notes.Add(nn.Note);
-                        break;
-                }
-            }
-            return captured;
-        }
-
-        void RestoreSelection(CapturedSelection captured)
+        void RestoreSelection(GraphSelectionSet captured)
         {
             var elements = new List<GraphElement>();
 
@@ -424,8 +386,8 @@ namespace Yozolab.DaerD
                         case StateNode sn: DeleteState(sn.State); structural = true; break;
                         case SubStateMachineNode mn: DeleteSubStateMachine(mn.StateMachine); structural = true; break;
                         case TransitionEdge te when !te.IsDefaultEdge: DeleteTransitionEdge(te); structural = true; break;
-                        case FrameNode fn: _frameData?.RemoveFrame(fn.Frame); structural = true; break;
-                        case NoteNode nn: _frameData?.RemoveNote(nn.Note); structural = true; break;
+                        case FrameNode fn: _frames.Data?.RemoveFrame(fn.Frame); structural = true; break;
+                        case NoteNode nn: _frames.Data?.RemoveNote(nn.Note); structural = true; break;
                     }
                 }
             }
@@ -457,10 +419,10 @@ namespace Yozolab.DaerD
             var toPersist = new List<GraphElement>(moved);
             foreach (var element in moved)
             {
-                if (!(element is FrameNode fn) || fn.Frame == null || _frameData == null) continue;
-                Undo.RecordObject(_frameData, "Move Frame");
+                if (!(element is FrameNode fn) || fn.Frame == null || _frames.Data == null) continue;
+                Undo.RecordObject(_frames.Data, "Move Frame");
                 fn.Frame.bounds = fn.GetPosition();
-                EditorUtility.SetDirty(_frameData);
+                EditorUtility.SetDirty(_frames.Data);
                 var carried = fn.TakeDraggedContents();
                 if (carried != null) toPersist.AddRange(carried);
             }
@@ -501,12 +463,12 @@ namespace Yozolab.DaerD
                     else if (spn.Kind == SpecialNodeKind.Exit) sm.exitPosition = v;
                     else sm.anyStatePosition = v;
                 }
-                else if (element is NoteNode nn && nn.Note != null && _frameData != null)
+                else if (element is NoteNode nn && nn.Note != null && _frames.Data != null)
                 {
                     // Covers notes dragged directly and notes carried along by a frame.
-                    Undo.RecordObject(_frameData, "Move Note");
+                    Undo.RecordObject(_frames.Data, "Move Note");
                     nn.Note.bounds = nn.GetPosition();
-                    EditorUtility.SetDirty(_frameData);
+                    EditorUtility.SetDirty(_frames.Data);
                 }
             }
 
@@ -538,7 +500,7 @@ namespace Yozolab.DaerD
             var sm = _context.CurrentStateMachine;
             Undo.RegisterCompleteObjectUndo(sm, "Delete Transition");
             foreach (var t in edge.Transitions)
-                RemoveTransitionFrom(source, t, sm);
+                EdgeCommands.RemoveTransitionFrom(EndOf(source), t, sm);
             EditorUtility.SetDirty(sm);
         }
 
@@ -549,76 +511,47 @@ namespace Yozolab.DaerD
             if (source == null || transition == null) return;
             var sm = _context.CurrentStateMachine;
             Undo.RegisterCompleteObjectUndo(sm, "Delete Transition");
-            RemoveTransitionFrom(source, transition, sm);
+            EdgeCommands.RemoveTransitionFrom(EndOf(source), transition, sm);
             EditorUtility.SetDirty(sm);
             Rebuild();
-        }
-
-        static void RemoveTransitionFrom(GraphNodeBase source, AnimatorTransitionBase t, AnimatorStateMachine sm)
-        {
-            if (t == null) return;
-            if (source is StateNode sn && sn.State != null && t is AnimatorStateTransition stateTransition)
-                sn.State.RemoveTransition(stateTransition);
-            else if (source is SpecialNode spn && spn.Kind == SpecialNodeKind.AnyState && t is AnimatorStateTransition anyTransition)
-                sm.RemoveAnyStateTransition(anyTransition);
-            else if (source is SpecialNode entrySpn && entrySpn.Kind == SpecialNodeKind.Entry && t is AnimatorTransition entryTransition)
-                sm.RemoveEntryTransition(entryTransition);
-            else if (source is SubStateMachineNode mn && t is AnimatorTransition smTransition)
-                sm.RemoveStateMachineTransition(mn.StateMachine, smTransition);
         }
 
         public AnimatorTransitionBase CreateTransition(GraphNodeBase source, GraphNodeBase destination)
         {
             if (source == null || destination == null) return null;
-            var sm = _context.CurrentStateMachine;
-            AnimatorTransitionBase created;
-            using (new UndoScope("Create Transition"))
-                created = CreateTransitionCore(source, destination, sm);
-            return created;
+            return _transitions.CreateTransition(EndOf(source), EndOf(destination));
         }
 
         /// <summary>
-        /// Inner shared by single and batch transition creation. The caller is responsible for
-        /// opening an <see cref="UndoScope"/> so the batch name (e.g. "Chain Transitions") wins
-        /// over the per-pair undo label.
+        /// The model behind a graph node, as the transition commands see it. Unknown nodes map to
+        /// <see cref="TransitionEnd.None"/>, which nothing may connect to.
         /// </summary>
-        AnimatorTransitionBase CreateTransitionCore(GraphNodeBase source, GraphNodeBase destination,
-            AnimatorStateMachine sm)
+        static TransitionEnd EndOf(GraphNodeBase node)
         {
-            AnimatorTransitionBase created = null;
-            if (source is StateNode sn)
+            switch (node)
             {
-                Undo.RegisterCompleteObjectUndo(sn.State, "Create Transition");
-                if (destination is StateNode dn) created = sn.State.AddTransition(dn.State);
-                else if (destination is SubStateMachineNode dm) created = sn.State.AddTransition(dm.StateMachine);
-                else if (destination is SpecialNode dsp && dsp.Kind == SpecialNodeKind.Exit) created = sn.State.AddExitTransition();
+                case StateNode sn:
+                    return TransitionEnd.Of(sn.State);
+                case SubStateMachineNode mn:
+                    return TransitionEnd.Of(mn.StateMachine);
+                case SpecialNode spn:
+                    switch (spn.Kind)
+                    {
+                        case SpecialNodeKind.Entry: return TransitionEnd.Entry;
+                        case SpecialNodeKind.Exit: return TransitionEnd.Exit;
+                        default: return TransitionEnd.AnyState;
+                    }
+                default:
+                    return TransitionEnd.None;
             }
-            else if (source is SpecialNode ssp && ssp.Kind == SpecialNodeKind.AnyState)
-            {
-                Undo.RegisterCompleteObjectUndo(sm, "Create Transition");
-                if (destination is StateNode dn) created = sm.AddAnyStateTransition(dn.State);
-                else if (destination is SubStateMachineNode dm) created = sm.AddAnyStateTransition(dm.StateMachine);
-            }
-            else if (source is SpecialNode esp && esp.Kind == SpecialNodeKind.Entry)
-            {
-                Undo.RegisterCompleteObjectUndo(sm, "Create Transition");
-                if (destination is StateNode dn) created = sm.AddEntryTransition(dn.State);
-                else if (destination is SubStateMachineNode dm) created = sm.AddEntryTransition(dm.StateMachine);
-            }
-            else if (source is SubStateMachineNode smn)
-            {
-                Undo.RegisterCompleteObjectUndo(sm, "Create Transition");
-                if (destination is StateNode dn) created = sm.AddStateMachineTransition(smn.StateMachine, dn.State);
-                else if (destination is SubStateMachineNode dm) created = sm.AddStateMachineTransition(smn.StateMachine, dm.StateMachine);
-                else if (destination is SpecialNode dsp && dsp.Kind == SpecialNodeKind.Exit) created = sm.AddStateMachineExitTransition(smn.StateMachine);
-            }
+        }
 
-            if (created is AnimatorStateTransition newStateTransition)
-                DaerDSettings.ApplyTransitionDefaultsTo(newStateTransition);
-
-            if (created != null && _context.Controller != null)
-                EditorUtility.SetDirty(_context.Controller);
-            return created;
+        static List<TransitionEnd> EndsOf(IEnumerable<GraphNodeBase> nodes)
+        {
+            var ends = new List<TransitionEnd>();
+            foreach (var node in nodes)
+                ends.Add(EndOf(node));
+            return ends;
         }
 
         // ---- reverse / redirect / replicate ----------------------------------
@@ -640,32 +573,9 @@ namespace Yozolab.DaerD
             if (!CanReverseEdge(edge)) return;
             var source = edge.output?.node as GraphNodeBase;
             var destination = edge.input?.node as GraphNodeBase;
-            var sm = _context.CurrentStateMachine;
-            if (sm == null) return;
 
-            var snapshots = new List<TransitionClipboard.Snapshot>();
-            foreach (var t in edge.Transitions)
-                if (t != null) snapshots.Add(TransitionClipboard.Capture(t));
-            var originals = new List<AnimatorTransitionBase>(edge.Transitions);
-
-            var created = new List<AnimatorTransitionBase>();
-            using (new UndoScope("Reverse Transition"))
-            {
-                RegisterRemoveUndo(source, sm, "Reverse Transition");
-                foreach (var t in originals)
-                    RemoveTransitionFrom(source, t, sm);
-
-                foreach (var snap in snapshots)
-                {
-                    var t = CreateTransition(destination, source);
-                    if (t != null)
-                    {
-                        TransitionClipboard.Apply(t, snap);
-                        created.Add(t);
-                    }
-                }
-                EditorUtility.SetDirty(sm);
-            }
+            var created = _transitions.Reverse(EndOf(source), EndOf(destination), edge.Transitions);
+            if (created == null) return;
 
             Rebuild();
             if (created.Count > 0) _context.Select(created[0]);
@@ -701,18 +611,7 @@ namespace Yozolab.DaerD
             if (edge.Transitions.Count == 0) return;
             var anchor = edge.Transitions[0];
 
-            using (new UndoScope("Redirect Transition"))
-            {
-                foreach (var t in edge.Transitions)
-                {
-                    if (t == null) continue;
-                    Undo.RegisterCompleteObjectUndo(t, "Redirect Transition");
-                    AssignDestination(t, newDestination);
-                    EditorUtility.SetDirty(t);
-                }
-                if (_context.Controller != null)
-                    EditorUtility.SetDirty(_context.Controller);
-            }
+            _transitions.Redirect(edge.Transitions, EndOf(newDestination));
 
             Rebuild();
             _context.Select(anchor);
@@ -726,23 +625,7 @@ namespace Yozolab.DaerD
             var destination = edge.input?.node as GraphNodeBase;
             if (source == null || destination == null) return;
 
-            var snapshots = new List<TransitionClipboard.Snapshot>();
-            foreach (var t in edge.Transitions)
-                if (t != null) snapshots.Add(TransitionClipboard.Capture(t));
-
-            var created = new List<AnimatorTransitionBase>();
-            using (new UndoScope("Replicate Transition"))
-            {
-                foreach (var snap in snapshots)
-                {
-                    var t = CreateTransition(source, destination);
-                    if (t != null)
-                    {
-                        TransitionClipboard.Apply(t, snap);
-                        created.Add(t);
-                    }
-                }
-            }
+            var created = _transitions.Replicate(EndOf(source), EndOf(destination), edge.Transitions);
 
             Rebuild();
             if (created.Count > 0) _context.Select(created[0]);
@@ -750,35 +633,6 @@ namespace Yozolab.DaerD
 
         static bool IsConnectableState(GraphNodeBase node) =>
             node is StateNode || node is SubStateMachineNode;
-
-        static void AssignDestination(AnimatorTransitionBase transition, GraphNodeBase destination)
-        {
-            switch (destination)
-            {
-                case StateNode sn:
-                    transition.destinationStateMachine = null;
-                    transition.isExit = false;
-                    transition.destinationState = sn.State;
-                    break;
-                case SubStateMachineNode mn:
-                    transition.destinationState = null;
-                    transition.isExit = false;
-                    transition.destinationStateMachine = mn.StateMachine;
-                    break;
-                case SpecialNode spn when spn.Kind == SpecialNodeKind.Exit:
-                    transition.destinationState = null;
-                    transition.destinationStateMachine = null;
-                    transition.isExit = true;
-                    break;
-            }
-        }
-
-        static void RegisterRemoveUndo(GraphNodeBase source, AnimatorStateMachine sm, string name)
-        {
-            Undo.RegisterCompleteObjectUndo(sm, name);
-            if (source is StateNode sn && sn.State != null)
-                Undo.RegisterCompleteObjectUndo(sn.State, name);
-        }
 
         /// <summary>Human-readable name of a node, used for menu labels and sorting.</summary>
         public static string NodeLabel(GraphNodeBase node)
@@ -794,112 +648,20 @@ namespace Yozolab.DaerD
 
         // ---- node creation ---------------------------------------------------
 
-        public AnimatorState CreateState(Vector2 position, string mode)
-        {
-            var sm = _context.CurrentStateMachine;
-            if (sm == null) return null;
+        public AnimatorState CreateState(Vector2 position, string mode) => _nodes.CreateState(position, mode);
 
-            AnimatorState state;
-            bool attachedSubAsset = false;
-            using (new UndoScope("Create State"))
-            {
-                Undo.RegisterCompleteObjectUndo(sm, "Create State");
-                state = sm.AddState(MakeUniqueName(sm, "New State"), new Vector3(position.x, position.y, 0f));
-                DaerDSettings.ApplyStateDefaultsTo(state);
+        public AnimatorState CreateStateWithMotion(Vector2 position, Motion motion) =>
+            _nodes.CreateStateWithMotion(position, motion);
 
-                // The controller's Empty clip fills the motion slot so a brand-new state never
-                // plays as a WD-OFF "freeze" state; the modes below overwrite it with a real motion.
-                var empty = GraphFrameData.GetEmptyClip(_context.Controller);
-                if (empty != null)
-                    state.motion = empty;
+        public void AssignMotion(AnimatorState state, Motion motion) => _nodes.AssignMotion(state, motion);
 
-                if (mode == "state-clip" && Selection.activeObject is AnimationClip clip)
-                {
-                    state.motion = clip;
-                    state.name = MakeUniqueName(sm, clip.name);
-                }
-                else if (mode == "state-blendtree")
-                {
-                    var blendTree = new BlendTree { name = "Blend Tree", hideFlags = HideFlags.HideInHierarchy };
-                    var path = AssetDatabase.GetAssetPath(_context.Controller);
-                    if (!string.IsNullOrEmpty(path))
-                    {
-                        AssetDatabase.AddObjectToAsset(blendTree, _context.Controller);
-                        attachedSubAsset = true;
-                    }
-                    state.motion = blendTree;
-                }
-                EditorUtility.SetDirty(sm);
-            }
-            // Written and reimported once the state holds the tree, so the Project window lists
-            // the new sub-asset instead of waiting for the next save.
-            if (attachedSubAsset)
-                DbtBuilder.CommitSubAssets(_context.Controller);
-            return state;
-        }
-
-        /// <summary>
-        /// Creates a state at <paramref name="position"/> using <paramref name="motion"/> as its
-        /// motion. Used when an AnimationClip or BlendTree asset is dropped onto empty graph space.
-        /// </summary>
-        public AnimatorState CreateStateWithMotion(Vector2 position, Motion motion)
-        {
-            var sm = _context.CurrentStateMachine;
-            if (sm == null || motion == null) return null;
-
-            AnimatorState state;
-            using (new UndoScope("Create State"))
-            {
-                Undo.RegisterCompleteObjectUndo(sm, "Create State");
-                state = sm.AddState(MakeUniqueName(sm, motion.name), new Vector3(position.x, position.y, 0f));
-                DaerDSettings.ApplyStateDefaultsTo(state);
-                state.motion = motion;
-                EditorUtility.SetDirty(sm);
-            }
-            return state;
-        }
-
-        /// <summary>Replaces a state's motion, used when an AnimationClip is dropped onto its node.</summary>
-        public void AssignMotion(AnimatorState state, Motion motion)
-        {
-            if (state == null) return;
-            using (new UndoScope("Assign Motion"))
-            {
-                Undo.RegisterCompleteObjectUndo(state, "Assign Motion");
-                state.motion = motion;
-                EditorUtility.SetDirty(state);
-                if (_context.Controller != null)
-                    EditorUtility.SetDirty(_context.Controller);
-            }
-        }
-
-        public AnimatorStateMachine CreateSubStateMachine(Vector2 position)
-        {
-            var sm = _context.CurrentStateMachine;
-            if (sm == null) return null;
-
-            AnimatorStateMachine child;
-            using (new UndoScope("Create Sub-State Machine"))
-            {
-                Undo.RegisterCompleteObjectUndo(sm, "Create Sub-State Machine");
-                child = sm.AddStateMachine(MakeUniqueName(sm, "New Sub-State Machine"), new Vector3(position.x, position.y, 0f));
-                EditorUtility.SetDirty(sm);
-            }
-            return child;
-        }
+        public AnimatorStateMachine CreateSubStateMachine(Vector2 position) => _nodes.CreateSubStateMachine(position);
 
         public void SetDefaultState(AnimatorState state)
         {
-            var sm = _context.CurrentStateMachine;
-            if (sm == null || state == null) return;
-            Undo.RegisterCompleteObjectUndo(sm, "Set Default State");
-            sm.defaultState = state;
-            EditorUtility.SetDirty(sm);
+            if (!_nodes.SetDefaultState(state)) return;
             RequestRebuild();
         }
-
-        static string MakeUniqueName(AnimatorStateMachine sm, string baseName) =>
-            StateDuplicator.MakeUniqueName(sm, baseName);
 
         // ---- frames ------------------------------------------------------------
 
@@ -932,10 +694,8 @@ namespace Yozolab.DaerD
         /// <summary>Creates an empty frame at <paramref name="position"/> (graph coordinates) and selects it.</summary>
         public void CreateFrameAt(Vector2 position)
         {
-            var sm = _context.CurrentStateMachine;
-            if (sm == null || _context.Controller == null) return;
-            _frameData = GraphFrameData.GetOrCreate(_context.Controller);
-            var frame = _frameData.AddFrame(sm, new Rect(position.x, position.y, 320f, 220f));
+            var frame = _frames.CreateFrame(new Rect(position.x, position.y, 320f, 220f));
+            if (frame == null) return;
             RequestRebuild();
             _context.Select(frame);
         }
@@ -956,8 +716,8 @@ namespace Yozolab.DaerD
             }
             bounds = Rect.MinMaxRect(bounds.xMin - 24f, bounds.yMin - 44f, bounds.xMax + 24f, bounds.yMax + 24f);
 
-            _frameData = GraphFrameData.GetOrCreate(_context.Controller);
-            var frame = _frameData.AddFrame(sm, bounds);
+            var frame = _frames.CreateFrame(bounds);
+            if (frame == null) return;
             RequestRebuild();
             _context.Select(frame);
         }
@@ -969,14 +729,12 @@ namespace Yozolab.DaerD
         /// </summary>
         void PersistFrameGeometry(FrameNode node)
         {
-            if (node?.Frame == null || _frameData == null) return;
+            if (node?.Frame == null || _frames.Data == null) return;
             var rect = node.GetPosition();
             var bounds = node.Frame.bounds;
             if (Mathf.Approximately(rect.width, bounds.width) && Mathf.Approximately(rect.height, bounds.height))
                 return;
-            Undo.RecordObject(_frameData, "Resize Frame");
-            node.Frame.bounds = rect;
-            EditorUtility.SetDirty(_frameData);
+            _frames.ResizeFrame(node.Frame, rect);
         }
 
         /// <summary>Refreshes a frame's visuals after its title/color changed in the inspector.</summary>
@@ -984,8 +742,7 @@ namespace Yozolab.DaerD
 
         public void DeleteFrame(GraphFrameData.Frame frame)
         {
-            if (frame == null || _frameData == null || frame.locked) return;
-            _frameData.RemoveFrame(frame);
+            if (!_frames.DeleteFrame(frame)) return;
             RequestRebuild();
         }
 
@@ -1009,46 +766,30 @@ namespace Yozolab.DaerD
                 else if (element is NoteNode nn && nn.Note != null) notesInside.Add(nn.Note);
             }
 
-            _frameData = GraphFrameData.GetOrCreate(_context.Controller);
-            var newFrame = FrameDuplicator.Duplicate(_frameData, _context.Controller, sm, frame, states, notesInside);
+            var newFrame = _frames.DuplicateFrame(frame, states, notesInside);
             if (newFrame == null) return;
 
             RequestRebuild();
             _context.Select(newFrame);
         }
 
-        public void ToggleFrameMoveNodes(GraphFrameData.Frame frame)
-        {
-            if (frame == null || _frameData == null) return;
-            Undo.RecordObject(_frameData, "Edit Frame");
-            frame.moveNodesWithFrame = !frame.moveNodesWithFrame;
-            EditorUtility.SetDirty(_frameData);
-        }
+        public void ToggleFrameMoveNodes(GraphFrameData.Frame frame) => _frames.ToggleFrameMoveNodes(frame);
 
         public void RenameFrame(GraphFrameData.Frame frame, string title)
         {
-            if (frame == null || _frameData == null || string.IsNullOrEmpty(title)) return;
-            Undo.RecordObject(_frameData, "Rename Frame");
-            frame.title = title;
-            EditorUtility.SetDirty(_frameData);
+            if (!_frames.RenameFrame(frame, title)) return;
             RefreshFrameVisuals(frame);
         }
 
         public void ToggleFrameLock(GraphFrameData.Frame frame)
         {
-            if (frame == null || _frameData == null) return;
-            Undo.RecordObject(_frameData, frame.locked ? "Unlock Frame" : "Lock Frame");
-            frame.locked = !frame.locked;
-            EditorUtility.SetDirty(_frameData);
+            if (!_frames.ToggleFrameLock(frame)) return;
             RefreshFrameVisuals(frame);
         }
 
         public void SetFrameColor(GraphFrameData.Frame frame, Color color)
         {
-            if (frame == null || _frameData == null) return;
-            Undo.RecordObject(_frameData, "Frame Color");
-            frame.color = color;
-            EditorUtility.SetDirty(_frameData);
+            if (!_frames.SetFrameColor(frame, color)) return;
             RefreshFrameVisuals(frame);
         }
 
@@ -1095,7 +836,7 @@ namespace Yozolab.DaerD
         /// <summary>Shrinks (or grows) the frame to snugly wrap the nodes currently inside it.</summary>
         public void FitFrameToContents(GraphFrameData.Frame frame)
         {
-            if (frame == null || _frameData == null || frame.locked) return;
+            if (frame == null || _frames.Data == null || frame.locked) return;
             var nodes = NodesFullyInside(frame.bounds);
             if (nodes.Count == 0) return;
 
@@ -1109,9 +850,7 @@ namespace Yozolab.DaerD
             }
             bounds = Rect.MinMaxRect(bounds.xMin - 24f, bounds.yMin - 44f, bounds.xMax + 24f, bounds.yMax + 24f);
 
-            Undo.RecordObject(_frameData, "Fit Frame To Contents");
-            frame.bounds = bounds;
-            EditorUtility.SetDirty(_frameData);
+            _frames.FitFrame(frame, bounds);
             FindFrameNode(frame)?.SetPosition(bounds);
         }
 
@@ -1120,45 +859,33 @@ namespace Yozolab.DaerD
         /// <summary>Creates an empty memo note at <paramref name="position"/> and selects it.</summary>
         public void CreateNoteAt(Vector2 position)
         {
-            var sm = _context.CurrentStateMachine;
-            if (sm == null || _context.Controller == null) return;
-            _frameData = GraphFrameData.GetOrCreate(_context.Controller);
-            var note = _frameData.AddNote(sm, new Rect(position.x, position.y, 200f, 100f));
+            var note = _frames.CreateNote(new Rect(position.x, position.y, 200f, 100f));
+            if (note == null) return;
             RequestRebuild();
             _context.Select(note);
         }
 
         public void DeleteNote(GraphFrameData.Note note)
         {
-            if (note == null || _frameData == null) return;
-            _frameData.RemoveNote(note);
+            if (!_frames.DeleteNote(note)) return;
             RequestRebuild();
         }
 
         public void SetNoteText(GraphFrameData.Note note, string text)
         {
-            if (note == null || _frameData == null) return;
-            Undo.RecordObject(_frameData, "Edit Note");
-            note.text = text ?? string.Empty;
-            EditorUtility.SetDirty(_frameData);
+            if (!_frames.SetNoteText(note, text)) return;
             RefreshNoteVisuals(note);
         }
 
         public void SetNoteColor(GraphFrameData.Note note, Color color)
         {
-            if (note == null || _frameData == null) return;
-            Undo.RecordObject(_frameData, "Note Color");
-            note.color = color;
-            EditorUtility.SetDirty(_frameData);
+            if (!_frames.SetNoteColor(note, color)) return;
             RefreshNoteVisuals(note);
         }
 
         public void SetNoteFontSize(GraphFrameData.Note note, int fontSize)
         {
-            if (note == null || _frameData == null) return;
-            Undo.RecordObject(_frameData, "Note Font Size");
-            note.fontSize = fontSize;
-            EditorUtility.SetDirty(_frameData);
+            if (!_frames.SetNoteFontSize(note, fontSize)) return;
             RefreshNoteVisuals(note);
         }
 
@@ -1171,23 +898,19 @@ namespace Yozolab.DaerD
         /// </summary>
         void PersistNoteGeometry(NoteNode node)
         {
-            if (node?.Note == null || _frameData == null) return;
+            if (node?.Note == null || _frames.Data == null) return;
             var rect = node.GetPosition();
             var bounds = node.Note.bounds;
             if (Mathf.Approximately(rect.width, bounds.width) && Mathf.Approximately(rect.height, bounds.height))
                 return;
-            Undo.RecordObject(_frameData, "Resize Note");
-            node.Note.bounds = rect;
-            EditorUtility.SetDirty(_frameData);
+            _frames.ResizeNote(node.Note, rect);
         }
 
         // ---- pack / unpack -----------------------------------------------------
 
         public void PackSelectedStates(List<AnimatorState> states)
         {
-            var sm = _context.CurrentStateMachine;
-            if (sm == null || states == null || states.Count == 0) return;
-            var child = StatePacker.Pack(sm, states);
+            var child = _nodes.PackStates(states);
             if (child == null) return;
             RequestRebuild();
             _context.Select(child);
@@ -1195,11 +918,7 @@ namespace Yozolab.DaerD
 
         public void UnpackSubStateMachine(AnimatorStateMachine child)
         {
-            var sm = _context.CurrentStateMachine;
-            if (sm == null || child == null) return;
-            var warnings = StatePacker.Unpack(sm, child, _context.Controller);
-            foreach (var warning in warnings)
-                Debug.LogWarning("DaerD: " + warning);
+            if (!_nodes.UnpackSubStateMachine(child)) return;
             RequestRebuild();
             _context.Select(null);
         }
@@ -1209,124 +928,43 @@ namespace Yozolab.DaerD
         public void ChainNodes(IList<GraphNodeBase> nodes, bool seeded = false)
         {
             if (nodes == null || nodes.Count < 2) return;
-            var sm = _context.CurrentStateMachine;
-            if (sm == null) return;
-            var created = new List<AnimatorTransitionBase>();
-            using (new UndoScope("Chain Transitions"))
-            {
-                for (int i = 0; i < nodes.Count - 1; i++)
-                    AddBatchTransition(nodes[i], nodes[i + 1], sm, created);
-                if (seeded) SeedCreated(created);
-            }
-            if (created.Count == 0) return;
-            Rebuild();
-            _context.Select(created[0]);
+            SelectBatch(_transitions.Chain(EndsOf(nodes), seeded));
         }
 
         public void FanOutNodes(GraphNodeBase source, IEnumerable<GraphNodeBase> targets, bool seeded = false)
         {
             if (source == null || targets == null) return;
-            var sm = _context.CurrentStateMachine;
-            if (sm == null) return;
-            var created = new List<AnimatorTransitionBase>();
-            using (new UndoScope("Fan-Out Transitions"))
-            {
-                foreach (var target in targets)
-                    AddBatchTransition(source, target, sm, created);
-                if (seeded) SeedCreated(created);
-            }
-            if (created.Count == 0) return;
-            Rebuild();
-            _context.Select(created[0]);
+            SelectBatch(_transitions.FanOut(EndOf(source), EndsOf(targets), seeded));
         }
 
         public void FanInNodes(IEnumerable<GraphNodeBase> sources, GraphNodeBase target, bool seeded = false)
         {
             if (sources == null || target == null) return;
-            var sm = _context.CurrentStateMachine;
-            if (sm == null) return;
-            var created = new List<AnimatorTransitionBase>();
-            using (new UndoScope("Fan-In Transitions"))
-            {
-                foreach (var source in sources)
-                    AddBatchTransition(source, target, sm, created);
-                if (seeded) SeedCreated(created);
-            }
-            if (created.Count == 0) return;
-            Rebuild();
-            _context.Select(created[0]);
+            SelectBatch(_transitions.FanIn(EndsOf(sources), EndOf(target), seeded));
         }
 
         public void CrossProductNodes(IList<GraphNodeBase> sources, IList<GraphNodeBase> targets, bool seeded = false)
         {
             if (sources == null || targets == null || sources.Count == 0 || targets.Count == 0) return;
-            var sm = _context.CurrentStateMachine;
-            if (sm == null) return;
-            var created = new List<AnimatorTransitionBase>();
-            using (new UndoScope("Multi Transition"))
-            {
-                foreach (var source in sources)
-                    foreach (var target in targets)
-                        AddBatchTransition(source, target, sm, created);
-                if (seeded) SeedCreated(created);
-            }
+            SelectBatch(_transitions.CrossProduct(EndsOf(sources), EndsOf(targets), seeded));
+        }
+
+        /// <summary>Shows the result of a chain / fan batch: nothing created means nothing to redraw.</summary>
+        void SelectBatch(List<AnimatorTransitionBase> created)
+        {
             if (created.Count == 0) return;
             Rebuild();
             _context.Select(created[0]);
         }
 
-        /// <summary>Seeded batch creation: the first copied transition's settings and
-        /// conditions stamp every created transition.</summary>
-        static void SeedCreated(List<AnimatorTransitionBase> created)
-        {
-            if (!TransitionClipboard.HasData) return;
-            var snapshot = TransitionClipboard.Snapshots[0];
-            foreach (var transition in created)
-                TransitionClipboard.Apply(transition, snapshot);
-        }
-
-        /// <summary>
-        /// One step of a chain / fan / cross batch. Skips invalid pairs (per
-        /// <see cref="TransitionConnect.CanConnect"/>) and self-loops on plain states, so
-        /// overlapping selections never produce nonsense transitions.
-        /// </summary>
-        void AddBatchTransition(GraphNodeBase source, GraphNodeBase destination, AnimatorStateMachine sm,
-            List<AnimatorTransitionBase> created)
-        {
-            if (source == null || destination == null || source == destination) return;
-            if (!TransitionConnect.CanConnect(source, destination)) return;
-            var transition = CreateTransitionCore(source, destination, sm);
-            if (transition != null) created.Add(transition);
-        }
-
         // ---- copy / paste ----------------------------------------------------
 
-        public void CopySelectedStates()
-        {
-            var states = new List<AnimatorState>();
-            foreach (var selectable in _graphView.selection)
-                if (selectable is StateNode sn && sn.State != null)
-                    states.Add(sn.State);
-            if (states.Count == 0) return;
-            StateClipboard.Copy(states, StateNodePosition, null, _context.Controller, _context.CurrentStateMachine);
-            // States and frames/notes paste together, so a fresh copy of one kind has to drop the
-            // other — otherwise the next paste would also drop whatever was copied before it.
-            FrameNoteClipboard.Clear();
-        }
+        public void CopySelectedStates() =>
+            _clipboard.CopyStates(new GraphSelectionSet(_graphView.selection).States, StateNodePosition);
 
-        /// <summary>
-        /// Pastes into the state machine currently on screen, so switching layers between the
-        /// copy and the paste is what moves states from one layer to another. Parameters the
-        /// states reference are recreated when the destination controller lacks them.
-        /// </summary>
         public void PasteStates(Vector2 position)
         {
-            if (!StateClipboard.HasData) return;
-            var controller = _context.Controller;
-            int parametersBefore = controller != null ? controller.parameters.Length : 0;
-            StateClipboard.Paste(_context.CurrentStateMachine, position, controller);
-            if (controller != null && controller.parameters.Length != parametersBefore)
-                _context.NotifyParametersChanged();
+            if (!_clipboard.PasteStates(position)) return;
             RequestRebuild();
         }
 
@@ -1337,75 +975,21 @@ namespace Yozolab.DaerD
 
         // ---- frame / note copy / paste ---------------------------------------
 
-        /// <summary>
-        /// Ctrl+C over the canvas: the states, frames and notes in the selection all go to their
-        /// clipboards in one gesture, sharing a single anchor so a mixed selection keeps its
-        /// relative layout when it is pasted — including into a different layer.
-        /// </summary>
         public void CopySelectedElements()
         {
-            var states = new List<AnimatorState>();
-            var frames = new List<GraphFrameData.Frame>();
-            var notes = new List<GraphFrameData.Note>();
-            int subStateMachines = 0;
-            foreach (var selectable in _graphView.selection)
-            {
-                switch (selectable)
-                {
-                    case StateNode sn when sn.State != null: states.Add(sn.State); break;
-                    case FrameNode fn when fn.Frame != null: frames.Add(fn.Frame); break;
-                    case NoteNode nn when nn.Note != null: notes.Add(nn.Note); break;
-                    case SubStateMachineNode ssm when ssm.StateMachine != null: subStateMachines++; break;
-                }
-            }
-            // Sub-state machines aren't part of the state clipboard. Say so instead of copying a
-            // silently incomplete selection — "select all" in a layer that has them looks like it
-            // worked until the paste comes up short.
-            if (subStateMachines > 0)
-                Debug.Log("DaerD: " + subStateMachines + " sub-state machine(s) were left out of the copy"
-                    + " — copy the whole layer (layer settings > Copy Layer) to move those too.");
-
-            if (states.Count == 0 && frames.Count == 0 && notes.Count == 0) return;
-
-            var anchor = new Vector2(float.MaxValue, float.MaxValue);
-            foreach (var state in states) anchor = Vector2.Min(anchor, StateNodePosition(state));
-            foreach (var frame in frames) anchor = Vector2.Min(anchor, frame.bounds.position);
-            foreach (var note in notes) anchor = Vector2.Min(anchor, note.bounds.position);
-
-            StateClipboard.Copy(states, StateNodePosition, anchor, _context.Controller, _context.CurrentStateMachine);
-            FrameNoteClipboard.Copy(frames, notes, anchor);
+            var selected = new GraphSelectionSet(_graphView.selection);
+            _clipboard.CopyElements(selected.States, selected.Frames, selected.Notes,
+                selected.StateMachines.Count, StateNodePosition);
         }
 
-        /// <summary>Copies one frame (from its context menu), dropping any copied states.</summary>
-        public void CopyFrame(GraphFrameData.Frame frame)
-        {
-            if (frame == null) return;
-            StateClipboard.Clear();
-            FrameNoteClipboard.Copy(new List<GraphFrameData.Frame> { frame }, null);
-        }
+        public void CopyFrame(GraphFrameData.Frame frame) => _clipboard.CopyFrame(frame);
 
-        /// <summary>Copies one note (from its context menu), dropping any copied states.</summary>
-        public void CopyNote(GraphFrameData.Note note)
-        {
-            if (note == null) return;
-            StateClipboard.Clear();
-            FrameNoteClipboard.Copy(null, new List<GraphFrameData.Note> { note });
-        }
+        public void CopyNote(GraphFrameData.Note note) => _clipboard.CopyNote(note);
 
-        /// <summary>
-        /// Pastes the copied frames and notes into the state machine currently on screen — the
-        /// clipboard holds no state machine reference, so this is what makes the copy land in
-        /// whichever layer the user has open.
-        /// </summary>
         public void PasteFramesAndNotes(Vector2 position)
         {
-            if (!FrameNoteClipboard.HasData || _context.Controller == null) return;
-            var sm = _context.CurrentStateMachine;
-            if (sm == null) return;
-
-            _frameData = GraphFrameData.GetOrCreate(_context.Controller);
-            var created = FrameNoteClipboard.Paste(_frameData, sm, position);
-            if (created.Count == 0) return;
+            var created = _clipboard.PasteFramesAndNotes(position);
+            if (created == null || created.Count == 0) return;
 
             RequestRebuild();
             _context.Select(created[0]);
@@ -1418,201 +1002,54 @@ namespace Yozolab.DaerD
 
         // ---- transition copy / paste -----------------------------------------
 
-        /// <summary>
-        /// Copies every (non-default) transition reachable from the given edges, recording each
-        /// transition's source kind / source node and its destination so the snapshots can later
-        /// be pasted onto a different state either as the new source or as the new destination.
-        /// </summary>
         public void CopyTransitionsFromEdges(IEnumerable<TransitionEdge> edges)
         {
-            var snapshots = new List<TransitionClipboard.Snapshot>();
+            var content = new List<(TransitionEnd, IList<AnimatorTransitionBase>)>();
             foreach (var edge in edges)
             {
                 if (edge == null || edge.IsDefaultEdge) continue;
-                var sourceNode = edge.output?.node as GraphNodeBase;
-                ResolveSourceContext(sourceNode,
-                    out var kind, out var sourceState, out var sourceSm);
-                foreach (var t in edge.Transitions)
-                {
-                    if (t == null) continue;
-                    snapshots.Add(TransitionClipboard.CaptureWithContext(t, kind, sourceState, sourceSm));
-                }
+                content.Add((EndOf(edge.output?.node as GraphNodeBase), edge.Transitions));
             }
-            if (snapshots.Count > 0)
-                TransitionClipboard.CopySnapshots(snapshots);
+            _clipboard.CopyTransitions(content);
         }
 
-        /// <summary>
-        /// Applies the first copied transition's settings (timing, conditions, mute/solo) onto every
-        /// transition of the given edges — the "paste onto" behaviour, driven from Ctrl+V.
-        /// </summary>
         public void PasteTransitionSettingsOntoEdges(IEnumerable<TransitionEdge> edges)
         {
-            if (!TransitionClipboard.HasData) return;
-            var snapshot = TransitionClipboard.Snapshots[0];
-            bool any = false;
-            using (new UndoScope("Paste Transition Settings"))
+            var transitions = new List<AnimatorTransitionBase>();
+            foreach (var edge in edges)
             {
-                foreach (var edge in edges)
-                {
-                    if (edge == null || edge.IsDefaultEdge) continue;
-                    foreach (var t in edge.Transitions)
-                        if (t != null) { TransitionClipboard.Apply(t, snapshot); any = true; }
-                }
+                if (edge == null || edge.IsDefaultEdge) continue;
+                transitions.AddRange(edge.Transitions);
             }
-            if (any) Rebuild();
+            if (_clipboard.PasteTransitionSettingsOnto(transitions)) Rebuild();
         }
 
-        /// <summary>
-        /// Adds a new transition alongside the existing ones on each given edge for every copied
-        /// snapshot, applying its settings — the "paste as new" behaviour, driven from Ctrl+Shift+V.
-        /// </summary>
         public void PasteTransitionsAsNewOnEdges(IEnumerable<TransitionEdge> edges)
         {
-            if (!TransitionClipboard.HasData) return;
-            var snapshots = TransitionClipboard.Snapshots;
-            AnimatorTransitionBase last = null;
-            using (new UndoScope("Paste Transition As New"))
+            var pairs = new List<(TransitionEnd, TransitionEnd)>();
+            foreach (var edge in edges)
             {
-                foreach (var edge in edges)
-                {
-                    if (edge == null || edge.IsDefaultEdge) continue;
-                    var source = edge.output?.node as GraphNodeBase;
-                    var destination = edge.input?.node as GraphNodeBase;
-                    if (source == null || destination == null) continue;
-                    foreach (var snap in snapshots)
-                    {
-                        var created = CreateTransition(source, destination);
-                        if (created != null) { TransitionClipboard.Apply(created, snap); last = created; }
-                    }
-                }
+                if (edge == null || edge.IsDefaultEdge) continue;
+                var source = edge.output?.node as GraphNodeBase;
+                var destination = edge.input?.node as GraphNodeBase;
+                if (source == null || destination == null) continue;
+                pairs.Add((EndOf(source), EndOf(destination)));
             }
+            if (!_clipboard.PasteTransitionsAsNewOn(pairs, out var last)) return;
             Rebuild();
             if (last != null) _context.Select(last);
         }
 
-        static void ResolveSourceContext(GraphNodeBase node,
-            out TransitionClipboard.SourceKind kind,
-            out AnimatorState state,
-            out AnimatorStateMachine stateMachine)
+        public void PasteTransitionsWithStateAsSource(AnimatorState state) =>
+            SelectPasted(_clipboard.PasteTransitionsWithStateAsSource(state));
+
+        public void PasteTransitionsWithStateAsDestination(AnimatorState state) =>
+            SelectPasted(_clipboard.PasteTransitionsWithStateAsDestination(state));
+
+        /// <summary>Shows the result of a transition paste; null means the paste never ran.</summary>
+        void SelectPasted(List<AnimatorTransitionBase> created)
         {
-            kind = TransitionClipboard.SourceKind.None;
-            state = null;
-            stateMachine = null;
-            switch (node)
-            {
-                case StateNode sn:
-                    kind = TransitionClipboard.SourceKind.State;
-                    state = sn.State;
-                    break;
-                case SubStateMachineNode mn:
-                    kind = TransitionClipboard.SourceKind.SubStateMachine;
-                    stateMachine = mn.StateMachine;
-                    break;
-                case SpecialNode spn when spn.Kind == SpecialNodeKind.AnyState:
-                    kind = TransitionClipboard.SourceKind.AnyState;
-                    break;
-                case SpecialNode spn when spn.Kind == SpecialNodeKind.Entry:
-                    kind = TransitionClipboard.SourceKind.Entry;
-                    break;
-            }
-        }
-
-        /// <summary>
-        /// Pastes the clipboard transitions onto <paramref name="state"/>, using it as the source
-        /// for every new transition. Each new transition's destination is the snapshot's recorded
-        /// destination (state, sub-state machine, or Exit). Snapshots whose destination cannot be
-        /// resolved inside the current state machine are skipped.
-        /// </summary>
-        public void PasteTransitionsWithStateAsSource(AnimatorState state)
-        {
-            if (state == null) return;
-            var sm = _context.CurrentStateMachine;
-            if (sm == null) return;
-            var snapshots = TransitionClipboard.Snapshots;
-            if (snapshots.Count == 0) return;
-
-            var created = new List<AnimatorTransitionBase>();
-            using (new UndoScope("Paste Transition (As Source)"))
-            {
-                Undo.RegisterCompleteObjectUndo(state, "Paste Transition");
-                foreach (var snap in snapshots)
-                {
-                    AnimatorTransitionBase t = null;
-                    if (snap.isExit)
-                    {
-                        t = state.AddExitTransition();
-                    }
-                    else if (snap.destinationState != null && sm.ContainsState(snap.destinationState))
-                    {
-                        if (snap.destinationState == state) continue;
-                        t = state.AddTransition(snap.destinationState);
-                    }
-                    else if (snap.destinationStateMachine != null && sm.ContainsStateMachine(snap.destinationStateMachine))
-                    {
-                        t = state.AddTransition(snap.destinationStateMachine);
-                    }
-                    if (t == null) continue;
-                    TransitionClipboard.Apply(t, snap);
-                    created.Add(t);
-                }
-                if (_context.Controller != null)
-                    EditorUtility.SetDirty(_context.Controller);
-            }
-
-            Rebuild();
-            if (created.Count > 0) _context.Select(created[0]);
-        }
-
-        /// <summary>
-        /// Pastes the clipboard transitions onto <paramref name="state"/>, using it as the
-        /// destination for every new transition. Each new transition is added at the snapshot's
-        /// original source (state, sub-state machine, AnyState, or Entry of the current state
-        /// machine). Snapshots whose source cannot be resolved are skipped.
-        /// </summary>
-        public void PasteTransitionsWithStateAsDestination(AnimatorState state)
-        {
-            if (state == null) return;
-            var sm = _context.CurrentStateMachine;
-            if (sm == null) return;
-            var snapshots = TransitionClipboard.Snapshots;
-            if (snapshots.Count == 0) return;
-
-            var created = new List<AnimatorTransitionBase>();
-            using (new UndoScope("Paste Transition (As Destination)"))
-            {
-                Undo.RegisterCompleteObjectUndo(sm, "Paste Transition");
-                foreach (var snap in snapshots)
-                {
-                    AnimatorTransitionBase t = null;
-                    switch (snap.sourceKind)
-                    {
-                        case TransitionClipboard.SourceKind.State:
-                            if (snap.sourceState == null || snap.sourceState == state) break;
-                            if (!sm.ContainsState(snap.sourceState)) break;
-                            Undo.RegisterCompleteObjectUndo(snap.sourceState, "Paste Transition");
-                            t = snap.sourceState.AddTransition(state);
-                            break;
-                        case TransitionClipboard.SourceKind.SubStateMachine:
-                            if (snap.sourceStateMachine == null) break;
-                            if (!sm.ContainsStateMachine(snap.sourceStateMachine)) break;
-                            t = sm.AddStateMachineTransition(snap.sourceStateMachine, state);
-                            break;
-                        case TransitionClipboard.SourceKind.AnyState:
-                            t = sm.AddAnyStateTransition(state);
-                            break;
-                        case TransitionClipboard.SourceKind.Entry:
-                            t = sm.AddEntryTransition(state);
-                            break;
-                    }
-                    if (t == null) continue;
-                    TransitionClipboard.Apply(t, snap);
-                    created.Add(t);
-                }
-                if (_context.Controller != null)
-                    EditorUtility.SetDirty(_context.Controller);
-            }
-
+            if (created == null) return;
             Rebuild();
             if (created.Count > 0) _context.Select(created[0]);
         }
