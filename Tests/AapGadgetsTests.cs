@@ -61,14 +61,6 @@ namespace Yozolab.DaerD.Tests
             return null;
         }
 
-        static AnimatorState FindState(AnimatorStateMachine stateMachine, string name)
-        {
-            foreach (var child in stateMachine.states)
-                if (child.state.name == name) return child.state;
-            Assert.Fail("no state named '" + name + "'");
-            return null;
-        }
-
         static bool HasLayer(AnimatorController controller, string name)
         {
             foreach (var layer in controller.layers)
@@ -271,8 +263,11 @@ namespace Yozolab.DaerD.Tests
             Object.DestroyImmediate(controller);
         }
 
+        /// <summary>The exact half (a normalized Direct core) and the lookup table that fills in
+        /// the half a Direct weight cannot reach are two children of one tree now — where the
+        /// second half used to be a motion-time layer at the end of the controller.</summary>
         [Test]
-        public void Reciprocal_NormalizesTheCoreAndCoversTheRestWithALayer()
+        public void Reciprocal_AddsAnExactCoreAndALookupTableBelowOne()
         {
             var controller = NewController("A");
             var request = NewRequest(controller, AapGadgets.Kind.Reciprocal);
@@ -280,9 +275,12 @@ namespace Yozolab.DaerD.Tests
             Assert.IsTrue(AapGadgets.Apply(request));
 
             Assert.IsNotNull(DbtBuilder.FindParameter(controller, "Out/Shift"));
+            Assert.AreEqual(2, controller.layers.Length, "Base and the blend tree layer, nothing else");
+            Assert.IsFalse(HasLayer(controller, "Out 1/x"), "the sub-1 half is a tree now, not a layer");
 
             var gadget = GadgetRoot(controller);
-            Assert.AreEqual(2, gadget.children.Length);
+            Assert.AreEqual(3, gadget.children.Length, "the shift, the exact core, the table");
+
             // Out/Shift = A - 1, so the normalized core divides by (Shift + 1) = A.
             var shift = (BlendTree)gadget.children[0].motion;
             Assert.AreEqual("A", shift.children[0].directBlendParameter);
@@ -299,25 +297,31 @@ namespace Yozolab.DaerD.Tests
             Assert.AreEqual("One", core.children[1].directBlendParameter);
             Assert.AreEqual(1f, ClipValue(core.children[1].motion, "Out"), 1e-4f);
 
-            // Below 1 a motion-time curve takes over.
-            var stateMachine = FindLayer(controller, "Out 1/x").stateMachine;
-            var idle = FindState(stateMachine, "Idle");
-            var inverse = FindState(stateMachine, "1/x");
-            Assert.AreSame(idle, stateMachine.defaultState);
-            Assert.IsTrue(inverse.timeParameterActive);
-            Assert.AreEqual("A", inverse.timeParameter);
+            // The table holds what the core is short of below 1: (1/u - 1), so the two add up
+            // to 1/u. From 1 up it holds 0 and the exact core stands alone.
+            var table = (BlendTree)gadget.children[2].motion;
+            Assert.AreEqual(BlendTreeType.Simple1D, table.blendType);
+            Assert.AreEqual("A", table.blendParameter);
+            Assert.AreEqual(97, table.children.Length, "96 rungs of the ladder, both ends included");
 
-            var curve = ClipCurve(inverse.motion, "Out");
-            Assert.AreEqual(1f, curve.Evaluate(100f), 1e-3f);    // the clip's end is input 1
-            Assert.AreEqual(4f, curve.Evaluate(25f), 1e-3f);     // a quarter in reads 1 / 0.25
+            var thresholds = AscendingThresholds(table);
+            int last = thresholds.Length - 1;
+            Assert.AreEqual(1f / 240f, thresholds[0], 1e-6f, "the floor is where the output caps at 240");
+            Assert.AreEqual(239f, ClipValue(table.children[0].motion, "Out"), 1e-3f,
+                "core 1 plus table 239 is the 240 cap");
+            Assert.AreEqual(1f, thresholds[last], 1e-6f);
+            Assert.AreEqual(0f, ClipValue(table.children[last].motion, "Out"), 1e-6f,
+                "at 1 the table must contribute nothing, and it clamps to that above 1");
 
-            Assert.AreEqual(1, idle.transitions.Length);
-            Assert.AreSame(inverse, idle.transitions[0].destinationState);
-            Assert.AreEqual(AnimatorConditionMode.Less, idle.transitions[0].conditions[0].mode);
-            Assert.AreEqual("A", idle.transitions[0].conditions[0].parameter);
-            Assert.AreEqual(1f, idle.transitions[0].conditions[0].threshold, 1e-4f);
-            Assert.AreEqual(AnimatorConditionMode.Greater, inverse.transitions[0].conditions[0].mode);
-            Assert.AreSame(idle, inverse.transitions[0].destinationState);
+            // Geometric, not even: every rung multiplies the one below by the same ratio, which
+            // is what makes the relative error of 1/u constant all the way down.
+            float ratio = Mathf.Pow(240f, 1f / 96f);
+            for (int i = 1; i <= last; i++)
+                Assert.AreEqual(ratio, thresholds[i] / thresholds[i - 1], 1e-3f, "rung " + i);
+            // Exact on the rungs themselves.
+            for (int i = 0; i <= last; i += 24)
+                Assert.AreEqual(1f / thresholds[i] - 1f, ClipValue(table.children[i].motion, "Out"),
+                    1e-2f, "rung " + i);
 
             Object.DestroyImmediate(controller);
         }
@@ -330,6 +334,8 @@ namespace Yozolab.DaerD.Tests
 
             Assert.IsNotNull(DbtBuilder.FindParameter(controller, "Out/Inv"));
             Assert.IsNotNull(DbtBuilder.FindParameter(controller, "Out/Inv/Shift"));
+            Assert.AreEqual(2, controller.layers.Length);
+            Assert.IsFalse(HasLayer(controller, "Out/Inv 1/x"));
 
             var gadget = GadgetRoot(controller);
             Assert.AreEqual(2, gadget.children.Length);
@@ -339,8 +345,10 @@ namespace Yozolab.DaerD.Tests
             Assert.AreEqual("Out/Inv", inner.children[0].directBlendParameter);
             Assert.AreEqual(1f, ClipValue(inner.children[0].motion, "Out"), 1e-4f);
 
-            // The reciprocal — and its layer — belong to B, the divisor.
-            Assert.AreEqual("B", FindState(FindLayer(controller, "Out/Inv 1/x").stateMachine, "1/x").timeParameter);
+            // The reciprocal — table and all — belongs to B, the divisor.
+            var reciprocal = (BlendTree)gadget.children[0].motion;
+            Assert.AreEqual(3, reciprocal.children.Length);
+            Assert.AreEqual("B", ((BlendTree)reciprocal.children[2].motion).blendParameter);
 
             Object.DestroyImmediate(controller);
         }
@@ -791,29 +799,25 @@ namespace Yozolab.DaerD.Tests
             Assert.IsNotNull(AapGadgets.Validate(collision));
         }
 
-        /// <summary>The supporting-layer names a caller can ask for have to be the names the
-        /// builders actually take: anything that regenerates removes them by name first, and
-        /// a miss would leave the old layer running beside the new one, both writing the
-        /// same output.</summary>
+        /// <summary>The supporting-layer name a caller can ask for has to be the name the
+        /// builder actually takes: anything that regenerates removes it by name first, and a
+        /// miss would leave the old layer running beside the new one, both writing the same
+        /// output.</summary>
         [Test]
-        public void SupportingLayerNames_MatchTheLayersTheGadgetsCreate()
+        public void SupportingLayerNames_MatchTheLayerFrameTimeCreates()
         {
-            var withLayers = new[]
-            {
-                AapGadgets.Kind.Reciprocal, AapGadgets.Kind.Divide, AapGadgets.Kind.FrameTime,
-            };
-            foreach (var kind in withLayers)
-            {
-                var controller = NewController("A", "B");
-                var request = NewRequest(controller, kind);
-                Assert.IsTrue(AapGadgets.Apply(request), kind.ToString());
+            var controller = NewController();
+            var request = NewRequest(controller, AapGadgets.Kind.FrameTime);
+            request.inputA = null;
+            request.inputB = null;
+            request.output = "FrameTime";
+            Assert.IsTrue(AapGadgets.Apply(request));
 
-                var names = AapGadgets.SupportingLayerNames(request);
-                Assert.AreEqual(1, names.Length, kind.ToString());
-                // FindLayer fails the test when the name isn't there.
-                Assert.IsNotNull(FindLayer(controller, names[0]), kind.ToString());
-                Object.DestroyImmediate(controller);
-            }
+            var names = AapGadgets.SupportingLayerNames(request);
+            Assert.AreEqual(1, names.Length);
+            // FindLayer fails the test when the name isn't there.
+            Assert.IsNotNull(FindLayer(controller, names[0]));
+            Object.DestroyImmediate(controller);
 
             var plain = NewController("A", "B");
             Assert.IsEmpty(AapGadgets.SupportingLayerNames(NewRequest(plain, AapGadgets.Kind.Multiply)),
@@ -821,18 +825,20 @@ namespace Yozolab.DaerD.Tests
             Object.DestroyImmediate(plain);
         }
 
-        /// <summary>The kinds that used to be a layer keep naming it. A controller an older
-        /// version built still carries that layer, and its name is the only handle a regenerate
-        /// has on it — miss it and the stale motion-time state keeps overwriting the output the
-        /// new tree computes, from the end of the controller where it always won.</summary>
+        /// <summary>The kinds that used to be (or half be) a layer keep naming it. A controller
+        /// an older version built still carries that layer, and its name is the only handle a
+        /// regenerate has on it — miss it and the stale motion-time state keeps overwriting the
+        /// output the new tree computes, from the end of the controller where it always won.
+        /// </summary>
         [Test]
         public void SupportingLayerNames_StillNameTheLayersOlderVersionsBuilt()
         {
             var kinds = new[]
             {
+                AapGadgets.Kind.Reciprocal, AapGadgets.Kind.Divide,
                 AapGadgets.Kind.Sine, AapGadgets.Kind.Cosine, AapGadgets.Kind.Tangent,
             };
-            var legacy = new[] { "Out sin(x)", "Out cos(x)", "Out tan(x)" };
+            var legacy = new[] { "Out 1/x", "Out/Inv 1/x", "Out sin(x)", "Out cos(x)", "Out tan(x)" };
 
             for (int i = 0; i < kinds.Length; i++)
             {

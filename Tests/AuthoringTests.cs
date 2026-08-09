@@ -471,6 +471,10 @@ namespace Yozolab.DaerD.Tests
         public void Gadgets_FromARecipe_CollectIntoOneLayer_AndRegenerateInPlace()
         {
             var controller = Track(new AnimatorController());
+            // As an older version would have left it: the reciprocal's half used to be a
+            // motion-time layer, and a controller in the wild still carries one. The sweep only
+            // knows it by the name AapGadgets.SupportingLayerNames still reports.
+            controller.AddLayer("Y/Inverse 1/x");
             var recipe = NewRecipe(controller, c =>
             {
                 var x = c.FloatParameter("X");
@@ -494,9 +498,10 @@ namespace Yozolab.DaerD.Tests
 
             int math = IndexOfLayer(controller, "Math");
             Assert.GreaterOrEqual(math, 0);
-            // The reciprocal's supporting layer covers the half the tree can't compute, so
-            // it only works while it sits after the tree that wrote the other half.
-            Assert.Greater(IndexOfLayer(controller, "Y/Inverse 1/x"), math);
+            // The reciprocal computes both halves inside the tree now, so the layer the older
+            // version left behind is reclaimed rather than joined by a numbered twin.
+            Assert.AreEqual(-1, IndexOfLayer(controller, "Y/Inverse 1/x"));
+            Assert.AreEqual(-1, IndexOfLayer(controller, "Y/Inverse 1/x 1"));
 
             var root = (BlendTree)controller.layers[math].stateMachine.states[0].state.motion;
             Assert.AreEqual(BlendTreeType.Direct, root.blendType);
