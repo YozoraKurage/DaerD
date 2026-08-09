@@ -27,6 +27,7 @@ namespace Yozolab.DaerD
         readonly SyncRequestInspector _syncRequests;
         readonly StateInspector _state;
         readonly MultiStateInspector _multiStates;
+        readonly NoteInspector _notes;
 
         public InspectorPanel(DaerDContext context, AnimatorGraphView graphView)
             : base(context, "Inspector")
@@ -42,6 +43,7 @@ namespace Yozolab.DaerD
             _syncRequests = new SyncRequestInspector(context, graphView.Sync);
             _state = new StateInspector(context, graphView.Sync, _syncRequests, _behaviours);
             _multiStates = new MultiStateInspector(context, graphView.Sync, _state, _overview, _multiBehaviours);
+            _notes = new NoteInspector(context, graphView.Sync);
             context.SelectionChanged += OnSelectionChanged;
             // The leftover scan (and the object references captured in it) belongs to the
             // outgoing controller — drop it on a tab switch.
@@ -119,7 +121,7 @@ namespace Yozolab.DaerD
             }
             else if (selection is GraphFrameData.Note note)
             {
-                DrawNote(note);
+                _notes.DrawNote(note);
             }
             else if (selection is SpecialNodeKind kind)
             {
@@ -187,7 +189,7 @@ namespace Yozolab.DaerD
             }
 
             EditorGUILayout.Space(6);
-            DrawFrameNoteClipboardRow(L.Tr("Copy Frame"),
+            NoteInspector.DrawFrameNoteClipboardRow(_graphView.Sync, L.Tr("Copy Frame"),
                 L.Tr("Copy this frame's box. Open another layer and paste to reuse it there."),
                 () => _graphView.Sync.CopyFrame(frame));
 
@@ -208,86 +210,6 @@ namespace Yozolab.DaerD
                     GUIUtility.ExitGUI();
                 }
             }
-            EditorGUILayout.EndHorizontal();
-        }
-
-        // ---- note ------------------------------------------------------------
-
-        static readonly int[] NoteFontSizes = { 10, 12, 16 };
-        static readonly string[] NoteFontSizeLabels = { "Small", "Medium", "Large" };
-
-        void DrawNote(GraphFrameData.Note note)
-        {
-            var frameData = GraphFrameData.Find(Context.Controller);
-            if (frameData == null || !frameData.notes.Contains(note))
-            {
-                EditorGUILayout.LabelField("This note no longer exists.");
-                return;
-            }
-
-            EditorGUILayout.LabelField("Note", EditorStyles.boldLabel);
-
-            // Text is edited in place on the note itself — the inspector column is too narrow
-            // for sticky-note content (long lines were getting cut off in the old TextArea).
-            // Show a read-only preview here and an "Edit Text" button that opens the in-graph
-            // editor, the same one double-click / F2 triggers.
-            EditorGUILayout.LabelField("Text", EditorStyles.miniBoldLabel);
-            using (new EditorGUI.DisabledScope(true))
-                EditorGUILayout.TextArea(string.IsNullOrEmpty(note.text) ? "(empty)" : note.text,
-                    EditorStyles.textArea, GUILayout.MinHeight(40));
-            if (GUILayout.Button("Edit Text in Graph"))
-            {
-                _graphView.Sync.FindNoteNode(note)?.BeginEdit();
-                GUIUtility.ExitGUI();
-            }
-            EditorGUILayout.LabelField("Tip: double-click the note (or press F2) to edit text in place.",
-                EditorStyles.miniLabel);
-
-            EditorGUILayout.Space(4);
-            EditorGUI.BeginChangeCheck();
-            var color = EditorGUILayout.ColorField("Color", note.color);
-            int sizeIndex = Array.IndexOf(NoteFontSizes, note.fontSize);
-            if (sizeIndex < 0) sizeIndex = 1;
-            sizeIndex = EditorGUILayout.Popup("Font Size", sizeIndex, NoteFontSizeLabels);
-            if (EditorGUI.EndChangeCheck())
-            {
-                Undo.RecordObject(frameData, "Edit Note");
-                note.color = color;
-                note.fontSize = NoteFontSizes[sizeIndex];
-                EditorUtility.SetDirty(frameData);
-                _graphView.Sync.RefreshNoteVisuals(note);
-            }
-
-            EditorGUILayout.Space(6);
-            DrawFrameNoteClipboardRow(L.Tr("Copy Note"),
-                L.Tr("Copy this note. Open another layer and paste to reuse it there."),
-                () => _graphView.Sync.CopyNote(note));
-
-            if (GUILayout.Button("Delete Note"))
-            {
-                _graphView.Sync.DeleteNote(note);
-                Context.Select(null);
-                GUIUtility.ExitGUI();
-            }
-        }
-
-        /// <summary>
-        /// Copy / paste row shared by the frame and note inspectors. Paste targets the layer
-        /// currently open in the graph — that's what makes these copies cross-layer — and drops
-        /// the copy at the position it was taken from.
-        /// </summary>
-        void DrawFrameNoteClipboardRow(string copyLabel, string copyTooltip, Action copy)
-        {
-            EditorGUILayout.BeginHorizontal();
-            if (GUILayout.Button(new GUIContent(copyLabel, copyTooltip)))
-                copy();
-            using (new EditorGUI.DisabledScope(!FrameNoteClipboard.HasData))
-                if (GUILayout.Button(new GUIContent(L.Tr("Paste Into This Layer"),
-                        L.Tr("Paste the copied frames / notes into the layer currently open in the graph."))))
-                {
-                    _graphView.Sync.PasteFramesAndNotesAtOrigin();
-                    GUIUtility.ExitGUI();
-                }
             EditorGUILayout.EndHorizontal();
         }
     }
