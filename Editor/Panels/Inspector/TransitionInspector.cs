@@ -16,17 +16,17 @@ namespace Yozolab.DaerD
     class TransitionInspector
     {
         readonly DaerDContext _context;
-        readonly AnimatorGraphView _graphView;
+        readonly GraphSync _sync;
         readonly List<AnimatorTransitionBase> _selectedTransitions;
         readonly MultiTransitionInspector _multiTransition;
 
         int _rangeAnchor = -1;
 
-        public TransitionInspector(DaerDContext context, AnimatorGraphView graphView,
+        public TransitionInspector(DaerDContext context, GraphSync sync,
             List<AnimatorTransitionBase> selectedTransitions, MultiTransitionInspector multiTransition)
         {
             _context = context;
-            _graphView = graphView;
+            _sync = sync;
             _selectedTransitions = selectedTransitions;
             _multiTransition = multiTransition;
         }
@@ -59,21 +59,16 @@ namespace Yozolab.DaerD
                 DrawSingleTransition(_selectedTransitions[0], controller);
         }
 
-        /// <summary>All transitions of every currently selected (non-default) edge.</summary>
+        /// <summary>All transitions of every currently selected (non-default) edge. The graph
+        /// answers which edges those are — including the fallback for a selection the graph is not
+        /// highlighting — and hands over the transitions, never the edges themselves.</summary>
         List<AnimatorTransitionBase> GatherTransitionPool()
         {
             var pool = new List<AnimatorTransitionBase>();
-            var edges = _graphView.GetSelectedEdges();
-            if (edges.Count == 0)
+            foreach (var group in _context.GetSelectedTransitionGroups())
             {
-                var fallback = _context.Selection as TransitionEdge
-                    ?? (_context.Selection is AnimatorTransitionBase tb ? _graphView.Sync.FindEdge(tb) : null);
-                if (fallback != null) edges.Add(fallback);
-            }
-            foreach (var edge in edges)
-            {
-                if (edge.IsDefaultEdge) continue;
-                foreach (var t in edge.Transitions)
+                if (group.isDefault) continue;
+                foreach (var t in group.transitions)
                     if (t != null && !pool.Contains(t)) pool.Add(t);
             }
             return pool;
@@ -203,7 +198,9 @@ namespace Yozolab.DaerD
 
         void DeleteTransitionRow(AnimatorTransitionBase transition, List<AnimatorTransitionBase> pool)
         {
-            var edge = _graphView.Sync.FindEdge(transition);
+            // Deleting needs the edge object itself (it is where the transition's source node
+            // lives), so this one stays a GraphSync command rather than a context notification.
+            var edge = _sync.FindEdge(transition);
             if (edge == null) return;
 
             AnimatorTransitionBase remaining = null;
@@ -211,18 +208,20 @@ namespace Yozolab.DaerD
                 if (!ReferenceEquals(t, transition)) { remaining = t; break; }
 
             _selectedTransitions.Remove(transition);
-            _graphView.Sync.DeleteTransition(edge, transition);
+            _sync.DeleteTransition(edge, transition);
             _context.Select(remaining);
         }
 
         void AddTransitionToAnchorEdge(List<AnimatorTransitionBase> pool)
         {
             var anchor = _selectedTransitions.Count > 0 ? _selectedTransitions[0] : pool[0];
-            var edge = _graphView.Sync.FindEdge(anchor);
+            // The new transition runs between the anchor edge's two endpoint nodes, so this needs
+            // the edge object; like the delete row, it stays a GraphSync command.
+            var edge = _sync.FindEdge(anchor);
             if (edge == null) return;
-            var created = _graphView.Sync.CreateTransition(
+            var created = _sync.CreateTransition(
                 edge.output?.node as GraphNodeBase, edge.input?.node as GraphNodeBase);
-            _graphView.Sync.Rebuild();
+            _sync.Rebuild();
             if (created != null) _context.Select(created);
         }
 

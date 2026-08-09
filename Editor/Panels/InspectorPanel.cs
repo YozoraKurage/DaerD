@@ -36,7 +36,7 @@ namespace Yozolab.DaerD
             _overview = new OverviewInspector(context, _cleanup);
             _stateMachine = new StateMachineInspector(context);
             _multiTransition = new MultiTransitionInspector(context, graphView.Sync, _selectedTransitions);
-            _transitions = new TransitionInspector(context, graphView, _selectedTransitions, _multiTransition);
+            _transitions = new TransitionInspector(context, graphView.Sync, _selectedTransitions, _multiTransition);
             _vrcDrawers = new VrcBehaviourDrawers(context, Refresh);
             _behaviours = new BehaviourInspector(context, _selectedBehaviours, _vrcDrawers);
             _multiBehaviours = new MultiStateBehaviourInspector(context, _selectedBehaviours, _behaviours, _vrcDrawers);
