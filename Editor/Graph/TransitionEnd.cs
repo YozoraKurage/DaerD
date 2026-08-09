@@ -53,10 +53,11 @@ namespace Yozolab.DaerD
             Kind == other.Kind && State == other.State && StateMachine == other.StateMachine;
 
         /// <summary>
-        /// The model-side twin of <see cref="TransitionConnect.CanConnect"/>: states and sub-state
-        /// machines may reach a state, a sub-state machine or Exit; Entry and Any State may reach
-        /// a state or a sub-state machine but cannot transition straight to Exit. Keep the two in
-        /// step — the graph view still asks the node-side copy while dragging an edge.
+        /// The one copy of the connect rule: states and sub-state machines may reach a state, a
+        /// sub-state machine or Exit; Entry and Any State may reach a state or a sub-state machine
+        /// but cannot transition straight to Exit. The graph view asks the same question while
+        /// dragging an edge — <see cref="TransitionConnect.CanConnect"/> turns its two nodes into
+        /// ends and lands here.
         /// </summary>
         public static bool CanConnect(TransitionEnd source, TransitionEnd destination)
         {
