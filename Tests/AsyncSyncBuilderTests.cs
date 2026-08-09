@@ -853,6 +853,24 @@ namespace Yozolab.DaerD.Tests
         }
 
         [Test]
+        public void RefreshIntervals_ReportTheWorstGap_NotTheAverageOne()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            // F sits at steps 0 and 2 of six: 2 steps one way round, 4 the other. Averaging
+            // would call that "every 3 steps" and hide the wait that actually happens.
+            request.scheduleOverride.AddRange(new[] { "F", "B", "F", "I", "B", "I" });
+            Assert.IsNull(AsyncSyncBuilder.Validate(request));
+
+            var intervals = AsyncSyncBuilder.RefreshIntervals(request);
+            Assert.AreEqual(4f * request.stepSeconds, intervals["F"], 0.0001f);
+            Assert.AreEqual(3f * request.stepSeconds, intervals["B"], 0.0001f);
+            Assert.AreEqual(4f * request.stepSeconds, intervals["I"], 0.0001f);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
         public void ScheduleOverride_SurvivesTheSavedSetup()
         {
             var controller = NewController();

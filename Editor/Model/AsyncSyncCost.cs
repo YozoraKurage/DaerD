@@ -73,9 +73,15 @@ namespace Yozolab.DaerD
             r == null ? 0f : EffectiveSchedule(r, BuildSlots(r)).Count * r.stepSeconds;
 
         /// <summary>
-        /// Seconds between two syncs of each target, from the actual schedule: pass length ×
-        /// step ÷ occurrences of the target's slot. This is what the wizard shows per row —
-        /// the honest number, after weight normalization and capping.
+        /// The longest a target can go without being sent, from the actual schedule: the
+        /// widest gap between two visits of its slot, counted around the wrap, × the step.
+        /// This is what the wizard shows per row — the honest number, after weight
+        /// normalization and capping.
+        ///
+        /// The worst gap rather than the average one, because the question the number answers
+        /// is how stale a remote's copy can be. Rate-derived passes spread their visits
+        /// evenly, so for those the two agree; a cycle timed by hand can put both visits of a
+        /// slot in the same half of the pass, and only the worst gap says so.
         /// </summary>
         public static Dictionary<string, float> RefreshIntervals(Request r)
         {
@@ -85,14 +91,21 @@ namespace Yozolab.DaerD
             var schedule = EffectiveSchedule(r, slots);
             if (schedule.Count == 0) return intervals;
 
-            var occurrences = new int[slots.Count];
-            foreach (var step in schedule) occurrences[step]++;
+            var visits = new List<int>[slots.Count];
+            for (int step = 0; step < schedule.Count; step++)
+                (visits[schedule[step]] ??= new List<int>()).Add(step);
+
             for (int i = 0; i < slots.Count; i++)
             {
-                if (occurrences[i] == 0) continue;
-                float interval = schedule.Count * r.stepSeconds / occurrences[i];
+                var seen = visits[i];
+                if (seen == null) continue;
+                // Seeded with the gap that closes the ring, which for a single visit is the
+                // whole pass — exactly the right answer for a slot sent once.
+                int gap = seen[0] + schedule.Count - seen[seen.Count - 1];
+                for (int j = 1; j < seen.Count; j++)
+                    gap = Mathf.Max(gap, seen[j] - seen[j - 1]);
                 foreach (var name in slots[i].targets)
-                    intervals[name] = interval;
+                    intervals[name] = gap * r.stepSeconds;
             }
             return intervals;
         }
