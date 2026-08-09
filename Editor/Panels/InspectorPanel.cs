@@ -17,13 +17,13 @@ namespace Yozolab.DaerD
         // Behaviour rows selected in the state inspector. Selecting is what tells Ctrl+C/V to
         // act on behaviours instead of the state itself (the graph view owns state copy/paste).
         readonly List<StateMachineBehaviour> _selectedBehaviours = new List<StateMachineBehaviour>();
-        int _behaviourRangeAnchor = -1;
         object _lastSelection;
         bool _showBlendTree = true;
         readonly CleanupInspector _cleanup = new CleanupInspector();
         readonly OverviewInspector _overview;
         readonly StateMachineInspector _stateMachine;
         readonly VrcBehaviourDrawers _vrcDrawers;
+        readonly BehaviourInspector _behaviours;
 
         public InspectorPanel(DaerDContext context, AnimatorGraphView graphView)
             : base(context, "Inspector")
@@ -34,6 +34,7 @@ namespace Yozolab.DaerD
             _multiTransition = new MultiTransitionInspector(context, graphView.Sync, _selectedTransitions);
             _transitions = new TransitionInspector(context, graphView, _selectedTransitions, _multiTransition);
             _vrcDrawers = new VrcBehaviourDrawers(context, graphView.Sync, Refresh);
+            _behaviours = new BehaviourInspector(graphView.Sync, _selectedBehaviours, _vrcDrawers);
             context.SelectionChanged += OnSelectionChanged;
             // The leftover scan (and the object references captured in it) belongs to the
             // outgoing controller — drop it on a tab switch.
@@ -50,7 +51,7 @@ namespace Yozolab.DaerD
                 _selectedTransitions.Clear();
                 _transitions.ResetAnchor();
                 _selectedBehaviours.Clear();
-                _behaviourRangeAnchor = -1;
+                _behaviours.ResetAnchor();
                 if (Context.Selection is AnimatorTransitionBase transition)
                     _selectedTransitions.Add(transition);
                 _lastSelection = Context.Selection;
@@ -513,7 +514,7 @@ namespace Yozolab.DaerD
             }
 
             DrawSyncRequests(state);
-            DrawBehaviours(state);
+            _behaviours.DrawBehaviours(state);
         }
 
         // ---- sync requests ---------------------------------------------------
@@ -743,210 +744,6 @@ namespace Yozolab.DaerD
             EditorGUILayout.EndHorizontal();
         }
 
-        void DrawBehaviours(AnimatorState state)
-        {
-            EditorGUILayout.Space(4);
-            var behaviours = state.behaviours;
-            PruneBehaviourSelection(behaviours);
-            HandleBehaviourShortcuts(state, behaviours);
-
-            bool hasSelection = _selectedBehaviours.Count > 0;
-            EditorGUILayout.BeginHorizontal();
-            EditorGUILayout.LabelField(hasSelection
-                    ? "Behaviours (" + _selectedBehaviours.Count + "/" + behaviours.Length + ")"
-                    : "Behaviours (" + behaviours.Length + ")",
-                EditorStyles.boldLabel);
-            using (new EditorGUI.DisabledScope(behaviours.Length == 0))
-                if (GUILayout.Button(new GUIContent(L.Tr("Copy"), hasSelection
-                        ? L.Tr("Copy the selected behaviours; paste from a state's right-click menu or here.")
-                        : L.Tr("Copy every behaviour on this state; paste from a state's right-click menu or here.")),
-                        EditorStyles.miniButton, GUILayout.Width(50)))
-                    CopyBehaviours(behaviours);
-            using (new EditorGUI.DisabledScope(VrcBehaviours.ClipboardCount == 0))
-                if (GUILayout.Button(new GUIContent(L.Tr("Paste"),
-                        L.Tr("Append the copied behaviours to this state.")),
-                        EditorStyles.miniButton, GUILayout.Width(50)))
-                {
-                    PasteBehaviours(state);
-                    GUIUtility.ExitGUI();
-                }
-            EditorGUILayout.EndHorizontal();
-            if (behaviours.Length > 0)
-                EditorGUILayout.LabelField(
-                    L.Tr("Click a title to select (Ctrl / Shift for multi-select); Ctrl+C / Ctrl+V copies and pastes the selected behaviours."),
-                    EditorStyles.miniLabel);
-
-            for (int i = 0; i < behaviours.Length; i++)
-            {
-                var behaviour = behaviours[i];
-                if (behaviour == null) continue;
-                bool selected = _selectedBehaviours.Contains(behaviour);
-
-                var boxBackground = GUI.backgroundColor;
-                if (selected) GUI.backgroundColor = PanelGui.SelectionTint;
-                EditorGUILayout.BeginVertical(EditorStyles.helpBox);
-                GUI.backgroundColor = boxBackground;
-
-                EditorGUILayout.BeginHorizontal();
-                var titleBackground = GUI.backgroundColor;
-                if (selected) GUI.backgroundColor = PanelGui.SelectionTint;
-                if (GUILayout.Button(BehaviourTitle(behaviour), BehaviourTitleStyle))
-                    HandleBehaviourRowClick(behaviours, i);
-                GUI.backgroundColor = titleBackground;
-
-                // Repeatable VRC types get a per-instance name so multiple rows stay
-                // distinguishable (drivers named "Network" by the sync generator, etc.).
-                string typeName = behaviour.GetType().Name;
-                if (VrcBehaviours.IsVrcType(typeName) && !VrcBehaviours.IsSingleton(typeName))
-                {
-                    string instanceName = EditorGUILayout.DelayedTextField(behaviour.name, GUILayout.Width(90));
-                    if (instanceName != behaviour.name)
-                    {
-                        Undo.RegisterCompleteObjectUndo(behaviour, "Rename Behaviour");
-                        behaviour.name = instanceName;
-                        EditorUtility.SetDirty(behaviour);
-                    }
-                }
-
-                using (new EditorGUI.DisabledScope(i == 0))
-                    if (GUILayout.Button("↑", EditorStyles.miniButton, GUILayout.Width(22)))
-                    { VrcBehaviours.Move(state, i, -1); GUIUtility.ExitGUI(); }
-                using (new EditorGUI.DisabledScope(i == behaviours.Length - 1))
-                    if (GUILayout.Button("↓", EditorStyles.miniButton, GUILayout.Width(22)))
-                    { VrcBehaviours.Move(state, i, +1); GUIUtility.ExitGUI(); }
-                if (GUILayout.Button("Remove", EditorStyles.miniButton, GUILayout.Width(60)))
-                {
-                    _selectedBehaviours.Remove(behaviour);
-                    _behaviourRangeAnchor = -1;
-                    VrcBehaviourDrawers.RemoveBehaviour(state, behaviour);
-                    _graphView.Sync.RefreshStateNode(state);   // B badge updates immediately
-                    GUIUtility.ExitGUI();
-                }
-                EditorGUILayout.EndHorizontal();
-                if (!_vrcDrawers.TryDrawKnownVrcBehaviour(behaviour))
-                    VrcBehaviourDrawers.DrawSerializedFields(behaviour);
-                EditorGUILayout.EndVertical();
-            }
-
-            if (GUILayout.Button("+ Add Behaviour"))
-                _vrcDrawers.ShowAddBehaviourMenu(state);
-        }
-
-        static string BehaviourTitle(StateMachineBehaviour behaviour)
-        {
-            string typeName = behaviour.GetType().Name;
-            // The VRC prefix is noise inside an already VRC-labeled box; keep titles short.
-            return typeName.StartsWith("VRC") ? typeName.Substring(3) : typeName;
-        }
-
-        // ---- behaviour selection ---------------------------------------------
-
-        static GUIStyle s_behaviourTitleStyle;
-
-        /// <summary>Header of a behaviour box: reads as a title, behaves as a selectable row.</summary>
-        static GUIStyle BehaviourTitleStyle => s_behaviourTitleStyle ??= new GUIStyle(EditorStyles.miniButton)
-        {
-            alignment = TextAnchor.MiddleLeft,
-            fontStyle = FontStyle.Bold,
-        };
-
-        /// <summary>Drops entries the state no longer holds (removed, moved to another state,
-        /// destroyed by an undo) so the selection can't outlive what it points at.</summary>
-        void PruneBehaviourSelection(StateMachineBehaviour[] behaviours)
-        {
-            _selectedBehaviours.RemoveAll(b => b == null || Array.IndexOf(behaviours, b) < 0);
-            if (_selectedBehaviours.Count == 0)
-                _behaviourRangeAnchor = -1;
-        }
-
-        /// <summary>Plain click selects one row; Ctrl/Cmd toggles; Shift extends from the anchor.
-        /// Clicking the already-single-selected row clears the selection, which hands Ctrl+C/V
-        /// back to the state-level copy/paste.</summary>
-        void HandleBehaviourRowClick(StateMachineBehaviour[] behaviours, int index)
-        {
-            var behaviour = behaviours[index];
-            var e = Event.current;
-            bool additive = e != null && (e.control || e.command);
-            bool range = e != null && e.shift;
-
-            if (range && _behaviourRangeAnchor >= 0 && _behaviourRangeAnchor < behaviours.Length)
-            {
-                _selectedBehaviours.Clear();
-                int lo = Mathf.Min(_behaviourRangeAnchor, index);
-                int hi = Mathf.Max(_behaviourRangeAnchor, index);
-                for (int i = lo; i <= hi; i++)
-                    if (behaviours[i] != null)
-                        _selectedBehaviours.Add(behaviours[i]);
-            }
-            else if (additive)
-            {
-                if (_selectedBehaviours.Contains(behaviour)) _selectedBehaviours.Remove(behaviour);
-                else _selectedBehaviours.Add(behaviour);
-                _behaviourRangeAnchor = index;
-            }
-            else if (_selectedBehaviours.Count == 1 && _selectedBehaviours[0] == behaviour)
-            {
-                _selectedBehaviours.Clear();
-                _behaviourRangeAnchor = -1;
-            }
-            else
-            {
-                _selectedBehaviours.Clear();
-                _selectedBehaviours.Add(behaviour);
-                _behaviourRangeAnchor = index;
-            }
-        }
-
-        /// <summary>
-        /// Ctrl+C / Ctrl+V on the behaviour list. Only fires while at least one behaviour row is
-        /// selected — otherwise the keys stay with the graph view's state copy/paste.
-        /// </summary>
-        void HandleBehaviourShortcuts(AnimatorState state, StateMachineBehaviour[] behaviours)
-        {
-            var e = Event.current;
-            if (e == null || e.type != EventType.KeyDown || !(e.control || e.command))
-                return;
-            if (_selectedBehaviours.Count == 0) return;
-            // A behaviour field being typed in (driver parameter name, instance name) owns the
-            // keys — Ctrl+C there means "copy the text", not "copy the behaviour".
-            if (EditorGUIUtility.editingTextField) return;
-
-            if (e.keyCode == KeyCode.C)
-            {
-                CopyBehaviours(behaviours);
-                e.Use();
-            }
-            else if (e.keyCode == KeyCode.V && VrcBehaviours.ClipboardCount > 0)
-            {
-                PasteBehaviours(state);
-                e.Use();
-                GUIUtility.ExitGUI();
-            }
-        }
-
-        /// <summary>Copies the selected behaviours, or every behaviour when nothing is selected.</summary>
-        void CopyBehaviours(StateMachineBehaviour[] behaviours)
-        {
-            VrcBehaviours.Copy(_selectedBehaviours.Count > 0
-                ? (IEnumerable<StateMachineBehaviour>)_selectedBehaviours
-                : behaviours);
-        }
-
-        /// <summary>Appends the clipboard to the state and selects what was pasted, so a
-        /// follow-up Ctrl+C / Remove acts on the new rows.</summary>
-        void PasteBehaviours(AnimatorState state)
-        {
-            int before = state.behaviours.Length;
-            VrcBehaviours.Paste(state, replace: false);
-            var after = state.behaviours;
-            _selectedBehaviours.Clear();
-            for (int i = before; i < after.Length; i++)
-                if (after[i] != null)
-                    _selectedBehaviours.Add(after[i]);
-            _behaviourRangeAnchor = _selectedBehaviours.Count > 0 ? before : -1;
-            _graphView.Sync.RefreshStateNode(state);   // B badge updates immediately
-        }
-
         // ---- behaviours across several states --------------------------------
 
         /// <summary>
@@ -977,7 +774,7 @@ namespace Yozolab.DaerD
             for (int i = 0; i < slots.Count; i++)
                 representatives[i] = slots[i].Representative;
 
-            PruneBehaviourSelection(representatives);
+            _behaviours.PruneBehaviourSelection(representatives);
             HandleMultiStateBehaviourShortcuts(states, representatives);
 
             bool hasSelection = _selectedBehaviours.Count > 0;
@@ -991,7 +788,7 @@ namespace Yozolab.DaerD
                         ? L.Tr("Copy the selected behaviours; paste from a state's right-click menu or here.")
                         : L.Tr("Copy one instance of every behaviour found on the selected states.")),
                         EditorStyles.miniButton, GUILayout.Width(50)))
-                    CopyBehaviours(representatives);
+                    _behaviours.CopyBehaviours(representatives);
             using (new EditorGUI.DisabledScope(VrcBehaviours.ClipboardCount == 0))
                 if (GUILayout.Button(new GUIContent(L.Tr("Paste"),
                         L.Tr("Append the copied behaviours to every selected state.")),
@@ -1037,8 +834,8 @@ namespace Yozolab.DaerD
             EditorGUILayout.BeginHorizontal();
             var titleBackground = GUI.backgroundColor;
             if (selected) GUI.backgroundColor = PanelGui.SelectionTint;
-            if (GUILayout.Button(BehaviourTitle(representative), BehaviourTitleStyle))
-                HandleBehaviourRowClick(representatives, index);
+            if (GUILayout.Button(BehaviourInspector.BehaviourTitle(representative), BehaviourInspector.BehaviourTitleStyle))
+                _behaviours.HandleBehaviourRowClick(representatives, index);
             GUI.backgroundColor = titleBackground;
 
             // Repeatable VRC types are matched by instance name, so renaming here has to reach
@@ -1227,7 +1024,7 @@ namespace Yozolab.DaerD
         void RemoveSlot(BehaviourSlot slot)
         {
             _selectedBehaviours.Remove(slot.Representative);
-            _behaviourRangeAnchor = -1;
+            _behaviours.ResetAnchor();
             using (new UndoScope("Remove Behaviours"))
                 for (int i = 0; i < slot.instances.Count; i++)
                 {
@@ -1251,7 +1048,7 @@ namespace Yozolab.DaerD
 
             if (e.keyCode == KeyCode.C)
             {
-                CopyBehaviours(representatives);
+                _behaviours.CopyBehaviours(representatives);
                 e.Use();
             }
             else if (e.keyCode == KeyCode.V && VrcBehaviours.ClipboardCount > 0)
@@ -1274,7 +1071,7 @@ namespace Yozolab.DaerD
             // The pasted rows regroup into new slots on the next repaint; the old selection
             // would point at whatever happened to sit at those indices.
             _selectedBehaviours.Clear();
-            _behaviourRangeAnchor = -1;
+            _behaviours.ResetAnchor();
         }
     }
 }
