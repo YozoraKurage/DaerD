@@ -26,6 +26,7 @@ namespace Yozolab.DaerD
         readonly MultiStateBehaviourInspector _multiBehaviours;
         readonly SyncRequestInspector _syncRequests;
         readonly StateInspector _state;
+        readonly MultiStateInspector _multiStates;
 
         public InspectorPanel(DaerDContext context, AnimatorGraphView graphView)
             : base(context, "Inspector")
@@ -40,6 +41,7 @@ namespace Yozolab.DaerD
             _multiBehaviours = new MultiStateBehaviourInspector(graphView.Sync, _selectedBehaviours, _behaviours, _vrcDrawers);
             _syncRequests = new SyncRequestInspector(context, graphView.Sync);
             _state = new StateInspector(context, graphView.Sync, _syncRequests, _behaviours);
+            _multiStates = new MultiStateInspector(context, graphView.Sync, _state, _overview, _multiBehaviours);
             context.SelectionChanged += OnSelectionChanged;
             // The leftover scan (and the object references captured in it) belongs to the
             // outgoing controller — drop it on a tab switch.
@@ -85,9 +87,9 @@ namespace Yozolab.DaerD
             // Multi-state editing takes precedence when the graph has more than one state
             // selected — mirrors the multi-transition editor behaviour.
             var selectedStates = _graphView.GetSelectedStates();
-            if (selectedStates.Count >= 2 && AnyStateAlive(selectedStates))
+            if (selectedStates.Count >= 2 && MultiStateInspector.AnyStateAlive(selectedStates))
             {
-                DrawMultiStateEditor(selectedStates);
+                _multiStates.DrawMultiStateEditor(selectedStates);
                 return;
             }
 
@@ -287,166 +289,6 @@ namespace Yozolab.DaerD
                     GUIUtility.ExitGUI();
                 }
             EditorGUILayout.EndHorizontal();
-        }
-
-        // ---- multi-state -----------------------------------------------------
-
-        static bool AnyStateAlive(List<AnimatorState> states)
-        {
-            foreach (var s in states)
-                if (s != null) return true;
-            return false;
-        }
-
-        /// <summary>
-        /// Bulk editor for the selected states' common fields. Mirrors the multi-transition
-        /// editor: every row shows the shared value (or a "mixed" placeholder) and writes back to
-        /// every selected state with a single undo entry.
-        /// </summary>
-        void DrawMultiStateEditor(List<AnimatorState> states)
-        {
-            // Drop destroyed entries up front so the mixed-value detection and writes don't
-            // walk a null reference mid-IMGUI.
-            var alive = new List<AnimatorState>(states.Count);
-            foreach (var s in states)
-                if (s != null) alive.Add(s);
-            if (alive.Count < 2)
-            {
-                if (alive.Count == 1) _state.DrawState(alive[0]);
-                else _overview.DrawOverview();
-                return;
-            }
-
-            var controller = Context.Controller;
-            EditorGUILayout.LabelField(alive.Count + " states selected", EditorStyles.boldLabel);
-            EditorGUILayout.LabelField("Common Settings (applied to all selected)", EditorStyles.boldLabel);
-
-            MultiEditGui.ObjectField<AnimatorState, Motion>("Motion", alive,
-                x => x.motion, (x, v) => x.motion = v,
-                undoName: "Edit States", postApply: s => _graphView.Sync.RefreshStateNode(s));
-            MultiEditGui.Float("Speed", alive, x => x.speed, (x, v) => x.speed = v, undoName: "Edit States");
-            MultiEditGui.Float("Cycle Offset", alive, x => x.cycleOffset, (x, v) => x.cycleOffset = v, undoName: "Edit States");
-            MultiEditGui.Bool("Mirror", alive, x => x.mirror, (x, v) => x.mirror = v, undoName: "Edit States");
-            MultiEditGui.Bool("Foot IK", alive, x => x.iKOnFeet, (x, v) => x.iKOnFeet = v, undoName: "Edit States");
-            MultiEditGui.Bool("Write Defaults", alive, x => x.writeDefaultValues, (x, v) => x.writeDefaultValues = v,
-                undoName: "Edit States", postApply: s => _graphView.Sync.RefreshStateNode(s));
-            MultiEditGui.Text("Tag", alive, x => x.tag, (x, v) => x.tag = v, undoName: "Edit States");
-
-            EditorGUILayout.Space(4);
-            DrawMultiStateParameterOverrides(alive, controller);
-
-            EditorGUILayout.Space(6);
-            PanelGui.HorizontalLine();
-            _multiBehaviours.DrawMultiStateBehaviours(alive);
-
-            EditorGUILayout.Space(6);
-            PanelGui.HorizontalLine();
-            EditorGUILayout.LabelField("Bulk Actions", EditorStyles.boldLabel);
-            EditorGUILayout.BeginHorizontal();
-            if (GUILayout.Button("Set Default State to First"))
-                _graphView.Sync.SetDefaultState(alive[0]);
-            if (GUILayout.Button("Delete All " + alive.Count))
-            {
-                if (EditorUtility.DisplayDialog("Delete States",
-                    "Delete the " + alive.Count + " selected states? Their transitions will be removed too.",
-                    "Delete", "Cancel"))
-                {
-                    DeleteStates(alive);
-                    GUIUtility.ExitGUI();
-                }
-            }
-            EditorGUILayout.EndHorizontal();
-        }
-
-        void DrawMultiStateParameterOverrides(List<AnimatorState> states, AnimatorController controller)
-        {
-            var floatParams = PanelGui.ParameterNamesOfType(controller, AnimatorControllerParameterType.Float);
-            var boolParams = PanelGui.ParameterNamesOfType(controller, AnimatorControllerParameterType.Bool);
-
-            EditorGUILayout.LabelField("Parameter Overrides (applied to all)", EditorStyles.boldLabel);
-
-            DrawMultiParameterOverride(states, "Speed Multiplier", floatParams,
-                x => x.speedParameterActive, x => x.speedParameter,
-                (s, a, p) => { s.speedParameterActive = a; s.speedParameter = p; });
-            DrawMultiParameterOverride(states, "Motion Time", floatParams,
-                x => x.timeParameterActive, x => x.timeParameter,
-                (s, a, p) => { s.timeParameterActive = a; s.timeParameter = p; });
-            DrawMultiParameterOverride(states, "Mirror", boolParams,
-                x => x.mirrorParameterActive, x => x.mirrorParameter,
-                (s, a, p) => { s.mirrorParameterActive = a; s.mirrorParameter = p; });
-            DrawMultiParameterOverride(states, "Cycle Offset", floatParams,
-                x => x.cycleOffsetParameterActive, x => x.cycleOffsetParameter,
-                (s, a, p) => { s.cycleOffsetParameterActive = a; s.cycleOffsetParameter = p; });
-        }
-
-        void DrawMultiParameterOverride(List<AnimatorState> states, string label, string[] parameters,
-            Func<AnimatorState, bool> activeGetter, Func<AnimatorState, string> paramGetter,
-            Action<AnimatorState, bool, string> apply)
-        {
-            EditorGUILayout.BeginHorizontal();
-
-            bool firstActive = activeGetter(states[0]);
-            bool activeMixed = false;
-            foreach (var s in states)
-                if (activeGetter(s) != firstActive) { activeMixed = true; break; }
-
-            string firstParam = paramGetter(states[0]) ?? string.Empty;
-            bool paramMixed = false;
-            foreach (var s in states)
-                if ((paramGetter(s) ?? string.Empty) != firstParam) { paramMixed = true; break; }
-
-            EditorGUI.showMixedValue = activeMixed;
-            EditorGUI.BeginChangeCheck();
-            bool active = EditorGUILayout.ToggleLeft(label, firstActive, GUILayout.Width(150));
-            EditorGUI.showMixedValue = false;
-            bool activeChanged = EditorGUI.EndChangeCheck();
-
-            string param = firstParam;
-            bool paramChanged = false;
-            using (new EditorGUI.DisabledScope(!active && !activeMixed))
-            {
-                int idx = Mathf.Max(0, Array.IndexOf(parameters, param));
-                EditorGUI.showMixedValue = paramMixed;
-                EditorGUI.BeginChangeCheck();
-                idx = EditorGUILayout.Popup(idx, parameters);
-                EditorGUI.showMixedValue = false;
-                paramChanged = EditorGUI.EndChangeCheck();
-                if (idx >= 0 && idx < parameters.Length) param = parameters[idx];
-            }
-
-            if (activeChanged || paramChanged)
-            {
-                using (new UndoScope("Edit States"))
-                    foreach (var s in states)
-                    {
-                        Undo.RegisterCompleteObjectUndo(s, "Edit States");
-                        // Carry over whatever the user didn't touch so a single click on the
-                        // toggle doesn't also rewrite the parameter name and vice versa.
-                        bool newActive = activeChanged ? active : activeGetter(s);
-                        string newParam = paramChanged ? param : paramGetter(s);
-                        apply(s, newActive, newParam);
-                        EditorUtility.SetDirty(s);
-                    }
-            }
-            EditorGUILayout.EndHorizontal();
-        }
-
-        void DeleteStates(List<AnimatorState> states)
-        {
-            var sm = Context.CurrentStateMachine;
-            if (sm == null) return;
-            using (new UndoScope("Delete States"))
-            {
-                Undo.RegisterCompleteObjectUndo(sm, "Delete States");
-                foreach (var s in states)
-                {
-                    if (s == null) continue;
-                    sm.RemoveState(s);
-                }
-                EditorUtility.SetDirty(sm);
-            }
-            Context.Select(null);
-            _graphView.Sync.RequestRebuild();
         }
     }
 }
