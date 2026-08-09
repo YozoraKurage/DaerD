@@ -333,16 +333,16 @@ namespace Yozolab.DaerD
             EditorGUILayout.LabelField(alive.Count + " states selected", EditorStyles.boldLabel);
             EditorGUILayout.LabelField("Common Settings (applied to all selected)", EditorStyles.boldLabel);
 
-            MultiObjectField<AnimatorState, Motion>("Motion", alive,
+            MultiEditGui.ObjectField<AnimatorState, Motion>("Motion", alive,
                 x => x.motion, (x, v) => x.motion = v,
                 undoName: "Edit States", postApply: s => _graphView.Sync.RefreshStateNode(s));
-            MultiFloat("Speed", alive, x => x.speed, (x, v) => x.speed = v, undoName: "Edit States");
-            MultiFloat("Cycle Offset", alive, x => x.cycleOffset, (x, v) => x.cycleOffset = v, undoName: "Edit States");
-            MultiBool("Mirror", alive, x => x.mirror, (x, v) => x.mirror = v, undoName: "Edit States");
-            MultiBool("Foot IK", alive, x => x.iKOnFeet, (x, v) => x.iKOnFeet = v, undoName: "Edit States");
-            MultiBool("Write Defaults", alive, x => x.writeDefaultValues, (x, v) => x.writeDefaultValues = v,
+            MultiEditGui.Float("Speed", alive, x => x.speed, (x, v) => x.speed = v, undoName: "Edit States");
+            MultiEditGui.Float("Cycle Offset", alive, x => x.cycleOffset, (x, v) => x.cycleOffset = v, undoName: "Edit States");
+            MultiEditGui.Bool("Mirror", alive, x => x.mirror, (x, v) => x.mirror = v, undoName: "Edit States");
+            MultiEditGui.Bool("Foot IK", alive, x => x.iKOnFeet, (x, v) => x.iKOnFeet = v, undoName: "Edit States");
+            MultiEditGui.Bool("Write Defaults", alive, x => x.writeDefaultValues, (x, v) => x.writeDefaultValues = v,
                 undoName: "Edit States", postApply: s => _graphView.Sync.RefreshStateNode(s));
-            MultiString("Tag", alive, x => x.tag, (x, v) => x.tag = v, undoName: "Edit States");
+            MultiEditGui.Text("Tag", alive, x => x.tag, (x, v) => x.tag = v, undoName: "Edit States");
 
             EditorGUILayout.Space(4);
             DrawMultiStateParameterOverrides(alive, controller);
@@ -2221,153 +2221,22 @@ namespace Yozolab.DaerD
         {
             EditorGUILayout.LabelField(L.Tr("Common Settings (applied to all selected)"), EditorStyles.boldLabel);
 
-            MultiBool(L.Tr("Mute"), _selectedTransitions, x => x.mute, (x, v) => x.mute = v, refreshEdges: true);
-            MultiBool(L.Tr("Solo"), _selectedTransitions, x => x.solo, (x, v) => x.solo = v, refreshEdges: true);
+            MultiEditGui.Bool(L.Tr("Mute"), _selectedTransitions, x => x.mute, (x, v) => x.mute = v, afterApply: RefreshEdges);
+            MultiEditGui.Bool(L.Tr("Solo"), _selectedTransitions, x => x.solo, (x, v) => x.solo = v, afterApply: RefreshEdges);
 
             var stateTransitions = new List<AnimatorStateTransition>();
             foreach (var t in _selectedTransitions)
                 if (t is AnimatorStateTransition st) stateTransitions.Add(st);
             if (stateTransitions.Count == 0) return;
 
-            MultiBool(L.Tr("Has Exit Time"), stateTransitions, x => x.hasExitTime, (x, v) => x.hasExitTime = v);
-            MultiFloat(L.Tr("Exit Time"), stateTransitions, x => x.exitTime, (x, v) => x.exitTime = v);
-            MultiBool(L.Tr("Fixed Duration"), stateTransitions, x => x.hasFixedDuration, (x, v) => x.hasFixedDuration = v);
-            MultiFloat(L.Tr("Duration"), stateTransitions, x => x.duration, (x, v) => x.duration = v);
-            MultiFloat(L.Tr("Offset"), stateTransitions, x => x.offset, (x, v) => x.offset = v);
-            MultiInterruption(stateTransitions);
-            MultiBool(L.Tr("Ordered Interruption"), stateTransitions, x => x.orderedInterruption, (x, v) => x.orderedInterruption = v);
-            MultiBool(L.Tr("Can Transition To Self"), stateTransitions, x => x.canTransitionToSelf, (x, v) => x.canTransitionToSelf = v);
-        }
-
-        void MultiBool<T>(string label, List<T> items, Func<T, bool> getter, Action<T, bool> setter,
-            bool refreshEdges = false, string undoName = "Edit Transitions",
-            Action<T> postApply = null) where T : UnityEngine.Object
-        {
-            if (items.Count == 0) return;
-            bool first = getter(items[0]);
-            bool mixed = false;
-            foreach (var item in items)
-                if (getter(item) != first) { mixed = true; break; }
-
-            EditorGUI.showMixedValue = mixed;
-            EditorGUI.BeginChangeCheck();
-            bool value = EditorGUILayout.Toggle(label, first);
-            EditorGUI.showMixedValue = false;
-            if (EditorGUI.EndChangeCheck())
-            {
-                using (new UndoScope(undoName))
-                    foreach (var item in items)
-                    {
-                        Undo.RegisterCompleteObjectUndo(item, undoName);
-                        setter(item, value);
-                        EditorUtility.SetDirty(item);
-                        postApply?.Invoke(item);
-                    }
-                if (refreshEdges) RefreshEdges();
-            }
-        }
-
-        void MultiFloat<T>(string label, List<T> items, Func<T, float> getter, Action<T, float> setter,
-            string undoName = "Edit Transitions") where T : UnityEngine.Object
-        {
-            if (items.Count == 0) return;
-            float first = getter(items[0]);
-            bool mixed = false;
-            foreach (var item in items)
-                if (!Mathf.Approximately(getter(item), first)) { mixed = true; break; }
-
-            EditorGUI.showMixedValue = mixed;
-            EditorGUI.BeginChangeCheck();
-            float value = EditorGUILayout.FloatField(label, first);
-            EditorGUI.showMixedValue = false;
-            if (EditorGUI.EndChangeCheck())
-            {
-                using (new UndoScope(undoName))
-                    foreach (var item in items)
-                    {
-                        Undo.RegisterCompleteObjectUndo(item, undoName);
-                        setter(item, value);
-                        EditorUtility.SetDirty(item);
-                    }
-            }
-        }
-
-        void MultiString<T>(string label, List<T> items, Func<T, string> getter, Action<T, string> setter,
-            string undoName = "Edit States") where T : UnityEngine.Object
-        {
-            if (items.Count == 0) return;
-            string first = getter(items[0]) ?? string.Empty;
-            bool mixed = false;
-            foreach (var item in items)
-                if ((getter(item) ?? string.Empty) != first) { mixed = true; break; }
-
-            EditorGUI.showMixedValue = mixed;
-            EditorGUI.BeginChangeCheck();
-            string value = EditorGUILayout.DelayedTextField(label, first);
-            EditorGUI.showMixedValue = false;
-            if (EditorGUI.EndChangeCheck())
-            {
-                using (new UndoScope(undoName))
-                    foreach (var item in items)
-                    {
-                        Undo.RegisterCompleteObjectUndo(item, undoName);
-                        setter(item, value);
-                        EditorUtility.SetDirty(item);
-                    }
-            }
-        }
-
-        void MultiObjectField<TOwner, TObject>(string label, List<TOwner> items,
-            Func<TOwner, TObject> getter, Action<TOwner, TObject> setter,
-            string undoName = "Edit States", Action<TOwner> postApply = null)
-            where TOwner : UnityEngine.Object
-            where TObject : UnityEngine.Object
-        {
-            if (items.Count == 0) return;
-            TObject first = getter(items[0]);
-            bool mixed = false;
-            foreach (var item in items)
-                if (!ReferenceEquals(getter(item), first)) { mixed = true; break; }
-
-            EditorGUI.showMixedValue = mixed;
-            EditorGUI.BeginChangeCheck();
-            var value = (TObject)EditorGUILayout.ObjectField(label, first, typeof(TObject), false);
-            EditorGUI.showMixedValue = false;
-            if (EditorGUI.EndChangeCheck())
-            {
-                using (new UndoScope(undoName))
-                    foreach (var item in items)
-                    {
-                        Undo.RegisterCompleteObjectUndo(item, undoName);
-                        setter(item, value);
-                        EditorUtility.SetDirty(item);
-                        postApply?.Invoke(item);
-                    }
-            }
-        }
-
-        void MultiInterruption(List<AnimatorStateTransition> items)
-        {
-            if (items.Count == 0) return;
-            var first = items[0].interruptionSource;
-            bool mixed = false;
-            foreach (var item in items)
-                if (item.interruptionSource != first) { mixed = true; break; }
-
-            EditorGUI.showMixedValue = mixed;
-            EditorGUI.BeginChangeCheck();
-            var value = (TransitionInterruptionSource)EditorGUILayout.EnumPopup(L.Tr("Interruption"), first);
-            EditorGUI.showMixedValue = false;
-            if (EditorGUI.EndChangeCheck())
-            {
-                using (new UndoScope("Edit Transitions"))
-                    foreach (var item in items)
-                    {
-                        Undo.RegisterCompleteObjectUndo(item, "Edit Transition");
-                        item.interruptionSource = value;
-                        EditorUtility.SetDirty(item);
-                    }
-            }
+            MultiEditGui.Bool(L.Tr("Has Exit Time"), stateTransitions, x => x.hasExitTime, (x, v) => x.hasExitTime = v);
+            MultiEditGui.Float(L.Tr("Exit Time"), stateTransitions, x => x.exitTime, (x, v) => x.exitTime = v);
+            MultiEditGui.Bool(L.Tr("Fixed Duration"), stateTransitions, x => x.hasFixedDuration, (x, v) => x.hasFixedDuration = v);
+            MultiEditGui.Float(L.Tr("Duration"), stateTransitions, x => x.duration, (x, v) => x.duration = v);
+            MultiEditGui.Float(L.Tr("Offset"), stateTransitions, x => x.offset, (x, v) => x.offset = v);
+            MultiEditGui.Interruption(stateTransitions);
+            MultiEditGui.Bool(L.Tr("Ordered Interruption"), stateTransitions, x => x.orderedInterruption, (x, v) => x.orderedInterruption = v);
+            MultiEditGui.Bool(L.Tr("Can Transition To Self"), stateTransitions, x => x.canTransitionToSelf, (x, v) => x.canTransitionToSelf = v);
         }
 
         void DrawSharedConditions(AnimatorController controller)
