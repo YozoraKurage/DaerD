@@ -15,9 +15,25 @@ namespace Yozolab.DaerD
     /// The generated lists are the point: a gadget or a sync setup expands into a wall of trees,
     /// clips and states nobody can read back, so the record saved with the controller is the
     /// only description of it there is, and this is where those records are shown.
+    ///
+    /// Laid out as one centred column of cards rather than as full-width rows: this pane is as
+    /// wide as the window, and a row stretched across all of it puts a two-word label at one
+    /// end and its buttons at the other with nothing in between.
     /// </summary>
     class HomePanel : PanelBase
     {
+        /// <summary>How wide the column of cards is allowed to grow. A cap, not a size — a pane
+        /// narrower than this gets the whole width instead.</summary>
+        const float ColumnWidth = 560f;
+
+        /// <summary>Prefix width inside the cards. The default is sized for an inspector column
+        /// and would eat half of <see cref="ColumnWidth"/>.</summary>
+        const float FieldLabelWidth = 110f;
+
+        /// <summary>One width for every row action across the three lists, so the buttons line
+        /// up down the column instead of stepping in and out with the label beside them.</summary>
+        const float RowButtonWidth = 56f;
+
         readonly CleanupInspector _cleanup = new CleanupInspector();
 
         public HomePanel(DaerDContext context) : base(context, "Home")
@@ -39,16 +55,44 @@ namespace Yozolab.DaerD
         protected override void DrawContent()
         {
             var controller = Context.Controller;
+
+            // Flexible space on both sides centres the column; the cap is a MaxWidth so the
+            // group still collapses with a narrow pane, which a fixed Width would not.
+            EditorGUILayout.BeginHorizontal();
+            GUILayout.FlexibleSpace();
+            EditorGUILayout.BeginVertical(GUILayout.MaxWidth(ColumnWidth));
+
             DrawController(controller);
-            PanelGui.HorizontalLine();
+            EditorGUILayout.Space(8);
             DrawGadgets(controller);
-            PanelGui.HorizontalLine();
+            EditorGUILayout.Space(8);
             DrawAsyncSyncs(controller);
-            PanelGui.HorizontalLine();
+            EditorGUILayout.Space(8);
             DrawRecipes(controller);
-            PanelGui.HorizontalLine();
+            EditorGUILayout.Space(8);
             DrawTools(controller);
+
+            EditorGUILayout.EndVertical();
+            GUILayout.FlexibleSpace();
+            EditorGUILayout.EndHorizontal();
         }
+
+        // ---- cards -------------------------------------------------------------
+
+        /// <summary>Opens one section's card. Every section is a box with its name in bold at
+        /// the top, so the column reads as a stack of things rather than as one long list.
+        /// </summary>
+        static void BeginCard(string title)
+        {
+            EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+            EditorGUILayout.LabelField(title, EditorStyles.boldLabel);
+        }
+
+        /// <summary>The count belongs in the heading of a list card: it is the first thing worth
+        /// knowing about a list, and it is still there when the list itself is empty.</summary>
+        static void BeginCard(string title, int count) => BeginCard(title + " (" + count + ")");
+
+        static void EndCard() => EditorGUILayout.EndVertical();
 
         // ---- controller --------------------------------------------------------
 
@@ -57,48 +101,56 @@ namespace Yozolab.DaerD
         /// DaerD is also used on gimmick controllers that belong to no avatar.</summary>
         void DrawController(AnimatorController controller)
         {
-            EditorGUILayout.LabelField(L.Tr("Controller"), EditorStyles.boldLabel);
-            EditorGUILayout.LabelField(L.Tr("Name"), controller.name);
-            EditorGUILayout.LabelField(L.Tr("Layers"), controller.layers.Length.ToString());
-            EditorGUILayout.LabelField(L.Tr("Parameters"), controller.parameters.Length.ToString());
+            BeginCard(L.Tr("Controller"));
 
-            EditorGUILayout.Space(6);
-            var currentEmpty = GraphFrameData.GetEmptyClip(controller);
-            var pickedEmpty = (AnimationClip)EditorGUILayout.ObjectField(
-                new GUIContent(L.Tr("Empty Clip"),
-                    L.Tr("Stored with this controller. New states are created with it, and the analyzer's Fill fix assigns it to states with no motion.")),
-                currentEmpty, typeof(AnimationClip), false);
-            if (pickedEmpty != currentEmpty)
-                GraphFrameData.SetEmptyClip(controller, pickedEmpty);
-
-            // Announced as a parameter change so the parameters panel drops the store it has
-            // cached and redraws its budget against the new one.
-            PanelGui.ParameterStoreField(controller, Context.NotifyParametersChanged);
-
-            var currentMenu = GraphFrameData.GetExpressionsMenu(controller);
-            var pickedMenu = EditorGUILayout.ObjectField(
-                new GUIContent(L.Tr("Expressions Menu"),
-                    L.Tr("The VRC Expressions Menu this controller belongs to, opened by the menu editor. Assigned explicitly — DaerD never guesses it from the scene.")),
-                currentMenu, typeof(ScriptableObject), false);
-            if (pickedMenu != currentMenu)
-            {
-                // The slot only accepts what the menu editor can actually read back.
-                if (pickedMenu == null || VrcMenuAccess.Is(pickedMenu))
-                    GraphFrameData.SetExpressionsMenu(controller, pickedMenu);
-                else
-                    EditorUtility.DisplayDialog(L.Tr("DaerD Menu"),
-                        L.Tr("That asset is not a VRC Expressions Menu."), "OK");
-            }
+            // One line rather than three labelled rows: the name and the two counts are read at
+            // a glance, and spelling out what each number is costs three rows to say it.
+            string identity = controller.name + "  —  " + L.Tr("{0} layers · {1} parameters",
+                controller.layers.Length, controller.parameters.Length);
+            EditorGUILayout.LabelField(new GUIContent(identity, identity));
 
             EditorGUILayout.Space(4);
-            var wdTooltip = L.Tr("Bulk-set every state. Layers containing only Direct blend trees stay ON.");
-            EditorGUILayout.BeginHorizontal();
-            EditorGUILayout.PrefixLabel(new GUIContent(L.Tr("Write Defaults"), wdTooltip));
-            if (GUILayout.Button(new GUIContent(L.Tr("Set All ON"), wdTooltip)))
-                BulkSetWriteDefaults(controller, true);
-            if (GUILayout.Button(new GUIContent(L.Tr("Set All OFF"), wdTooltip)))
-                BulkSetWriteDefaults(controller, false);
-            EditorGUILayout.EndHorizontal();
+            using (new PanelGui.LabelWidthScope(FieldLabelWidth))
+            {
+                var currentEmpty = GraphFrameData.GetEmptyClip(controller);
+                var pickedEmpty = (AnimationClip)EditorGUILayout.ObjectField(
+                    new GUIContent(L.Tr("Empty Clip"),
+                        L.Tr("Stored with this controller. New states are created with it, and the analyzer's Fill fix assigns it to states with no motion.")),
+                    currentEmpty, typeof(AnimationClip), false);
+                if (pickedEmpty != currentEmpty)
+                    GraphFrameData.SetEmptyClip(controller, pickedEmpty);
+
+                // Announced as a parameter change so the parameters panel drops the store it has
+                // cached and redraws its budget against the new one.
+                PanelGui.ParameterStoreField(controller, Context.NotifyParametersChanged);
+
+                var currentMenu = GraphFrameData.GetExpressionsMenu(controller);
+                var pickedMenu = EditorGUILayout.ObjectField(
+                    new GUIContent(L.Tr("Expressions Menu"),
+                        L.Tr("The VRC Expressions Menu this controller belongs to, opened by the menu editor. Assigned explicitly — DaerD never guesses it from the scene.")),
+                    currentMenu, typeof(ScriptableObject), false);
+                if (pickedMenu != currentMenu)
+                {
+                    // The slot only accepts what the menu editor can actually read back.
+                    if (pickedMenu == null || VrcMenuAccess.Is(pickedMenu))
+                        GraphFrameData.SetExpressionsMenu(controller, pickedMenu);
+                    else
+                        EditorUtility.DisplayDialog(L.Tr("DaerD Menu"),
+                            L.Tr("That asset is not a VRC Expressions Menu."), "OK");
+                }
+
+                // Inside the scope too, so its prefix lines up with the three slots above it.
+                var wdTooltip = L.Tr("Bulk-set every state. Layers containing only Direct blend trees stay ON.");
+                EditorGUILayout.BeginHorizontal();
+                EditorGUILayout.PrefixLabel(new GUIContent(L.Tr("Write Defaults"), wdTooltip));
+                if (GUILayout.Button(new GUIContent(L.Tr("Set All ON"), wdTooltip)))
+                    BulkSetWriteDefaults(controller, true);
+                if (GUILayout.Button(new GUIContent(L.Tr("Set All OFF"), wdTooltip)))
+                    BulkSetWriteDefaults(controller, false);
+                EditorGUILayout.EndHorizontal();
+            }
+
+            EndCard();
         }
 
         void BulkSetWriteDefaults(AnimatorController controller, bool value)
@@ -116,33 +168,35 @@ namespace Yozolab.DaerD
 
         // ---- DBT gadgets -------------------------------------------------------
 
-        /// <summary>The gadgets saved with this controller, each with the layer whose root
-        /// Direct tree it hangs off. Editing re-opens the wizard on that gadget, so the inputs
-        /// it was made from are the ones on screen.</summary>
+        /// <summary>The gadgets saved with this controller, each with the operation it computes
+        /// and the layer whose root Direct tree it hangs off. Editing re-opens the wizard on that
+        /// gadget, so the inputs it was made from are the ones on screen.</summary>
         void DrawGadgets(AnimatorController controller)
         {
             var gadgets = GraphFrameData.GetGadgets(controller);
-            EditorGUILayout.LabelField(L.Tr("DBT Gadgets") + " (" + gadgets.Count + ")",
-                EditorStyles.boldLabel);
+            BeginCard(L.Tr("DBT Gadgets"), gadgets.Count);
             if (gadgets.Count == 0)
                 EditorGUILayout.LabelField(L.Tr("No gadgets yet."), EditorStyles.centeredGreyMiniLabel);
 
             foreach (var config in gadgets)
             {
+                string kind = KindLabel(config);
+                string layer = LayerNameOf(controller, config.layer);
                 EditorGUILayout.BeginHorizontal();
-                EditorGUILayout.LabelField(AapGadgetWindow.GadgetLabel(config) + "  —  "
-                    + LayerNameOf(controller, config.layer));
-                if (GUILayout.Button(L.Tr("Edit"), EditorStyles.miniButton, GUILayout.Width(46)))
+                DrawRowName(config.output, config.output + " (" + kind + ") — " + layer);
+                DrawRowNote(kind);
+                DrawRowNote(layer);
+                if (RowButton(L.Tr("Edit")))
                 {
                     AapGadgetWindow.Open(controller, config, OnGadgetApplied);
                     GUIUtility.ExitGUI();   // the focus moved to another window under this layout pass
                 }
-                if (GUILayout.Button(L.Tr("Select"), EditorStyles.miniButton, GUILayout.Width(56)))
+                if (RowButton(L.Tr("Select")))
                 {
                     SelectLayer(controller, config.layer);
                     GUIUtility.ExitGUI();
                 }
-                if (GUILayout.Button(L.Tr("Delete"), EditorStyles.miniButton, GUILayout.Width(56)))
+                if (RowButton(L.Tr("Delete")))
                 {
                     DeleteGadget(controller, config);
                     GUIUtility.ExitGUI();   // the gadget list was rebuilt under this layout pass
@@ -156,7 +210,15 @@ namespace Yozolab.DaerD
                 AapGadgetWindow.Open(controller, OnGadgetApplied);
                 GUIUtility.ExitGUI();   // the focus moved to another window under this layout pass
             }
+            EndCard();
         }
+
+        /// <summary>The operation a saved gadget computes, as the wizard's popup names it.
+        /// <see cref="AapGadgets.KindLabels"/> is indexed by the enum the config stores as an
+        /// int.</summary>
+        static string KindLabel(GraphFrameData.AapGadgetConfig config) =>
+            config.kind >= 0 && config.kind < AapGadgets.KindLabels.Length
+                ? AapGadgets.KindLabels[config.kind] : "?";
 
         /// <summary>A gadget was created, regenerated or deleted: parameters, a blend tree and
         /// possibly a whole layer changed with it.</summary>
@@ -182,19 +244,19 @@ namespace Yozolab.DaerD
         void DrawAsyncSyncs(AnimatorController controller)
         {
             var configs = GraphFrameData.GetAsyncSyncs(controller);
-            EditorGUILayout.LabelField(L.Tr("Async Sync") + " (" + configs.Count + ")",
-                EditorStyles.boldLabel);
+            BeginCard(L.Tr("Async Sync"), configs.Count);
             if (configs.Count == 0)
                 EditorGUILayout.LabelField(L.Tr("No async sync setups yet."),
                     EditorStyles.centeredGreyMiniLabel);
 
             foreach (var config in configs)
             {
+                string shape = L.Tr("{0} target(s), {1}s step",
+                    config.targets.Count, config.stepSeconds.ToString("0.###"));
                 EditorGUILayout.BeginHorizontal();
-                EditorGUILayout.LabelField(config.baseName + "  —  "
-                    + L.Tr("{0} target(s), {1}s step",
-                        config.targets.Count, config.stepSeconds.ToString("0.###")));
-                if (GUILayout.Button(L.Tr("Select"), EditorStyles.miniButton, GUILayout.Width(56)))
+                DrawRowName(config.baseName, config.baseName + " — " + shape);
+                DrawRowNote(shape);
+                if (RowButton(L.Tr("Select")))
                 {
                     int index = AsyncSyncBuilder.LayerIndexOf(controller, config);
                     if (index >= 0) Context.SetLayer(index);
@@ -209,6 +271,7 @@ namespace Yozolab.DaerD
                 AsyncSyncWindow.Open(controller, layerIndex => Context.NotifyLayerStructureChanged(layerIndex));
                 GUIUtility.ExitGUI();   // the focus moved to another window under this layout pass
             }
+            EndCard();
         }
 
         // ---- C# recipes --------------------------------------------------------
@@ -235,8 +298,7 @@ namespace Yozolab.DaerD
                 machines.Add(entry.Key);
             }
 
-            EditorGUILayout.LabelField(L.Tr("C# Recipes") + " (" + recipes.Count + ")",
-                EditorStyles.boldLabel);
+            BeginCard(L.Tr("C# Recipes"), recipes.Count);
             if (recipes.Count == 0)
                 EditorGUILayout.LabelField(L.Tr("No recipe-owned layers."),
                     EditorStyles.centeredGreyMiniLabel);
@@ -247,32 +309,37 @@ namespace Yozolab.DaerD
                 var names = new List<string>();
                 foreach (var machine in machines)
                     names.Add(LayerNameOf(controller, machine));
+                string owned = string.Join(", ", names);
 
                 EditorGUILayout.BeginHorizontal();
-                EditorGUILayout.LabelField(recipe.name + "  —  " + string.Join(", ", names));
-                if (GUILayout.Button(new GUIContent(L.Tr("Ping"),
-                        L.Tr("Highlight this object in the Project / graph")),
-                        EditorStyles.miniButton, GUILayout.Width(46)))
+                DrawRowName(recipe.name, recipe.name + " — " + owned);
+                DrawRowNote(owned);
+                if (RowButton(L.Tr("Ping"), L.Tr("Highlight this object in the Project / graph")))
                     EditorGUIUtility.PingObject(recipe);
                 // One layer is unambiguous; several would need a picker nobody asked for, and
                 // the recipe asset is the better destination for those anyway.
                 using (new EditorGUI.DisabledScope(machines.Count != 1))
-                    if (GUILayout.Button(L.Tr("Select"), EditorStyles.miniButton, GUILayout.Width(56)))
+                    if (RowButton(L.Tr("Select")))
                     {
                         SelectLayer(controller, machines[0]);
                         GUIUtility.ExitGUI();
                     }
                 EditorGUILayout.EndHorizontal();
             }
+            EndCard();
         }
 
         // ---- tools -------------------------------------------------------------
 
-        /// <summary>The reports and editors that act on the whole controller. Each opens in its
-        /// own window, so the explanations live in tooltips rather than in labels here.</summary>
+        /// <summary>The reports and editors that act on the whole controller. Two to a row: they
+        /// are short labels, and a stack of full-width buttons reads as the most important thing
+        /// in the column when it is the least. Each opens in its own window, so the explanations
+        /// live in tooltips rather than in labels here.</summary>
         void DrawTools(AnimatorController controller)
         {
-            EditorGUILayout.LabelField(L.Tr("Tools"), EditorStyles.boldLabel);
+            BeginCard(L.Tr("Tools"));
+
+            EditorGUILayout.BeginHorizontal();
             if (GUILayout.Button(new GUIContent(L.Tr("Analyze Controller"),
                     L.Tr("Audit this controller for unused parameters, broken conditions, unreachable states and more."))))
             {
@@ -285,6 +352,9 @@ namespace Yozolab.DaerD
                 ClipsWindow.Open(controller);
                 GUIUtility.ExitGUI();   // the focus moved to another window under this layout pass
             }
+            EditorGUILayout.EndHorizontal();
+
+            EditorGUILayout.BeginHorizontal();
             if (GUILayout.Button(new GUIContent(L.Tr("Export C# Recipe"),
                     L.Tr("Convert this controller (or chosen layers) into editable C# that rebuilds it — clips stay assignable by drag & drop on the recipe asset."))))
             {
@@ -297,10 +367,34 @@ namespace Yozolab.DaerD
                 VrcMenuWindow.Open(controller);
                 GUIUtility.ExitGUI();   // the focus moved to another window under this layout pass
             }
+            EditorGUILayout.EndHorizontal();
+
+            EditorGUILayout.Space(4);
             _cleanup.DrawCleanupSection(controller);
+            EndCard();
         }
 
         // ---- shared row pieces -------------------------------------------------
+
+        /// <summary>A list row's subject. It takes the slack in the row, which is what pushes
+        /// the buttons to the right edge; the full text is the tooltip, because a narrow column
+        /// clips the label and there would be no other way to read it.</summary>
+        static void DrawRowName(string name, string full) =>
+            EditorGUILayout.LabelField(new GUIContent(name, full), GUILayout.ExpandWidth(true));
+
+        /// <summary>A grey aside beside the row's subject — what the gadget computes, where it
+        /// lives, how big the setup is. Same weight as the layer list's badges, and sized to its
+        /// text so a long one is not cut in half.</summary>
+        static void DrawRowNote(string note) =>
+            GUILayout.Label(note, EditorStyles.centeredGreyMiniLabel, GUILayout.ExpandWidth(false));
+
+        /// <summary>A row action, at the one width they all share.</summary>
+        static bool RowButton(string label) =>
+            GUILayout.Button(label, EditorStyles.miniButton, GUILayout.Width(RowButtonWidth));
+
+        static bool RowButton(string label, string tooltip) =>
+            GUILayout.Button(new GUIContent(label, tooltip), EditorStyles.miniButton,
+                GUILayout.Width(RowButtonWidth));
 
         /// <summary>The name of the layer a saved record points at. Records identify their
         /// layer by its root state machine so that renames and reorders don't break them, which

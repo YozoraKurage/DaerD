@@ -187,6 +187,9 @@ msgstr "ホームを開く"
 msgid "Gadgets, sync setups and tools for this controller live in the Home screen."
 msgstr "ガジェット・巡回同期の設定・各種ツールはホーム画面にまとまっています。"
 
+msgid "{0} layers · {1} parameters"
+msgstr "レイヤー {0} 個 · パラメーター {1} 個"
+
 msgid "The VRC Expressions Menu this controller belongs to, opened by the menu editor. Assigned explicitly — DaerD never guesses it from the scene."
 msgstr "このコントローラーが属する VRC Expressions Menu。メニューエディターが開く対象です。明示的に指定するもので、DaerD がシーンから推測することはありません。"
 

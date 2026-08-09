@@ -30,6 +30,29 @@ namespace Yozolab.DaerD
         }
 
         /// <summary>
+        /// Narrows the prefix labels inside the scope, for a column too tight for the default
+        /// width to leave a usable field beside it.
+        /// Usage: <c>using (new PanelGui.LabelWidthScope(110f)) { ... }</c>
+        ///
+        /// A scope rather than a save / restore pair because the fields it wraps can abandon
+        /// the layout pass with <see cref="GUIUtility.ExitGUI"/> (the store slot's Detect does),
+        /// which would jump straight over a trailing restore and leave every other panel drawing
+        /// with this width.
+        /// </summary>
+        public readonly struct LabelWidthScope : IDisposable
+        {
+            readonly float _previous;
+
+            public LabelWidthScope(float width)
+            {
+                _previous = EditorGUIUtility.labelWidth;
+                EditorGUIUtility.labelWidth = width;
+            }
+
+            public void Dispose() => EditorGUIUtility.labelWidth = _previous;
+        }
+
+        /// <summary>
         /// The explicit parameter-store slot (a VRC Expression Parameters asset, or a
         /// GameObject / component carrying MA Parameters) plus the opt-in Detect button.
         /// Drawn from both the parameters panel, where the budget hangs off it, and the home

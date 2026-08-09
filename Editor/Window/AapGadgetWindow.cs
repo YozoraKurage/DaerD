@@ -382,9 +382,9 @@ namespace Yozolab.DaerD
 
         /// <summary>"Hue*Gain (Multiply)": the output names the gadget, the operation says what
         /// it does. <see cref="AapGadgets.KindLabels"/> is indexed by the enum the config stores
-        /// as an int. Shared with the home screen's gadget list so one gadget reads the same
-        /// wherever it is listed.</summary>
-        internal static string GadgetLabel(GraphFrameData.AapGadgetConfig config)
+        /// as an int. One line, because a popup entry is one line — the home screen's list has
+        /// room to set the two apart and spells them out in its own columns.</summary>
+        static string GadgetLabel(GraphFrameData.AapGadgetConfig config)
         {
             string kind = config.kind >= 0 && config.kind < AapGadgets.KindLabels.Length
                 ? AapGadgets.KindLabels[config.kind] : "?";
