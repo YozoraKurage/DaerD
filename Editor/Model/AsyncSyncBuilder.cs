@@ -33,6 +33,19 @@ namespace Yozolab.DaerD
     /// step) while the local value keeps full precision, so a multiplexed Float reads back
     /// slightly quantized for everyone but the wearer.
     /// See https://www.proustite.com/articles/float-expression-parameters/
+    ///
+    /// Targets marked requestable additionally accept sync REQUESTS: a local, unsynced Bool
+    /// ("base/Req/target") that anything on the avatar can raise — DaerD's per-state sync
+    /// request drives it from a Parameter Driver. At each step boundary the cycle checks the
+    /// flags and jumps to a requested slot instead of the ring's next step, so a fresh value
+    /// reaches remotes after at most one step instead of a full pass; the slot's send driver
+    /// clears the flag as it services it. A request for the slot that just sent is picked up
+    /// one step later — never back-to-back, which the decoder couldn't see.
+    ///
+    /// Requests queue, they don't interrupt: a redirect carries the ring's exit time, so the
+    /// step that was running when a flag went up still spends its full dwell and the jump
+    /// happens at the boundary. One request is serviced per boundary — the first in cycle
+    /// order — and flags that lost the boundary stay raised for the next one.
     /// </summary>
     static class AsyncSyncBuilder
     {
@@ -43,7 +56,7 @@ namespace Yozolab.DaerD
             /// <summary>ceil(log2 N) synced Bools hold the index bits, LSB-first.</summary>
             Bool,
             /// <summary>Pick whichever costs fewer synced bits for the slot count, preferring
-            /// the single Int when they tie. See <see cref="ResolveEncoding"/>.</summary>
+            /// the single Int when they tie. See <see cref="AsyncSyncCost.ResolveEncoding"/>.</summary>
             Auto,
         }
 
@@ -65,6 +78,15 @@ namespace Yozolab.DaerD
             /// names not present in <see cref="targets"/> are ignored, so a stale saved
             /// setup doesn't block regeneration.</summary>
             public Dictionary<string, int> rates = new Dictionary<string, int>();
+
+            /// <summary>
+            /// Targets that accept an on-demand sync request. Each gets a local, unsynced
+            /// Bool ("base/Req/target"); anything on the avatar — typically a DaerD sync
+            /// request on a state — sets it to 1, and the send cycle jumps to that target's
+            /// slot at the next step boundary instead of waiting out the pass. The slot's
+            /// send driver resets the flag once the value is on the wire.
+            /// </summary>
+            public List<string> requestTargets = new List<string>();
 
             public int RateOf(string name) =>
                 rates != null && rates.TryGetValue(name, out int rate)
@@ -110,358 +132,72 @@ namespace Yozolab.DaerD
             public int rate = 1;
         }
 
-        public static string IndexParameter(string baseName) => baseName + "/Index";
+        // Spelled out in AsyncSyncNaming; the facade keeps the names its callers know.
+
+        public static string IndexParameter(string baseName) =>
+            AsyncSyncNaming.IndexParameter(baseName);
 
         public static string BitParameter(string baseName, int bit) =>
-            baseName + "/Index/b" + bit;
+            AsyncSyncNaming.BitParameter(baseName, bit);
 
         public static string ChannelParameter(string baseName, AnimatorControllerParameterType type) =>
-            baseName + "/" + type;
+            AsyncSyncNaming.ChannelParameter(baseName, type);
 
-        /// <summary>Channel 0 keeps the legacy "/Float" name; extras are "/Float2", "/Float3"…</summary>
         public static string FloatChannelParameter(string baseName, int channel) =>
-            channel == 0
-                ? baseName + "/" + AnimatorControllerParameterType.Float
-                : baseName + "/" + AnimatorControllerParameterType.Float + (channel + 1);
+            AsyncSyncNaming.FloatChannelParameter(baseName, channel);
+
+        public static string RequestParameter(string baseName, string target) =>
+            AsyncSyncNaming.RequestParameter(baseName, target);
+
+        public static string DefaultBaseName(AnimatorController controller) =>
+            AsyncSyncNaming.DefaultBaseName(controller);
+
+        internal static string DefaultBaseName(string guid, ICollection<string> taken) =>
+            AsyncSyncNaming.DefaultBaseName(guid, taken);
 
         // ---- slots and schedule ----------------------------------------------
 
-        /// <summary>
-        /// Groups the targets into slots, in listed order — the order IS the cycle order,
-        /// which is why the wizard lets it be arranged by hand. Bool / Int targets get one
-        /// slot each; Float targets batch up to <see cref="Request.floatChannels"/> per slot,
-        /// but only with Floats of the same rate — a batch is revisited as a whole or not
-        /// at all.
-        /// </summary>
-        public static List<Slot> BuildSlots(Request r)
-        {
-            var slots = new List<Slot>();
-            if (r?.targets == null || r.controller == null) return slots;
+        // The math itself lives in AsyncSyncSchedule; these keep the facade's surface.
 
-            int channels = Mathf.Clamp(r.floatChannels, 1, 8);
-            var openFloats = new Dictionary<int, Slot>();
+        public static List<Slot> BuildSlots(Request r) => AsyncSyncSchedule.BuildSlots(r);
 
-            foreach (var name in r.targets)
-            {
-                var parameter = DbtBuilder.FindParameter(r.controller, name);
-                if (parameter == null) continue;
-                int rate = r.RateOf(name);
+        public static List<int> BuildSchedule(List<Slot> slots) =>
+            AsyncSyncSchedule.BuildSchedule(slots);
 
-                if (parameter.type != AnimatorControllerParameterType.Float)
-                {
-                    var slot = new Slot { rate = rate };
-                    slot.targets.Add(name);
-                    slots.Add(slot);
-                    continue;
-                }
+        public static int[] EffectiveWeights(List<Slot> slots) =>
+            AsyncSyncSchedule.EffectiveWeights(slots);
 
-                if (!openFloats.TryGetValue(rate, out var open)
-                    || open.targets.Count >= channels)
-                {
-                    open = new Slot { rate = rate };
-                    slots.Add(open);
-                    openFloats[rate] = open;
-                }
-                open.targets.Add(name);
-            }
-            return slots;
-        }
+        static int Gcd(int a, int b) => AsyncSyncSchedule.Gcd(a, b);
 
-        /// <summary>
-        /// The order the cycle visits the slots, as indices into <see cref="BuildSlots"/>.
-        /// A slot of effective weight w appears w times per pass, at positions spread as
-        /// evenly as rounding allows, so a ×2 slot sits near the opposite ends of the cycle
-        /// rather than twice in a row. Weights are the slot rates after two corrections
-        /// (see <see cref="EffectiveWeights"/>), and the result never places one slot in
-        /// adjacent steps — including across the wrap — because the decoder's Any-State
-        /// transitions have canTransitionToSelf off and would not re-trigger.
-        /// </summary>
-        public static List<int> BuildSchedule(List<Slot> slots)
-        {
-            var schedule = new List<int>();
-            if (slots == null || slots.Count == 0) return schedule;
-            if (slots.Count == 1) { schedule.Add(0); return schedule; }
-
-            var weights = EffectiveWeights(slots);
-            int total = 0;
-            foreach (var weight in weights) total += weight;
-
-            // Heaviest slots claim their ideal (evenly spaced) positions first; lighter
-            // ones probe forward from theirs. Stable: equal weights keep list order.
-            var order = new List<int>();
-            for (int i = 0; i < slots.Count; i++) order.Add(i);
-            order.Sort((a, b) => weights[b] != weights[a] ? weights[b] - weights[a] : a - b);
-
-            var cells = new int[total];
-            for (int c = 0; c < total; c++) cells[c] = -1;
-            foreach (int slot in order)
-                for (int k = 0; k < weights[slot]; k++)
-                {
-                    int cell = Mathf.RoundToInt(k * total / (float)weights[slot]) % total;
-                    while (cells[cell] >= 0) cell = (cell + 1) % total;
-                    cells[cell] = slot;
-                }
-            schedule.AddRange(cells);
-
-            RepairAdjacency(schedule);
-            return schedule;
-        }
-
-        /// <summary>
-        /// Slot rates turned into schedulable weights: divided by their common factor
-        /// (all-×2 is the same cycle as all-×1, just twice the states), then any weight
-        /// larger than the sum of the others is lowered to that sum — with fewer separating
-        /// steps than occurrences, adjacency is unavoidable and the decoder would miss
-        /// the repeats anyway.
-        /// </summary>
-        public static int[] EffectiveWeights(List<Slot> slots)
-        {
-            var weights = new int[slots.Count];
-            for (int i = 0; i < slots.Count; i++)
-                weights[i] = Mathf.Clamp(slots[i].rate, 1, MaxRate);
-            // A lone slot has nothing to be spaced against — its weight is 1 by definition.
-            // Bailing out also matters for termination: the cap condition below is always
-            // "true" for a single slot (w > 0 others), which used to spin forever.
-            if (weights.Length < 2)
-            {
-                for (int i = 0; i < weights.Length; i++) weights[i] = 1;
-                return weights;
-            }
-
-            int gcd = 0;
-            foreach (var weight in weights) gcd = Gcd(gcd, weight);
-            if (gcd > 1)
-                for (int i = 0; i < weights.Length; i++) weights[i] /= gcd;
-
-            // Capping one weight can change the balance for another; loop to a fixed point.
-            // `changed` is set only when a weight actually shrinks — flagging a no-op write
-            // (cap already at the floor) would loop forever.
-            for (bool changed = true; changed;)
-            {
-                changed = false;
-                int total = 0;
-                foreach (var weight in weights) total += weight;
-                for (int i = 0; i < weights.Length; i++)
-                {
-                    int others = total - weights[i];
-                    int capped = Mathf.Max(1, others);
-                    if (weights[i] > others && weights[i] != capped)
-                    {
-                        weights[i] = capped;
-                        changed = true;
-                        break;
-                    }
-                }
-            }
-            return weights;
-        }
-
-        static int Gcd(int a, int b) => b == 0 ? a : Gcd(b, a % b);
-
-        /// <summary>Fixes the rare rounding artefact where one slot landed in adjacent cells
-        /// (cyclically): swap the duplicate with any cell that resolves it, or drop it.</summary>
-        static void RepairAdjacency(List<int> schedule)
-        {
-            for (int guard = 0; guard < schedule.Count; guard++)
-            {
-                int bad = -1;
-                for (int i = 0; i < schedule.Count && bad < 0; i++)
-                    if (schedule.Count > 1 && schedule[i] == schedule[(i + 1) % schedule.Count])
-                        bad = (i + 1) % schedule.Count;
-                if (bad < 0) return;
-
-                bool swapped = false;
-                for (int j = 0; j < schedule.Count && !swapped; j++)
-                {
-                    if (schedule[j] == schedule[bad]) continue;
-                    // The swap must fix `bad` without breaking j's own neighbourhood.
-                    int before = (j - 1 + schedule.Count) % schedule.Count;
-                    int after = (j + 1) % schedule.Count;
-                    if (schedule[before] == schedule[bad] || schedule[after] == schedule[bad])
-                        continue;
-                    int badBefore = (bad - 1 + schedule.Count) % schedule.Count;
-                    int badAfter = (bad + 1) % schedule.Count;
-                    if (badBefore != j && schedule[badBefore] == schedule[j]) continue;
-                    if (badAfter != j && schedule[badAfter] == schedule[j]) continue;
-
-                    (schedule[bad], schedule[j]) = (schedule[j], schedule[bad]);
-                    swapped = true;
-                }
-                if (!swapped) schedule.RemoveAt(bad);   // last resort: lose one occurrence
-            }
-        }
-
-        /// <summary>Maps <see cref="Request.scheduleOverride"/> onto slot indices; errors
-        /// (unknown name, uncovered slot, adjacent repeats) go to <paramref name="errors"/>.</summary>
         public static List<int> ResolveScheduleOverride(Request r, List<Slot> slots,
-            List<string> errors)
-        {
-            var schedule = new List<int>();
-            var slotOf = new Dictionary<string, int>();
-            for (int i = 0; i < slots.Count; i++)
-                foreach (var name in slots[i].targets)
-                    slotOf[name] = i;
+            List<string> errors) => AsyncSyncSchedule.ResolveScheduleOverride(r, slots, errors);
 
-            foreach (var name in r.scheduleOverride)
-            {
-                if (!slotOf.TryGetValue(name, out int slot))
-                {
-                    errors?.Add(L.Tr("Schedule entry '{0}' is not a multiplexed parameter.", name));
-                    return null;
-                }
-                schedule.Add(slot);
-            }
-
-            var visited = new HashSet<int>(schedule);
-            if (visited.Count < slots.Count)
-            {
-                errors?.Add(L.Tr("The explicit schedule never visits some slots — every parameter must appear at least once."));
-                return null;
-            }
-            for (int i = 0; i < schedule.Count; i++)
-                if (schedule.Count > 1 && schedule[i] == schedule[(i + 1) % schedule.Count])
-                {
-                    errors?.Add(L.Tr("The explicit schedule puts one slot in adjacent steps (position {0}) — the decoder would not re-trigger.", i));
-                    return null;
-                }
-            return schedule;
-        }
-
-        /// <summary>The schedule a request actually runs: the explicit override when given
-        /// (and valid), the rate-based automatic one otherwise.</summary>
-        public static List<int> EffectiveSchedule(Request r, List<Slot> slots)
-        {
-            if (r?.scheduleOverride != null && r.scheduleOverride.Count > 0)
-            {
-                var resolved = ResolveScheduleOverride(r, slots, null);
-                if (resolved != null) return resolved;
-            }
-            return BuildSchedule(slots);
-        }
+        public static List<int> EffectiveSchedule(Request r, List<Slot> slots) =>
+            AsyncSyncSchedule.EffectiveSchedule(r, slots);
 
         // ---- resolution and cost ---------------------------------------------
 
-        /// <summary>
-        /// The encoding a request actually builds with. Auto weighs the two: the Bool index
-        /// costs ceil(log2 N) bits against the Int's flat 8, so it wins for anything under 256
-        /// slots. A tie goes to the Int purely on tidiness — one parameter in the store and one
-        /// condition per decoder route instead of eight. Both are equally safe on the wire:
-        /// expression parameters arrive together, so the index bits can't be read half-updated.
-        /// </summary>
-        public static IndexEncoding ResolveEncoding(Request r)
-        {
-            if (r == null || r.encoding != IndexEncoding.Auto) return r?.encoding ?? IndexEncoding.Int;
-            int slots = Mathf.Max(2, BuildSlots(r).Count);
-            return NetworkSyncBuilder.BitsRequired(slots) < 8 ? IndexEncoding.Bool : IndexEncoding.Int;
-        }
+        // Worked out in AsyncSyncCost; the facade stays the single entry point.
 
-        /// <summary>
-        /// The clip the generated states will play, or null when they stay motion-less. A
-        /// zero-length clip is refused: exit times are normalized to the motion, so there would
-        /// be nothing to divide the step interval by.
-        /// </summary>
-        public static AnimationClip ResolveEmptyClip(Request r)
-        {
-            if (r == null || !r.assignEmptyClip) return null;
-            var clip = r.emptyClip != null ? r.emptyClip : GraphFrameData.GetEmptyClip(r.controller);
-            return clip != null && clip.length > 0f ? clip : null;
-        }
+        public static IndexEncoding ResolveEncoding(Request r) => AsyncSyncCost.ResolveEncoding(r);
 
-        /// <summary>Float channels the request actually uses — capped by how many Floats any
-        /// one slot really carries, so unused channels are neither created nor billed.</summary>
-        public static int FloatChannelsUsed(Request r)
-        {
-            int used = 0;
-            foreach (var slot in BuildSlots(r))
-            {
-                if (slot.targets.Count == 0) continue;
-                var parameter = DbtBuilder.FindParameter(r.controller, slot.targets[0]);
-                if (parameter != null && parameter.type == AnimatorControllerParameterType.Float)
-                    used = Mathf.Max(used, slot.targets.Count);
-            }
-            return used;
-        }
+        public static AnimationClip ResolveEmptyClip(Request r) => AsyncSyncCost.ResolveEmptyClip(r);
 
-        /// <summary>Seconds for one full pass of the schedule — the worst-case age of a
-        /// regular value.</summary>
-        public static float CycleSeconds(Request r) =>
-            r == null ? 0f : EffectiveSchedule(r, BuildSlots(r)).Count * r.stepSeconds;
+        public static int FloatChannelsUsed(Request r) => AsyncSyncCost.FloatChannelsUsed(r);
 
-        /// <summary>
-        /// Seconds between two syncs of each target, from the actual schedule: pass length ×
-        /// step ÷ occurrences of the target's slot. This is what the wizard shows per row —
-        /// the honest number, after weight normalization and capping.
-        /// </summary>
-        public static Dictionary<string, float> RefreshIntervals(Request r)
-        {
-            var intervals = new Dictionary<string, float>();
-            if (r == null) return intervals;
-            var slots = BuildSlots(r);
-            var schedule = EffectiveSchedule(r, slots);
-            if (schedule.Count == 0) return intervals;
+        public static float CycleSeconds(Request r) => AsyncSyncCost.CycleSeconds(r);
 
-            var occurrences = new int[slots.Count];
-            foreach (var step in schedule) occurrences[step]++;
-            for (int i = 0; i < slots.Count; i++)
-            {
-                if (occurrences[i] == 0) continue;
-                float interval = schedule.Count * r.stepSeconds / occurrences[i];
-                foreach (var name in slots[i].targets)
-                    intervals[name] = interval;
-            }
-            return intervals;
-        }
+        public static Dictionary<string, float> RefreshIntervals(Request r) =>
+            AsyncSyncCost.RefreshIntervals(r);
 
-        /// <summary>
-        /// Slots that can still be added without spending another synced bit. The Bool index
-        /// only grows at powers of two, so the tail of each range is free; an Int index has room
-        /// for 255 slots from the start.
-        /// </summary>
-        public static int FreeSlots(Request r)
-        {
-            if (r?.targets == null || ResolveEncoding(r) != IndexEncoding.Bool) return 0;
-            int count = Mathf.Max(2, BuildSlots(r).Count);
-            int capacity = 1 << NetworkSyncBuilder.BitsRequired(count);
-            return Mathf.Max(0, capacity - count);
-        }
+        public static int FreeSlots(Request r) => AsyncSyncCost.FreeSlots(r);
 
-        /// <summary>Synced bits the generated parameters will occupy.</summary>
-        public static int CompressedBits(Request r)
-        {
-            int bits = ResolveEncoding(r) == IndexEncoding.Int
-                ? 8
-                : NetworkSyncBuilder.BitsRequired(Mathf.Max(2, BuildSlots(r).Count));
-            foreach (var type in ChannelTypes(r))
-                bits += type == AnimatorControllerParameterType.Bool ? 1
-                    : type == AnimatorControllerParameterType.Float ? FloatChannelsUsed(r) * 8
-                    : 8;
-            return bits;
-        }
+        public static int CompressedBits(Request r) => AsyncSyncCost.CompressedBits(r);
 
-        /// <summary>Synced bits the targets would occupy if each synced directly.</summary>
-        public static int DirectBits(Request r)
-        {
-            int bits = 0;
-            foreach (var name in r.targets)
-            {
-                var parameter = DbtBuilder.FindParameter(r.controller, name);
-                if (parameter == null) continue;
-                bits += parameter.type == AnimatorControllerParameterType.Bool ? 1 : 8;
-            }
-            return bits;
-        }
+        public static int DirectBits(Request r) => AsyncSyncCost.DirectBits(r);
 
-        static List<AnimatorControllerParameterType> ChannelTypes(Request r)
-        {
-            var types = new List<AnimatorControllerParameterType>();
-            foreach (var name in r.targets)
-            {
-                var parameter = DbtBuilder.FindParameter(r.controller, name);
-                if (parameter != null && !types.Contains(parameter.type))
-                    types.Add(parameter.type);
-            }
-            return types;
-        }
+        static List<AnimatorControllerParameterType> ChannelTypes(Request r) =>
+            AsyncSyncCost.ChannelTypes(r);
 
         // ---- reserved names ----------------------------------------------------
 
@@ -569,7 +305,9 @@ namespace Yozolab.DaerD
             if (isLocal != null && isLocal.type != AnimatorControllerParameterType.Bool)
                 return L.Tr("Parameter '{0}' exists but is not a Bool.", NetworkSyncBuilder.IsLocalParameter);
 
-            foreach (var (name, type) in GeneratedParameters(r))
+            var machineParameters = GeneratedParameters(r);
+            machineParameters.AddRange(RequestParameters(r));
+            foreach (var (name, type) in machineParameters)
             {
                 if (seen.Contains(name))
                     return L.Tr("Generated parameter '{0}' collides with a target.", name);
@@ -658,6 +396,18 @@ namespace Yozolab.DaerD
                 && r.controller.layers[r.layerIndex].defaultWeight <= 0f && r.layerIndex != 0)
                 warnings.Add(L.Tr("The target layer's weight is 0 — the send cycle won't run until it is raised."));
 
+            // Stale request entries are ignored rather than blocking (same contract as rates),
+            // but a recipe author typing .Requestable("Typo") deserves to hear about it.
+            if (r.requestTargets != null)
+                foreach (var name in r.requestTargets)
+                    if (!r.targets.Contains(name))
+                    {
+                        warnings.Add(L.Tr(
+                            "Sync requests are enabled for '{0}', which is not multiplexed here — the entry is ignored.",
+                            name));
+                        break;
+                    }
+
             if (r.stepSeconds < 0.3f)
                 warnings.Add(L.Tr("Steps shorter than VRChat's ~0.3 s sync cadence risk remotes skipping slots."));
             foreach (var type in ChannelTypes(r))
@@ -707,249 +457,79 @@ namespace Yozolab.DaerD
             return generated;
         }
 
+        /// <summary>
+        /// The request flags this request will create (all Bool). Unlike
+        /// <see cref="GeneratedParameters"/> these stay local: they are never synced and never
+        /// added to the parameter store — a request is raised and serviced on the wearer's
+        /// client, and remotes just see the slot arrive early.
+        /// </summary>
+        public static List<(string name, AnimatorControllerParameterType type)> RequestParameters(Request r)
+        {
+            var generated = new List<(string, AnimatorControllerParameterType)>();
+            foreach (var target in RequestableTargets(r))
+                generated.Add((RequestParameter(r.baseName, target),
+                    AnimatorControllerParameterType.Bool));
+            return generated;
+        }
+
+        /// <summary>Request targets in cycle order, deduplicated, restricted to actual
+        /// targets — a stale saved entry must not block regeneration (same contract as
+        /// <see cref="Request.rates"/>).</summary>
+        public static List<string> RequestableTargets(Request r)
+        {
+            var requestable = new List<string>();
+            if (r?.requestTargets == null || r.targets == null) return requestable;
+            foreach (var target in r.targets)
+                if (r.requestTargets.Contains(target) && !requestable.Contains(target))
+                    requestable.Add(target);
+            return requestable;
+        }
+
         // ---- build ----------------------------------------------------------------
 
+        /// <summary>
+        /// A runnable request rebuilt from a saved setup — what regenerating outside the
+        /// wizard (per-state sync requests, the layer panel) starts from. Mirrors the wizard's
+        /// own restore: layer resolved through the config's state machine, store and Empty
+        /// clip from the controller's current associations. An explicit recipe schedule is
+        /// not persisted, so a recipe-authored layer regenerated this way falls back to
+        /// rates until the recipe's next Generate.
+        /// </summary>
+        public static Request FromConfig(AnimatorController controller,
+            GraphFrameData.AsyncSyncConfig config)
+        {
+            var request = new Request
+            {
+                controller = controller,
+                baseName = config.baseName,
+                encoding = (IndexEncoding)config.encoding,
+                stepSeconds = config.stepSeconds,
+                floatChannels = Mathf.Clamp(config.FloatChannelsOrDefault, 1, 8),
+                store = ParameterStore.Of(controller),
+                emptyClip = GraphFrameData.GetEmptyClip(controller),
+                layerIndex = LayerIndexOf(controller, config),
+            };
+            request.targets.AddRange(config.targets);
+            foreach (var rate in config.RateMap())
+                request.rates[rate.Key] = rate.Value;
+            if (config.requests != null)
+                request.requestTargets.AddRange(config.requests);
+            return request;
+        }
+
+        /// <summary>The layer a saved setup owns right now, or -1 when it is gone.</summary>
+        public static int LayerIndexOf(AnimatorController controller,
+            GraphFrameData.AsyncSyncConfig config)
+        {
+            if (controller == null || config == null) return -1;
+            var layers = controller.layers;
+            for (int i = 0; i < layers.Length; i++)
+                if (layers[i].stateMachine == config.layer)
+                    return i;
+            return -1;
+        }
+
         /// <summary>Runs the (pre-validated) request; returns false when validation fails.</summary>
-        public static bool Apply(Request r)
-        {
-            if (Validate(r) != null) return false;
-            var controller = r.controller;
-
-            using (new UndoScope("Async Sync"))
-            {
-                Undo.RegisterCompleteObjectUndo(controller, "Async Sync");
-
-                EnsureParameter(controller, NetworkSyncBuilder.IsLocalParameter,
-                    AnimatorControllerParameterType.Bool);
-                var generated = GeneratedParameters(r);
-                foreach (var (name, type) in generated)
-                    EnsureParameter(controller, name, type);
-
-                AnimatorStateMachine stateMachine;
-                if (r.layerIndex >= 0)
-                {
-                    // Regenerate the designated layer in place instead of stacking new ones.
-                    stateMachine = controller.layers[r.layerIndex].stateMachine;
-                    Undo.RegisterCompleteObjectUndo(stateMachine, "Async Sync");
-                    ClearStateMachine(stateMachine);
-                }
-                else
-                {
-                    string layerName = string.IsNullOrEmpty(r.layerName) ? r.baseName : r.layerName;
-                    controller.AddLayer(DbtBuilder.UniqueLayerName(controller, layerName));
-                    var layers = controller.layers;
-                    layers[layers.Length - 1].defaultWeight = 1f;
-                    controller.layers = layers;
-                    stateMachine = layers[layers.Length - 1].stateMachine;
-                    Undo.RegisterCompleteObjectUndo(stateMachine, "Async Sync");
-                }
-
-                var slots = BuildSlots(r);
-                var schedule = EffectiveSchedule(r, slots);
-                var encoding = ResolveEncoding(r);
-                // Motion for the generated states. Zero-length clips are refused: exit times are
-                // normalized to the motion, so a length of 0 would make them meaningless.
-                var empty = ResolveEmptyClip(r);
-                // Nothing designated: create the clip rather than leave every generated state
-                // motion-less. A clip that exists but was refused (zero length, explicit or
-                // designated) is left alone — that is the user's own clip, and the warning says so.
-                if (empty == null && r.assignEmptyClip && r.emptyClip == null
-                    && GraphFrameData.GetEmptyClip(controller) == null)
-                    empty = GraphFrameData.EnsureEmptyClip(controller);
-
-                string[] indexBits = null;
-                if (encoding == IndexEncoding.Bool)
-                {
-                    int bits = NetworkSyncBuilder.BitsRequired(slots.Count);
-                    indexBits = new string[bits];
-                    for (int i = 0; i < bits; i++)
-                        indexBits[i] = BitParameter(r.baseName, i);
-                }
-
-                // Local side: the cycle, one state per SCHEDULE step — a priority slot appears
-                // several times, and each appearance needs its own state to keep the ring a
-                // ring. A motion-less state advances normalized time at one unit per second,
-                // so its exit time reads directly as seconds; with the Empty clip filled in,
-                // the same dwell has to be expressed in units of that clip.
-                float exitTime = empty != null ? r.stepSeconds / empty.length : r.stepSeconds;
-
-                var visits = new Dictionary<int, int>();
-                var sendStates = new List<AnimatorState>(schedule.Count);
-                for (int k = 0; k < schedule.Count; k++)
-                {
-                    int slotIndex = schedule[k];
-                    var slot = slots[slotIndex];
-                    visits.TryGetValue(slotIndex, out int visit);
-                    visits[slotIndex] = visit + 1;
-
-                    var state = stateMachine.AddState(
-                        SlotStateName("Send", slot, visit),
-                        new Vector3(260f, 60f + k * 70f, 0f));
-                    state.writeDefaultValues = true;
-                    state.motion = empty;
-                    sendStates.Add(state);
-
-                    if (r.skipDrivers) continue;
-                    var driver = VrcParameterDriver.AddTo(state, "Async Send");
-                    if (driver == null) continue;
-                    Undo.RegisterCompleteObjectUndo(driver, "Async Sync");
-                    VrcParameterDriver.SetLocalOnly(driver, true);
-                    // Values first, then the index — remotes react to the index change.
-                    AddChannelCopies(driver, r, slot, toChannels: true);
-                    if (encoding == IndexEncoding.Int)
-                        VrcParameterDriver.AddSetEntry(driver, IndexParameter(r.baseName), slotIndex);
-                    else
-                        for (int bit = 0; bit < indexBits.Length; bit++)
-                            VrcParameterDriver.AddSetEntry(driver, indexBits[bit],
-                                ((slotIndex >> bit) & 1) == 1 ? 1f : 0f);
-                }
-                for (int k = 0; k < sendStates.Count; k++)
-                {
-                    var transition = sendStates[k].AddTransition(sendStates[(k + 1) % sendStates.Count]);
-                    transition.hasExitTime = true;
-                    transition.exitTime = exitTime;
-                    transition.hasFixedDuration = true;
-                    transition.duration = 0f;
-                    EditorUtility.SetDirty(transition);
-                }
-
-                // Remote side: Any-State decoder — one state per SLOT (revisits reuse it).
-                var idle = stateMachine.AddState("Remote Idle", new Vector3(620f, 60f, 0f));
-                idle.writeDefaultValues = true;
-                idle.motion = empty;
-                for (int i = 0; i < slots.Count; i++)
-                {
-                    var slot = slots[i];
-                    var state = stateMachine.AddState(
-                        SlotStateName("Recv", slot, 0),
-                        new Vector3(620f, 130f + i * 70f, 0f));
-                    state.writeDefaultValues = true;
-                    state.motion = empty;
-
-                    if (!r.skipDrivers)
-                    {
-                        var driver = VrcParameterDriver.AddTo(state, "Async Recv");
-                        if (driver != null)
-                        {
-                            Undo.RegisterCompleteObjectUndo(driver, "Async Sync");
-                            VrcParameterDriver.SetLocalOnly(driver, false);
-                            AddChannelCopies(driver, r, slot, toChannels: false);
-                        }
-                    }
-
-                    var transition = stateMachine.AddAnyStateTransition(state);
-                    transition.canTransitionToSelf = false;
-                    transition.hasExitTime = false;
-                    transition.hasFixedDuration = true;
-                    transition.duration = 0f;
-                    transition.AddCondition(AnimatorConditionMode.IfNot, 0f,
-                        NetworkSyncBuilder.IsLocalParameter);
-                    if (encoding == IndexEncoding.Int)
-                        transition.AddCondition(AnimatorConditionMode.Equals, i, IndexParameter(r.baseName));
-                    else
-                        for (int bit = 0; bit < indexBits.Length; bit++)
-                            transition.AddCondition(((i >> bit) & 1) == 1
-                                    ? AnimatorConditionMode.If : AnimatorConditionMode.IfNot,
-                                0f, indexBits[bit]);
-                    EditorUtility.SetDirty(transition);
-                }
-
-                // Entry: locals fall through to the first send slot; remotes branch to Idle.
-                stateMachine.defaultState = sendStates[0];
-                var entry = stateMachine.AddEntryTransition(idle);
-                entry.AddCondition(AnimatorConditionMode.IfNot, 0f, NetworkSyncBuilder.IsLocalParameter);
-
-                // The generated parameters are the only ones that need to sync.
-                if (r.addToStore && r.store != null && r.store.Target != null)
-                    foreach (var (name, type) in generated)
-                    {
-                        if (r.store.Find(name) != null) continue;
-                        var mapped = VrcExpressionParameters.MapType(type);
-                        if (mapped == null) continue;
-                        r.store.Add(new VrcExpressionParameters.Entry
-                        {
-                            name = name,
-                            valueType = mapped.Value,
-                            synced = true,
-                            saved = false,
-                        });
-                    }
-
-                // Remember the setup with the controller so the wizard can re-open and
-                // regenerate this layer later (same pattern as the DBT layer choice).
-                GraphFrameData.SaveAsyncSync(controller, new GraphFrameData.AsyncSyncConfig
-                {
-                    layer = stateMachine,
-                    baseName = r.baseName,
-                    encoding = (int)r.encoding,
-                    stepSeconds = r.stepSeconds,
-                    floatChannels = r.floatChannels,
-                    targets = new List<string>(r.targets),
-                    rates = GraphFrameData.AsyncSyncConfig.ToRateEntries(r.rates),
-                });
-
-                EditorUtility.SetDirty(stateMachine);
-                EditorUtility.SetDirty(controller);
-            }
-            return true;
-        }
-
-        /// <summary>"Send X", "Send X +2" for a batch, "(2)" suffixed on repeat visits so
-        /// state names stay unique inside the machine.</summary>
-        static string SlotStateName(string prefix, Slot slot, int visit)
-        {
-            string name = prefix + " " + DbtBuilder.Sanitize(slot.targets[0]);
-            if (slot.targets.Count > 1) name += " +" + (slot.targets.Count - 1);
-            if (visit > 0) name += " (" + (visit + 1) + ")";
-            return name;
-        }
-
-        /// <summary>Adds the copy entries for one slot: each Float target pairs with its
-        /// channel by position; Bool / Int slots hold one target on the type's channel.</summary>
-        static void AddChannelCopies(StateMachineBehaviour driver, Request r, Slot slot, bool toChannels)
-        {
-            for (int j = 0; j < slot.targets.Count; j++)
-            {
-                string target = slot.targets[j];
-                var type = DbtBuilder.FindParameter(r.controller, target).type;
-                string channel = type == AnimatorControllerParameterType.Float
-                    ? FloatChannelParameter(r.baseName, j)
-                    : ChannelParameter(r.baseName, type);
-                if (toChannels)
-                    VrcParameterDriver.AddCopyEntry(driver, target, channel);
-                else
-                    VrcParameterDriver.AddCopyEntry(driver, channel, target);
-            }
-        }
-
-        /// <summary>Empties a layer for regeneration: transitions, states (and their
-        /// behaviours, so no orphaned sub-assets pile up) and nested machines.</summary>
-        static void ClearStateMachine(AnimatorStateMachine stateMachine)
-        {
-            foreach (var transition in stateMachine.anyStateTransitions)
-                if (transition != null)
-                    stateMachine.RemoveAnyStateTransition(transition);
-            foreach (var transition in stateMachine.entryTransitions)
-                if (transition != null)
-                    stateMachine.RemoveEntryTransition(transition);
-            foreach (var child in stateMachine.states)
-            {
-                if (child.state == null) continue;
-                foreach (var behaviour in child.state.behaviours)
-                    if (behaviour != null)
-                        Undo.DestroyObjectImmediate(behaviour);
-                stateMachine.RemoveState(child.state);
-            }
-            foreach (var child in stateMachine.stateMachines)
-                if (child.stateMachine != null)
-                    stateMachine.RemoveStateMachine(child.stateMachine);
-        }
-
-        static void EnsureParameter(AnimatorController controller, string name,
-            AnimatorControllerParameterType type)
-        {
-            if (DbtBuilder.FindParameter(controller, name) == null)
-                controller.AddParameter(name, type);
-        }
+        public static bool Apply(Request r) => AsyncSyncApplier.Apply(r);
     }
 }

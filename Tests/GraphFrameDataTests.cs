@@ -54,6 +54,9 @@ namespace Yozolab.DaerD.Tests
             var foreignFrame = data.AddFrame(other, new Rect(0f, 0f, 10f, 10f), "Elsewhere");
             data.asyncSyncs.Add(new GraphFrameData.AsyncSyncConfig { layer = old, baseName = "Zip" });
             data.codeOwned.Add(new GraphFrameData.CodeOwnedLayer { layer = old, recipe = controller });
+            var gadgetTree = new BlendTree { name = "Mul Hue, Gain" };
+            data.aapGadgets.Add(new GraphFrameData.AapGadgetConfig
+            { layer = old, tree = gadgetTree, output = "Hue*Gain" });
 
             // The real-world sequence: the old machine dies before the remap runs.
             Object.DestroyImmediate(old);
@@ -64,12 +67,78 @@ namespace Yozolab.DaerD.Tests
             Assert.AreSame(successor, data.notes[0].stateMachine);
             Assert.AreSame(successor, data.asyncSyncs[0].layer);
             Assert.AreSame(successor, data.codeOwned[0].layer);
+            Assert.AreSame(successor, data.aapGadgets[0].layer);
             Assert.AreSame(other, foreignFrame.stateMachine, "records of other layers stay put");
 
             Assert.IsFalse(data.RemapMachineReferences(123456789, successor),
                 "an unknown id must not touch anything");
 
+            Object.DestroyImmediate(gadgetTree);
             Object.DestroyImmediate(successor);
+            Object.DestroyImmediate(data);
+            Object.DestroyImmediate(controller);
+        }
+
+        /// <summary>A gadget is filed under the parameter it writes: regenerating one replaces
+        /// its own record instead of leaving a second one describing the same output.</summary>
+        [Test]
+        public void SaveGadget_ReplacesTheEntryForTheSameOutput()
+        {
+            var controller = new AnimatorController();
+            controller.AddLayer("DBT");
+            var machine = controller.layers[0].stateMachine;
+            var data = GraphFrameData.GetOrCreate(controller);
+
+            var before = new BlendTree { name = "Mul Hue, Gain" };
+            var after = new BlendTree { name = "Mul Hue, Gain" };
+            data.SaveGadget(new GraphFrameData.AapGadgetConfig
+            { layer = machine, tree = before, output = "Hue*Gain" });
+            data.SaveGadget(new GraphFrameData.AapGadgetConfig
+            { layer = machine, tree = after, output = "Hue*Gain" });
+            data.SaveGadget(new GraphFrameData.AapGadgetConfig
+            { layer = machine, tree = before, output = "Hue+Gain" });
+
+            var live = data.Gadgets();
+            Assert.AreEqual(2, live.Count);
+            Assert.AreSame(after, live[0].tree, "the regenerated gadget took its own entry over");
+            Assert.AreEqual("Hue+Gain", live[1].output);
+
+            data.RemoveGadget("Hue+Gain");
+            Assert.AreEqual(1, data.Gadgets().Count);
+            Assert.AreEqual("Hue*Gain", data.Gadgets()[0].output);
+
+            Object.DestroyImmediate(before);
+            Object.DestroyImmediate(after);
+            Object.DestroyImmediate(data);
+            Object.DestroyImmediate(controller);
+        }
+
+        /// <summary>Deleting the layer, or the tree inside it, deletes the gadget — the record
+        /// then describes nothing and must not be offered for regeneration.</summary>
+        [Test]
+        public void Gadgets_PrunesEntriesWhoseLayerOrTreeIsGone()
+        {
+            var controller = new AnimatorController();
+            controller.AddLayer("DBT");
+            controller.AddLayer("Other");
+            var machine = controller.layers[0].stateMachine;
+            var otherMachine = controller.layers[1].stateMachine;
+            var data = GraphFrameData.GetOrCreate(controller);
+
+            var tree = new BlendTree { name = "Mul Hue, Gain" };
+            var otherTree = new BlendTree { name = "Add Hue, Gain" };
+            data.SaveGadget(new GraphFrameData.AapGadgetConfig
+            { layer = machine, tree = tree, output = "Hue*Gain" });
+            data.SaveGadget(new GraphFrameData.AapGadgetConfig
+            { layer = otherMachine, tree = otherTree, output = "Hue+Gain" });
+            Assert.AreEqual(2, data.Gadgets().Count);
+
+            Object.DestroyImmediate(tree);
+            Object.DestroyImmediate(otherMachine);
+            Assert.IsEmpty(data.Gadgets());
+            Assert.IsEmpty(data.aapGadgets, "the prune is a write, not a filtered view");
+
+            Object.DestroyImmediate(otherTree);
             Object.DestroyImmediate(data);
             Object.DestroyImmediate(controller);
         }

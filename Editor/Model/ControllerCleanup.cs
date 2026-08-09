@@ -68,7 +68,7 @@ namespace Yozolab.DaerD
             AnimatorControllerLayer layer, bool synced, int navLayerIndex, string layerLabel,
             string controllerPath, Dictionary<AnimationClip, ClipEntry> entries, List<ClipEntry> ordered)
         {
-            string pathLabel = BuildPathLabel(layerLabel, path);
+            string pathLabel = path.PathLabel(layerLabel);
             foreach (var cs in sm.states)
             {
                 var state = cs.state;
@@ -122,19 +122,6 @@ namespace Yozolab.DaerD
                     AddMotionUsages(child.motion, tree, state, pathLabel, layerIndex, path,
                         controllerPath, entries, ordered, seenInState);
             }
-        }
-
-        static string BuildPathLabel(string layerLabel, List<AnimatorStateMachine> path)
-        {
-            // path[0] is the layer's root SM, represented by the layer name instead.
-            if (path.Count <= 1) return layerLabel;
-            var sb = new System.Text.StringBuilder(layerLabel);
-            for (int i = 1; i < path.Count; i++)
-            {
-                sb.Append(" / ");
-                sb.Append(path[i] != null ? path[i].name : "?");
-            }
-            return sb.ToString();
         }
 
         // ---- clip replacement ------------------------------------------------

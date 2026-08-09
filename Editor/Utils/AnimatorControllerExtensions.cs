@@ -100,6 +100,39 @@ namespace Yozolab.DaerD
             }
         }
 
+        /// <summary>Breadcrumb for a state-machine drill path, as shown in search / usage rows.</summary>
+        public static string PathLabel(this List<AnimatorStateMachine> path, string layerName)
+        {
+            // Layer name plus any sub-state-machines drilled into (path[0] is the layer's root SM,
+            // shown as the layer label rather than its name).
+            if (path.Count <= 1) return layerName;
+            var sb = new System.Text.StringBuilder(layerName);
+            for (int i = 1; i < path.Count; i++)
+            {
+                sb.Append(" / ");
+                sb.Append(path[i] != null ? path[i].name : "?");
+            }
+            return sb.ToString();
+        }
+
+        /// <summary>True when the state is a DIRECT child of the state machine (not nested deeper).</summary>
+        public static bool ContainsState(this AnimatorStateMachine sm, AnimatorState target)
+        {
+            if (target == null || sm == null) return false;
+            foreach (var cs in sm.states)
+                if (cs.state == target) return true;
+            return false;
+        }
+
+        /// <summary>True when the machine is a DIRECT child of the state machine (not nested deeper).</summary>
+        public static bool ContainsStateMachine(this AnimatorStateMachine sm, AnimatorStateMachine target)
+        {
+            if (target == null || sm == null) return false;
+            foreach (var cm in sm.stateMachines)
+                if (cm.stateMachine == target) return true;
+            return false;
+        }
+
         /// <summary>
         /// True when <paramref name="root"/> is, or nests (at any depth), <paramref name="target"/>.
         /// Safe to call on trees that already contain reference cycles.

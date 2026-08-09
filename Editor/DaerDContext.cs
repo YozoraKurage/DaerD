@@ -26,6 +26,15 @@ namespace Yozolab.DaerD
 
         public object Selection { get; private set; }
 
+        /// <summary>
+        /// The home screen — the controller-wide view that replaces the graph in the centre
+        /// pane — is showing instead of a layer. A flag of its own rather than a sentinel
+        /// <see cref="LayerIndex"/>: every piece of index arithmetic (clamping, the per-tab
+        /// remembered layer, Shift scrolling) would otherwise need an exception, and the
+        /// index is exactly what home has to keep — it is where leaving home returns to.
+        /// </summary>
+        public bool IsHomeSelected { get; private set; }
+
         public event Action ControllerChanged;
         public event Action LayerChanged;
         public event Action StateMachinePathChanged;
@@ -35,8 +44,44 @@ namespace Yozolab.DaerD
         public event Action GraphRebuilt;
         public event Action ParametersChanged;
         public event Action LayersChanged;
+        /// <summary>Fires whenever <see cref="IsHomeSelected"/> flips either way, so the
+        /// centre pane, the breadcrumb and the layer list's tint stay in step with it.</summary>
+        public event Action HomeChanged;
         public event Action SelectionChanged;
         public event Action<object> FrameRequested;
+        public event Action<object> GraphVisualsChanged;
+        public event Action<GraphFrameData.Note> NoteEditRequested;
+
+        /// <summary>
+        /// The bulk repaints a <see cref="GraphVisualsChanged"/> notification can ask for, for the
+        /// call sites that touch every state or every transition at once rather than one object.
+        /// </summary>
+        public enum GraphVisuals
+        {
+            /// Every state node's labels and badges (e.g. after a bulk Write Defaults).
+            AllStateNodes,
+            /// Every transition edge's badge and colour (e.g. after a mute / solo or condition edit).
+            AllEdges,
+        }
+
+        /// <summary>
+        /// Reads the states currently selected in the graph. A provider rather than a "selection
+        /// changed" event on purpose: the inspector asks for this during its IMGUI repaint and must
+        /// see the live selection. A pushed copy would go stale, because the graph restores its
+        /// selection after every rebuild through
+        /// <see cref="AnimatorGraphView.SetSelectionSilently"/>, which deliberately bypasses the
+        /// notifying overrides. Registered by the graph view; null until then (and for a window
+        /// whose graph was never built), which reads as "nothing selected".
+        /// </summary>
+        public Func<List<AnimatorState>> SelectedStatesProvider;
+
+        /// <summary>
+        /// Reads the transitions behind the current graph selection, one entry per selected edge.
+        /// Model data only, so no graph element type has to cross into a panel. A provider for the
+        /// same reason as <see cref="SelectedStatesProvider"/> — the transition inspector queries
+        /// it live while repainting.
+        /// </summary>
+        public Func<List<(bool isDefault, IList<AnimatorTransitionBase> transitions)>> SelectedTransitionGroupsProvider;
 
         public bool HasController => Controller != null;
 
@@ -62,6 +107,9 @@ namespace Yozolab.DaerD
         {
             Controller = controller;
             LayerIndex = 0;
+            // Cleared without a HomeChanged of its own: everything that listens to it also
+            // listens to ControllerChanged, which is a full refresh anyway.
+            IsHomeSelected = false;
             Selection = null;
             ClearBlendTreePath();
             RebuildPath();
@@ -73,6 +121,9 @@ namespace Yozolab.DaerD
         public void SetLayer(int index)
         {
             if (Controller == null) return;
+            // Picking a layer is also the gesture that leaves home; nothing else has to ask.
+            bool wasHome = IsHomeSelected;
+            IsHomeSelected = false;
             var count = Controller.layers.Length;
             // With zero layers there is nothing to show, but the path / selection / listeners
             // must still be reset so the UI doesn't keep displaying a layer that no longer exists.
@@ -81,6 +132,25 @@ namespace Yozolab.DaerD
             ClearBlendTreePath();
             RebuildPath();
             LayerChanged?.Invoke();
+            SelectionChanged?.Invoke();
+            // Last, so listeners see a settled layer before they are told home is over.
+            if (wasHome) HomeChanged?.Invoke();
+        }
+
+        /// <summary>
+        /// Shows the home screen. The layer stays selected underneath (<see cref="LayerIndex"/>
+        /// is untouched) so any layer click — or a Shift scroll — comes straight back to it,
+        /// but the drill path is popped to the layer root: home is not a place inside a
+        /// sub-state machine, and returning should land where <see cref="SetLayer"/> lands.
+        /// </summary>
+        public void SelectHome()
+        {
+            if (Controller == null || IsHomeSelected) return;
+            IsHomeSelected = true;
+            Selection = null;
+            ClearBlendTreePath();
+            RebuildPath();
+            HomeChanged?.Invoke();
             SelectionChanged?.Invoke();
         }
 
@@ -239,6 +309,28 @@ namespace Yozolab.DaerD
 
         /// <summary>Asks the current graph view to center on <paramref name="model"/>.</summary>
         public void RequestFrameOn(object model) => FrameRequested?.Invoke(model);
+
+        /// <summary>
+        /// Asks the graph to repaint what it draws for <paramref name="target"/>: an
+        /// <see cref="AnimatorState"/>'s node, a <see cref="GraphFrameData.Frame"/> box, a
+        /// <see cref="GraphFrameData.Note"/>, or one of the <see cref="GraphVisuals"/> bulk
+        /// targets. Nothing structural changed, so this is a repaint and not a rebuild.
+        /// </summary>
+        public void NotifyGraphVisualsChanged(object target) => GraphVisualsChanged?.Invoke(target);
+
+        /// <summary>Asks the graph to open the in-place text editor on <paramref name="note"/> —
+        /// the same one a double-click (or F2) on the note starts.</summary>
+        public void NotifyNoteEditRequested(GraphFrameData.Note note) => NoteEditRequested?.Invoke(note);
+
+        /// <summary>The states selected in the graph; empty when no graph has registered a provider.</summary>
+        public List<AnimatorState> GetSelectedStates() =>
+            SelectedStatesProvider?.Invoke() ?? new List<AnimatorState>();
+
+        /// <summary>The transitions of the currently selected edges, grouped per edge; empty when
+        /// no graph has registered a provider.</summary>
+        public List<(bool isDefault, IList<AnimatorTransitionBase> transitions)> GetSelectedTransitionGroups() =>
+            SelectedTransitionGroupsProvider?.Invoke()
+            ?? new List<(bool isDefault, IList<AnimatorTransitionBase> transitions)>();
 
         public void NotifyLayersChanged()
         {

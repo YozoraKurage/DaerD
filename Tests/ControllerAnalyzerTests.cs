@@ -15,7 +15,7 @@ namespace Yozolab.DaerD.Tests
             return controller;
         }
 
-        static List<ControllerAnalyzer.Issue> Terminal(AnimatorController controller) =>
+        static List<AnalyzerIssue> Terminal(AnimatorController controller) =>
             ControllerAnalyzer.FindTerminalStateGroups(controller.layers[0]);
 
         [Test]
@@ -80,12 +80,12 @@ namespace Yozolab.DaerD.Tests
 
             Assert.AreEqual(1, issues.Count);
             StringAssert.Contains("'Stuck'", issues[0].message);
-            Assert.AreEqual(ControllerAnalyzer.Severity.Info, issues[0].severity);
+            Assert.AreEqual(IssueSeverity.Info, issues[0].severity);
 
             Object.DestroyImmediate(controller);
         }
 
-        static List<ControllerAnalyzer.Issue> OfKind(AnimatorController controller, ControllerAnalyzer.Kind kind) =>
+        static List<AnalyzerIssue> OfKind(AnimatorController controller, IssueKind kind) =>
             ControllerAnalyzer.Analyze(controller).FindAll(i => i.kind == kind);
 
         [Test]
@@ -94,11 +94,11 @@ namespace Yozolab.DaerD.Tests
             var controller = NewController(out var sm);
             sm.AddState("Bare").writeDefaultValues = true;
 
-            var issues = OfKind(controller, ControllerAnalyzer.Kind.MissingMotion);
+            var issues = OfKind(controller, IssueKind.MissingMotion);
 
             Assert.AreEqual(1, issues.Count);
             StringAssert.Contains("'Bare'", issues[0].message);
-            Assert.AreEqual(ControllerAnalyzer.Severity.Warning, issues[0].severity);
+            Assert.AreEqual(IssueSeverity.Warning, issues[0].severity);
 
             Object.DestroyImmediate(controller);
         }
@@ -109,11 +109,11 @@ namespace Yozolab.DaerD.Tests
             var controller = NewController(out var sm);
             sm.AddState("Frozen").writeDefaultValues = false;
 
-            var issues = OfKind(controller, ControllerAnalyzer.Kind.MissingMotion);
+            var issues = OfKind(controller, IssueKind.MissingMotion);
 
             Assert.AreEqual(1, issues.Count);
             StringAssert.Contains("'Frozen'", issues[0].message);
-            Assert.AreEqual(ControllerAnalyzer.Severity.Error, issues[0].severity);
+            Assert.AreEqual(IssueSeverity.Error, issues[0].severity);
 
             Object.DestroyImmediate(controller);
         }
@@ -125,7 +125,7 @@ namespace Yozolab.DaerD.Tests
             var clip = new AnimationClip();
             sm.AddState("HasClip").motion = clip;
 
-            Assert.AreEqual(0, OfKind(controller, ControllerAnalyzer.Kind.MissingMotion).Count);
+            Assert.AreEqual(0, OfKind(controller, IssueKind.MissingMotion).Count);
 
             Object.DestroyImmediate(clip);
             Object.DestroyImmediate(controller);
@@ -144,7 +144,7 @@ namespace Yozolab.DaerD.Tests
             };
             sm.AddState("Locomotion").motion = tree;
 
-            var issues = OfKind(controller, ControllerAnalyzer.Kind.MissingMotion);
+            var issues = OfKind(controller, IssueKind.MissingMotion);
 
             Assert.AreEqual(1, issues.Count);
             StringAssert.Contains("'Move'", issues[0].message);
@@ -161,7 +161,7 @@ namespace Yozolab.DaerD.Tests
             var controller = NewController(out _);
             controller.AddParameter("Ghost", AnimatorControllerParameterType.Bool);
 
-            var issues = OfKind(controller, ControllerAnalyzer.Kind.UnusedParameter);
+            var issues = OfKind(controller, IssueKind.UnusedParameter);
 
             Assert.AreEqual(1, issues.Count);
             Assert.IsNotNull(issues[0].fix);
@@ -180,7 +180,7 @@ namespace Yozolab.DaerD.Tests
             var t = a.AddTransition(b);
             t.hasExitTime = false;   // no conditions + no exit time → can never fire
 
-            var issues = OfKind(controller, ControllerAnalyzer.Kind.DeadTransition);
+            var issues = OfKind(controller, IssueKind.DeadTransition);
 
             Assert.AreEqual(1, issues.Count);
             Assert.IsNotNull(issues[0].fix);
@@ -201,7 +201,7 @@ namespace Yozolab.DaerD.Tests
             t.AddCondition(AnimatorConditionMode.If, 0f, "P");
             t.AddCondition(AnimatorConditionMode.If, 0f, "P");
 
-            var issues = OfKind(controller, ControllerAnalyzer.Kind.DuplicateCondition);
+            var issues = OfKind(controller, IssueKind.DuplicateCondition);
 
             Assert.AreEqual(1, issues.Count);
             Assert.IsNotNull(issues[0].fix);
@@ -218,7 +218,7 @@ namespace Yozolab.DaerD.Tests
             sm.AddState("A");
             controller.AddLayer("Hollow");
 
-            var issues = OfKind(controller, ControllerAnalyzer.Kind.EmptyLayer);
+            var issues = OfKind(controller, IssueKind.EmptyLayer);
 
             Assert.AreEqual(1, issues.Count);
             StringAssert.Contains("'Hollow'", issues[0].message);
@@ -237,12 +237,12 @@ namespace Yozolab.DaerD.Tests
             var layers = controller.layers;
             layers[1].defaultWeight = 0f;
             controller.layers = layers;
-            Assert.AreEqual(1, OfKind(controller, ControllerAnalyzer.Kind.LayerWeight).Count);
+            Assert.AreEqual(1, OfKind(controller, IssueKind.LayerWeight).Count);
 
             layers = controller.layers;
             layers[1].defaultWeight = 1f;
             controller.layers = layers;
-            Assert.AreEqual(0, OfKind(controller, ControllerAnalyzer.Kind.LayerWeight).Count);
+            Assert.AreEqual(0, OfKind(controller, IssueKind.LayerWeight).Count);
 
             Object.DestroyImmediate(controller);
         }
@@ -254,7 +254,7 @@ namespace Yozolab.DaerD.Tests
             var a = sm.AddState("A");
             a.behaviours = new StateMachineBehaviour[] { null };
 
-            var issues = OfKind(controller, ControllerAnalyzer.Kind.MissingBehaviour);
+            var issues = OfKind(controller, IssueKind.MissingBehaviour);
 
             Assert.AreEqual(1, issues.Count);
             Assert.IsNotNull(issues[0].fix);
@@ -309,11 +309,11 @@ namespace Yozolab.DaerD.Tests
 
         // ---- direct blend tree health -----------------------------------------
 
-        static List<ControllerAnalyzer.Issue> DirectTreeIssues(AnimatorController controller)
+        static List<AnalyzerIssue> DirectTreeIssues(AnimatorController controller)
         {
-            var result = new List<ControllerAnalyzer.Issue>();
+            var result = new List<AnalyzerIssue>();
             foreach (var issue in ControllerAnalyzer.Analyze(controller))
-                if (issue.kind == ControllerAnalyzer.Kind.DirectBlendTree)
+                if (issue.kind == IssueKind.DirectBlendTree)
                     result.Add(issue);
             return result;
         }
@@ -330,7 +330,7 @@ namespace Yozolab.DaerD.Tests
 
             var issues = DirectTreeIssues(controller);
             Assert.AreEqual(1, issues.Count);
-            Assert.AreEqual(ControllerAnalyzer.Severity.Error, issues[0].severity);
+            Assert.AreEqual(IssueSeverity.Error, issues[0].severity);
             Assert.IsNotNull(issues[0].fix);
 
             issues[0].fix();

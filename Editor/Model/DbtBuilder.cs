@@ -62,6 +62,34 @@ namespace Yozolab.DaerD
         }
 
         /// <summary>
+        /// The state machine of the layer holding <paramref name="gadget"/> — either as a
+        /// state's own motion (a layer's root Direct tree) or as one of such a root's direct
+        /// children (one gadget inside it). <see cref="EnsureDirectBlendTreeLayer"/> hands back
+        /// the root and nothing else, and a saved gadget record is keyed by the layer it landed
+        /// in, so scanning back for it is the only way there. Null when no layer holds it.
+        /// </summary>
+        public static AnimatorStateMachine HostingMachine(AnimatorController controller, Motion gadget)
+        {
+            if (controller == null || gadget == null) return null;
+            foreach (var layer in controller.layers)
+            {
+                var stateMachine = layer.stateMachine;
+                if (stateMachine == null) continue;
+                // A DBT layer keeps its tree on the one state at the machine's root; nothing
+                // deeper can be a gadget host, so the search stops there.
+                foreach (var child in stateMachine.states)
+                {
+                    var motion = child.state != null ? child.state.motion : null;
+                    if (motion == gadget) return stateMachine;
+                    if (!(motion is BlendTree root) || root.blendType != BlendTreeType.Direct) continue;
+                    foreach (var entry in root.children)
+                        if (entry.motion == gadget) return stateMachine;
+                }
+            }
+            return null;
+        }
+
+        /// <summary>
         /// Direct blend tree weights need a float parameter that stays 1. Reuses a suitable
         /// existing "One" (Float with default 1); otherwise creates the first free candidate.
         /// </summary>
@@ -85,6 +113,15 @@ namespace Yozolab.DaerD
         {
             if (FindParameter(controller, name) == null)
                 AddFloatParameter(controller, name, defaultValue);
+        }
+
+        /// <summary>Adds the parameter (with its type's zero/false default) when the controller
+        /// has none by that name; an existing parameter is left as it is, type included.</summary>
+        public static void EnsureParameter(AnimatorController controller, string name,
+            AnimatorControllerParameterType type)
+        {
+            if (FindParameter(controller, name) == null)
+                controller.AddParameter(name, type);
         }
 
         public static void AddFloatParameter(AnimatorController controller, string name, float defaultValue)
@@ -116,6 +153,32 @@ namespace Yozolab.DaerD
             return clip;
         }
 
+        /// <summary>Multi-key AAP clip: same binding as <see cref="ParameterClip"/>, but the
+        /// parameter follows the curve over the clip's length — a state playing it by motion
+        /// time turns the curve into a lookup table indexed by another parameter.</summary>
+        public static AnimationClip CurveClip(AnimatorController controller, string name,
+            string parameter, AnimationCurve curve, float frameRate)
+        {
+            var clip = new AnimationClip { name = name };
+            var binding = EditorCurveBinding.FloatCurve(string.Empty, typeof(Animator), parameter);
+            AnimationUtility.SetEditorCurve(clip, binding, curve);
+            // Only the authoring grid the curve is drawn against; the keys keep their exact
+            // times, and the clip's length stays the last key's time.
+            clip.frameRate = frameRate;
+            Attach(controller, clip);
+            return clip;
+        }
+
+        /// <summary>A clip that animates nothing. Blend tree children and states both need a
+        /// motion to exist, and some of them are there to carry a weight or to hold a layer
+        /// still rather than to write anything.</summary>
+        public static AnimationClip EmptyClip(AnimatorController controller, string name)
+        {
+            var clip = new AnimationClip { name = name };
+            Attach(controller, clip);
+            return clip;
+        }
+
         public static BlendTree Tree1D(AnimatorController controller, string name, string blendParameter)
         {
             var tree = new BlendTree
@@ -124,6 +187,27 @@ namespace Yozolab.DaerD
                 blendType = BlendTreeType.Simple1D,
                 blendParameter = blendParameter,
                 useAutomaticThresholds = false,
+                hideFlags = HideFlags.HideInHierarchy,
+            };
+            Attach(controller, tree);
+            return tree;
+        }
+
+        /// <summary>
+        /// A 2D Freeform Directional tree. This mode blends by the *direction* of (x, y)
+        /// rather than by the plane distance, which is what turns a ring of children into a
+        /// lookup table over the angle; a child at the origin is the value the field collapses
+        /// to when the vector has no direction to speak of.
+        /// </summary>
+        public static BlendTree Tree2DFreeformDirectional(AnimatorController controller, string name,
+            string xParameter, string yParameter)
+        {
+            var tree = new BlendTree
+            {
+                name = name,
+                blendType = BlendTreeType.FreeformDirectional2D,
+                blendParameter = xParameter,
+                blendParameterY = yParameter,
                 hideFlags = HideFlags.HideInHierarchy,
             };
             Attach(controller, tree);
@@ -177,6 +261,18 @@ namespace Yozolab.DaerD
             Undo.RegisterCreatedObjectUndo(obj, "DBT Gadget");
             if (!string.IsNullOrEmpty(AssetDatabase.GetAssetPath(controller)))
                 AssetDatabase.AddObjectToAsset(obj, controller);
+        }
+
+        /// <summary>Flushes freshly attached sub-assets into the imported artifact. The Project
+        /// window lists sub-assets from the import, not from memory, so anything added with
+        /// AddObjectToAsset stays invisible there until the file is saved and reimported. Once
+        /// per batch — import churn is the reason this isn't part of Attach itself.</summary>
+        public static void CommitSubAssets(AnimatorController controller)
+        {
+            var path = controller != null ? AssetDatabase.GetAssetPath(controller) : null;
+            if (string.IsNullOrEmpty(path)) return;
+            AssetDatabase.SaveAssets();
+            AssetDatabase.ImportAsset(path);
         }
 
         /// <summary>Sub-asset names keep out of Unity's menu-splitting on '/'.</summary>

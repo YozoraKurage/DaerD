@@ -7,7 +7,9 @@ namespace Yozolab.DaerD.Authoring
     /// Async Sync (巡回同期) from a recipe, with everything the wizard offers plus the one
     /// thing it doesn't: an explicit schedule. Runs after the declared layers are applied;
     /// regenerates its own layer in place on every Generate (matched by base name through
-    /// the saved setup, exactly like the wizard's layer choice).
+    /// the saved setup, exactly like the wizard's layer choice). Unnamed, it runs under the
+    /// controller's derived default base name — a flat "Async" would collide with the next
+    /// distribution that multiplexes on the same avatar.
     ///
     ///   c.AsyncSync()
     ///    .Targets("Hue", "Outfit", "TailState")
@@ -28,6 +30,11 @@ namespace Yozolab.DaerD.Authoring
                 _request.controller = controller;
                 _request.store = ParameterStore.Of(controller);
                 _request.emptyClip = GraphFrameData.GetEmptyClip(controller);
+
+                // The controller is only known here, and everything below — the saved setup,
+                // the layer name, the error message — keys on the base name, so resolve it first.
+                if (string.IsNullOrEmpty(_request.baseName))
+                    _request.baseName = ResolveDefaultBaseName(controller);
 
                 // Regenerate in place when a setup with this base name already owns a layer —
                 // a recipe must be repeatable without stacking sync layers.
@@ -60,9 +67,29 @@ namespace Yozolab.DaerD.Authoring
                     return warnings;
                 }
                 AsyncSyncBuilder.Apply(_request);
+                // The generated layer is the recipe's: the next Generate rebuilds it, which
+                // is what the layer list's ownership badge and the panels' "add it in the
+                // recipe instead" hints are there to say.
+                string layer = string.IsNullOrEmpty(_request.layerName)
+                    ? _request.baseName : _request.layerName;
+                if (!root.PostLayers.Contains(layer)) root.PostLayers.Add(layer);
+
                 warnings.AddRange(AsyncSyncBuilder.Warnings(_request));
                 return warnings;
             });
+        }
+
+        /// <summary>
+        /// The base name an unnamed <c>AsyncSync()</c> runs under. A setup already generated
+        /// under the old flat "Async" default keeps it: renaming it on the next Generate would
+        /// leave the previous layer and its synced parameters behind, unowned. Everything else
+        /// gets the controller's own default, which no other distribution can collide with.
+        /// </summary>
+        static string ResolveDefaultBaseName(AnimatorController controller)
+        {
+            foreach (var config in GraphFrameData.GetAsyncSyncs(controller))
+                if (config.baseName == "Async") return "Async";
+            return AsyncSyncBuilder.DefaultBaseName(controller);
         }
 
         /// <summary>The parameters to multiplex, in cycle order.</summary>
@@ -77,6 +104,18 @@ namespace Yozolab.DaerD.Authoring
         public AsyncSyncRecipeBuilder Rate(string parameter, int timesPerPass)
         {
             _request.rates[parameter] = timesPerPass;
+            return this;
+        }
+
+        /// <summary>
+        /// Accept on-demand sync requests for these targets: each gets a local, unsynced
+        /// Bool ("base/Req/target"), and the cycle jumps to a requested target's slot at the
+        /// next step boundary instead of waiting out the pass. Raise the flag from a state's
+        /// Sync Request (or any Parameter Driver); the send cycle clears it on service.
+        /// </summary>
+        public AsyncSyncRecipeBuilder Requestable(params string[] targets)
+        {
+            _request.requestTargets.AddRange(targets);
             return this;
         }
 

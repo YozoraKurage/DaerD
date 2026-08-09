@@ -48,6 +48,103 @@ namespace Yozolab.DaerD.Tests
             Assert.IsNull(ParameterStore.TryWrap(new AnimationClip()));
         }
 
+        static ParameterStore NewVrcStore(params VrcExpressionParameters.Entry[] entries)
+        {
+            var asset = ScriptableObject.CreateInstance<VRCExpressionParameters>();
+            VrcExpressionParameters.WriteAll(asset, entries);
+            return ParameterStore.TryWrap(asset);
+        }
+
+        [Test]
+        public void SetSynced_ChangesListedEntriesAndCountsOnlyRealChanges()
+        {
+            var store = NewVrcStore(
+                new VrcExpressionParameters.Entry
+                { name = "A", valueType = VrcExpressionParameters.ValueType.Bool },
+                new VrcExpressionParameters.Entry
+                { name = "B", valueType = VrcExpressionParameters.ValueType.Int },
+                new VrcExpressionParameters.Entry
+                { name = "Keep", valueType = VrcExpressionParameters.ValueType.Bool });
+
+            // The name the store doesn't hold is skipped rather than counted.
+            Assert.AreEqual(2, store.SetSynced(new[] { "A", "B", "Absent" }, false));
+            Assert.IsFalse(store.Find("A").synced);
+            Assert.IsFalse(store.Find("B").synced);
+            Assert.IsTrue(store.Find("Keep").synced);
+            Assert.AreEqual(1, store.UsedBits());   // only Keep still costs bits
+
+            Assert.AreEqual(0, store.SetSynced(new[] { "A", "B" }, false), "nothing left to change");
+            Assert.AreEqual(2, store.SetSynced(new[] { "A", "B" }, true));
+            Assert.IsTrue(store.Find("A").synced);
+        }
+
+        [Test]
+        public void SetSynced_MaUnsyncKeepsTheRowType()
+        {
+            var component = NewMaComponent();
+            component.parameters.Add(Config("Bool", syncType: 3));
+            component.parameters.Add(Config("Int", syncType: 1));
+            component.parameters.Add(Config("Local", syncType: 2, localOnly: true));
+            component.parameters.Add(Config("Anim", syncType: 0));
+            var store = ParameterStore.TryWrap(component);
+
+            // "Local" is unsynced already and "Absent" isn't there — neither counts.
+            Assert.AreEqual(2, store.SetSynced(new[] { "Bool", "Int", "Local", "Absent" }, false));
+            Assert.IsFalse(store.Find("Bool").synced);
+            Assert.IsFalse(store.Find("Int").synced);
+            // Unsyncing is written as localOnly: the row keeps its type instead of collapsing
+            // to NotSynced, so the parameter stays declared.
+            Assert.AreEqual(3, component.parameters[0].syncType);
+            Assert.AreEqual(1, component.parameters[1].syncType);
+            Assert.IsTrue(component.parameters[0].localOnly);
+            Assert.IsTrue(store.Find("Bool").typed);
+
+            // A NotSynced row has no type to sync as — syncing it on is skipped, not guessed.
+            Assert.AreEqual(0, store.SetSynced(new[] { "Anim" }, true));
+            Assert.AreEqual(0, component.parameters[3].syncType);
+            Assert.IsFalse(store.Find("Anim").synced);
+        }
+
+        [Test]
+        public void MissingEntries_SkipsKnownNamesAndTriggersAndAddsThemAsync()
+        {
+            var controller = new AnimatorController();
+            controller.AddLayer("Base");
+            controller.AddParameter(new AnimatorControllerParameter
+            { name = "Float", type = AnimatorControllerParameterType.Float, defaultFloat = 0.25f });
+            controller.AddParameter(new AnimatorControllerParameter
+            { name = "Int", type = AnimatorControllerParameterType.Int, defaultInt = 3 });
+            controller.AddParameter(new AnimatorControllerParameter
+            { name = "Bool", type = AnimatorControllerParameterType.Bool, defaultBool = true });
+            controller.AddParameter("Trig", AnimatorControllerParameterType.Trigger);
+
+            var component = NewMaComponent();
+            component.parameters.Add(Config("Int", syncType: 1));
+            var store = ParameterStore.TryWrap(component);
+
+            var missing = ParameterStore.MissingEntries(controller, store);
+            var names = new List<string>();
+            foreach (var entry in missing) names.Add(entry.name);
+            // Controller order, without the row the store already has and without the Trigger.
+            CollectionAssert.AreEqual(new[] { "Float", "Bool" }, names);
+
+            Assert.AreEqual(VrcExpressionParameters.ValueType.Float, missing[0].valueType);
+            Assert.AreEqual(0.25f, missing[0].defaultValue);
+            Assert.AreEqual(VrcExpressionParameters.ValueType.Bool, missing[1].valueType);
+            Assert.AreEqual(1f, missing[1].defaultValue);   // Bool default true
+            foreach (var entry in missing)
+            {
+                Assert.IsFalse(entry.synced, "the bulk add declares parameters, it doesn't sync them");
+                Assert.IsFalse(entry.saved);
+            }
+
+            // Int carries the controller's default too, once nothing shadows it.
+            var all = ParameterStore.MissingEntries(controller, null);
+            Assert.AreEqual(3, all.Count);
+            Assert.AreEqual("Int", all[1].name);
+            Assert.AreEqual(3f, all[1].defaultValue);
+        }
+
         [Test]
         public void MaStore_ReadMapsTypesSyncAndSkipsPrefixRows()
         {
@@ -161,7 +258,7 @@ namespace Yozolab.DaerD.Tests
             var component = NewMaComponent();
             component.parameters.Add(Config("Anim", syncType: 0));   // NotSynced → untyped
 
-            var issues = new List<ControllerAnalyzer.Issue>();
+            var issues = new List<AnalyzerIssue>();
             ParameterStore.TryWrap(component).Analyze(controller, issues);
             Assert.AreEqual(0, issues.Count);
         }

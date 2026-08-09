@@ -5,28 +5,17 @@ using UnityEngine.UIElements;
 
 namespace Yozolab.DaerD
 {
-    /// <summary>Shared rules for which graph nodes may start / receive a transition.</summary>
+    /// <summary>The node-side door to the transition connect rule, used while dragging an edge.</summary>
     static class TransitionConnect
     {
-        /// <summary>Mirrors the source/destination combinations <see cref="GraphSync.CreateTransition"/> accepts.</summary>
-        public static bool CanConnect(GraphNodeBase source, GraphNodeBase destination)
-        {
-            if (source == null || destination == null) return false;
-            bool destState = destination is StateNode;
-            bool destSsm = destination is SubStateMachineNode;
-            bool destExit = destination is SpecialNode dsp && dsp.Kind == SpecialNodeKind.Exit;
-            switch (source)
-            {
-                case StateNode _:
-                case SubStateMachineNode _:
-                    return destState || destSsm || destExit;
-                case SpecialNode sp when sp.Kind == SpecialNodeKind.AnyState || sp.Kind == SpecialNodeKind.Entry:
-                    // Entry / Any State cannot transition straight to Exit.
-                    return destState || destSsm;
-                default:
-                    return false;
-            }
-        }
+        /// <summary>
+        /// Names both nodes as transition ends (via <see cref="GraphNodeBase.EndOf"/>, the single
+        /// node-to-end conversion) and asks <see cref="TransitionEnd.CanConnect"/>, the single copy
+        /// of the rule — the graph accepts exactly what the transition commands accept, by
+        /// construction rather than by two lists kept in step.
+        /// </summary>
+        public static bool CanConnect(GraphNodeBase source, GraphNodeBase destination) =>
+            TransitionEnd.CanConnect(GraphNodeBase.EndOf(source), GraphNodeBase.EndOf(destination));
     }
 
     /// <summary>

@@ -16,9 +16,10 @@ namespace Yozolab.DaerD.Tests
     {
         /// <summary>
         /// A controller exercising everything the IR models: four parameter types, blend
-        /// trees (nested, 2D, direct child, normalized flag), behaviours, parameter-driven
-        /// state fields, a sub-state machine with entry/exit/any/state-machine transitions,
-        /// cross-machine destinations, and a synced layer with a motion override.
+        /// trees (nested, 2D, direct child, normalized flag), behaviours on a state and on a
+        /// state machine, parameter-driven state fields, a sub-state machine with
+        /// entry/exit/any/state-machine transitions, cross-machine destinations, and a synced
+        /// layer with a motion override and a behaviour override.
         /// </summary>
         static AnimatorController BuildSample(out AnimationClip clipA, out AnimationClip clipB)
         {
@@ -99,6 +100,11 @@ namespace Yozolab.DaerD.Tests
             exit.solo = true;
 
             var sub = sm.AddStateMachine("Sub", new Vector3(500f, 50f, 0f));
+            // On the machine itself, not on a state.
+            var subBehaviour = (IRTestBehaviour)sub.AddStateMachineBehaviour(typeof(IRTestBehaviour));
+            subBehaviour.payload = "machine";
+            subBehaviour.number = 7;
+
             var d = sub.AddState("D", new Vector3(40f, 40f, 0f));
             d.motion = clipB;
             sub.defaultState = d;
@@ -117,12 +123,15 @@ namespace Yozolab.DaerD.Tests
             entry.AddCondition(AnimatorConditionMode.If, 0f, "B");
             sm.defaultState = a;
 
-            // Synced layer over "Main" with one motion override.
+            // Synced layer over "Main" with a motion override and a behaviour override.
             controller.AddLayer("MainSync");
             layers = controller.layers;
             layers[2].syncedLayerIndex = 1;
             layers[2].syncedLayerAffectsTiming = true;
             layers[2].SetOverrideMotion(a, clipB);
+            var overridden = ScriptableObject.CreateInstance<IRTestBehaviour>();
+            overridden.payload = "synced";
+            layers[2].SetOverrideBehaviours(a, new StateMachineBehaviour[] { overridden });
             controller.layers = layers;
             return controller;
         }
@@ -146,6 +155,40 @@ namespace Yozolab.DaerD.Tests
             Object.DestroyImmediate(rebuilt);
             Object.DestroyImmediate(clipA);
             Object.DestroyImmediate(clipB);
+        }
+
+        /// <summary>Behaviours on a state machine were invisible to the IR: an export dropped
+        /// them and Generate deleted them from the controller, with no diff to show for it
+        /// because neither side modelled the field. Both halves of that are guarded here.</summary>
+        [Test]
+        public void MachineBehaviours_SurviveARebuild_AndAreDiffed()
+        {
+            var source = new AnimatorController();
+            source.AddLayer("L");
+            var sm = source.layers[0].stateMachine;
+            sm.AddState("S", Vector3.zero);
+            ((IRTestBehaviour)sm.AddStateMachineBehaviour(typeof(IRTestBehaviour))).payload = "root";
+            var sub = sm.AddStateMachine("Sub", new Vector3(300f, 0f, 0f));
+            ((IRTestBehaviour)sub.AddStateMachineBehaviour(typeof(IRTestBehaviour))).number = 7;
+
+            var ir = ControllerIR.Parse(source);
+            var rebuilt = new AnimatorController();
+            var warnings = ControllerIRBuilder.Rebuild(ir, rebuilt, exclusive: true);
+            Assert.IsEmpty(warnings, Join(warnings));
+
+            var root = rebuilt.layers[0].stateMachine;
+            Assert.AreEqual(1, root.behaviours.Length);
+            Assert.AreEqual("root", ((IRTestBehaviour)root.behaviours[0]).payload);
+            Assert.AreEqual(7,
+                ((IRTestBehaviour)root.stateMachines[0].stateMachine.behaviours[0]).number);
+
+            // And losing one is now a reported difference rather than a silent one.
+            var stripped = ControllerIR.Parse(source);
+            stripped.layers[0].machine.behaviours.Clear();
+            Assert.IsNotEmpty(ControllerIRDiff.Compare(ir, stripped));
+
+            Object.DestroyImmediate(source);
+            Object.DestroyImmediate(rebuilt);
         }
 
         [Test]

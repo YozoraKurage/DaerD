@@ -21,12 +21,17 @@ namespace Yozolab.DaerD
             context.ControllerChanged += Refresh;
             context.LayerChanged += Refresh;
             context.LayersChanged += Refresh;
+            // Home and the layers tint each other off, so the list has to repaint on the way in
+            // as well as on the way out.
+            context.HomeChanged += Refresh;
         }
 
         protected override void DrawContent()
         {
             var controller = Context.Controller;
             var layers = controller.layers;
+
+            DrawHomeRow();
 
             // Collected once per repaint (the lookups walk the controller's sub-assets), not
             // once per row.
@@ -43,7 +48,7 @@ namespace Yozolab.DaerD
 
                 bool isCurrent = i == Context.LayerIndex;
                 var prev = GUI.backgroundColor;
-                if (isCurrent) GUI.backgroundColor = new Color(0.40f, 0.60f, 0.90f);
+                if (isCurrent) GUI.backgroundColor = PanelGui.SelectionTint;
                 if (GUILayout.Button(layers[i].name, EditorStyles.miniButton))
                     Context.SetLayer(i);
                 GUI.backgroundColor = prev;
@@ -83,6 +88,21 @@ namespace Yozolab.DaerD
             if (GUILayout.Button(new GUIContent("+ Add Layer",
                     L.Tr("With templates saved (or a copied layer), this opens a menu. Use '.' in a template's asset name to nest it into submenus."))))
                 ShowAddLayerMenu();
+        }
+
+        /// <summary>
+        /// The controller-wide screen, sitting above the list as a row that behaves like a
+        /// layer row without being one: no badges, no settings gear, and deliberately outside
+        /// <see cref="_reorder"/> — there is nothing to reorder it against.
+        /// </summary>
+        void DrawHomeRow()
+        {
+            var prev = GUI.backgroundColor;
+            if (Context.IsHomeSelected) GUI.backgroundColor = PanelGui.SelectionTint;
+            if (GUILayout.Button(L.Tr("Home"), EditorStyles.miniButton))
+                Context.SelectHome();
+            GUI.backgroundColor = prev;
+            EditorGUILayout.Space(2);
         }
 
         /// <summary>Plain add when nothing else is available; otherwise a menu with the
@@ -187,15 +207,7 @@ namespace Yozolab.DaerD
             DaerDLayerTemplate.Save(controller, index, path);
         }
 
-        void OnLayerStructureChanged(int layerIndex)
-        {
-            var controller = Context.Controller;
-            Context.NotifyParametersChanged();
-            Context.NotifyLayersChanged();
-            Context.NotifyGraphStructureChanged();
-            if (controller != null && layerIndex >= 0 && layerIndex < controller.layers.Length)
-                Context.SetLayer(layerIndex);
-        }
+        void OnLayerStructureChanged(int layerIndex) => Context.NotifyLayerStructureChanged(layerIndex);
 
         /// <summary>Editable settings for one layer, anchored to its row's gear button.</summary>
         class LayerSettingsPopup : PopupWindowContent
@@ -324,7 +336,7 @@ namespace Yozolab.DaerD
         {
             var controller = Context.Controller;
             Undo.RegisterCompleteObjectUndo(controller, "Add Layer");
-            controller.AddLayer(MakeUniqueLayerName(controller, "New Layer"));
+            controller.AddLayer(DbtBuilder.UniqueLayerName(controller, "New Layer"));
             var layers = controller.layers;
             layers[layers.Length - 1].defaultWeight = 1f;
             controller.layers = layers;
@@ -377,7 +389,7 @@ namespace Yozolab.DaerD
             {
                 Undo.RegisterCompleteObjectUndo(controller, "Duplicate Layer");
                 var src = controller.layers[idx];
-                controller.AddLayer(MakeUniqueLayerName(controller, src.name + " Copy"));
+                controller.AddLayer(DbtBuilder.UniqueLayerName(controller, src.name + " Copy"));
                 var layers = controller.layers;
                 int newIdx = layers.Length - 1;
                 layers[newIdx].defaultWeight = src.defaultWeight;
@@ -395,20 +407,6 @@ namespace Yozolab.DaerD
             }
             Context.NotifyLayersChanged();
             Context.SetLayer(controller.layers.Length - 1);
-        }
-
-        static string MakeUniqueLayerName(AnimatorController controller, string baseName)
-        {
-            bool Taken(string n)
-            {
-                foreach (var l in controller.layers)
-                    if (l.name == n) return true;
-                return false;
-            }
-            if (!Taken(baseName)) return baseName;
-            int i = 1;
-            while (Taken(baseName + " " + i)) i++;
-            return baseName + " " + i;
         }
     }
 }
