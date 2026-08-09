@@ -30,17 +30,17 @@ namespace Yozolab.DaerD
         public void DrawState(AnimatorState state)
         {
             var controller = _context.Controller;
-            EditorGUILayout.LabelField("State", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField(L.Tr("State"), EditorStyles.boldLabel);
 
             EditorGUI.BeginChangeCheck();
-            string name = EditorGUILayout.DelayedTextField("Name", state.name);
-            var motion = (Motion)EditorGUILayout.ObjectField("Motion", state.motion, typeof(Motion), false);
-            float speed = EditorGUILayout.FloatField("Speed", state.speed);
-            float cycleOffset = EditorGUILayout.FloatField("Cycle Offset", state.cycleOffset);
-            bool mirror = EditorGUILayout.Toggle("Mirror", state.mirror);
-            bool ikOnFeet = EditorGUILayout.Toggle("Foot IK", state.iKOnFeet);
-            bool writeDefaults = EditorGUILayout.Toggle("Write Defaults", state.writeDefaultValues);
-            string tag = EditorGUILayout.TextField("Tag", state.tag);
+            string name = EditorGUILayout.DelayedTextField(L.Tr("Name"), state.name);
+            var motion = (Motion)EditorGUILayout.ObjectField(L.Tr("Motion"), state.motion, typeof(Motion), false);
+            float speed = EditorGUILayout.FloatField(L.Tr("Speed"), state.speed);
+            float cycleOffset = EditorGUILayout.FloatField(L.Tr("Cycle Offset"), state.cycleOffset);
+            bool mirror = EditorGUILayout.Toggle(L.Tr("Mirror"), state.mirror);
+            bool ikOnFeet = EditorGUILayout.Toggle(L.Tr("Foot IK"), state.iKOnFeet);
+            bool writeDefaults = EditorGUILayout.Toggle(L.Tr("Write Defaults"), state.writeDefaultValues);
+            string tag = EditorGUILayout.TextField(L.Tr("Tag"), state.tag);
             if (EditorGUI.EndChangeCheck())
             {
                 Undo.RegisterCompleteObjectUndo(state, "Edit State");
@@ -58,19 +58,19 @@ namespace Yozolab.DaerD
                 if (visualChange) _context.NotifyGraphStructureChanged();
                 // The WD badge lives on the graph node; repaint it right away rather than
                 // waiting for the next full rebuild.
-                else if (badgeChange) _sync.RefreshStateNode(state);
+                else if (badgeChange) _context.NotifyGraphVisualsChanged(state);
             }
 
             DrawStateParameters(state, controller);
 
             EditorGUILayout.Space(4);
             var transitions = state.transitions;
-            EditorGUILayout.LabelField("Transitions (" + transitions.Length + ")", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField(L.Tr("Transitions") + " (" + transitions.Length + ")", EditorStyles.boldLabel);
             foreach (var t in transitions)
             {
                 EditorGUILayout.BeginHorizontal();
                 EditorGUILayout.LabelField(ParameterConverter.DescribeTransition(t));
-                if (GUILayout.Button("Select", EditorStyles.miniButton, GUILayout.Width(56)))
+                if (GUILayout.Button(L.Tr("Select"), EditorStyles.miniButton, GUILayout.Width(56)))
                 {
                     var edge = _sync.FindEdge(t);
                     _context.Select((object)edge ?? t);
@@ -85,7 +85,7 @@ namespace Yozolab.DaerD
             if (state.motion is BlendTree blendTree)
             {
                 EditorGUILayout.Space(4);
-                _showBlendTree = EditorGUILayout.Foldout(_showBlendTree, "Blend Tree", true);
+                _showBlendTree = EditorGUILayout.Foldout(_showBlendTree, L.Tr("Blend Tree"), true);
                 if (_showBlendTree)
                 {
                     EditorGUI.indentLevel++;
@@ -108,18 +108,18 @@ namespace Yozolab.DaerD
             var boolParams = PanelGui.ParameterNamesOfType(controller, AnimatorControllerParameterType.Bool);
 
             EditorGUILayout.Space(4);
-            EditorGUILayout.LabelField("Parameter Overrides", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField(L.Tr("Parameter Overrides"), EditorStyles.boldLabel);
 
-            DrawParameterOverride(state, "Speed Multiplier", floatParams,
+            DrawParameterOverride(state, L.Tr("Speed Multiplier"), floatParams,
                 state.speedParameterActive, state.speedParameter,
                 (active, param) => { state.speedParameterActive = active; state.speedParameter = param; });
-            DrawParameterOverride(state, "Motion Time", floatParams,
+            DrawParameterOverride(state, L.Tr("Motion Time"), floatParams,
                 state.timeParameterActive, state.timeParameter,
                 (active, param) => { state.timeParameterActive = active; state.timeParameter = param; });
-            DrawParameterOverride(state, "Mirror", boolParams,
+            DrawParameterOverride(state, L.Tr("Mirror"), boolParams,
                 state.mirrorParameterActive, state.mirrorParameter,
                 (active, param) => { state.mirrorParameterActive = active; state.mirrorParameter = param; });
-            DrawParameterOverride(state, "Cycle Offset", floatParams,
+            DrawParameterOverride(state, L.Tr("Cycle Offset"), floatParams,
                 state.cycleOffsetParameterActive, state.cycleOffsetParameter,
                 (active, param) => { state.cycleOffsetParameterActive = active; state.cycleOffsetParameter = param; });
         }

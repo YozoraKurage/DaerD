@@ -17,15 +17,13 @@ namespace Yozolab.DaerD
         readonly Dictionary<int, int> _vrcDriverSelectedIndex = new Dictionary<int, int>();
 
         readonly DaerDContext _context;
-        readonly GraphSync _sync;
         // Repaints the inspector once the add menu's callback runs, long after the frame that
         // opened it.
         readonly System.Action _refresh;
 
-        public VrcBehaviourDrawers(DaerDContext context, GraphSync sync, System.Action refresh)
+        public VrcBehaviourDrawers(DaerDContext context, System.Action refresh)
         {
             _context = context;
-            _sync = sync;
             _refresh = refresh;
         }
 
@@ -86,7 +84,7 @@ namespace Yozolab.DaerD
             var disable = so.FindProperty("disableLocomotion");
             if (disable != null)
                 disable.boolValue = !DrawTwoWayToggle(!disable.boolValue, L.Tr("Enable"), L.Tr("Disable"));
-            PropertyRow(so, "debugString", "Debug String");
+            PropertyRow(so, "debugString", L.Tr("Debug String"));
             so.ApplyModifiedProperties();
         }
 
@@ -102,8 +100,8 @@ namespace Yozolab.DaerD
                 EditorGUILayout.PropertyField(fixedDelay,
                     new GUIContent(L.Tr("Fixed Delay"),
                         L.Tr("On: the delay is in seconds. Off: normalized time of the state.")));
-            PropertyRow(so, "delayTime", "Delay Time");
-            PropertyRow(so, "debugString", "Debug String");
+            PropertyRow(so, "delayTime", L.Tr("Delay Time"));
+            PropertyRow(so, "debugString", L.Tr("Debug String"));
             so.ApplyModifiedProperties();
         }
 
@@ -111,13 +109,13 @@ namespace Yozolab.DaerD
         {
             var so = new SerializedObject(behaviour);
             so.Update();
-            PropertyRow(so, "playable", "Playable");
-            PropertyRow(so, "layer", "Layer");
+            PropertyRow(so, "playable", L.Tr("Playable"));
+            PropertyRow(so, "layer", L.Tr("Layer"));
             var goal = so.FindProperty("goalWeight");
             if (goal != null)
                 goal.floatValue = EditorGUILayout.Slider(L.Tr("Goal Weight"), goal.floatValue, 0f, 1f);
-            PropertyRow(so, "blendDuration", "Blend Duration");
-            PropertyRow(so, "debugString", "Debug String");
+            PropertyRow(so, "blendDuration", L.Tr("Blend Duration"));
+            PropertyRow(so, "debugString", L.Tr("Debug String"));
             so.ApplyModifiedProperties();
         }
 
@@ -125,12 +123,12 @@ namespace Yozolab.DaerD
         {
             var so = new SerializedObject(behaviour);
             so.Update();
-            PropertyRow(so, "layer", "Layer");
+            PropertyRow(so, "layer", L.Tr("Layer"));
             var goal = so.FindProperty("goalWeight");
             if (goal != null)
                 goal.floatValue = EditorGUILayout.Slider(L.Tr("Goal Weight"), goal.floatValue, 0f, 1f);
-            PropertyRow(so, "blendDuration", "Blend Duration");
-            PropertyRow(so, "debugString", "Debug String");
+            PropertyRow(so, "blendDuration", L.Tr("Blend Duration"));
+            PropertyRow(so, "debugString", L.Tr("Debug String"));
             so.ApplyModifiedProperties();
         }
 
@@ -143,7 +141,7 @@ namespace Yozolab.DaerD
             var sourcePath = so.FindProperty("SourcePath");
             if (sourcePath != null)
             {
-                EditorGUILayout.PropertyField(sourcePath, new GUIContent("Source Path"));
+                EditorGUILayout.PropertyField(sourcePath, new GUIContent(L.Tr("Source Path")));
                 // Action slot: dropping an AudioSource fills the path (relative to its root).
                 var dropped = (AudioSource)EditorGUILayout.ObjectField(
                     new GUIContent(L.Tr("Resolve From AudioSource"),
@@ -166,7 +164,9 @@ namespace Yozolab.DaerD
         }
 
         // Body part rows in the order the VRCSDK inspector shows them: display label + the
-        // matching serialized property name on VRCAnimatorTrackingControl.
+        // matching serialized property name on VRCAnimatorTrackingControl. The labels are the
+        // English source strings (translated where they are drawn, not here — a static table
+        // would freeze whatever language was current at domain load).
         static readonly (string label, string property)[] VrcTrackingTargets =
         {
             ("Head", "trackingHead"),
@@ -187,7 +187,7 @@ namespace Yozolab.DaerD
             var so = new SerializedObject(behaviour);
             so.Update();
 
-            EditorGUILayout.LabelField("Tracking Control", EditorStyles.miniBoldLabel);
+            EditorGUILayout.LabelField(L.Tr("Tracking Control"), EditorStyles.miniBoldLabel);
 
             // Column headers use the same subdivision as the rows so they stay aligned when
             // the inspector is resized.
@@ -195,7 +195,7 @@ namespace Yozolab.DaerD
                 GUILayout.ExpandWidth(true));
             var headerCols = SubdivideTrackingRow(headerRect);
             for (int i = 0; i < VrcTrackingColumns.Length; i++)
-                GUI.Label(headerCols[i + 1], VrcTrackingColumns[i], TrackingColumnHeaderStyle);
+                GUI.Label(headerCols[i + 1], L.Tr(VrcTrackingColumns[i]), TrackingColumnHeaderStyle);
 
             // "All" row acts as a bulk selector: shows the common value across every body part
             // (or nothing when they diverge) and, when clicked, forces that column onto them all.
@@ -208,7 +208,7 @@ namespace Yozolab.DaerD
                 if (commonValue == -1) commonValue = p.intValue;
                 else if (commonValue != p.intValue) { commonKnown = false; break; }
             }
-            int allPicked = DrawVrcTrackingRow("All", commonKnown ? commonValue : -1);
+            int allPicked = DrawVrcTrackingRow(L.Tr("All"), commonKnown ? commonValue : -1);
             if (allPicked >= 0 && (!commonKnown || allPicked != commonValue))
             {
                 foreach (var (_, prop) in VrcTrackingTargets)
@@ -222,7 +222,7 @@ namespace Yozolab.DaerD
             {
                 var prop = so.FindProperty(propPath);
                 if (prop == null) continue;
-                int picked = DrawVrcTrackingRow(label, prop.intValue);
+                int picked = DrawVrcTrackingRow(L.Tr(label), prop.intValue);
                 if (picked >= 0 && picked != prop.intValue)
                     prop.intValue = picked;
             }
@@ -230,7 +230,7 @@ namespace Yozolab.DaerD
             var debug = so.FindProperty("debugString");
             if (debug != null)
             {
-                EditorGUILayout.PropertyField(debug, new GUIContent("Debug String"));
+                EditorGUILayout.PropertyField(debug, new GUIContent(L.Tr("Debug String")));
             }
 
             so.ApplyModifiedProperties();
@@ -314,15 +314,15 @@ namespace Yozolab.DaerD
             var so = new SerializedObject(behaviour);
             so.Update();
 
-            EditorGUILayout.HelpBox(VrcParameterDriverInfo, MessageType.Info);
+            EditorGUILayout.HelpBox(L.Tr(VrcParameterDriverInfo), MessageType.Info);
 
             var localOnly = so.FindProperty("localOnly");
             if (localOnly != null)
-                EditorGUILayout.PropertyField(localOnly, new GUIContent("Local Only"));
+                EditorGUILayout.PropertyField(localOnly, new GUIContent(L.Tr("Local Only")));
 
             var debugString = so.FindProperty("debugString");
             if (debugString != null)
-                EditorGUILayout.PropertyField(debugString, new GUIContent("Debug String"));
+                EditorGUILayout.PropertyField(debugString, new GUIContent(L.Tr("Debug String")));
 
             var parameters = so.FindProperty("parameters");
             if (parameters == null || !parameters.isArray)
@@ -337,14 +337,14 @@ namespace Yozolab.DaerD
             else selected = Mathf.Clamp(selected, 0, parameters.arraySize - 1);
 
             EditorGUILayout.BeginHorizontal();
-            if (GUILayout.Button("Add"))
+            if (GUILayout.Button(L.Tr("Add")))
             {
                 parameters.arraySize++;
                 selected = parameters.arraySize - 1;
             }
             using (new EditorGUI.DisabledScope(selected <= 0))
             {
-                if (GUILayout.Button("Up"))
+                if (GUILayout.Button(L.Tr("Up")))
                 {
                     parameters.MoveArrayElement(selected, selected - 1);
                     selected--;
@@ -352,7 +352,7 @@ namespace Yozolab.DaerD
             }
             using (new EditorGUI.DisabledScope(selected < 0 || selected >= parameters.arraySize - 1))
             {
-                if (GUILayout.Button("Down"))
+                if (GUILayout.Button(L.Tr("Down")))
                 {
                     parameters.MoveArrayElement(selected, selected + 1);
                     selected++;
@@ -360,7 +360,7 @@ namespace Yozolab.DaerD
             }
             using (new EditorGUI.DisabledScope(selected < 0))
             {
-                if (GUILayout.Button("Delete"))
+                if (GUILayout.Button(L.Tr("Delete")))
                 {
                     parameters.DeleteArrayElementAtIndex(selected);
                     if (parameters.arraySize == 0) selected = -1;
@@ -393,7 +393,7 @@ namespace Yozolab.DaerD
 
             // Clicking anywhere on this entry's box makes it the selected one.
             var headerRect = GUILayoutUtility.GetRect(0, EditorGUIUtility.singleLineHeight);
-            EditorGUI.LabelField(headerRect, "Parameter " + index, EditorStyles.miniBoldLabel);
+            EditorGUI.LabelField(headerRect, L.Tr("Parameter {0}", index), EditorStyles.miniBoldLabel);
             if (Event.current.type == EventType.MouseDown && headerRect.Contains(Event.current.mousePosition))
             {
                 selected = index;
@@ -414,23 +414,24 @@ namespace Yozolab.DaerD
             var destMaxProp = entry.FindPropertyRelative("destMax");
 
             if (typeProp != null)
-                EditorGUILayout.PropertyField(typeProp, new GUIContent("Type"));
+                EditorGUILayout.PropertyField(typeProp, new GUIContent(L.Tr("Type")));
 
             int type = typeProp != null ? typeProp.intValue : 0;
 
             // For Set/Add/Random the destination is `name`; for Copy VRCSDK reuses `name` as the
             // Copy destination while `source` holds the parameter being read.
             if (type == 3 && sourceProp != null)
-                EditorGUILayout.PropertyField(sourceProp, new GUIContent("Source"));
+                EditorGUILayout.PropertyField(sourceProp, new GUIContent(L.Tr("Source")));
             if (nameProp != null)
             {
-                EditorGUILayout.PropertyField(nameProp, new GUIContent("Destination"));
+                EditorGUILayout.PropertyField(nameProp, new GUIContent(L.Tr("Destination")));
                 if (controllerParameters != null
                     && !string.IsNullOrEmpty(nameProp.stringValue)
                     && !ControllerHasParameter(controllerParameters, nameProp.stringValue))
                 {
                     EditorGUILayout.HelpBox(
-                        "Parameter '" + nameProp.stringValue + "' not found. Make sure you defined it in the Animator window's Parameter list.",
+                        L.Tr("Parameter '{0}' not found. Make sure you defined it in the Animator window's Parameter list.",
+                            nameProp.stringValue),
                         MessageType.Warning);
                 }
             }
@@ -440,24 +441,24 @@ namespace Yozolab.DaerD
                 case 0: // Set
                 case 1: // Add
                     if (valueProp != null)
-                        EditorGUILayout.PropertyField(valueProp, new GUIContent("Value"));
+                        EditorGUILayout.PropertyField(valueProp, new GUIContent(L.Tr("Value")));
                     break;
                 case 2: // Random
                     if (valueMinProp != null)
-                        EditorGUILayout.PropertyField(valueMinProp, new GUIContent("Value Min"));
+                        EditorGUILayout.PropertyField(valueMinProp, new GUIContent(L.Tr("Value Min")));
                     if (valueMaxProp != null)
-                        EditorGUILayout.PropertyField(valueMaxProp, new GUIContent("Value Max"));
+                        EditorGUILayout.PropertyField(valueMaxProp, new GUIContent(L.Tr("Value Max")));
                     if (chanceProp != null)
-                        EditorGUILayout.PropertyField(chanceProp, new GUIContent("Chance"));
+                        EditorGUILayout.PropertyField(chanceProp, new GUIContent(L.Tr("Chance")));
                     break;
                 case 3: // Copy
                     if (convertRangeProp != null)
                     {
-                        EditorGUILayout.PropertyField(convertRangeProp, new GUIContent("Convert Range"));
+                        EditorGUILayout.PropertyField(convertRangeProp, new GUIContent(L.Tr("Convert Range")));
                         if (convertRangeProp.boolValue)
                         {
-                            DrawMinMaxRow("Source", sourceMinProp, sourceMaxProp);
-                            DrawMinMaxRow("Destination", destMinProp, destMaxProp);
+                            DrawMinMaxRow(L.Tr("Source"), sourceMinProp, sourceMaxProp);
+                            DrawMinMaxRow(L.Tr("Destination"), destMinProp, destMaxProp);
                         }
                     }
                     break;
@@ -484,8 +485,8 @@ namespace Yozolab.DaerD
             EditorGUILayout.LabelField(label, GUILayout.Width(EditorGUIUtility.labelWidth));
             float saved = EditorGUIUtility.labelWidth;
             EditorGUIUtility.labelWidth = 30f;
-            if (minProp != null) EditorGUILayout.PropertyField(minProp, new GUIContent("Min"));
-            if (maxProp != null) EditorGUILayout.PropertyField(maxProp, new GUIContent("Max"));
+            if (minProp != null) EditorGUILayout.PropertyField(minProp, new GUIContent(L.Tr("Min")));
+            if (maxProp != null) EditorGUILayout.PropertyField(maxProp, new GUIContent(L.Tr("Max")));
             EditorGUIUtility.labelWidth = saved;
             EditorGUILayout.EndHorizontal();
         }
@@ -529,7 +530,7 @@ namespace Yozolab.DaerD
                                 if (VrcBehaviours.IsSingleton(captured) && VrcBehaviours.Has(s, captured))
                                     continue;
                                 VrcBehaviours.Add(s, captured);
-                                _sync.RefreshStateNode(s);   // B badge updates immediately
+                                _context.NotifyGraphVisualsChanged(s);   // B badge updates immediately
                             }
                         _refresh();
                     });
@@ -542,7 +543,7 @@ namespace Yozolab.DaerD
                 if (type.IsAbstract) continue;
                 if (anyVrc && VrcBehaviours.IsVrcType(type.Name)) continue;   // already listed above
                 var captured = type;
-                var label = anyVrc ? "Other/" + type.Name : type.Name;
+                var label = anyVrc ? L.Tr("Other") + "/" + type.Name : type.Name;
                 menu.AddItem(new GUIContent(label), false, () =>
                 {
                     using (new UndoScope("Add Behaviour"))
@@ -552,13 +553,13 @@ namespace Yozolab.DaerD
                             Undo.RegisterCompleteObjectUndo(s, "Add Behaviour");
                             s.AddStateMachineBehaviour(captured);
                             EditorUtility.SetDirty(s);
-                            _sync.RefreshStateNode(s);   // B badge updates immediately
+                            _context.NotifyGraphVisualsChanged(s);   // B badge updates immediately
                         }
                     _refresh();
                 });
             }
             if (menu.GetItemCount() == 0)
-                menu.AddDisabledItem(new GUIContent("No StateMachineBehaviour types found"));
+                menu.AddDisabledItem(new GUIContent(L.Tr("No StateMachineBehaviour types found")));
             menu.ShowAsContext();
         }
 

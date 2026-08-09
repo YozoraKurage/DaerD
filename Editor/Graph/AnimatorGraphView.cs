@@ -75,6 +75,51 @@ namespace Yozolab.DaerD
             context.GraphStructureChanged += _sync.RequestRebuild;
             context.SelectionChanged += OnContextSelectionChanged;
             context.FrameRequested += FrameOn;
+            context.GraphVisualsChanged += OnGraphVisualsChanged;
+            context.NoteEditRequested += note => _sync.FindNoteNode(note)?.BeginEdit();
+            // Registered, not subscribed: the panels read these while repainting and need the live
+            // selection — see the provider fields on DaerDContext for why a push would go stale.
+            context.SelectedStatesProvider = GetSelectedStates;
+            context.SelectedTransitionGroupsProvider = SelectedTransitionGroups;
+        }
+
+        /// <summary>
+        /// Repaints what the graph draws for one model object (or, for a
+        /// <see cref="DaerDContext.GraphVisuals"/> target, for all of them) without rebuilding —
+        /// the inspector edited a field that only changes how something looks.
+        /// </summary>
+        void OnGraphVisualsChanged(object target)
+        {
+            switch (target)
+            {
+                case AnimatorState state:
+                    _sync.RefreshStateNode(state);
+                    break;
+                case GraphFrameData.Frame frame:
+                    _sync.RefreshFrameVisuals(frame);
+                    break;
+                case GraphFrameData.Note note:
+                    _sync.RefreshNoteVisuals(note);
+                    break;
+                case DaerDContext.GraphVisuals bulk:
+                    RefreshAll(bulk);
+                    break;
+            }
+        }
+
+        /// <summary>The two whole-graph repaints: every state node, or every transition edge.</summary>
+        void RefreshAll(DaerDContext.GraphVisuals target)
+        {
+            switch (target)
+            {
+                case DaerDContext.GraphVisuals.AllStateNodes:
+                    _sync.RefreshAllStateNodes();
+                    break;
+                case DaerDContext.GraphVisuals.AllEdges:
+                    foreach (var edge in _sync.Edges)
+                        edge.Refresh();
+                    break;
+            }
         }
 
         /// <summary>
@@ -308,6 +353,28 @@ namespace Yozolab.DaerD
         public List<TransitionEdge> GetSelectedEdges() => SelectionSet().TransitionEdges;
 
         public List<AnimatorState> GetSelectedStates() => SelectionSet().States;
+
+        /// <summary>
+        /// The transitions the inspector should offer for editing, one entry per selected edge and
+        /// reduced to model data so no <see cref="TransitionEdge"/> reaches a panel. With no edge
+        /// selected in the graph it falls back to the edge behind
+        /// <see cref="DaerDContext.Selection"/>: the shared selection can name a transition (or an
+        /// edge) that the graph itself is not highlighting.
+        /// </summary>
+        List<(bool isDefault, IList<AnimatorTransitionBase> transitions)> SelectedTransitionGroups()
+        {
+            var edges = GetSelectedEdges();
+            if (edges.Count == 0)
+            {
+                var fallback = _context.Selection as TransitionEdge
+                    ?? (_context.Selection is AnimatorTransitionBase tb ? _sync.FindEdge(tb) : null);
+                if (fallback != null) edges.Add(fallback);
+            }
+            var groups = new List<(bool isDefault, IList<AnimatorTransitionBase> transitions)>(edges.Count);
+            foreach (var edge in edges)
+                groups.Add((edge.IsDefaultEdge, edge.Transitions));
+            return groups;
+        }
 
         /// <summary>
         /// Every selected node that can take part in transitions: plain states, sub-state machines,

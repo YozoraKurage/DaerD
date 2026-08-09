@@ -10,13 +10,11 @@ namespace Yozolab.DaerD
     class OverviewInspector
     {
         readonly DaerDContext _context;
-        readonly GraphSync _sync;
         readonly CleanupInspector _cleanup;
 
-        public OverviewInspector(DaerDContext context, GraphSync sync, CleanupInspector cleanup)
+        public OverviewInspector(DaerDContext context, CleanupInspector cleanup)
         {
             _context = context;
-            _sync = sync;
             _cleanup = cleanup;
         }
 
@@ -102,7 +100,8 @@ namespace Yozolab.DaerD
                     value ? L.Tr("Set ON") : L.Tr("Set OFF"), L.Tr("Cancel")))
                 return;
             ControllerAnalyzer.SetAllWriteDefaults(controller, value);
-            _sync.RefreshAllStateNodes();   // WD badges update immediately
+            // WD badges update immediately
+            _context.NotifyGraphVisualsChanged(DaerDContext.GraphVisuals.AllStateNodes);
         }
     }
 }

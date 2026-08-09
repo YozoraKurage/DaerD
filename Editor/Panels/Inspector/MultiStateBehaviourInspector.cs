@@ -10,15 +10,15 @@ namespace Yozolab.DaerD
     /// <summary>Bulk behaviour editing for the states selected in the graph.</summary>
     class MultiStateBehaviourInspector
     {
-        readonly GraphSync _sync;
+        readonly DaerDContext _context;
         readonly List<StateMachineBehaviour> _selectedBehaviours;
         readonly BehaviourInspector _behaviours;
         readonly VrcBehaviourDrawers _vrcDrawers;
 
-        public MultiStateBehaviourInspector(GraphSync sync, List<StateMachineBehaviour> selectedBehaviours,
+        public MultiStateBehaviourInspector(DaerDContext context, List<StateMachineBehaviour> selectedBehaviours,
             BehaviourInspector behaviours, VrcBehaviourDrawers vrcDrawers)
         {
-            _sync = sync;
+            _context = context;
             _selectedBehaviours = selectedBehaviours;
             _behaviours = behaviours;
             _vrcDrawers = vrcDrawers;
@@ -58,8 +58,8 @@ namespace Yozolab.DaerD
             bool hasSelection = _selectedBehaviours.Count > 0;
             EditorGUILayout.BeginHorizontal();
             EditorGUILayout.LabelField(hasSelection
-                    ? "Behaviours (" + _selectedBehaviours.Count + "/" + slots.Count + ")"
-                    : "Behaviours (" + slots.Count + ")",
+                    ? L.Tr("Behaviours") + " (" + _selectedBehaviours.Count + "/" + slots.Count + ")"
+                    : L.Tr("Behaviours") + " (" + slots.Count + ")",
                 EditorStyles.boldLabel);
             using (new EditorGUI.DisabledScope(slots.Count == 0))
                 if (GUILayout.Button(new GUIContent(L.Tr("Copy"), hasSelection
@@ -92,7 +92,7 @@ namespace Yozolab.DaerD
             for (int i = 0; i < slots.Count; i++)
                 DrawBehaviourSlot(slots[i], states, representatives, i);
 
-            if (GUILayout.Button("+ Add Behaviour to All " + states.Count))
+            if (GUILayout.Button(L.Tr("+ Add Behaviour to All {0}", states.Count)))
                 _vrcDrawers.ShowAddBehaviourMenu(states);
         }
 
@@ -283,7 +283,7 @@ namespace Yozolab.DaerD
                     added.name = representative.name;
                     VrcBehaviours.MarkAsSubAsset(added);
                     EditorUtility.SetDirty(state);
-                    _sync.RefreshStateNode(state);   // B badge updates immediately
+                    _context.NotifyGraphVisualsChanged(state);   // B badge updates immediately
                 }
         }
 
@@ -298,7 +298,7 @@ namespace Yozolab.DaerD
                     var owner = slot.owners[i];
                     if (instance == null || owner == null) continue;
                     VrcBehaviours.RemoveFrom(owner, instance);
-                    _sync.RefreshStateNode(owner);   // B badge updates immediately
+                    _context.NotifyGraphVisualsChanged(owner);   // B badge updates immediately
                 }
         }
 
@@ -332,7 +332,7 @@ namespace Yozolab.DaerD
                 {
                     if (state == null) continue;
                     VrcBehaviours.Paste(state, replace: false);
-                    _sync.RefreshStateNode(state);   // B badge updates immediately
+                    _context.NotifyGraphVisualsChanged(state);   // B badge updates immediately
                 }
             // The pasted rows regroup into new slots on the next repaint; the old selection
             // would point at whatever happened to sit at those indices.

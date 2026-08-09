@@ -56,19 +56,19 @@ namespace Yozolab.DaerD
             }
 
             var controller = _context.Controller;
-            EditorGUILayout.LabelField(alive.Count + " states selected", EditorStyles.boldLabel);
-            EditorGUILayout.LabelField("Common Settings (applied to all selected)", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField(L.Tr("{0} states selected", alive.Count), EditorStyles.boldLabel);
+            EditorGUILayout.LabelField(L.Tr("Common Settings (applied to all selected)"), EditorStyles.boldLabel);
 
-            MultiEditGui.ObjectField<AnimatorState, Motion>("Motion", alive,
+            MultiEditGui.ObjectField<AnimatorState, Motion>(L.Tr("Motion"), alive,
                 x => x.motion, (x, v) => x.motion = v,
-                undoName: "Edit States", postApply: s => _sync.RefreshStateNode(s));
-            MultiEditGui.Float("Speed", alive, x => x.speed, (x, v) => x.speed = v, undoName: "Edit States");
-            MultiEditGui.Float("Cycle Offset", alive, x => x.cycleOffset, (x, v) => x.cycleOffset = v, undoName: "Edit States");
-            MultiEditGui.Bool("Mirror", alive, x => x.mirror, (x, v) => x.mirror = v, undoName: "Edit States");
-            MultiEditGui.Bool("Foot IK", alive, x => x.iKOnFeet, (x, v) => x.iKOnFeet = v, undoName: "Edit States");
-            MultiEditGui.Bool("Write Defaults", alive, x => x.writeDefaultValues, (x, v) => x.writeDefaultValues = v,
-                undoName: "Edit States", postApply: s => _sync.RefreshStateNode(s));
-            MultiEditGui.Text("Tag", alive, x => x.tag, (x, v) => x.tag = v, undoName: "Edit States");
+                undoName: "Edit States", postApply: s => _context.NotifyGraphVisualsChanged(s));
+            MultiEditGui.Float(L.Tr("Speed"), alive, x => x.speed, (x, v) => x.speed = v, undoName: "Edit States");
+            MultiEditGui.Float(L.Tr("Cycle Offset"), alive, x => x.cycleOffset, (x, v) => x.cycleOffset = v, undoName: "Edit States");
+            MultiEditGui.Bool(L.Tr("Mirror"), alive, x => x.mirror, (x, v) => x.mirror = v, undoName: "Edit States");
+            MultiEditGui.Bool(L.Tr("Foot IK"), alive, x => x.iKOnFeet, (x, v) => x.iKOnFeet = v, undoName: "Edit States");
+            MultiEditGui.Bool(L.Tr("Write Defaults"), alive, x => x.writeDefaultValues, (x, v) => x.writeDefaultValues = v,
+                undoName: "Edit States", postApply: s => _context.NotifyGraphVisualsChanged(s));
+            MultiEditGui.Text(L.Tr("Tag"), alive, x => x.tag, (x, v) => x.tag = v, undoName: "Edit States");
 
             EditorGUILayout.Space(4);
             DrawMultiStateParameterOverrides(alive, controller);
@@ -79,15 +79,15 @@ namespace Yozolab.DaerD
 
             EditorGUILayout.Space(6);
             PanelGui.HorizontalLine();
-            EditorGUILayout.LabelField("Bulk Actions", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField(L.Tr("Bulk Actions"), EditorStyles.boldLabel);
             EditorGUILayout.BeginHorizontal();
-            if (GUILayout.Button("Set Default State to First"))
+            if (GUILayout.Button(L.Tr("Set Default State to First")))
                 _sync.SetDefaultState(alive[0]);
-            if (GUILayout.Button("Delete All " + alive.Count))
+            if (GUILayout.Button(L.Tr("Delete All {0}", alive.Count)))
             {
-                if (EditorUtility.DisplayDialog("Delete States",
-                    "Delete the " + alive.Count + " selected states? Their transitions will be removed too.",
-                    "Delete", "Cancel"))
+                if (EditorUtility.DisplayDialog(L.Tr("Delete States"),
+                    L.Tr("Delete the {0} selected states? Their transitions will be removed too.", alive.Count),
+                    L.Tr("Delete"), L.Tr("Cancel")))
                 {
                     DeleteStates(alive);
                     GUIUtility.ExitGUI();
@@ -101,18 +101,18 @@ namespace Yozolab.DaerD
             var floatParams = PanelGui.ParameterNamesOfType(controller, AnimatorControllerParameterType.Float);
             var boolParams = PanelGui.ParameterNamesOfType(controller, AnimatorControllerParameterType.Bool);
 
-            EditorGUILayout.LabelField("Parameter Overrides (applied to all)", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField(L.Tr("Parameter Overrides (applied to all)"), EditorStyles.boldLabel);
 
-            DrawMultiParameterOverride(states, "Speed Multiplier", floatParams,
+            DrawMultiParameterOverride(states, L.Tr("Speed Multiplier"), floatParams,
                 x => x.speedParameterActive, x => x.speedParameter,
                 (s, a, p) => { s.speedParameterActive = a; s.speedParameter = p; });
-            DrawMultiParameterOverride(states, "Motion Time", floatParams,
+            DrawMultiParameterOverride(states, L.Tr("Motion Time"), floatParams,
                 x => x.timeParameterActive, x => x.timeParameter,
                 (s, a, p) => { s.timeParameterActive = a; s.timeParameter = p; });
-            DrawMultiParameterOverride(states, "Mirror", boolParams,
+            DrawMultiParameterOverride(states, L.Tr("Mirror"), boolParams,
                 x => x.mirrorParameterActive, x => x.mirrorParameter,
                 (s, a, p) => { s.mirrorParameterActive = a; s.mirrorParameter = p; });
-            DrawMultiParameterOverride(states, "Cycle Offset", floatParams,
+            DrawMultiParameterOverride(states, L.Tr("Cycle Offset"), floatParams,
                 x => x.cycleOffsetParameterActive, x => x.cycleOffsetParameter,
                 (s, a, p) => { s.cycleOffsetParameterActive = a; s.cycleOffsetParameter = p; });
         }

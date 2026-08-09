@@ -175,7 +175,7 @@ namespace Yozolab.DaerD
             _blendTreeView = new BlendTreeGraphView(_context);
             _layersPanel = new LayersPanel(_context);
             _parametersPanel = new ParametersPanel(_context);
-            _inspectorPanel = new InspectorPanel(_context, _graphView);
+            _inspectorPanel = new InspectorPanel(_context, _graphView.Sync);
             _hierarchyPanel = new BlendTreeHierarchyPanel(_context);
 
             // The three centre surfaces share the pane; one is visible at a time depending

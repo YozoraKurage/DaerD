@@ -8,7 +8,6 @@ namespace Yozolab.DaerD
     /// <summary>Context-sensitive inspector for the currently selected graph element.</summary>
     class InspectorPanel : PanelBase
     {
-        readonly AnimatorGraphView _graphView;
         readonly List<AnimatorTransitionBase> _selectedTransitions = new List<AnimatorTransitionBase>();
         readonly MultiTransitionInspector _multiTransition;
         readonly TransitionInspector _transitions;
@@ -29,22 +28,21 @@ namespace Yozolab.DaerD
         readonly NoteInspector _notes;
         readonly FrameInspector _frames;
 
-        public InspectorPanel(DaerDContext context, AnimatorGraphView graphView)
+        public InspectorPanel(DaerDContext context, GraphSync sync)
             : base(context, "Inspector")
         {
-            _graphView = graphView;
-            _overview = new OverviewInspector(context, graphView.Sync, _cleanup);
+            _overview = new OverviewInspector(context, _cleanup);
             _stateMachine = new StateMachineInspector(context);
-            _multiTransition = new MultiTransitionInspector(context, graphView.Sync, _selectedTransitions);
-            _transitions = new TransitionInspector(context, graphView, _selectedTransitions, _multiTransition);
-            _vrcDrawers = new VrcBehaviourDrawers(context, graphView.Sync, Refresh);
-            _behaviours = new BehaviourInspector(graphView.Sync, _selectedBehaviours, _vrcDrawers);
-            _multiBehaviours = new MultiStateBehaviourInspector(graphView.Sync, _selectedBehaviours, _behaviours, _vrcDrawers);
-            _syncRequests = new SyncRequestInspector(context, graphView.Sync);
-            _state = new StateInspector(context, graphView.Sync, _syncRequests, _behaviours);
-            _multiStates = new MultiStateInspector(context, graphView.Sync, _state, _overview, _multiBehaviours);
-            _notes = new NoteInspector(context, graphView.Sync);
-            _frames = new FrameInspector(context, graphView.Sync);
+            _multiTransition = new MultiTransitionInspector(context, sync, _selectedTransitions);
+            _transitions = new TransitionInspector(context, sync, _selectedTransitions, _multiTransition);
+            _vrcDrawers = new VrcBehaviourDrawers(context, Refresh);
+            _behaviours = new BehaviourInspector(context, _selectedBehaviours, _vrcDrawers);
+            _multiBehaviours = new MultiStateBehaviourInspector(context, _selectedBehaviours, _behaviours, _vrcDrawers);
+            _syncRequests = new SyncRequestInspector(context);
+            _state = new StateInspector(context, sync, _syncRequests, _behaviours);
+            _multiStates = new MultiStateInspector(context, sync, _state, _overview, _multiBehaviours);
+            _notes = new NoteInspector(context, sync);
+            _frames = new FrameInspector(context, sync);
             context.SelectionChanged += OnSelectionChanged;
             // The leftover scan (and the object references captured in it) belongs to the
             // outgoing controller — drop it on a tab switch.
@@ -89,7 +87,7 @@ namespace Yozolab.DaerD
 
             // Multi-state editing takes precedence when the graph has more than one state
             // selected — mirrors the multi-transition editor behaviour.
-            var selectedStates = _graphView.GetSelectedStates();
+            var selectedStates = Context.GetSelectedStates();
             if (selectedStates.Count >= 2 && MultiStateInspector.AnyStateAlive(selectedStates))
             {
                 _multiStates.DrawMultiStateEditor(selectedStates);
@@ -126,7 +124,7 @@ namespace Yozolab.DaerD
             }
             else if (selection is SpecialNodeKind kind)
             {
-                EditorGUILayout.HelpBox(kind + " node. Drag from its port to create transitions.", MessageType.Info);
+                EditorGUILayout.HelpBox(L.Tr("{0} node. Drag from its port to create transitions.", kind), MessageType.Info);
             }
             else
             {
@@ -136,18 +134,18 @@ namespace Yozolab.DaerD
 
         void DrawBlendTreeSelection(BlendTree blendTree)
         {
-            EditorGUILayout.LabelField("Blend Tree", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField(L.Tr("Blend Tree"), EditorStyles.boldLabel);
             BlendTreePanel.Draw(blendTree, Context);
         }
 
         void DrawClipSelection(AnimationClip clip)
         {
-            EditorGUILayout.LabelField("Animation Clip", EditorStyles.boldLabel);
-            EditorGUILayout.ObjectField("Clip", clip, typeof(AnimationClip), false);
-            EditorGUILayout.LabelField("Length", clip.length.ToString("0.###") + "s");
-            EditorGUILayout.LabelField("Frame Rate", clip.frameRate.ToString("0.#") + " fps");
-            EditorGUILayout.LabelField("Looping", clip.isLooping ? "Yes" : "No");
-            if (GUILayout.Button("Ping in Project"))
+            EditorGUILayout.LabelField(L.Tr("Animation Clip"), EditorStyles.boldLabel);
+            EditorGUILayout.ObjectField(L.Tr("Clip"), clip, typeof(AnimationClip), false);
+            EditorGUILayout.LabelField(L.Tr("Length"), clip.length.ToString("0.###") + "s");
+            EditorGUILayout.LabelField(L.Tr("Frame Rate"), clip.frameRate.ToString("0.#") + " fps");
+            EditorGUILayout.LabelField(L.Tr("Looping"), clip.isLooping ? L.Tr("Yes") : L.Tr("No"));
+            if (GUILayout.Button(L.Tr("Ping in Project")))
                 EditorGUIUtility.PingObject(clip);
         }
     }

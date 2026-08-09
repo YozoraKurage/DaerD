@@ -11,12 +11,10 @@ namespace Yozolab.DaerD
     class SyncRequestInspector
     {
         readonly DaerDContext _context;
-        readonly GraphSync _sync;
 
-        public SyncRequestInspector(DaerDContext context, GraphSync sync)
+        public SyncRequestInspector(DaerDContext context)
         {
             _context = context;
-            _sync = sync;
         }
 
         /// <summary>Setups the user opened with "+ Add Sync Request" but hasn't ticked a
@@ -80,7 +78,7 @@ namespace Yozolab.DaerD
                 if (GUILayout.Button(L.Tr("Remove"), EditorStyles.miniButton, GUILayout.Width(70)))
                 {
                     SyncRequestBuilder.Remove(controller, state, entry.baseName);
-                    _sync.RefreshStateNode(state);
+                    _context.NotifyGraphVisualsChanged(state);
                     GUIUtility.ExitGUI();
                 }
                 EditorGUILayout.EndVertical();
@@ -141,7 +139,7 @@ namespace Yozolab.DaerD
             {
                 _syncRequestDrafts.Remove((state.GetInstanceID(), config.baseName));
                 SyncRequestBuilder.Remove(controller, state, config.baseName);
-                _sync.RefreshStateNode(state);
+                _context.NotifyGraphVisualsChanged(state);
                 GUIUtility.ExitGUI();
             }
             EditorGUILayout.EndHorizontal();
@@ -174,7 +172,7 @@ namespace Yozolab.DaerD
                 {
                     SyncRequestBuilder.Apply(controller, config, state, selected);
                 }
-                _sync.RefreshStateNode(state);
+                _context.NotifyGraphVisualsChanged(state);
             }
 
             // A recipe regenerates its layers by destroy-and-recreate, on both sides of this

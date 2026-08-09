@@ -13,16 +13,16 @@ namespace Yozolab.DaerD
     /// </summary>
     class BehaviourInspector
     {
-        readonly GraphSync _sync;
+        readonly DaerDContext _context;
         readonly List<StateMachineBehaviour> _selectedBehaviours;
         readonly VrcBehaviourDrawers _vrcDrawers;
 
         int _behaviourRangeAnchor = -1;
 
-        public BehaviourInspector(GraphSync sync, List<StateMachineBehaviour> selectedBehaviours,
+        public BehaviourInspector(DaerDContext context, List<StateMachineBehaviour> selectedBehaviours,
             VrcBehaviourDrawers vrcDrawers)
         {
-            _sync = sync;
+            _context = context;
             _selectedBehaviours = selectedBehaviours;
             _vrcDrawers = vrcDrawers;
         }
@@ -40,8 +40,8 @@ namespace Yozolab.DaerD
             bool hasSelection = _selectedBehaviours.Count > 0;
             EditorGUILayout.BeginHorizontal();
             EditorGUILayout.LabelField(hasSelection
-                    ? "Behaviours (" + _selectedBehaviours.Count + "/" + behaviours.Length + ")"
-                    : "Behaviours (" + behaviours.Length + ")",
+                    ? L.Tr("Behaviours") + " (" + _selectedBehaviours.Count + "/" + behaviours.Length + ")"
+                    : L.Tr("Behaviours") + " (" + behaviours.Length + ")",
                 EditorStyles.boldLabel);
             using (new EditorGUI.DisabledScope(behaviours.Length == 0))
                 if (GUILayout.Button(new GUIContent(L.Tr("Copy"), hasSelection
@@ -90,12 +90,12 @@ namespace Yozolab.DaerD
                 using (new EditorGUI.DisabledScope(i == behaviours.Length - 1))
                     if (GUILayout.Button("↓", EditorStyles.miniButton, GUILayout.Width(22)))
                     { VrcBehaviours.Move(state, i, +1); GUIUtility.ExitGUI(); }
-                if (GUILayout.Button("Remove", EditorStyles.miniButton, GUILayout.Width(60)))
+                if (GUILayout.Button(L.Tr("Remove"), EditorStyles.miniButton, GUILayout.Width(60)))
                 {
                     _selectedBehaviours.Remove(behaviour);
                     _behaviourRangeAnchor = -1;
                     VrcBehaviourDrawers.RemoveBehaviour(state, behaviour);
-                    _sync.RefreshStateNode(state);   // B badge updates immediately
+                    _context.NotifyGraphVisualsChanged(state);   // B badge updates immediately
                     GUIUtility.ExitGUI();
                 }
                 EditorGUILayout.EndHorizontal();
@@ -103,7 +103,7 @@ namespace Yozolab.DaerD
                 EditorGUILayout.EndVertical();
             }
 
-            if (GUILayout.Button("+ Add Behaviour"))
+            if (GUILayout.Button(L.Tr("+ Add Behaviour")))
                 _vrcDrawers.ShowAddBehaviourMenu(state);
         }
 
@@ -242,7 +242,7 @@ namespace Yozolab.DaerD
                 if (after[i] != null)
                     _selectedBehaviours.Add(after[i]);
             _behaviourRangeAnchor = _selectedBehaviours.Count > 0 ? before : -1;
-            _sync.RefreshStateNode(state);   // B badge updates immediately
+            _context.NotifyGraphVisualsChanged(state);   // B badge updates immediately
         }
     }
 }

@@ -22,25 +22,25 @@ namespace Yozolab.DaerD
             var frameData = GraphFrameData.Find(_context.Controller);
             if (frameData == null || !frameData.frames.Contains(frame))
             {
-                EditorGUILayout.LabelField("This frame no longer exists.");
+                EditorGUILayout.LabelField(L.Tr("This frame no longer exists."));
                 return;
             }
 
-            EditorGUILayout.LabelField("Frame", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField(L.Tr("Frame"), EditorStyles.boldLabel);
 
             EditorGUI.BeginChangeCheck();
             string frameTitle;
             Color color;
             using (new EditorGUI.DisabledScope(frame.locked))
             {
-                frameTitle = EditorGUILayout.DelayedTextField("Title", frame.title);
-                color = EditorGUILayout.ColorField("Color", frame.color);
+                frameTitle = EditorGUILayout.DelayedTextField(L.Tr("Title"), frame.title);
+                color = EditorGUILayout.ColorField(L.Tr("Color"), frame.color);
             }
             bool moveNodes = EditorGUILayout.Toggle(
-                new GUIContent("Move Nodes With Frame", "Dragging the title bar also moves the nodes inside the frame."),
+                new GUIContent(L.Tr("Move Nodes With Frame"), L.Tr("Dragging the title bar also moves the nodes inside the frame.")),
                 frame.moveNodesWithFrame);
             bool locked = EditorGUILayout.Toggle(
-                new GUIContent("Locked", "A locked frame cannot be moved, resized, renamed or deleted."),
+                new GUIContent(L.Tr("Locked"), L.Tr("A locked frame cannot be moved, resized, renamed or deleted.")),
                 frame.locked);
             if (EditorGUI.EndChangeCheck())
             {
@@ -50,7 +50,7 @@ namespace Yozolab.DaerD
                 frame.moveNodesWithFrame = moveNodes;
                 frame.locked = locked;
                 EditorUtility.SetDirty(frameData);
-                _sync.RefreshFrameVisuals(frame);
+                _context.NotifyGraphVisualsChanged(frame);
             }
 
             EditorGUILayout.Space(6);
@@ -61,14 +61,14 @@ namespace Yozolab.DaerD
             EditorGUILayout.BeginHorizontal();
             // Duplicates this frame, the states inside, and the transitions among them — works
             // even when the frame is locked since the copy is independent.
-            if (GUILayout.Button("Duplicate Frame"))
+            if (GUILayout.Button(L.Tr("Duplicate Frame")))
             {
                 _sync.DuplicateFrame(frame);
                 GUIUtility.ExitGUI();
             }
             using (new EditorGUI.DisabledScope(frame.locked))
             {
-                if (GUILayout.Button("Delete Frame"))
+                if (GUILayout.Button(L.Tr("Delete Frame")))
                 {
                     _sync.DeleteFrame(frame);
                     _context.Select(null);
