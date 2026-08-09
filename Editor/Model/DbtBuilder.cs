@@ -87,6 +87,15 @@ namespace Yozolab.DaerD
                 AddFloatParameter(controller, name, defaultValue);
         }
 
+        /// <summary>Adds the parameter (with its type's zero/false default) when the controller
+        /// has none by that name; an existing parameter is left as it is, type included.</summary>
+        public static void EnsureParameter(AnimatorController controller, string name,
+            AnimatorControllerParameterType type)
+        {
+            if (FindParameter(controller, name) == null)
+                controller.AddParameter(name, type);
+        }
+
         public static void AddFloatParameter(AnimatorController controller, string name, float defaultValue)
         {
             controller.AddParameter(new AnimatorControllerParameter

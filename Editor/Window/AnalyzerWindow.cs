@@ -14,22 +14,22 @@ namespace Yozolab.DaerD
     {
         [SerializeField] AnimatorController _controller;
 
-        List<ControllerAnalyzer.Issue> _issues;
+        List<AnalyzerIssue> _issues;
         Vector2 _scroll;
         // Ping / Fix are recorded during the row draw and executed after the layout pass
         // ends — both rebuild state under the current IMGUI layout otherwise.
-        ControllerAnalyzer.Issue _pendingPing;
-        ControllerAnalyzer.Issue _pendingFix;
+        AnalyzerIssue _pendingPing;
+        AnalyzerIssue _pendingFix;
 
         // Severity filter. Session-static: shared by every window, reset on domain reload —
         // a per-user display preference isn't worth an EditorPref.
         static bool s_showErrors = true, s_showWarnings = true, s_showInfo = true;
 
-        static readonly ControllerAnalyzer.Severity[] SeverityOrder =
+        static readonly IssueSeverity[] SeverityOrder =
         {
-            ControllerAnalyzer.Severity.Error,
-            ControllerAnalyzer.Severity.Warning,
-            ControllerAnalyzer.Severity.Info,
+            IssueSeverity.Error,
+            IssueSeverity.Warning,
+            IssueSeverity.Info,
         };
 
         public static AnalyzerWindow Open(AnimatorController controller)
@@ -148,9 +148,9 @@ namespace Yozolab.DaerD
             EditorGUILayout.EndHorizontal();
         }
 
-        static bool IsSeverityShown(ControllerAnalyzer.Severity severity) =>
-            severity == ControllerAnalyzer.Severity.Error ? s_showErrors
-            : severity == ControllerAnalyzer.Severity.Warning ? s_showWarnings
+        static bool IsSeverityShown(IssueSeverity severity) =>
+            severity == IssueSeverity.Error ? s_showErrors
+            : severity == IssueSeverity.Warning ? s_showWarnings
             : s_showInfo;
 
         /// <summary>Toggle row with per-severity counts, plus the copy-report button.</summary>
@@ -159,8 +159,8 @@ namespace Yozolab.DaerD
             int errors = 0, warnings = 0, infos = 0;
             foreach (var issue in _issues)
             {
-                if (issue.severity == ControllerAnalyzer.Severity.Error) errors++;
-                else if (issue.severity == ControllerAnalyzer.Severity.Warning) warnings++;
+                if (issue.severity == IssueSeverity.Error) errors++;
+                else if (issue.severity == IssueSeverity.Warning) warnings++;
                 else infos++;
             }
 
@@ -174,10 +174,10 @@ namespace Yozolab.DaerD
             EditorGUILayout.EndHorizontal();
         }
 
-        void DrawIssueRow(ControllerAnalyzer.Issue issue)
+        void DrawIssueRow(AnalyzerIssue issue)
         {
-            var messageType = issue.severity == ControllerAnalyzer.Severity.Error ? MessageType.Error
-                : issue.severity == ControllerAnalyzer.Severity.Warning ? MessageType.Warning
+            var messageType = issue.severity == IssueSeverity.Error ? MessageType.Error
+                : issue.severity == IssueSeverity.Warning ? MessageType.Warning
                 : MessageType.None;
             EditorGUILayout.BeginHorizontal();
             EditorGUILayout.HelpBox(
@@ -217,14 +217,14 @@ namespace Yozolab.DaerD
         /// Opens (or focuses) the DaerD window on this controller and navigates its graph to
         /// the issue's object; anything unlocatable falls back to the Project-window ping.
         /// </summary>
-        void PingIssue(ControllerAnalyzer.Issue issue)
+        void PingIssue(AnalyzerIssue issue)
         {
             var window = DaerDWindow.Open(_controller);
             if (!window.TryFocusIssue(issue))
                 EditorGUIUtility.PingObject(issue.context);
         }
 
-        void ApplyIssueFix(ControllerAnalyzer.Issue issue)
+        void ApplyIssueFix(AnalyzerIssue issue)
         {
             issue.fix();
             Reanalyze();

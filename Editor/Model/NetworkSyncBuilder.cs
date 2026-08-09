@@ -168,7 +168,7 @@ namespace Yozolab.DaerD
                 Undo.RegisterCompleteObjectUndo(controller, "Network Sync");
                 Undo.RegisterCompleteObjectUndo(stateMachine, "Network Sync");
 
-                EnsureParameter(controller, IsLocalParameter, AnimatorControllerParameterType.Bool);
+                DbtBuilder.EnsureParameter(controller, IsLocalParameter, AnimatorControllerParameterType.Bool);
                 var syncParams = EnsureSyncParameters(r, originals.Count);
 
                 // Mirrors sit below the local block, preserving the local layout.
@@ -254,18 +254,11 @@ namespace Yozolab.DaerD
             return true;
         }
 
-        static void EnsureParameter(AnimatorController controller, string name,
-            AnimatorControllerParameterType type)
-        {
-            if (DbtBuilder.FindParameter(controller, name) == null)
-                controller.AddParameter(name, type);
-        }
-
         static string[] EnsureSyncParameters(Request r, int stateCount)
         {
             if (r.encoding == Encoding.Int)
             {
-                EnsureParameter(r.controller, r.syncParameter, AnimatorControllerParameterType.Int);
+                DbtBuilder.EnsureParameter(r.controller, r.syncParameter, AnimatorControllerParameterType.Int);
                 return new[] { r.syncParameter };
             }
             int bits = BitsRequired(stateCount);
@@ -273,7 +266,7 @@ namespace Yozolab.DaerD
             for (int i = 0; i < bits; i++)
             {
                 names[i] = BitParameterName(r.syncParameter, i);
-                EnsureParameter(r.controller, names[i], AnimatorControllerParameterType.Bool);
+                DbtBuilder.EnsureParameter(r.controller, names[i], AnimatorControllerParameterType.Bool);
             }
             return names;
         }

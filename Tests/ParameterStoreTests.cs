@@ -258,7 +258,7 @@ namespace Yozolab.DaerD.Tests
             var component = NewMaComponent();
             component.parameters.Add(Config("Anim", syncType: 0));   // NotSynced → untyped
 
-            var issues = new List<ControllerAnalyzer.Issue>();
+            var issues = new List<AnalyzerIssue>();
             ParameterStore.TryWrap(component).Analyze(controller, issues);
             Assert.AreEqual(0, issues.Count);
         }

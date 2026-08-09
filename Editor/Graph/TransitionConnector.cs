@@ -5,26 +5,40 @@ using UnityEngine.UIElements;
 
 namespace Yozolab.DaerD
 {
-    /// <summary>Shared rules for which graph nodes may start / receive a transition.</summary>
+    /// <summary>The node-side door to the transition connect rule, used while dragging an edge.</summary>
     static class TransitionConnect
     {
-        /// <summary>Mirrors the source/destination combinations <see cref="GraphSync.CreateTransition"/> accepts.</summary>
-        public static bool CanConnect(GraphNodeBase source, GraphNodeBase destination)
+        /// <summary>
+        /// Names both nodes as transition ends and asks <see cref="TransitionEnd.CanConnect"/>,
+        /// which is the single copy of the rule — the graph accepts exactly what the transition
+        /// commands accept, by construction rather than by two lists kept in step.
+        /// </summary>
+        public static bool CanConnect(GraphNodeBase source, GraphNodeBase destination) =>
+            TransitionEnd.CanConnect(EndOf(source), EndOf(destination));
+
+        /// <summary>
+        /// The end a graph node stands for. A null or unrecognised node becomes
+        /// <see cref="TransitionEnd.None"/>, which nothing may connect to — the old explicit null
+        /// check, expressed in the model's own vocabulary. GraphSync converts the same way for the
+        /// nodes the commands are handed.
+        /// </summary>
+        static TransitionEnd EndOf(GraphNodeBase node)
         {
-            if (source == null || destination == null) return false;
-            bool destState = destination is StateNode;
-            bool destSsm = destination is SubStateMachineNode;
-            bool destExit = destination is SpecialNode dsp && dsp.Kind == SpecialNodeKind.Exit;
-            switch (source)
+            switch (node)
             {
-                case StateNode _:
-                case SubStateMachineNode _:
-                    return destState || destSsm || destExit;
-                case SpecialNode sp when sp.Kind == SpecialNodeKind.AnyState || sp.Kind == SpecialNodeKind.Entry:
-                    // Entry / Any State cannot transition straight to Exit.
-                    return destState || destSsm;
+                case StateNode sn:
+                    return TransitionEnd.Of(sn.State);
+                case SubStateMachineNode mn:
+                    return TransitionEnd.Of(mn.StateMachine);
+                case SpecialNode spn:
+                    switch (spn.Kind)
+                    {
+                        case SpecialNodeKind.Entry: return TransitionEnd.Entry;
+                        case SpecialNodeKind.Exit: return TransitionEnd.Exit;
+                        default: return TransitionEnd.AnyState;
+                    }
                 default:
-                    return false;
+                    return TransitionEnd.None;
             }
         }
     }

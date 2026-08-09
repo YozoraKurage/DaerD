@@ -137,7 +137,7 @@ namespace Yozolab.DaerD
         /// <summary>Analyzer hook: broken-binding warnings when a scene Animator runs the
         /// controller (headless analysis is unaffected).</summary>
         public static void Analyze(AnimatorController controller,
-            List<ControllerAnalyzer.Issue> issues)
+            List<AnalyzerIssue> issues)
         {
             var root = FindAnimatorRoot(controller);
             if (root == null) return;
@@ -149,10 +149,10 @@ namespace Yozolab.DaerD
                 perClip[entry.clip] = count + 1;
             }
             foreach (var pair in perClip)
-                issues.Add(new ControllerAnalyzer.Issue
+                issues.Add(new AnalyzerIssue
                 {
-                    kind = ControllerAnalyzer.Kind.ClipBindings,
-                    severity = ControllerAnalyzer.Severity.Warning,
+                    kind = IssueKind.ClipBindings,
+                    severity = IssueSeverity.Warning,
                     message = L.Tr("Clip '{0}' has {1} binding(s) whose path no longer exists under '{2}'.",
                         pair.Key.name, pair.Value, root.name),
                     context = pair.Key,

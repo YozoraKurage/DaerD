@@ -43,7 +43,7 @@ namespace Yozolab.DaerD
         static void WalkStateMachine(AnimatorStateMachine sm, List<AnimatorStateMachine> path,
             int layerIndex, string layerName, string param, List<Usage> usages)
         {
-            string pathLabel = BuildPathLabel(layerName, path);
+            string pathLabel = path.PathLabel(layerName);
 
             foreach (var t in sm.anyStateTransitions)
                 if (TransitionUses(t, param))
@@ -148,20 +148,6 @@ namespace Yozolab.DaerD
                 stateMachinePath = new List<AnimatorStateMachine>(path),
                 selection = selection,
             };
-        }
-
-        static string BuildPathLabel(string layerName, List<AnimatorStateMachine> path)
-        {
-            // Layer name plus any sub-state-machines drilled into (path[0] is the layer's root SM,
-            // shown as the layer label rather than its name).
-            if (path.Count <= 1) return layerName;
-            var sb = new System.Text.StringBuilder(layerName);
-            for (int i = 1; i < path.Count; i++)
-            {
-                sb.Append(" / ");
-                sb.Append(path[i] != null ? path[i].name : "?");
-            }
-            return sb.ToString();
         }
     }
 }

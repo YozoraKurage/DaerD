@@ -125,7 +125,7 @@ namespace Yozolab.DaerD.Tests
                 Entry("Mismatched", VrcExpressionParameters.ValueType.Bool),
                 Entry("Orphan", VrcExpressionParameters.ValueType.Bool));
 
-            var issues = new List<ControllerAnalyzer.Issue>();
+            var issues = new List<AnalyzerIssue>();
             ParameterStore.TryWrap(asset).Analyze(controller, issues);
 
             // Type mismatches are a supported VRChat technique (parameter mismatching) —
@@ -133,8 +133,8 @@ namespace Yozolab.DaerD.Tests
             Assert.AreEqual(2, issues.Count);
             foreach (var issue in issues)
             {
-                Assert.AreEqual(ControllerAnalyzer.Kind.VrcParameters, issue.kind);
-                Assert.AreEqual(ControllerAnalyzer.Severity.Info, issue.severity);
+                Assert.AreEqual(IssueKind.VrcParameters, issue.kind);
+                Assert.AreEqual(IssueSeverity.Info, issue.severity);
             }
         }
     }

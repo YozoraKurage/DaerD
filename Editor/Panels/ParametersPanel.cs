@@ -368,12 +368,7 @@ namespace Yozolab.DaerD
 
         /// <summary>A DBT gadget added parameters, possibly a layer and a blend tree — let
         /// every panel and the graph pick that up.</summary>
-        void OnDbtGadgetApplied()
-        {
-            Context.NotifyParametersChanged();
-            Context.NotifyLayersChanged();
-            Context.NotifyGraphStructureChanged();
-        }
+        void OnDbtGadgetApplied() => Context.NotifyLayerStructureChanged();
 
         void ShowUsagesMenu(string parameterName, int index)
         {
