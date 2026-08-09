@@ -316,6 +316,7 @@ namespace Yozolab.DaerD
             var intervals = AsyncSyncBuilder.RefreshIntervals(request);
             var requestable = AsyncSyncBuilder.RequestableTargets(request);
             int shown = Mathf.Min(schedule.Count, MaxStripCells);
+            EditorGUILayout.LabelField(L.Tr("Cycle:"), EditorStyles.miniLabel);
             int perRow = Mathf.Max(1, Mathf.FloorToInt(_stripWidth / MinCellWidth));
             int rows = Mathf.CeilToInt(shown / (float)perRow);
 
