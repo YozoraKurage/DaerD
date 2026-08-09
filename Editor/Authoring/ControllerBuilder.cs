@@ -171,7 +171,13 @@ namespace Yozolab.DaerD.Authoring
             // first one built — its rebuild starts by clearing that layer.
             string name = string.IsNullOrEmpty(layerName) ? "DBT" : layerName;
             if (!_gadgets.TryGetValue(name, out var builder))
+            {
                 _gadgets[name] = builder = new GadgetRecipeBuilder(this, name);
+                // Only the first visit declares a variable; the ones after it add to a builder
+                // the recorded code already has a name for.
+                Script?.Declare(builder, name + " Gadgets", this,
+                    name == "DBT" ? "Gadgets()" : $"Gadgets({RecipeScript.S(name)})");
+            }
             return builder;
         }
 

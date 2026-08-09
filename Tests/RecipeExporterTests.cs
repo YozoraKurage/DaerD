@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using NUnit.Framework;
+using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
 using Yozolab.DaerD.Authoring;
@@ -242,6 +243,237 @@ namespace Yozolab.DaerD.Tests
                 new HashSet<string> { "Second" }, new HashSet<string>());
             var diffs = ControllerIRDiff.Compare(expected, result.replayed.IR);
             Assert.IsEmpty(diffs, string.Join("\n", diffs));
+        }
+
+        // ---- gadget layers -----------------------------------------------------
+
+        /// <summary>Runs the body against a controller that really exists on disk: the gadget
+        /// records the exporter reads live in a hidden sub-asset of the .controller, and an
+        /// in-memory controller has nowhere to keep one.</summary>
+        static void WithSavedController(System.Action<AnimatorController> body)
+        {
+            const string path = "Assets/DaerDRecipeGadgetExportTest.controller";
+            AssetDatabase.CreateAsset(new AnimatorController(), path);
+            try
+            {
+                var controller = AssetDatabase.LoadAssetAtPath<AnimatorController>(path);
+                controller.AddLayer("Base");
+                controller.layers[0].stateMachine.AddState("Idle", new Vector3(0f, 0f, 0f));
+                controller.AddParameter("A", AnimatorControllerParameterType.Float);
+                controller.AddParameter("B", AnimatorControllerParameterType.Float);
+                body(controller);
+            }
+            finally
+            {
+                AssetDatabase.DeleteAsset(path);
+            }
+        }
+
+        static int IndexOfLayer(AnimatorController controller, string name)
+        {
+            var layers = controller.layers;
+            for (int i = 0; i < layers.Length; i++)
+                if (layers[i].name == name) return i;
+            return -1;
+        }
+
+        /// <summary>One gadget into the "Math" layer, creating it on the first call.</summary>
+        static void ApplyGadget(AnimatorController controller, AapGadgets.Kind kind,
+            System.Action<AapGadgets.Request> tweak)
+        {
+            var request = new AapGadgets.Request
+            {
+                controller = controller,
+                kind = kind,
+                inputA = "A",
+                inputB = "B",
+                layerIndex = IndexOfLayer(controller, "Math"),
+                newLayerName = "Math",
+            };
+            tweak(request);
+            Assert.IsTrue(AapGadgets.Apply(request), kind.ToString());
+        }
+
+        static int CountOccurrences(string text, string needle)
+        {
+            int count = 0;
+            for (int i = text.IndexOf(needle); i >= 0; i = text.IndexOf(needle, i + needle.Length))
+                count++;
+            return count;
+        }
+
+        /// <summary>The build body alone. The file opens with an API cheat sheet that names
+        /// half the API in comments, so "the export did not write X" has to be asked of the
+        /// code the export actually decided on.</summary>
+        static string Body(string code)
+        {
+            int start = code.IndexOf("BuildGenerated(ControllerBuilder c)");
+            Assert.Greater(start, 0, "the generated half has no build body");
+            return code.Substring(start);
+        }
+
+        /// <summary>A layer whose every child has a saved config comes back as the gadget calls
+        /// that built it instead of the wall of trees they expand into — and the parameters
+        /// those calls recreate stop being declared, while the shared ones stay.</summary>
+        [Test]
+        public void Export_CoveredGadgetLayer_ComesBackAsGadgetCalls()
+        {
+            WithSavedController(controller =>
+            {
+                ApplyGadget(controller, AapGadgets.Kind.Multiply, r => r.output = "A*B");
+                ApplyGadget(controller, AapGadgets.Kind.Buffer, r =>
+                {
+                    r.output = "A/Late";
+                    r.bufferFrames = 2;
+                });
+                ApplyGadget(controller, AapGadgets.Kind.Smooth, r =>
+                {
+                    r.output = "A/Smoothed";
+                    r.smoothing = "A/Smoothing";
+                });
+
+                var result = RecipeExporter.Export(controller, null, "GadgetRecipe", null);
+                Assert.IsEmpty(result.warnings, string.Join("\n", result.warnings));
+                string code = result.code;
+
+                StringAssert.Contains("// ---- Layer: Math (DBT gadgets) ", code);
+                StringAssert.Contains("c.Gadgets(\"Math\")", code);
+                StringAssert.Contains(".Multiply(\"A\", \"B\", \"A*B\")", code);
+                // Trailing arguments that match the method's own defaults stay out of the call.
+                StringAssert.Contains(".Buffer(\"A\", \"A/Late\", 2)", code);
+                StringAssert.Contains(".Smooth(\"A\", \"A/Smoothed\", \"A/Smoothing\")", code);
+
+                // None of the trees, states or clips those calls stand for.
+                StringAssert.DoesNotContain("NewBlendTree(", Body(code));
+                StringAssert.DoesNotContain("c.Layer(\"Math\")", code);
+                Assert.IsEmpty(result.fields, "every clip in the layer is minted by the calls");
+
+                // The gadgets own their outputs and everything under them, and rebuild those
+                // themselves; the constant One and the smoothing amount are shared, and stay.
+                StringAssert.DoesNotContain("FloatParameter(\"A*B\")", code);
+                StringAssert.DoesNotContain("FloatParameter(\"A/Late/1\")", code);
+                StringAssert.Contains("c.FloatParameter(\"A\")", code);
+                StringAssert.Contains("FloatParameter(\"One\", 1)", code);
+                StringAssert.Contains("FloatParameter(\"A/Smoothing\", 0.9f)", code);
+            });
+        }
+
+        /// <summary>A child somebody added to the tree by hand has no call to stand for it, so
+        /// the layer falls back to the raw tree it is — and the export says why.</summary>
+        [Test]
+        public void Export_GadgetLayerWithAnUnaccountedChild_FallsBackToTheRawTree()
+        {
+            WithSavedController(controller =>
+            {
+                ApplyGadget(controller, AapGadgets.Kind.Multiply, r => r.output = "A*B");
+
+                var root = (BlendTree)controller.layers[IndexOfLayer(controller, "Math")]
+                    .stateMachine.states[0].state.motion;
+                DbtBuilder.AddDirectChild(root, DbtBuilder.ParameterClip(controller, "B", 1f), "One");
+
+                var result = RecipeExporter.Export(controller, null, "GadgetRecipe", null);
+                Assert.AreEqual(1, result.warnings.Count, string.Join("\n", result.warnings));
+                StringAssert.Contains("Math", result.warnings[0]);
+                StringAssert.Contains("c.Layer(\"Math\")", result.code);
+                StringAssert.Contains("NewBlendTree(", Body(result.code));
+                Assert.IsNotEmpty(result.fields, "a raw tree needs its clips as fields");
+            });
+        }
+
+        /// <summary>The clock layer FrameTime brings is rebuilt by the gadget call; exporting
+        /// its states as well would only add a second copy under a numbered name.</summary>
+        [Test]
+        public void Export_SupportingLayerOfACoveredGadget_IsLeftToTheGadgetCall()
+        {
+            WithSavedController(controller =>
+            {
+                ApplyGadget(controller, AapGadgets.Kind.FrameTime, r =>
+                {
+                    r.inputA = null;
+                    r.inputB = null;
+                    r.output = "FrameTime";
+                });
+
+                var result = RecipeExporter.Export(controller, null, "GadgetRecipe", null);
+                Assert.IsEmpty(result.warnings, string.Join("\n", result.warnings));
+                StringAssert.Contains(".FrameTime(\"FrameTime\")", result.code);
+                StringAssert.Contains("(regenerated by the gadget layer above)", result.code);
+                StringAssert.DoesNotContain("c.Layer(\"FrameTime Clock\")", result.code);
+            });
+        }
+
+        /// <summary>A LUT's curve has to survive as source, which means one Keyframe literal
+        /// per key.</summary>
+        [Test]
+        public void Export_Lut1DGadget_WritesTheCurveAsALiteral()
+        {
+            WithSavedController(controller =>
+            {
+                ApplyGadget(controller, AapGadgets.Kind.Lut1D, r =>
+                {
+                    r.output = "A/Lut";
+                    r.curve = new AnimationCurve(
+                        new Keyframe(0f, 0f, 1f, 1f),
+                        new Keyframe(0.5f, 0.25f, 1f, 1f),
+                        new Keyframe(1f, 1f, 1f, 1f));
+                    r.lutSamples = 9;
+                });
+
+                var result = RecipeExporter.Export(controller, null, "GadgetRecipe", null);
+                Assert.IsEmpty(result.warnings, string.Join("\n", result.warnings));
+                string code = result.code;
+                StringAssert.Contains(".Lut1D(\"A\", \"A/Lut\", new AnimationCurve(new Keyframe(", code);
+                Assert.AreEqual(3, CountOccurrences(code, "new Keyframe("), "one literal per key");
+                StringAssert.Contains("), 9)", code,
+                    "the sample count differs from the default, so it is written too");
+            });
+        }
+
+        /// <summary>Tangent weights have no place in a four-argument Keyframe, so a curve that
+        /// carries them comes out flat — quietly changing the values the LUT bakes unless the
+        /// export says so.</summary>
+        [Test]
+        public void Export_Lut1DGadgetWithWeightedTangents_WarnsThatTheWeightsAreDropped()
+        {
+            WithSavedController(controller =>
+            {
+                ApplyGadget(controller, AapGadgets.Kind.Lut1D, r =>
+                {
+                    r.output = "A/Lut";
+                    r.curve = new AnimationCurve(new[]
+                    {
+                        new Keyframe(0f, 0f, 1f, 1f)
+                        {
+                            weightedMode = WeightedMode.Both, inWeight = 0.5f, outWeight = 0.5f,
+                        },
+                        new Keyframe(1f, 1f, 1f, 1f),
+                    });
+                });
+
+                var result = RecipeExporter.Export(controller, null, "GadgetRecipe", null);
+                Assert.AreEqual(1, result.warnings.Count, string.Join("\n", result.warnings));
+                StringAssert.Contains("A/Lut", result.warnings[0]);
+            });
+        }
+
+        /// <summary>Exporting the gadget layer alone still declares what it reads: the input
+        /// parameters and the constant weight come from the tree, not from the configs.</summary>
+        [Test]
+        public void Export_GadgetLayerOnItsOwn_StillDeclaresTheParametersItReads()
+        {
+            WithSavedController(controller =>
+            {
+                ApplyGadget(controller, AapGadgets.Kind.Multiply, r => r.output = "A*B");
+
+                var result = RecipeExporter.Export(controller, new[] { "Math" }, "GadgetRecipe", null);
+                string code = result.code;
+                StringAssert.Contains("c.FloatParameter(\"A\")", code);
+                StringAssert.Contains("c.FloatParameter(\"B\")", code);
+                StringAssert.Contains("FloatParameter(\"One\", 1)", code);
+                StringAssert.DoesNotContain("FloatParameter(\"A*B\")", code);
+                StringAssert.Contains(".Multiply(\"A\", \"B\", \"A*B\")", code);
+                StringAssert.DoesNotContain("c.Layer(\"Base\")", code);
+            });
         }
 
         /// <summary>Regression: a mangled output path ("chara/Animation/…", no Assets/

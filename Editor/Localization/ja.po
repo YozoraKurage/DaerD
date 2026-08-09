@@ -1924,6 +1924,9 @@ msgstr "C# Recipe をエクスポート"
 msgid "Export Layer To C#"
 msgstr "レイヤーを C# にエクスポート"
 
+msgid "Gadget layers are regenerated at the end of the controller; the layer order will differ from the original."
+msgstr "ガジェットのレイヤーはコントローラーの末尾に再生成されます。元のレイヤー順とは変わります。"
+
 msgid "Generate"
 msgstr "生成"
 
@@ -1935,6 +1938,12 @@ msgstr "チェックしたレイヤーを DaerD の Authoring API で再構築�
 
 msgid "Layer '{0}' is declared more than once."
 msgstr "レイヤー '{0}' が複数回宣言されています。"
+
+msgid "Layer '{0}': {1} of {2} blend tree children have no saved gadget config; exported as a raw tree."
+msgstr "レイヤー '{0}': Blend Tree の子 {2} 個のうち {1} 個に保存されたガジェット設定がありません。ツリーのままエクスポートしました。"
+
+msgid "LUT curve for '{0}' uses weighted tangents; the exported curve drops the weights."
+msgstr "'{0}' の LUT カーブが重み付きタンジェントを使っています。エクスポートされるカーブでは重みが失われます。"
 
 msgid "Layers To Export"
 msgstr "エクスポートするレイヤー"
