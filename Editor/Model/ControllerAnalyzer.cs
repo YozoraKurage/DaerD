@@ -618,7 +618,7 @@ namespace Yozolab.DaerD
             foreach (var name in SortedKeys(reads))
                 issues.Add(new AnalyzerIssue
                 {
-                    severity = IssueSeverity.Warning,
+                    severity = IssueSeverity.Error,
                     kind = IssueKind.AapDriver,
                     message = L.Tr(
                         "Animation writes '{0}' (AAP), and {1} Parameter Driver entr(ies) copy from it. A driver can't read an animated value — the copy carries the animator's own, usually the default.",
@@ -628,7 +628,7 @@ namespace Yozolab.DaerD
             foreach (var name in SortedKeys(writes))
                 issues.Add(new AnalyzerIssue
                 {
-                    severity = IssueSeverity.Warning,
+                    severity = IssueSeverity.Error,
                     kind = IssueKind.AapDriver,
                     message = L.Tr(
                         "Animation writes '{0}' (AAP), and {1} Parameter Driver entr(ies) write it too. The blend tree overwrites the driver every frame, so the driver's value never sticks.",

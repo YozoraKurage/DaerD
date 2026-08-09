@@ -1890,8 +1890,11 @@ msgstr "リモート側の Float は -1..1 を 8 bit の固定小数点で扱い
 msgid "Puppet controls drive {0}. A puppet drag streams continuously, so multiplexing it makes remotes see the drag one step per pass — those are better left synced directly."
 msgstr "{0} は Expressions Menu のパペット操作で駆動されています。パペットのドラッグは連続的に送信されるため、多重化するとリモート側では 1 周につき 1 段階ずつしか動きません。直接同期のままにするのをおすすめします。"
 
-msgid "Animation writes {0} (AAP — a DBT gadget output or a hand-made AAP clip). The send cycle copies targets with a Parameter Driver, which can't read an animated value, so those never reach remotes."
-msgstr "{0} はアニメーションが書き込むパラメーター（AAP — DBT ガジェットの出力か手書きの AAP クリップ）です。送信サイクルは Parameter Driver のコピーでターゲットを写しますが、Driver はアニメーションの値を読めないため、これらはリモートに届きません。"
+msgid "'{0}' could not be rebuilt, so the request was not added. Open its sync layer and apply it there to see what is wrong."
+msgstr "'{0}' を再生成できなかったため、リクエストは追加されませんでした。その巡回同期レイヤーを開いて適用し、原因を確認してください。"
+
+msgid "'{0}' is written by animation (AAP — a DBT gadget output or a hand-made AAP clip) and can't be multiplexed: the send cycle copies targets with a Parameter Driver, which can't read an animated value."
+msgstr "'{0}' はアニメーションが書き込むパラメーター（AAP — DBT ガジェットの出力か手書きの AAP クリップ）のため多重化できません。送信サイクルは Parameter Driver のコピーでターゲットを写しますが、Driver はアニメーションの値を読めません。"
 
 # ---- async sync (float channels / priority) ----
 

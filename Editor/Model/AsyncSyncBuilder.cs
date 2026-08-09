@@ -277,6 +277,12 @@ namespace Yozolab.DaerD
             if (r.layerIndex >= controller.layers.Length)
                 return L.Tr("The target layer no longer exists.");
 
+            // Parameters animation writes (AAP — every DBT gadget output is one) are rejected
+            // outright rather than warned about: the send cycle copies each target with a
+            // Parameter Driver, a driver cannot read a value the animation system owns, and
+            // the result is a parameter that silently syncs its default forever.
+            var animated = AapWriteScan.CollectWrittenParameters(controller);
+
             var seen = new HashSet<string>();
             foreach (var name in r.targets)
             {
@@ -287,6 +293,8 @@ namespace Yozolab.DaerD
                     return L.Tr("Parameter '{0}' does not exist.", name);
                 if (parameter.type == AnimatorControllerParameterType.Trigger)
                     return L.Tr("Triggers can't be multiplexed ('{0}').", name);
+                if (animated.Contains(name))
+                    return L.Tr("'{0}' is written by animation (AAP — a DBT gadget output or a hand-made AAP clip) and can't be multiplexed: the send cycle copies targets with a Parameter Driver, which can't read an animated value.", name);
                 // The machinery must not multiplex itself: IsLocal, another setup's generated
                 // parameters, or anything under this request's own namespace.
                 if (IsReservedName(controller, name) || name.StartsWith(r.baseName + "/"))
@@ -392,18 +400,6 @@ namespace Yozolab.DaerD
                 warnings.Add(L.Tr(
                     "Puppet controls drive {0}. A puppet drag streams continuously, so multiplexing it makes remotes see the drag one step per pass — those are better left synced directly.",
                     string.Join(", ", puppeted)));
-
-            // The send ring copies each target into its channel with a Parameter Driver, and a
-            // driver cannot read a value that animation writes: an AAP target would send the
-            // animator's own field (usually the default) rather than what the tree computed.
-            var animated = new List<string>();
-            var written = AapWriteScan.CollectWrittenParameters(r.controller);
-            foreach (var name in r.targets)
-                if (written.Contains(name)) animated.Add("'" + name + "'");
-            if (animated.Count > 0)
-                warnings.Add(L.Tr(
-                    "Animation writes {0} (AAP — a DBT gadget output or a hand-made AAP clip). The send cycle copies targets with a Parameter Driver, which can't read an animated value, so those never reach remotes.",
-                    string.Join(", ", animated)));
 
             if (r.assignEmptyClip)
             {

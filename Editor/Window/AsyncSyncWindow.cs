@@ -79,6 +79,7 @@ namespace Yozolab.DaerD
             _form.DrawOrderSection(request);
 
             _form.DrawPreview(request);
+            _form.DrawBlockingProblem(request);
             foreach (var warning in AsyncSyncBuilder.Warnings(request))
                 EditorGUILayout.HelpBox(warning, MessageType.Warning);
             _form.DrawStoreFix(request);

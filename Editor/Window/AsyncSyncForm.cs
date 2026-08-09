@@ -399,6 +399,20 @@ namespace Yozolab.DaerD
             return tooltip;
         }
 
+        /// <summary>
+        /// The reason applying would be refused, shown while the setup is being edited rather
+        /// than only in a dialog once the button is pressed: a rejected target — a Trigger, a
+        /// parameter animation writes — is something to see at the moment it is ticked.
+        /// Silent until there is a cycle to speak of, so an empty form doesn't open in red.
+        /// </summary>
+        public void DrawBlockingProblem(AsyncSyncBuilder.Request request)
+        {
+            if (request == null || request.targets.Count < 2) return;
+            var problem = AsyncSyncBuilder.Validate(request);
+            if (problem != null)
+                EditorGUILayout.HelpBox(problem, MessageType.Error);
+        }
+
         public void DrawPreview(AsyncSyncBuilder.Request request)
         {
             if (request.targets.Count < 2) return;

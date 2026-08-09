@@ -453,6 +453,8 @@ namespace Yozolab.DaerD.Tests
             {
                 StringAssert.Contains("'Aap'", issue.message);
                 StringAssert.Contains("2 Parameter Driver", issue.message);
+                // Both directions fail outright in game, and silently — not a matter of taste.
+                Assert.AreEqual(IssueSeverity.Error, issue.severity);
             }
 
             Object.DestroyImmediate(controller);
