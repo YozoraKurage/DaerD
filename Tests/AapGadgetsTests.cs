@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.Animations;
@@ -66,6 +67,37 @@ namespace Yozolab.DaerD.Tests
                 if (child.state.name == name) return child.state;
             Assert.Fail("no state named '" + name + "'");
             return null;
+        }
+
+        static bool HasLayer(AnimatorController controller, string name)
+        {
+            foreach (var layer in controller.layers)
+                if (layer.name == name) return true;
+            return false;
+        }
+
+        /// <summary>Thresholds of a 1D tree read in order, with ascent asserted on the way —
+        /// a 1D tree only interpolates what it was given sorted.</summary>
+        static float[] AscendingThresholds(BlendTree tree)
+        {
+            var thresholds = new float[tree.children.Length];
+            for (int i = 0; i < thresholds.Length; i++)
+            {
+                thresholds[i] = tree.children[i].threshold;
+                if (i > 0)
+                    Assert.Greater(thresholds[i], thresholds[i - 1],
+                        "thresholds have to ascend (child " + i + ")");
+            }
+            return thresholds;
+        }
+
+        /// <summary>How many distinct motions a tree's children share between them.</summary>
+        static int DistinctMotions(BlendTree tree)
+        {
+            var motions = new HashSet<Motion>();
+            foreach (var child in tree.children)
+                motions.Add(child.motion);
+            return motions.Count;
         }
 
         [Test]
@@ -444,47 +476,72 @@ namespace Yozolab.DaerD.Tests
             Object.DestroyImmediate(controller);
         }
 
+        /// <summary>sin used to be a curve read by a state's motion time, and so a layer and
+        /// nothing else. It is a 1D lookup tree now: one child per sample of the period, and
+        /// the tree's own blending does the interpolating.</summary>
         [Test]
-        public void Sine_IsALayerOfItsOwnDrivenByMotionTime()
+        public void Sine_IsALookupTreeOverTheInput()
         {
             var controller = NewController("A");
             var request = NewRequest(controller, AapGadgets.Kind.Sine);
             request.inputB = null;
             Assert.IsTrue(AapGadgets.Apply(request));
 
-            Assert.AreEqual(2, controller.layers.Length, "no blend tree layer is needed");
-            Assert.IsNull(DbtBuilder.FindParameter(controller, "One"), "and no weight parameter either");
+            Assert.AreEqual(2, controller.layers.Length, "Base and the blend tree layer");
+            Assert.IsFalse(HasLayer(controller, "Out sin(x)"), "no layer of its own any more");
+            Assert.IsNotNull(DbtBuilder.FindParameter(controller, "One"), "it is a tree child now");
             Assert.IsNotNull(DbtBuilder.FindParameter(controller, "Out"));
 
-            var state = FindState(FindLayer(controller, "Out sin(x)").stateMachine, "sin(x)");
-            Assert.IsTrue(state.timeParameterActive);
-            Assert.AreEqual("A", state.timeParameter);
+            var gadget = GadgetRoot(controller);
+            Assert.AreEqual(BlendTreeType.Simple1D, gadget.blendType);
+            Assert.AreEqual("A", gadget.blendParameter);
+            Assert.AreEqual(65, gadget.children.Length, "64 samples of the period, both ends included");
 
-            var clip = (AnimationClip)state.motion;
-            Assert.AreEqual(1f, clip.length, 1e-4f, "one second of clip is one whole turn");
-            var curve = ClipCurve(clip, "Out");
-            Assert.AreEqual(0f, curve.Evaluate(0f), 1e-4f);
-            Assert.AreEqual(1f, curve.Evaluate(0.25f), 1e-4f);
-            Assert.AreEqual(0f, curve.Evaluate(0.5f), 1e-3f);
-            Assert.AreEqual(-1f, curve.Evaluate(0.75f), 1e-4f);
+            var thresholds = AscendingThresholds(gadget);
+            Assert.AreEqual(0f, thresholds[0], 1e-6f);
+            Assert.AreEqual(1f, thresholds[64], 1e-6f, "input 1 is one whole turn");
+            Assert.AreEqual(0.25f, thresholds[16], 1e-6f);
+
+            // A whole turn: 0 at both ends and the half, ±1 at the quarters.
+            Assert.AreEqual(0f, ClipValue(gadget.children[0].motion, "Out"), 1e-6f);
+            Assert.AreEqual(1f, ClipValue(gadget.children[16].motion, "Out"), 1e-6f);
+            Assert.AreEqual(0f, ClipValue(gadget.children[32].motion, "Out"), 1e-6f);
+            Assert.AreEqual(-1f, ClipValue(gadget.children[48].motion, "Out"), 1e-6f);
+            Assert.AreEqual(0f, ClipValue(gadget.children[64].motion, "Out"), 1e-6f);
+
+            // A period revisits its values, so the tree needs fewer clips than it has children.
+            Assert.Less(DistinctMotions(gadget), gadget.children.Length,
+                "samples that land on the same value share one clip");
 
             Object.DestroyImmediate(controller);
         }
 
         [Test]
-        public void Tangent_ClampsThePoles()
+        public void Tangent_PinsThePolesToTheLimit()
         {
             var controller = NewController("A");
             var request = NewRequest(controller, AapGadgets.Kind.Tangent);
             request.inputB = null;
             Assert.IsTrue(AapGadgets.Apply(request));
 
-            var curve = ClipCurve(FindState(FindLayer(controller, "Out tan(x)").stateMachine, "tan(x)").motion, "Out");
-            Assert.AreEqual(0f, curve.Evaluate(0f), 1e-4f);
-            Assert.AreEqual(1f, curve.Evaluate(0.125f), 1e-3f);    // tan(45°)
-            foreach (var key in curve.keys)
-                Assert.LessOrEqual(Mathf.Abs(key.value), 100f, "the poles stay finite");
-            Assert.AreEqual(100f, curve.Evaluate(0.25f), 1e-3f);
+            Assert.IsFalse(HasLayer(controller, "Out tan(x)"));
+            var gadget = GadgetRoot(controller);
+            Assert.AreEqual(65, gadget.children.Length);
+            AscendingThresholds(gadget);
+            Assert.AreEqual(0f, ClipValue(gadget.children[0].motion, "Out"), 1e-6f);
+            Assert.AreEqual(1f, ClipValue(gadget.children[8].motion, "Out"), 1e-5f);   // tan(45°)
+            foreach (var child in gadget.children)
+                Assert.LessOrEqual(Mathf.Abs(ClipValue(child.motion, "Out")), 100f,
+                    "the poles stay finite");
+
+            // Both poles sit exactly on a sample, and both are pinned to +100 — so the drop to
+            // the negative branch happens at the pole rather than one sample before it.
+            Assert.AreEqual(100f, ClipValue(gadget.children[16].motion, "Out"), 1e-4f);
+            Assert.AreEqual(100f, ClipValue(gadget.children[48].motion, "Out"), 1e-4f);
+            Assert.AreSame(gadget.children[16].motion, gadget.children[48].motion,
+                "one value, one clip");
+            Assert.Greater(ClipValue(gadget.children[15].motion, "Out"), 10f, "still climbing");
+            Assert.Less(ClipValue(gadget.children[17].motion, "Out"), -10f, "and already past");
 
             Object.DestroyImmediate(controller);
         }
@@ -744,7 +801,6 @@ namespace Yozolab.DaerD.Tests
             var withLayers = new[]
             {
                 AapGadgets.Kind.Reciprocal, AapGadgets.Kind.Divide, AapGadgets.Kind.FrameTime,
-                AapGadgets.Kind.Sine, AapGadgets.Kind.Cosine, AapGadgets.Kind.Tangent,
             };
             foreach (var kind in withLayers)
             {
@@ -763,6 +819,35 @@ namespace Yozolab.DaerD.Tests
             Assert.IsEmpty(AapGadgets.SupportingLayerNames(NewRequest(plain, AapGadgets.Kind.Multiply)),
                 "a gadget that fits in the tree brings no layer");
             Object.DestroyImmediate(plain);
+        }
+
+        /// <summary>The kinds that used to be a layer keep naming it. A controller an older
+        /// version built still carries that layer, and its name is the only handle a regenerate
+        /// has on it — miss it and the stale motion-time state keeps overwriting the output the
+        /// new tree computes, from the end of the controller where it always won.</summary>
+        [Test]
+        public void SupportingLayerNames_StillNameTheLayersOlderVersionsBuilt()
+        {
+            var kinds = new[]
+            {
+                AapGadgets.Kind.Sine, AapGadgets.Kind.Cosine, AapGadgets.Kind.Tangent,
+            };
+            var legacy = new[] { "Out sin(x)", "Out cos(x)", "Out tan(x)" };
+
+            for (int i = 0; i < kinds.Length; i++)
+            {
+                var controller = NewController("A", "B");
+                var request = NewRequest(controller, kinds[i]);
+                var names = AapGadgets.SupportingLayerNames(request);
+                Assert.AreEqual(1, names.Length, kinds[i].ToString());
+                Assert.AreEqual(legacy[i], names[0], kinds[i].ToString());
+
+                Assert.IsTrue(AapGadgets.Apply(request), kinds[i].ToString());
+                Assert.IsFalse(HasLayer(controller, names[0]),
+                    "the name is there to reclaim an old layer, not to describe one this build makes");
+                Assert.AreEqual(2, controller.layers.Length, kinds[i].ToString());
+                Object.DestroyImmediate(controller);
+            }
         }
 
         [Test]

@@ -20,12 +20,12 @@ namespace Yozolab.DaerD
     ///
     /// A second family gets there by interpolation instead of arithmetic: a tree's own
     /// blending IS a lookup table, so sampling a function onto the children's thresholds
-    /// (Lut1D) or onto a ring of directions (Atan2) evaluates it without leaving the tree.
+    /// (Lut1D, the trigonometric kinds) or onto a ring of directions (Atan2) evaluates it
+    /// without leaving the tree.
     ///
-    /// Three gadget families need more than a blend tree child, and add a layer of their own
-    /// at the end of the controller: division (a curve covers the half a Direct weight cannot
-    /// reach), frame time (a clock clip to subtract from itself) and the trigonometric curves
-    /// (played by motion time, which no blend tree can drive). Reference:
+    /// Two gadget families need more than a blend tree child, and add a layer of their own at
+    /// the end of the controller: division (a curve covers the half a Direct weight cannot
+    /// reach) and frame time (a clock clip to subtract from itself). Reference:
     /// https://vrc.school/docs/Other/Advanced-BlendTrees
     /// </summary>
     static class AapGadgets
@@ -72,18 +72,18 @@ namespace Yozolab.DaerD
         /// <summary>FrameTime reads the animator's own clock, so it has no input parameter.</summary>
         public static bool NeedsInput(Kind kind) => kind != Kind.FrameTime;
 
-        /// <summary>False for the kinds that are nothing but a layer: a curve played by motion
-        /// time cannot live inside a blend tree, so they need neither a Direct tree nor the
-        /// layer choice that comes with it.</summary>
-        public static bool UsesDbtLayer(Kind kind) =>
-            kind != Kind.Sine && kind != Kind.Cosine && kind != Kind.Tangent;
+        /// <summary>Kinds that compute inside a Direct blend tree, and so want a target layer
+        /// to be added to. Constant since the trigonometric curves became 1D lookup trees:
+        /// nothing is a layer and nothing else any more. It stays as a predicate because it is
+        /// the question the callers actually ask — the wizard before it offers a layer choice,
+        /// a recipe before it creates the layer — and a kind that cannot be expressed as a
+        /// tree would be back to answering false.</summary>
+        public static bool UsesDbtLayer(Kind kind) => true;
 
-        /// <summary>Kinds that add a layer of their own — either instead of a blend tree child
-        /// or on top of one. Layer order carries meaning here (see the builders), which the
-        /// wizard says out loud.</summary>
+        /// <summary>Kinds that add a layer of their own on top of their blend tree child. Layer
+        /// order carries meaning here (see the builders), which the wizard says out loud.</summary>
         public static bool CreatesSupportingLayer(Kind kind) =>
-            kind == Kind.Reciprocal || kind == Kind.Divide || kind == Kind.FrameTime
-            || !UsesDbtLayer(kind);
+            kind == Kind.Reciprocal || kind == Kind.Divide || kind == Kind.FrameTime;
 
         public class Request
         {
@@ -151,11 +151,17 @@ namespace Yozolab.DaerD
         public static string BufferStage(string output, int stage) => output + "/" + stage;
 
         /// <summary>
-        /// The layers this request adds beside the blend tree child, under the exact names it
-        /// gives them. Anything that regenerates — a recipe rebuilds its gadget layer on every
-        /// Generate — needs them by name: the builders take a free name when one is taken, so
-        /// a leftover copy wouldn't be replaced but joined by a numbered twin still writing
-        /// the same output.
+        /// The layers this request has to claim, under the exact names the builders give them.
+        /// Anything that regenerates — a recipe rebuilds its gadget layer on every Generate —
+        /// needs them by name: the builders take a free name when one is taken, so a leftover
+        /// copy wouldn't be replaced but joined by a numbered twin still writing the same
+        /// output.
+        ///
+        /// The trigonometric kinds no longer build one — they carried a motion-time layer each
+        /// in earlier versions and now compute inside the blend tree — but their old names stay
+        /// listed here so that regenerating a recipe reclaims the layer such a controller is
+        /// still carrying instead of stranding it beside the new tree, both writing the same
+        /// output. Removing a layer that isn't there is a no-op, so listing costs nothing.
         /// </summary>
         public static string[] SupportingLayerNames(Request r)
         {
@@ -227,8 +233,6 @@ namespace Yozolab.DaerD
                 && (r.bufferFrames < MinBufferFrames || r.bufferFrames > MaxBufferFrames))
                 return L.Tr("Frames must be between 1 and 8.");
 
-            // The layer-only kinds bring their own layer; there is no target to check.
-            if (!UsesDbtLayer(r.kind)) return null;
             return AapSmoothing.ValidateLayerChoice(controller, r.layerIndex, r.newLayerName);
         }
 
@@ -268,16 +272,11 @@ namespace Yozolab.DaerD
                 if (r.kind == Kind.SmoothLinear)
                     DbtBuilder.EnsureFloatParameter(controller, r.smoothing, Mathf.Max(0f, r.smoothingDefault));
 
-                if (UsesDbtLayer(r.kind))
-                {
-                    string one = DbtBuilder.EnsureConstantOneParameter(controller);
-                    var root = DbtBuilder.EnsureDirectBlendTreeLayer(controller, r.layerIndex, r.newLayerName);
-                    DbtBuilder.AddDirectChild(root, Build(r, controller, one), one);
-                }
-                else
-                {
-                    BuildTrigonometryLayer(controller, r.kind, r.inputA, r.output);
-                }
+                // Every kind is a blend tree child; the one builder that still wants a layer of
+                // its own (FrameTime's clock) adds it on the way.
+                string one = DbtBuilder.EnsureConstantOneParameter(controller);
+                var root = DbtBuilder.EnsureDirectBlendTreeLayer(controller, r.layerIndex, r.newLayerName);
+                DbtBuilder.AddDirectChild(root, Build(r, controller, one), one);
                 EditorUtility.SetDirty(controller);
             }
             // Everything the gadget built is a sub-asset; one flush shows the whole batch.
@@ -306,6 +305,9 @@ namespace Yozolab.DaerD
                 case Kind.SmoothLinear:
                     return SmoothLinear(c, a, output, one, r.smoothing, r.rangeMin, r.rangeMax);
                 case Kind.SeparateDigits: return SeparateDigits(c, a, output, one);
+                case Kind.Sine:
+                case Kind.Cosine:
+                case Kind.Tangent: return Trigonometry(c, r.kind, a, output);
                 case Kind.Lut1D: return Lut1D(c, a, output, r.curve, r.lutSamples);
                 // Input A is the numerator of atan2 and input B the denominator, so the
                 // wizard's A/B pair reads in the order the function's arguments do.
@@ -731,30 +733,42 @@ namespace Yozolab.DaerD
         static string TrigLabel(Kind kind) =>
             kind == Kind.Sine ? "sin" : kind == Kind.Cosine ? "cos" : "tan";
 
+        /// <summary>The layer these kinds used to be. Kept for reclaiming one from a controller
+        /// an older version built — see <see cref="SupportingLayerNames"/>.</summary>
         static string TrigLayerName(Kind kind, string output) =>
             output + " " + TrigLabel(kind) + "(x)";
 
         /// <summary>
-        /// sin / cos / tan of the input, as a curve read by motion time: the state's normalized
-        /// time IS the input, so 0..1 walks one whole period (0 to 2π) of a one-second clip.
-        /// Nothing here can live in a blend tree — motion time belongs to a state — so these
-        /// kinds are a layer and nothing else.
+        /// sin / cos / tan of the input in turns: 0..1 walks one whole period, 0 to 2π. These
+        /// used to be a curve read by a state's motion time, which no blend tree can drive; a
+        /// 1D tree gets to the same place without leaving the tree, because blending between
+        /// adjacent thresholds IS interpolating a table — children holding f(i/N) at threshold
+        /// i/N are the function, sampled. Same trick as <see cref="Lut1D"/>, with the curve
+        /// fixed and the sample count chosen for it.
+        ///
+        /// <see cref="TrigSamples"/> per period leaves sin and cos within ~1.2e-3 of the true
+        /// value everywhere, comfortably inside the 1/127 a synced float can carry anyway — and
+        /// it is divisible by four, which is what lets <see cref="TrigValue"/> put a sample
+        /// exactly on tan's poles instead of near them.
+        /// Reference: https://vrc.school/docs/Other/Advanced-BlendTrees
         /// </summary>
-        static void BuildTrigonometryLayer(AnimatorController c, Kind kind, string input, string output)
+        public static BlendTree Trigonometry(AnimatorController c, Kind kind, string input, string output)
         {
-            string label = TrigLabel(kind);
-            var stateMachine = AddSupportingLayer(c, TrigLayerName(kind, output));
-
-            var curve = new AnimationCurve();
+            var tree = DbtBuilder.Tree1D(c, Name(TrigLabel(kind), input, null), input);
+            // A period revisits its values: sin and cos mirror around every quarter turn, and
+            // tan's two poles are pinned to the same limit. Sharing clips by value the way
+            // Lut1D does keeps the sub-asset count down to the values that are distinct as
+            // floats — mirrored samples only collide when the arithmetic lands on the same bits,
+            // which is most but not all of them.
+            var clips = new Dictionary<float, AnimationClip>();
             for (int i = 0; i <= TrigSamples; i++)
-                curve.AddKey(new Keyframe((float)i / TrigSamples, TrigValue(kind, i)));
-            SmoothTangents(curve);
-
-            var clip = DbtBuilder.CurveClip(c,
-                DbtBuilder.Sanitize(output) + " = " + label + "(x)", output, curve, TrigSamples);
-            var state = AddSupportingState(stateMachine, label + "(x)", new Vector3(300f, 60f, 0f), clip);
-            state.timeParameterActive = true;
-            state.timeParameter = input;
+            {
+                float value = TrigValue(kind, i);
+                if (!clips.TryGetValue(value, out var clip))
+                    clips[value] = clip = DbtBuilder.ParameterClip(c, output, value);
+                tree.AddChild(clip, (float)i / TrigSamples);
+            }
+            return tree;
         }
 
         static float TrigValue(Kind kind, int sample)
@@ -767,7 +781,7 @@ namespace Yozolab.DaerD
             // meaningless (its sign depends on which side of π/2 the angle rounds to). Pin them
             // to +limit: tan climbs on the way in, so the drop to the negative branch then
             // happens at the pole instead of one sample early. The rest is clamped to the band,
-            // which is what keeps the curve a finite lookup table at all.
+            // which is what keeps the table finite at all.
             if (sample * 4 == TrigSamples || sample * 4 == TrigSamples * 3) return TangentLimit;
             return Mathf.Clamp(Mathf.Tan(angle), -TangentLimit, TangentLimit);
         }
