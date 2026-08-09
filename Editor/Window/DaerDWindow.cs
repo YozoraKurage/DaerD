@@ -12,6 +12,8 @@ namespace Yozolab.DaerD
     {
         [SerializeField] AnimatorController _controller;
         [SerializeField] int _layerIndex;
+        // Home is a selection like a layer is, so it has to survive a domain reload the same way.
+        [SerializeField] bool _homeSelected;
 
         // Remembered across domain reloads so the open tabs survive script recompiles / play mode.
         [SerializeField] List<AnimatorController> _openControllers = new List<AnimatorController>();
@@ -33,6 +35,7 @@ namespace Yozolab.DaerD
         AnimatorGraphView _graphView;
         BlendTreeGraphView _blendTreeView;
         AsyncSyncPanel _asyncSyncPanel;
+        HomePanel _homePanel;
         // The centre pane shows the async-sync settings panel instead of the graph while an
         // async-sync layer is active — its states are generated machinery. "Show Graph" flips
         // this for a peek; it resets on every layer/controller switch, so the settings view
@@ -153,8 +156,10 @@ namespace Yozolab.DaerD
         void CreateGUI()
         {
             // Captured before the wiring below, because SetController (fired during restore) resets
-            // the layer to 0 via SyncSerializedState, clobbering the serialized value.
+            // the layer to 0 and clears the home flag via SyncSerializedState, clobbering the
+            // serialized values.
             int restoredLayer = _layerIndex;
+            bool restoredHome = _homeSelected;
 
             rootVisualElement.Clear();
             _context = new DaerDContext();
@@ -178,9 +183,10 @@ namespace Yozolab.DaerD
             _inspectorPanel = new InspectorPanel(_context, _graphView.Sync);
             _hierarchyPanel = new BlendTreeHierarchyPanel(_context);
 
-            // The three centre surfaces share the pane; one is visible at a time depending
-            // on whether the user has drilled into a blend tree or sits on an async-sync
-            // layer (whose graph is generated machinery — the settings panel is the view).
+            // The four centre surfaces share the pane; one is visible at a time depending on
+            // whether Home is picked, the user has drilled into a blend tree, or sits on an
+            // async-sync layer (whose graph is generated machinery — the settings panel is
+            // the view).
             _graphHost = new VisualElement { style = { flexGrow = 1 } };
             _graphView.style.flexGrow = 1;
             _blendTreeView.style.flexGrow = 1;
@@ -190,9 +196,11 @@ namespace Yozolab.DaerD
                 _showSyncGraph = true;
                 RefreshGraphVisibility();
             };
+            _homePanel = new HomePanel(_context) { style = { flexGrow = 1 } };
             _graphHost.Add(_graphView);
             _graphHost.Add(_blendTreeView);
             _graphHost.Add(_asyncSyncPanel);
+            _graphHost.Add(_homePanel);
 
             // Floating way back from the raw graph to the settings view; only visible while
             // peeking at an async-sync layer's graph.
@@ -239,8 +247,10 @@ namespace Yozolab.DaerD
             _context.StateMachinePathChanged += RefreshBreadcrumb;
             _context.BlendTreePathChanged += RefreshBreadcrumb;
             _context.ControllerChanged += RefreshBreadcrumb;
+            _context.HomeChanged += RefreshBreadcrumb;
             _context.LayerChanged += SyncSerializedState;
             _context.ControllerChanged += SyncSerializedState;
+            _context.HomeChanged += SyncSerializedState;
 
             // Subscribed before RefreshGraphVisibility so the flag is fresh when it runs.
             _context.LayerChanged += ResetSyncGraphPeek;
@@ -254,6 +264,7 @@ namespace Yozolab.DaerD
             // moving: the wizard applying onto it, an undo, a recipe regenerating it.
             _context.LayersChanged += RefreshGraphVisibility;
             _context.GraphStructureChanged += RefreshGraphVisibility;
+            _context.HomeChanged += RefreshGraphVisibility;
             RefreshGraphVisibility();
 
             // SelectSync must subscribe before StatePreview so that on a State selection change
@@ -267,6 +278,10 @@ namespace Yozolab.DaerD
                 _context.SetController(_controller);
                 if (restoredLayer > 0)
                     _context.SetLayer(restoredLayer);   // restore the active layer after a domain reload
+                // After the layer, not instead of it: home keeps the layer underneath as the
+                // place it returns to.
+                if (restoredHome)
+                    _context.SelectHome();
             }
 
             RefreshTabBar();
@@ -284,7 +299,21 @@ namespace Yozolab.DaerD
             if (Mathf.Approximately(delta, 0f)) return;
 
             int count = _context.Controller.layers.Length;
-            int next = Mathf.Clamp(_context.LayerIndex + (delta > 0f ? 1 : -1), 0, Mathf.Max(0, count - 1));
+            bool down = delta > 0f;
+            // Home sits above layer 0 in the list, so the gesture walks the two as one strip:
+            // down off home lands on the first layer, up off the first layer goes back to it.
+            if (_context.IsHomeSelected)
+            {
+                if (down && count > 0) _context.SetLayer(0);
+                return;
+            }
+            if (!down && _context.LayerIndex == 0)
+            {
+                _context.SelectHome();
+                return;
+            }
+
+            int next = Mathf.Clamp(_context.LayerIndex + (down ? 1 : -1), 0, Mathf.Max(0, count - 1));
             if (next != _context.LayerIndex)
                 _context.SetLayer(next);
         }
@@ -293,6 +322,7 @@ namespace Yozolab.DaerD
         {
             _controller = _context.Controller;
             _layerIndex = _context.LayerIndex;
+            _homeSelected = _context.IsHomeSelected;
             RememberCurrentLayer();
         }
 
@@ -391,6 +421,17 @@ namespace Yozolab.DaerD
             _breadcrumb.Clear();
             if (_context == null || !_context.HasController) return;
 
+            // Home is not inside any layer, so there is no trail to draw — just where we are.
+            if (_context.IsHomeSelected)
+            {
+                var home = new Label(L.Tr("Home"));
+                home.style.unityFontStyleAndWeight = FontStyle.Bold;
+                home.style.marginLeft = 6;
+                home.style.marginRight = 2;
+                _breadcrumb.Add(home);
+                return;
+            }
+
             var layer = _context.CurrentLayer;
             if (layer != null)
             {
@@ -437,18 +478,41 @@ namespace Yozolab.DaerD
 
         void ResetSyncGraphPeek() => _showSyncGraph = false;
 
-        /// <summary>Picks the centre view: the blend tree editor when drilled into one, the
-        /// async-sync settings panel when sitting at the root of a generated sync layer
-        /// (unless the user asked to peek at the graph), the state machine graph otherwise.</summary>
+        /// <summary>Picks the centre view: the home screen when it is selected, the blend tree
+        /// editor when drilled into one, the async-sync settings panel when sitting at the root
+        /// of a generated sync layer (unless the user asked to peek at the graph), the state
+        /// machine graph otherwise.</summary>
         void RefreshGraphVisibility()
         {
             if (_graphView == null || _blendTreeView == null) return;
+
+            // Home wins over everything: it is about the controller, so none of the views of a
+            // single layer (nor the way back into one of them) belongs on screen beside it.
+            bool home = _context != null && _context.IsHomeSelected;
+            if (_homePanel != null)
+            {
+                _homePanel.style.display = home ? DisplayStyle.Flex : DisplayStyle.None;
+                if (home) _homePanel.Refresh();
+            }
+            if (home)
+            {
+                _graphView.style.display = DisplayStyle.None;
+                _blendTreeView.style.display = DisplayStyle.None;
+                if (_asyncSyncPanel != null) _asyncSyncPanel.style.display = DisplayStyle.None;
+                if (_syncViewButton != null) _syncViewButton.style.display = DisplayStyle.None;
+                RefreshRightColumnLayout(false);
+                return;
+            }
+
             bool inBlendTree = _context != null && _context.IsViewingBlendTree;
 
             // Only the layer ROOT swaps to the settings panel — a generated layer has no sub
-            // machines, so a drilled-down path means the user is somewhere hand-made.
+            // machines, so a drilled-down path means the user is somewhere hand-made. The path
+            // always carries the layer's root machine at index 0, so "not drilled" is one entry
+            // and not none: at zero the layer has no state machine at all, and there would be
+            // nothing to match a saved setup against anyway.
             var syncConfig = !inBlendTree && _context != null
-                && _context.StateMachinePath.Count == 0
+                && _context.StateMachinePath.Count <= 1
                 ? AsyncSyncPanel.ConfigOf(_context.Controller, _context.CurrentLayer?.stateMachine)
                 : null;
             bool showSyncPanel = syncConfig != null && !_showSyncGraph;
@@ -512,10 +576,7 @@ namespace Yozolab.DaerD
             // Freshly opened window: CreateGUI (and with it the context) hasn't run yet.
             if (_context == null || _context.Controller == null) return false;
 
-            var location = ControllerLocator.Locate(_context.Controller, issue.context);
-            if (location == null && issue.layerIndex >= 0
-                && issue.layerIndex < _context.Controller.layers.Length)
-                location = new ControllerLocator.Location { layerIndex = issue.layerIndex };
+            var location = ControllerLocator.LocateIssue(_context.Controller, issue);
             if (location == null) return false;
             return TryNavigateTo(location.layerIndex, location.stateMachinePath, location.target);
         }
@@ -556,6 +617,7 @@ namespace Yozolab.DaerD
             _inspectorPanel?.Refresh();
             _hierarchyPanel?.Refresh();
             _asyncSyncPanel?.Refresh();
+            _homePanel?.Refresh();
         }
 
         void OnPlayModeChanged(PlayModeStateChange change) => _graphView?.Sync.RequestRebuild();

@@ -26,6 +26,15 @@ namespace Yozolab.DaerD
 
         public object Selection { get; private set; }
 
+        /// <summary>
+        /// The home screen — the controller-wide view that replaces the graph in the centre
+        /// pane — is showing instead of a layer. A flag of its own rather than a sentinel
+        /// <see cref="LayerIndex"/>: every piece of index arithmetic (clamping, the per-tab
+        /// remembered layer, Shift scrolling) would otherwise need an exception, and the
+        /// index is exactly what home has to keep — it is where leaving home returns to.
+        /// </summary>
+        public bool IsHomeSelected { get; private set; }
+
         public event Action ControllerChanged;
         public event Action LayerChanged;
         public event Action StateMachinePathChanged;
@@ -35,6 +44,9 @@ namespace Yozolab.DaerD
         public event Action GraphRebuilt;
         public event Action ParametersChanged;
         public event Action LayersChanged;
+        /// <summary>Fires whenever <see cref="IsHomeSelected"/> flips either way, so the
+        /// centre pane, the breadcrumb and the layer list's tint stay in step with it.</summary>
+        public event Action HomeChanged;
         public event Action SelectionChanged;
         public event Action<object> FrameRequested;
         public event Action<object> GraphVisualsChanged;
@@ -95,6 +107,9 @@ namespace Yozolab.DaerD
         {
             Controller = controller;
             LayerIndex = 0;
+            // Cleared without a HomeChanged of its own: everything that listens to it also
+            // listens to ControllerChanged, which is a full refresh anyway.
+            IsHomeSelected = false;
             Selection = null;
             ClearBlendTreePath();
             RebuildPath();
@@ -106,6 +121,9 @@ namespace Yozolab.DaerD
         public void SetLayer(int index)
         {
             if (Controller == null) return;
+            // Picking a layer is also the gesture that leaves home; nothing else has to ask.
+            bool wasHome = IsHomeSelected;
+            IsHomeSelected = false;
             var count = Controller.layers.Length;
             // With zero layers there is nothing to show, but the path / selection / listeners
             // must still be reset so the UI doesn't keep displaying a layer that no longer exists.
@@ -114,6 +132,25 @@ namespace Yozolab.DaerD
             ClearBlendTreePath();
             RebuildPath();
             LayerChanged?.Invoke();
+            SelectionChanged?.Invoke();
+            // Last, so listeners see a settled layer before they are told home is over.
+            if (wasHome) HomeChanged?.Invoke();
+        }
+
+        /// <summary>
+        /// Shows the home screen. The layer stays selected underneath (<see cref="LayerIndex"/>
+        /// is untouched) so any layer click — or a Shift scroll — comes straight back to it,
+        /// but the drill path is popped to the layer root: home is not a place inside a
+        /// sub-state machine, and returning should land where <see cref="SetLayer"/> lands.
+        /// </summary>
+        public void SelectHome()
+        {
+            if (Controller == null || IsHomeSelected) return;
+            IsHomeSelected = true;
+            Selection = null;
+            ClearBlendTreePath();
+            RebuildPath();
+            HomeChanged?.Invoke();
             SelectionChanged?.Invoke();
         }
 

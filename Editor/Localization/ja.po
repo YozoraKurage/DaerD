@@ -176,6 +176,77 @@ msgstr "このコントローラーの Empty クリップを割り当てます"
 msgid "Fill the empty child slots with this controller's Empty clip"
 msgstr "モーション未設定の子スロットにこのコントローラーの Empty クリップを割り当てます"
 
+# ---- home screen ----
+
+msgid "Home"
+msgstr "ホーム"
+
+msgid "Open Home"
+msgstr "ホームを開く"
+
+msgid "Gadgets, sync setups and tools for this controller live in the Home screen."
+msgstr "ガジェット・巡回同期の設定・各種ツールはホーム画面にまとまっています。"
+
+msgid "{0} layers · {1} parameters"
+msgstr "レイヤー {0} 個 · パラメーター {1} 個"
+
+msgid "The VRC Expressions Menu this controller belongs to, opened by the menu editor. Assigned explicitly — DaerD never guesses it from the scene."
+msgstr "このコントローラーが属する VRC Expressions Menu。メニューエディターが開く対象です。明示的に指定するもので、DaerD がシーンから推測することはありません。"
+
+msgid "DBT Gadgets"
+msgstr "DBT ガジェット"
+
+msgid "No gadgets yet."
+msgstr "ガジェットはまだありません。"
+
+msgid "Edit"
+msgstr "編集"
+
+msgid "+ Add Gadget"
+msgstr "+ ガジェットを追加"
+
+msgid "Add a Direct blend tree gadget that computes a float operation every frame."
+msgstr "Float 演算を毎フレーム計算する Direct Blend Tree ガジェットを追加します。"
+
+msgid "No async sync setups yet."
+msgstr "巡回同期の設定はまだありません。"
+
+msgid "{0} target(s), {1}s step"
+msgstr "対象 {0} 件 / ステップ間隔 {1} 秒"
+
+msgid "+ New Async Sync"
+msgstr "+ 巡回同期を新規作成"
+
+msgid "C# Recipes"
+msgstr "C# レシピ"
+
+msgid "No recipe-owned layers."
+msgstr "レシピが生成したレイヤーはありません。"
+
+msgid "Tools"
+msgstr "ツール"
+
+msgid "Window"
+msgstr "ウィンドウ"
+
+msgid "Open this tool in a window of its own, so it stays visible while you edit the graph."
+msgstr "このツールを独立したウィンドウで開きます。グラフを編集している間も表示したままにできます。"
+
+msgid "Clips"
+msgstr "クリップ"
+
+msgid "Analyzer"
+msgstr "解析"
+
+msgid "Recipe Export"
+msgstr "レシピ書き出し"
+
+msgid "The menu editor works on the avatar's menu tree, in a window of its own."
+msgstr "メニューエディターはアバターのメニュー階層を編集するため、独立したウィンドウで開きます。"
+
+msgid "Open Menu Editor"
+msgstr "メニューエディターを開く"
+
 # ---- overview / analysis UI ----
 
 msgid "Controller"

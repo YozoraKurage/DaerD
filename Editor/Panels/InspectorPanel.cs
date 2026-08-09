@@ -16,7 +16,6 @@ namespace Yozolab.DaerD
         // act on behaviours instead of the state itself (the graph view owns state copy/paste).
         readonly List<StateMachineBehaviour> _selectedBehaviours = new List<StateMachineBehaviour>();
         object _lastSelection;
-        readonly CleanupInspector _cleanup = new CleanupInspector();
         readonly OverviewInspector _overview;
         readonly StateMachineInspector _stateMachine;
         readonly VrcBehaviourDrawers _vrcDrawers;
@@ -31,7 +30,7 @@ namespace Yozolab.DaerD
         public InspectorPanel(DaerDContext context, GraphSync sync)
             : base(context, "Inspector")
         {
-            _overview = new OverviewInspector(context, _cleanup);
+            _overview = new OverviewInspector(context);
             _stateMachine = new StateMachineInspector(context);
             _multiTransition = new MultiTransitionInspector(context, sync, _selectedTransitions);
             _transitions = new TransitionInspector(context, sync, _selectedTransitions, _multiTransition);
@@ -44,9 +43,7 @@ namespace Yozolab.DaerD
             _notes = new NoteInspector(context, sync);
             _frames = new FrameInspector(context, sync);
             context.SelectionChanged += OnSelectionChanged;
-            // The leftover scan (and the object references captured in it) belongs to the
-            // outgoing controller — drop it on a tab switch.
-            context.ControllerChanged += ClearControllerCaches;
+            context.ControllerChanged += Refresh;
             context.GraphStructureChanged += Refresh;
             context.GraphRebuilt += Refresh;
             context.ParametersChanged += Refresh;
@@ -67,12 +64,6 @@ namespace Yozolab.DaerD
                 // next IMGUI repaint redraws the controls fresh against the new transition(s).
                 TransitionInspector.EndConditionInput();
             }
-            Refresh();
-        }
-
-        void ClearControllerCaches()
-        {
-            _cleanup.Clear();
             Refresh();
         }
 

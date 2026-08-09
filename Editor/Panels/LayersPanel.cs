@@ -21,12 +21,17 @@ namespace Yozolab.DaerD
             context.ControllerChanged += Refresh;
             context.LayerChanged += Refresh;
             context.LayersChanged += Refresh;
+            // Home and the layers tint each other off, so the list has to repaint on the way in
+            // as well as on the way out.
+            context.HomeChanged += Refresh;
         }
 
         protected override void DrawContent()
         {
             var controller = Context.Controller;
             var layers = controller.layers;
+
+            DrawHomeRow();
 
             // Collected once per repaint (the lookups walk the controller's sub-assets), not
             // once per row.
@@ -83,6 +88,21 @@ namespace Yozolab.DaerD
             if (GUILayout.Button(new GUIContent("+ Add Layer",
                     L.Tr("With templates saved (or a copied layer), this opens a menu. Use '.' in a template's asset name to nest it into submenus."))))
                 ShowAddLayerMenu();
+        }
+
+        /// <summary>
+        /// The controller-wide screen, sitting above the list as a row that behaves like a
+        /// layer row without being one: no badges, no settings gear, and deliberately outside
+        /// <see cref="_reorder"/> — there is nothing to reorder it against.
+        /// </summary>
+        void DrawHomeRow()
+        {
+            var prev = GUI.backgroundColor;
+            if (Context.IsHomeSelected) GUI.backgroundColor = PanelGui.SelectionTint;
+            if (GUILayout.Button(L.Tr("Home"), EditorStyles.miniButton))
+                Context.SelectHome();
+            GUI.backgroundColor = prev;
+            EditorGUILayout.Space(2);
         }
 
         /// <summary>Plain add when nothing else is available; otherwise a menu with the

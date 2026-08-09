@@ -45,7 +45,31 @@ namespace Yozolab.DaerD
             new List<GraphFrameData.AapGadgetConfig>();
         int _gadgetChoice;
 
-        public static void Open(AnimatorController controller, Action onApplied)
+        public static void Open(AnimatorController controller, Action onApplied) =>
+            Create(controller, onApplied);
+
+        /// <summary>
+        /// Opens the wizard already loaded with a saved gadget, for the callers that pick the
+        /// subject outside the window (the home screen lists the controller's gadgets and edits
+        /// one from there). Matched by output name, which is the key a gadget is saved under —
+        /// a record the controller no longer lists lands on "create new", the same state the
+        /// plain <see cref="Open(AnimatorController, Action)"/> starts in.
+        /// </summary>
+        public static void Open(AnimatorController controller,
+            GraphFrameData.AapGadgetConfig config, Action onApplied)
+        {
+            var window = Create(controller, onApplied);
+            if (config == null) return;
+            for (int i = 0; i < window._gadgets.Count; i++)
+            {
+                if (window._gadgets[i].output != config.output) continue;
+                window._gadgetChoice = i + 1;
+                window.LoadConfig(window._gadgets[i]);
+                return;
+            }
+        }
+
+        static AapGadgetWindow Create(AnimatorController controller, Action onApplied)
         {
             var window = CreateInstance<AapGadgetWindow>();
             window.titleContent = new GUIContent(L.Tr("DBT Gadget"));
@@ -54,6 +78,7 @@ namespace Yozolab.DaerD
             window._onApplied = onApplied;
             window.RefreshChoices();
             window.ShowUtility();
+            return window;
         }
 
         void RefreshChoices()
@@ -171,15 +196,6 @@ namespace Yozolab.DaerD
             return string.Empty;
         }
 
-        // Must stay in AapGadgets.Kind order.
-        static readonly string[] KindLabels =
-        {
-            "Smooth", "Add", "Add (Ranged)", "Sub", "Sub (Ranged)", "Multiply",
-            "And", "Or", "Not", "Float As Bool", "Remap",
-            "Reciprocal", "Divide", "Frame Time", "Smooth (Linear)", "Separate Digits",
-            "Sine", "Cosine", "Tangent", "LUT (Curve)", "Atan2", "Buffer (Delay)",
-        };
-
         /// <summary>Shapes the Curve field can be filled with. Index 0 writes nothing — see
         /// <see cref="CurvePresetValue"/> for the rest.</summary>
         static readonly string[] CurvePresetLabels =
@@ -242,7 +258,8 @@ namespace Yozolab.DaerD
             DrawGadgetChoice();
 
             EditorGUI.BeginChangeCheck();
-            _kind = (AapGadgets.Kind)EditorGUILayout.Popup(L.Tr("Operation"), (int)_kind, KindLabels);
+            _kind = (AapGadgets.Kind)EditorGUILayout.Popup(L.Tr("Operation"), (int)_kind,
+                AapGadgets.KindLabels);
             // Atan2's inputs are a vector, not an A/B pair, and naming them after the axes is
             // the only hint that A is the one atan2 takes first.
             bool vectorInputs = _kind == AapGadgets.Kind.Atan2;
@@ -364,12 +381,13 @@ namespace Yozolab.DaerD
         }
 
         /// <summary>"Hue*Gain (Multiply)": the output names the gadget, the operation says what
-        /// it does. <see cref="KindLabels"/> is indexed by the enum the config stores as an int.
-        /// </summary>
+        /// it does. <see cref="AapGadgets.KindLabels"/> is indexed by the enum the config stores
+        /// as an int. One line, because a popup entry is one line — the home screen's list has
+        /// room to set the two apart and spells them out in its own columns.</summary>
         static string GadgetLabel(GraphFrameData.AapGadgetConfig config)
         {
-            string kind = config.kind >= 0 && config.kind < KindLabels.Length
-                ? KindLabels[config.kind] : "?";
+            string kind = config.kind >= 0 && config.kind < AapGadgets.KindLabels.Length
+                ? AapGadgets.KindLabels[config.kind] : "?";
             return config.output + " (" + kind + ")";
         }
 

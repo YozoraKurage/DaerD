@@ -56,6 +56,15 @@ namespace Yozolab.DaerD
             Buffer,
         }
 
+        // Must stay in AapGadgets.Kind order.
+        public static readonly string[] KindLabels =
+        {
+            "Smooth", "Add", "Add (Ranged)", "Sub", "Sub (Ranged)", "Multiply",
+            "And", "Or", "Not", "Float As Bool", "Remap",
+            "Reciprocal", "Divide", "Frame Time", "Smooth (Linear)", "Separate Digits",
+            "Sine", "Cosine", "Tangent", "LUT (Curve)", "Atan2", "Buffer (Delay)",
+        };
+
         public static bool IsBinary(Kind kind) =>
             kind == Kind.Add || kind == Kind.AddRanged || kind == Kind.Sub
             || kind == Kind.SubRanged || kind == Kind.Multiply

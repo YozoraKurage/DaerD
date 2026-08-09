@@ -20,6 +20,21 @@ namespace Yozolab.DaerD
             public object target;
         }
 
+        /// <summary>
+        /// Where an analyzer issue points: the object it carries, or — when that is nothing a
+        /// graph can show (an unused parameter, a whole layer) — the layer it was reported on.
+        /// Null when neither, and the caller falls back to a Project-window ping.
+        /// </summary>
+        public static Location LocateIssue(AnimatorController controller, AnalyzerIssue issue)
+        {
+            if (controller == null || issue == null) return null;
+            var location = Locate(controller, issue.context);
+            if (location == null && issue.layerIndex >= 0
+                && issue.layerIndex < controller.layers.Length)
+                location = new Location { layerIndex = issue.layerIndex };
+            return location;
+        }
+
         public static Location Locate(AnimatorController controller, object obj)
         {
             if (controller == null || obj == null) return null;
