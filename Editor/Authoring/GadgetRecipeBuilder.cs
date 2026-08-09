@@ -223,9 +223,9 @@ namespace Yozolab.DaerD.Authoring
                 output = output.Name,
             });
 
-        /// <summary>output = 1 / input for positive inputs. Adds a supporting layer — the
-        /// half below 1 is out of a Direct tree's reach — and the shift it computes on the
-        /// way costs the result an extra frame of lag.</summary>
+        /// <summary>output = 1 / input for positive inputs, all inside the blend tree: exact
+        /// above 1, a geometric lookup ladder below it. The shift the exact half computes on
+        /// the way costs the result an extra frame of lag.</summary>
         public GadgetRecipeBuilder Reciprocal(ParamRef input, ParamRef output) =>
             Queue(new AapGadgets.Request
             {
@@ -235,8 +235,8 @@ namespace Yozolab.DaerD.Authoring
             });
 
         /// <summary>output = A / B for positive inputs: B's reciprocal, then A times it.
-        /// Inherits <see cref="Reciprocal"/>'s supporting layer, and one more frame of lag on
-        /// top of its two — the multiply reads last frame's reciprocal.</summary>
+        /// Inherits <see cref="Reciprocal"/>'s extra frame of lag, and one more on top —
+        /// the multiply reads last frame's reciprocal.</summary>
         public GadgetRecipeBuilder Divide(ParamRef a, ParamRef b, ParamRef output) =>
             Queue(new AapGadgets.Request
             {
@@ -378,8 +378,9 @@ namespace Yozolab.DaerD.Authoring
                 output = outputBase.Name,
             });
 
-        /// <summary>sin of the input in turns (0..1 is one whole period), as a curve read by
-        /// motion time. A layer of its own — motion time belongs to a state.</summary>
+        /// <summary>sin of the input in turns (0..1 is one whole period), as a 1D lookup
+        /// tree inside the blend tree — the period sampled evenly and interpolated straight
+        /// in between.</summary>
         public GadgetRecipeBuilder Sine(ParamRef input, ParamRef output) =>
             Trigonometry(AapGadgets.Kind.Sine, input, output);
 
