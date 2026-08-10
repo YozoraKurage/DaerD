@@ -397,12 +397,16 @@ namespace Yozolab.DaerD.Tests
             var smoothed = c.FloatParameter("Raw/Smoothed");
             var scaled = c.FloatParameter("Raw/Scaled");
             var mixed = c.FloatParameter("Mixed");
+            var delta = c.FloatParameter("Delta");
 
             var layer = c.Layer("Visible");
             layer.NewState("Only").WithAnimation(_idle).At(0, 0).Default()
                 .WithWriteDefaultsSetTo(false);
 
+            // FrameTime brings a supporting layer of its own — the clock — so the order
+            // and idempotence tests cover a post step that owns more than one layer.
             c.Gadgets("DBT")
+                .FrameTime(delta)
                 .Smooth(raw, smoothed, smoothing)
                 .Remap(smoothed, scaled, -1f, 1f, 0f, 1f)
                 .Multiply(scaled, other, mixed);
@@ -505,7 +509,7 @@ namespace Yozolab.DaerD.Tests
                     "a parameter was added twice");
                 CollectionAssert.AreEquivalent(Describe(first), Describe(ControllerIR.Parse(controller)),
                     "the parameters are not the same set after a second pass");
-                CollectionAssert.AreEquivalent(new[] { "Visible", "DBT", "Async" },
+                CollectionAssert.AreEquivalent(new[] { "Visible", "DBT", "Delta Clock", "Async" },
                     LayerNames(controller), "the layers are not the same set");
 
                 // Only the layer the recipe declares outright is compared structurally. A post
@@ -554,6 +558,36 @@ namespace Yozolab.DaerD.Tests
                 Assert.AreSame(handTree, handState.motion, "the tree was replaced");
                 Assert.GreaterOrEqual(IndexOfLayer(controller, "DBT"), 0,
                     "the gadget layer did not get built beside it");
+            });
+        }
+
+        /// <summary>
+        /// The other half of that: a hand-built layer under the name the gadget step claims
+        /// does get replaced — the step owns its layer by name, the same bargain a declared
+        /// layer makes. What it must not do is take it quietly, because the name it claims by
+        /// default is the one someone would have picked for their own.
+        /// </summary>
+        [Test]
+        public void AHandBuiltLayerUnderTheGadgetName_IsReplaced_ButSaidSo()
+        {
+            WithSavedController(controller =>
+            {
+                controller.AddLayer("DBT");
+                controller.layers[0].stateMachine.AddState("Hand Written", Vector3.zero);
+
+                var recipe = NewRecipe(controller, BuildWithPostSteps);
+                var first = recipe.Generate();
+
+                // Matched on the layer's own name rather than the sentence around it: the
+                // message is translated, the name it is given is not.
+                Assert.IsNotEmpty(first.FindAll(w => w.Contains("'DBT'")),
+                    "nothing was said about replacing a layer nobody generated:\n"
+                    + string.Join("\n", first));
+
+                // And it stays quiet from then on: the layer is this recipe's now.
+                var second = recipe.Generate();
+                Assert.IsEmpty(second.FindAll(w => w.Contains("'DBT'")),
+                    "warned again about a layer it generated itself:\n" + string.Join("\n", second));
             });
         }
 

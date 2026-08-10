@@ -2081,6 +2081,9 @@ msgstr "あなたの Build がエクスポート側の BuildGenerated と同じ�
 msgid "This recipe has no exported half to compare against."
 msgstr "この Recipe には比較対象のエクスポート側がありません。"
 
+msgid "Layer '{0}' was already there and no recipe generated it — the DBT gadgets replaced it. Give one of the two another name to keep both."
+msgstr "レイヤー '{0}' は元からあったもので、どの Recipe も生成していません。DBT ガジェットがこれを置き換えました。両方残すなら、どちらかの名前を変えてください。"
+
 msgid "Post steps (Raw, Async Sync, DBT gadgets) declare nothing comparable — check those by hand."
 msgstr "後段ステップ（Raw・巡回同期・DBT ガジェット）は比較対象になりません。そこは目視で確認してください。"
 

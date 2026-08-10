@@ -86,6 +86,7 @@ namespace Yozolab.DaerD.Authoring
             // one back to the index it was found at); this is the same courtesy for the ones
             // a post step owns.
             var previousIndices = PreviousIndices(controller, layerNames);
+            WarnAboutLayersNobodyGenerated(controller, layerNames, warnings);
             RemoveLayers(controller, layerNames);
             RemoveOwnedParameters(controller);
 
@@ -132,6 +133,33 @@ namespace Yozolab.DaerD.Authoring
             for (int i = controller.layers.Length - 1; i >= 0; i--)
                 if (names.Contains(controller.layers[i].name))
                     controller.RemoveLayer(i);
+        }
+
+        /// <summary>
+        /// Says so before the sweep takes a layer no recipe generated. This step claims its
+        /// layer by name, which is the same bargain a declared layer makes — except the name
+        /// here has a default, and that default is "DBT", which is exactly what someone would
+        /// call a blend tree layer they built by hand. Replacing it is the contract; losing it
+        /// without a word is not. A layer this recipe generated on an earlier pass is recorded
+        /// as code-owned and says nothing, so the warning only ever fires the first time.
+        /// </summary>
+        static void WarnAboutLayersNobodyGenerated(AnimatorController controller,
+            List<string> names, List<string> warnings)
+        {
+            // The record lives in a sub-asset of the controller, so a controller that is not
+            // on disk has none — and everything would look hand-made, including the layers
+            // this step generated a moment ago. Nothing can be said there, so nothing is.
+            if (string.IsNullOrEmpty(AssetDatabase.GetAssetPath(controller))) return;
+
+            var owned = GraphFrameData.GetCodeOwned(controller);
+            foreach (var layer in controller.layers)
+            {
+                if (!names.Contains(layer.name)) continue;
+                if (layer.stateMachine != null && owned.ContainsKey(layer.stateMachine)) continue;
+                warnings.Add(L.Tr(
+                    "Layer '{0}' was already there and no recipe generated it — the DBT gadgets "
+                    + "replaced it. Give one of the two another name to keep both.", layer.name));
+            }
         }
 
         /// <summary>The layers among <paramref name="names"/> that already exist, paired with
