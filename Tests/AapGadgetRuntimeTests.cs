@@ -366,6 +366,102 @@ namespace Yozolab.DaerD.Tests
                 Assert.AreEqual(expected, rig.Evaluate("Out", Settle, ("A", a), ("B", b)), expected * 3e-3f);
         }
 
+        /// <summary>
+        /// The ranged reciprocal, past where the plain one gives up. Saying the divisor stays in
+        /// 0.001…1 lets it lift the divisor into the half the exact core covers, so there is no
+        /// ladder in the answer — and therefore no 240.
+        /// </summary>
+        [TestCase(1f, 1f)]
+        [TestCase(0.5f, 2f)]
+        [TestCase(0.1f, 10f)]
+        [TestCase(0.01f, 100f)]
+        [TestCase(0.002f, 500f)]
+        [TestCase(0.001f, 1000f)]
+        public void ReciprocalRanged_HasNoCeilingInsideItsWindow(float a, float expected)
+        {
+            using (var rig = RigFor(AapGadgets.Kind.ReciprocalRanged,
+                r => { r.inMin = 0.001f; r.inMax = 1f; }))
+                Assert.AreEqual(expected, rig.Evaluate("Out", Settle, ("A", a)), expected * 2e-3f);
+        }
+
+        /// <summary>Side by side at a divisor the ladder cannot reach: the plain gadget is held
+        /// at its cap and the ranged one is still dividing.</summary>
+        [Test]
+        public void ReciprocalRanged_GoesWhereThePlainOneStops()
+        {
+            using (var plain = RigFor(AapGadgets.Kind.Reciprocal))
+            using (var ranged = RigFor(AapGadgets.Kind.ReciprocalRanged,
+                r => { r.inMin = 0.001f; r.inMax = 1f; }))
+            {
+                Assert.AreEqual(240f, plain.Evaluate("Out", Settle, ("A", 0.001f)), 1f);
+                Assert.AreEqual(1000f, ranged.Evaluate("Out", Settle, ("A", 0.001f)), 2f);
+            }
+        }
+
+        /// <summary>No table means no sampling error either: on the ladder the answer is good to
+        /// about 8e-4 relative, and here it is good to the float.</summary>
+        [Test]
+        public void ReciprocalRanged_IsMoreExactThanTheLadder()
+        {
+            using (var plain = RigFor(AapGadgets.Kind.Reciprocal))
+            using (var ranged = RigFor(AapGadgets.Kind.ReciprocalRanged,
+                r => { r.inMin = 0.01f; r.inMax = 1f; }))
+            {
+                // A value deliberately between two rungs of the ladder.
+                const float x = 0.037f;
+                float exact = 1f / x;
+                float laddered = plain.Evaluate("Out", Settle, ("A", x));
+                float lifted = ranged.Evaluate("Out", Settle, ("A", x));
+
+                Assert.AreEqual(exact, lifted, exact * 1e-5f, "the lifted answer is the float's");
+                Assert.Greater(Mathf.Abs(laddered - exact), Mathf.Abs(lifted - exact),
+                    "and it beats the ladder, which is sampled");
+            }
+        }
+
+        /// <summary>Outside the window the divisor clamps, so the answer is the reciprocal of
+        /// the clamped divisor rather than nonsense — 1/min below, 1/max above.</summary>
+        [Test]
+        public void ReciprocalRanged_ClampsToTheEndsOfItsWindow()
+        {
+            using (var rig = RigFor(AapGadgets.Kind.ReciprocalRanged,
+                r => { r.inMin = 0.01f; r.inMax = 2f; }))
+            {
+                Assert.AreEqual(100f, rig.Evaluate("Out", Settle, ("A", 1e-6f)), 0.5f, "below the window");
+                Assert.AreEqual(0.5f, rig.Evaluate("Out", Settle, ("A", 50f)), 1e-3f, "above it");
+            }
+        }
+
+        [TestCase(1f, 0.001f, 1000f)]
+        [TestCase(3f, 0.01f, 300f)]
+        [TestCase(2f, 4f, 0.5f)]
+        public void DivideRanged_DividesWithoutTheCeiling(float a, float b, float expected)
+        {
+            using (var rig = RigFor(AapGadgets.Kind.DivideRanged,
+                r => { r.inMin = 0.001f; r.inMax = 8f; }))
+                Assert.AreEqual(expected, rig.Evaluate("Out", Settle, ("A", a), ("B", b)),
+                    expected * 3e-3f);
+        }
+
+        /// <summary>A divisor window that starts at or below zero is refused: the lift divides
+        /// by that end, and a window straddling zero has a divisor of zero inside it.</summary>
+        [Test]
+        public void ReciprocalRanged_RefusesAWindowThatTouchesZero()
+        {
+            var controller = NewController("A", "B");
+            var request = NewRequest(controller, AapGadgets.Kind.ReciprocalRanged);
+            request.inMin = 0f;
+            request.inMax = 1f;
+            Assert.IsNotNull(AapGadgets.Validate(request), "a window starting at zero");
+
+            request.inMin = -1f;
+            Assert.IsNotNull(AapGadgets.Validate(request), "and one straddling it");
+
+            request.inMin = 0.5f;
+            request.inMax = 0.5f;
+            Assert.IsNotNull(AapGadgets.Validate(request), "and one with no width");
+        }
+
         // ---- smoothing (the two that never settle) --------------------------------
 
         /// <summary>

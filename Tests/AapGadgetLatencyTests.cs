@@ -287,6 +287,26 @@ namespace Yozolab.DaerD.Tests
                 "and a numerator that moves instead");
         }
 
+        /// <summary>Three: the lift into the exact half's territory, the shift, and the core.
+        /// One more than the plain reciprocal, and one number rather than two — the ladder it
+        /// does without is also the half that used to answer at a different speed.</summary>
+        [Test]
+        public void ReciprocalRanged_CostsThreeFrames()
+        {
+            Assert.AreEqual(3, Latency(AapGadgets.Kind.ReciprocalRanged,
+                r => { r.inMin = 0.001f; r.inMax = 1f; },
+                In(("A", 1f)), In(("A", 0.001f)), "Out", 1000f, 2f));
+        }
+
+        /// <summary>The ranged reciprocal's three, and the multiply.</summary>
+        [Test]
+        public void DivideRanged_CostsFourFrames()
+        {
+            Assert.AreEqual(4, Latency(AapGadgets.Kind.DivideRanged,
+                r => { r.inMin = 0.001f; r.inMax = 8f; },
+                In(("A", 1f), ("B", 1f)), In(("A", 1f), ("B", 0.01f)), "Out", 100f, 0.5f));
+        }
+
         /// <summary>Two frames: one to split both inputs into their halves, one to sum the four
         /// products of those halves. The same two in every quadrant — a sign is not a special
         /// case here, it is which of two weights happens to be non-zero.</summary>

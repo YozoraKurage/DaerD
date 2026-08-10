@@ -59,6 +59,8 @@ namespace Yozolab.DaerD
             // every controller already built.
             MultiplySigned,
             DivideSigned,
+            ReciprocalRanged,
+            DivideRanged,
         }
 
         // Must stay in AapGadgets.Kind order.
@@ -69,6 +71,7 @@ namespace Yozolab.DaerD
             "Reciprocal", "Divide", "Frame Time", "Smooth (Linear)", "Separate Digits",
             "Sine", "Cosine", "Tangent", "LUT (Curve)", "Atan2", "Buffer (Delay)",
             "Multiply (Signed)", "Divide (Signed)",
+            "Reciprocal (Ranged)", "Divide (Ranged)",
         };
 
         public static bool IsBinary(Kind kind) =>
@@ -76,7 +79,14 @@ namespace Yozolab.DaerD
             || kind == Kind.SubRanged || kind == Kind.Multiply
             || kind == Kind.And || kind == Kind.Or || kind == Kind.Divide
             || kind == Kind.Atan2
-            || kind == Kind.MultiplySigned || kind == Kind.DivideSigned;
+            || kind == Kind.MultiplySigned || kind == Kind.DivideSigned
+            || kind == Kind.DivideRanged;
+
+        /// <summary>Kinds that take an *input* range as well as (or instead of) an output one.
+        /// Remap maps from it; the ranged reciprocal and divide use it to say where the divisor
+        /// lives, which is what lets them skip the lookup ladder altogether.</summary>
+        public static bool UsesInputRange(Kind kind) =>
+            kind == Kind.Remap || kind == Kind.ReciprocalRanged || kind == Kind.DivideRanged;
 
         public static bool UsesRange(Kind kind) =>
             kind == Kind.Smooth || kind == Kind.AddRanged || kind == Kind.SubRanged
@@ -143,6 +153,11 @@ namespace Yozolab.DaerD
             /// during validation, and everything it built is swept just before this one is —
             /// so regenerating lands in the same place instead of beside itself.</summary>
             public GraphFrameData.AapGadgetConfig replaces;
+            /// <summary>Output names that already exist because the caller created them up
+            /// front, and are therefore not collisions. A chain that feeds back needs this: the
+            /// gadget reading the loop runs before the one writing it, so the parameter has to
+            /// be there first, and it belongs to the writer all the same.</summary>
+            public string[] preCreated;
         }
 
         /// <summary>
@@ -206,9 +221,15 @@ namespace Yozolab.DaerD
                 // The four half-copies, then the four products of them.
                 case Kind.MultiplySigned:
                     return 2;
+                // The lift into the core's half, the shift, and the core.
+                case Kind.ReciprocalRanged:
+                    return 3;
                 // The reciprocal's two, and the multiply that reads it.
                 case Kind.Divide:
                     return 3;
+                // The ranged reciprocal's three, and the multiply.
+                case Kind.DivideRanged:
+                    return 4;
                 // The magnitude, its reciprocal's two, and the stage that puts the sign back.
                 case Kind.DivideSigned:
                     return 4;
@@ -292,8 +313,12 @@ namespace Yozolab.DaerD
                 || r.kind == Kind.MultiplySigned || r.kind == Kind.DivideSigned)
                 && !(r.rangeMin < r.rangeMax))
                 return L.Tr("Range Min must be smaller than Range Max.");
-            if (r.kind == Kind.Remap && !(r.inMin < r.inMax))
+            if (UsesInputRange(r.kind) && !(r.inMin < r.inMax))
                 return L.Tr("Input Min must be smaller than Input Max.");
+            // The lift divides by the window's lower end and needs the whole window on one side
+            // of zero, so that a divisor inside it is never zero and never changes sign.
+            if ((r.kind == Kind.ReciprocalRanged || r.kind == Kind.DivideRanged) && !(r.inMin > 0f))
+                return L.Tr("The divisor range must start above zero — it is what the reciprocal is scaled by.");
             if (r.kind == Kind.Lut1D)
             {
                 if (r.curve == null || r.curve.length < 2)
@@ -317,7 +342,9 @@ namespace Yozolab.DaerD
         /// parameters exist because the previous run of this very request created them, and
         /// they are swept before the new ones are built — reading them as a collision would
         /// make a gadget impossible to regenerate under its own name.</summary>
-        static bool Reclaims(Request r, string name) => r.replaces != null && r.replaces.Owns(name);
+        static bool Reclaims(Request r, string name) =>
+            (r.replaces != null && r.replaces.Owns(name))
+            || (r.preCreated != null && System.Array.IndexOf(r.preCreated, name) >= 0);
 
         static AapSmoothing.Request ToSmoothingRequest(Request r) => new AapSmoothing.Request
         {
@@ -623,7 +650,11 @@ namespace Yozolab.DaerD
                 case Kind.FloatAsBool: return FloatAsBool(c, a, output, r.threshold);
                 case Kind.Remap: return Remap(c, a, output, r.rangeMin, r.rangeMax, r.inMin, r.inMax);
                 case Kind.Reciprocal: return Reciprocal(c, a, output, one);
+                case Kind.ReciprocalRanged:
+                    return ReciprocalRanged(c, a, output, one, r.inMin, r.inMax);
                 case Kind.Divide: return Divide(c, a, b, output, one);
+                case Kind.DivideRanged:
+                    return DivideRanged(c, a, b, output, one, r.inMin, r.inMax);
                 case Kind.FrameTime: return FrameTime(c, output);
                 case Kind.SmoothLinear:
                     return SmoothLinear(c, a, output, one, r.smoothing, r.rangeMin, r.rangeMax);
@@ -1052,6 +1083,71 @@ namespace Yozolab.DaerD
                     clips[value] = clip = DbtBuilder.ParameterClip(c, output, value);
                 tree.AddChild(clip, u);
             }
+            return tree;
+        }
+
+        /// <summary>
+        /// output = 1 / input for a divisor that stays inside [min, max], both positive — with
+        /// no lookup ladder in it, and so no ceiling of its own.
+        ///
+        /// <see cref="Reciprocal"/> stops at 240 because of the table that covers inputs below
+        /// 1, and that table is only there because the exact core needs a weight that would have
+        /// to go negative down there. The core itself has no ceiling: it divides by a shift a
+        /// sibling wrote, which is a float and not a table. So a divisor whose range is known
+        /// can be lifted into the core's half and never meet the ladder at all:
+        ///
+        ///     1 / x = (1 / min) · 1 / (x / min),   and x / min is 1 or more by construction.
+        ///
+        /// The scaling back is free — the core's own clip carries 1/min instead of 1, so the
+        /// division and the rescale are the same write. Three frames: the lift, the shift, the
+        /// core. Accuracy is the float's rather than a sampled table's, which also makes this
+        /// the reciprocal to iterate against when a recipe wants more digits than the ladder's
+        /// ~8e-4.
+        ///
+        /// Outside the window the lift clamps, and the answer is the reciprocal of the clamped
+        /// divisor — 1/min below it and 1/max above — which is the honest reading of "the
+        /// divisor was supposed to be in here".
+        /// </summary>
+        public static BlendTree ReciprocalRanged(AnimatorController c, string input, string output,
+            string one, float min, float max)
+        {
+            string lifted = output + "/Lifted", shift = output + "/Shift";
+            string name = Name("Reciprocal", input, null) + " (Ranged)";
+            DbtBuilder.EnsureFloatParameter(c, output, 0f);
+            DbtBuilder.EnsureFloatParameter(c, lifted, 0f);
+            DbtBuilder.EnsureFloatParameter(c, shift, 0f);
+
+            var core = DbtBuilder.DirectTree(c, name + " (Core)");
+            DbtBuilder.SetNormalizedBlendValues(core, true);
+            DbtBuilder.AddDirectChild(core, DbtBuilder.EmptyClip(c, "Weight Only"), shift);
+            DbtBuilder.AddDirectChild(core, DbtBuilder.ParameterClip(c, output, 1f / min), one);
+
+            var tree = DbtBuilder.DirectTree(c, name);
+            DbtBuilder.AddDirectChild(tree, Remap(c, input, lifted, 1f, max / min, min, max), one);
+            DbtBuilder.AddDirectChild(tree, Sub(c, lifted, one, shift), one);
+            DbtBuilder.AddDirectChild(tree, core, one);
+            return tree;
+        }
+
+        /// <summary>output = A / B for a divisor inside [min, max], both positive:
+        /// <see cref="ReciprocalRanged"/>'s three frames and one for the multiply, with the
+        /// numerator held back the same three so the quotient is of one moment. Four frames, and
+        /// none of <see cref="Divide"/>'s ceiling.</summary>
+        public static BlendTree DivideRanged(AnimatorController c, string a, string b,
+            string output, string one, float min, float max)
+        {
+            string inverse = InverseParameter(output);
+            string first = output + "/Num/1", second = output + "/Num/2", numerator = output + "/Num";
+            DbtBuilder.EnsureFloatParameter(c, output, 0f);
+            foreach (var name in new[] { first, second, numerator })
+                DbtBuilder.EnsureFloatParameter(c, name, 0f);
+
+            var tree = DbtBuilder.DirectTree(c, Name("Div", a, b) + " (Ranged)");
+            DbtBuilder.AddDirectChild(tree, ReciprocalRanged(c, b, inverse, one, min, max), one);
+            DbtBuilder.AddDirectChild(tree, Copy(c, a, first), one);
+            DbtBuilder.AddDirectChild(tree, Copy(c, first, second), one);
+            DbtBuilder.AddDirectChild(tree, Copy(c, second, numerator), one);
+            DbtBuilder.AddDirectChild(tree, Multiply(c, numerator, inverse, output), one);
             return tree;
         }
 

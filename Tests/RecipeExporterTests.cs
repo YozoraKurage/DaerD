@@ -313,6 +313,37 @@ namespace Yozolab.DaerD.Tests
             return code.Substring(start);
         }
 
+        /// <summary>The ranged division pair carries the divisor window it was built with;
+        /// written back without it, the reciprocal would be the laddered one and the controller
+        /// would cap at 240 where the original did not.</summary>
+        [Test]
+        public void Export_RangedDivisionGadgets_CarryTheirDivisorWindow()
+        {
+            WithSavedController(controller =>
+            {
+                ApplyGadget(controller, AapGadgets.Kind.ReciprocalRanged, r =>
+                {
+                    r.output = "A/Inv";
+                    r.inMin = 0.001f;
+                    r.inMax = 1f;
+                });
+                ApplyGadget(controller, AapGadgets.Kind.DivideRanged, r =>
+                {
+                    r.output = "A÷B";
+                    r.inMin = 0.5f;
+                    r.inMax = 8f;
+                });
+
+                var result = RecipeExporter.Export(controller, null, "GadgetRecipe", null);
+                Assert.IsEmpty(result.warnings, string.Join("\n", result.warnings));
+
+                StringAssert.Contains(".ReciprocalRanged(\"A\", \"A/Inv\", 0.001f, 1)", result.code);
+                StringAssert.Contains(".DivideRanged(\"A\", \"B\", \"A÷B\", 0.5f, 8)", result.code);
+                StringAssert.DoesNotContain(".Reciprocal(\"A\"", result.code);
+                StringAssert.DoesNotContain("NewBlendTree(", Body(result.code));
+            });
+        }
+
         /// <summary>The signed pair export as their own calls, ranges and all — a signed
         /// multiply written back as the plain one would come out positive-only, which is a
         /// different controller.</summary>

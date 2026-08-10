@@ -130,7 +130,9 @@ namespace Yozolab.DaerD
                 case AapGadgets.Kind.Not: _output = a + "/Not"; break;
                 case AapGadgets.Kind.FloatAsBool: _output = a + "/Bool"; break;
                 case AapGadgets.Kind.Remap: _output = a + "/Remapped"; break;
-                case AapGadgets.Kind.Reciprocal: _output = a + "/Inv"; break;
+                case AapGadgets.Kind.Reciprocal:
+                case AapGadgets.Kind.ReciprocalRanged: _output = a + "/Inv"; break;
+                case AapGadgets.Kind.DivideRanged: _output = a + "÷" + b; break;
                 case AapGadgets.Kind.Divide:
                 case AapGadgets.Kind.DivideSigned: _output = a + "÷" + b; break;
                 // No input to name it after — and one per controller is the idea anyway.
@@ -175,7 +177,11 @@ namespace Yozolab.DaerD
                 case AapGadgets.Kind.Remap:
                     return L.Tr("Linearly remaps the input range to the output range (reversed output ranges invert the slope).");
                 case AapGadgets.Kind.Reciprocal:
-                    return L.Tr("output = 1 / input, for positive inputs: exact from 1 up, a lookup table below it (capped at 240). The result trails the input by two frames.");
+                    return L.Tr("output = 1 / input, for positive inputs: exact from 1 up, a lookup table below it (capped at 240). Two frames. If you know the range the divisor stays in, Reciprocal (Ranged) has no cap and no table.");
+                case AapGadgets.Kind.ReciprocalRanged:
+                    return L.Tr("output = 1 / input for a divisor inside Divisor Min…Max, both above zero. Lifts the divisor above 1 so the exact half answers on its own — no 240 cap, no lookup table. Three frames. Outside the range the answer is the reciprocal of the clamped divisor.");
+                case AapGadgets.Kind.DivideRanged:
+                    return L.Tr("output = A / B for a divisor inside Divisor Min…Max, both above zero. No cap and no lookup table; four frames. Prefer this over Divide whenever B's range is known.");
                 case AapGadgets.Kind.Divide:
                     return L.Tr("output = A / B, for positive inputs. Builds B's reciprocal first, so the result trails by three frames.");
                 case AapGadgets.Kind.DivideSigned:
@@ -325,11 +331,14 @@ namespace Yozolab.DaerD
                     _kind == AapGadgets.Kind.Remap ? L.Tr("Output Max") : L.Tr("Range Max"), _rangeMax);
                 EditorGUILayout.EndHorizontal();
             }
-            if (_kind == AapGadgets.Kind.Remap)
+            if (AapGadgets.UsesInputRange(_kind))
             {
+                bool divisor = _kind != AapGadgets.Kind.Remap;
                 EditorGUILayout.BeginHorizontal();
-                _inMin = EditorGUILayout.FloatField(L.Tr("Input Min"), _inMin);
-                _inMax = EditorGUILayout.FloatField(L.Tr("Input Max"), _inMax);
+                _inMin = EditorGUILayout.FloatField(
+                    divisor ? L.Tr("Divisor Min") : L.Tr("Input Min"), _inMin);
+                _inMax = EditorGUILayout.FloatField(
+                    divisor ? L.Tr("Divisor Max") : L.Tr("Input Max"), _inMax);
                 EditorGUILayout.EndHorizontal();
             }
             if (_kind == AapGadgets.Kind.FloatAsBool)

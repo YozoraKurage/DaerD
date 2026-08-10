@@ -738,6 +738,120 @@ namespace Yozolab.DaerD.Tests
             Assert.IsEmpty(recipe.Generate());
         }
 
+        /// <summary>
+        /// A chain that feeds back into itself says so, because the frame counts stop describing
+        /// it the moment it does. The ages are computed by walking the chain once from its
+        /// inputs; a gadget reading what a later gadget writes closes a loop, and a parameter in
+        /// a loop holds a little of every past frame rather than information of one age.
+        ///
+        /// It is a note and not a refusal — an integrator or an iteration is a loop on purpose.
+        /// </summary>
+        [Test]
+        public void Gadgets_SayWhenTheChainFeedsBackIntoItself()
+        {
+            var controller = Track(new AnimatorController());
+            var recipe = NewRecipe(controller, c =>
+            {
+                var x = c.FloatParameter("X");
+                c.FloatParameter("Loop");
+                c.Layer("Base").NewState("S");
+                // Loop is read here and written two lines down: an integrator, in miniature.
+                c.Gadgets("Math")
+                    .Add(x, "Loop", "Loop/Next")
+                    .Remap("Loop/Next", "Loop", 0f, 2f, 0f, 2f);
+            });
+
+            var warnings = recipe.Generate();
+            Assert.AreEqual(1, warnings.Count, string.Join("\n", warnings));
+            Assert.IsTrue(warnings[0].Contains("feeds back"), warnings[0]);
+            Assert.IsTrue(warnings[0].Contains("Loop"), warnings[0]);
+
+            // Built regardless — the loop is the point, and it needs the parameter it reads to
+            // exist before the gadget that writes it has run.
+            Assert.IsNotNull(DbtBuilder.FindParameter(controller, "Loop/Next"));
+            Assert.IsNotNull(DbtBuilder.FindParameter(controller, "Loop"));
+            var root = (BlendTree)controller.layers[IndexOfLayer(controller, "Math")]
+                .stateMachine.states[0].state.motion;
+            Assert.AreEqual(2, root.children.Length, "both gadgets are in the layer");
+        }
+
+        /// <summary>
+        /// And it runs: an integrator built as a loop through the gadget chain adds its input to
+        /// itself once a frame. Two gadgets, so one round of the loop takes two frames — which
+        /// is the whole reason the frame arithmetic bows out here and a measurement takes over.
+        /// </summary>
+        [Test]
+        public void Gadgets_AChainThatFeedsBackActuallyRuns()
+        {
+            var controller = Track(new AnimatorController());
+            var recipe = NewRecipe(controller, c =>
+            {
+                var step = c.FloatParameter("Step");
+                c.FloatParameter("Total");
+                c.Layer("Base").NewState("S");
+                c.Gadgets("Math")
+                    .Add(step, "Total", "Total/Next")
+                    .Remap("Total/Next", "Total", 0f, 100f, 0f, 100f);
+            });
+            recipe.Generate();
+
+            using (var rig = new AnimatorRig(controller))
+            {
+                rig.Set("Step", 1f);
+                // Two gadgets in the ring, so the total goes up by one every two frames.
+                rig.Step(20);
+                float after20 = rig.Get("Total");
+                Assert.Greater(after20, 5f, "it is accumulating");
+                Assert.Less(after20, 15f, "at about half a step a frame");
+
+                rig.Step(20);
+                Assert.AreEqual(after20 * 2f, rig.Get("Total"), 2f, "and steadily");
+            }
+        }
+
+        /// <summary>One note per chain, not one per gadget in the loop: the useful fact is that
+        /// the arithmetic has stopped applying, and repeating it for every edge would bury the
+        /// misalignment reports that are still worth reading.</summary>
+        [Test]
+        public void Gadgets_SayItOnceHoweverManyWaysTheChainLoops()
+        {
+            var controller = Track(new AnimatorController());
+            var recipe = NewRecipe(controller, c =>
+            {
+                var x = c.FloatParameter("X");
+                c.FloatParameter("P");
+                c.FloatParameter("Q");
+                c.Layer("Base").NewState("S");
+                c.Gadgets("Math")
+                    .Add(x, "P", "A1")
+                    .Add(x, "Q", "A2")
+                    .Remap("A1", "P", 0f, 2f, 0f, 2f)
+                    .Remap("A2", "Q", 0f, 2f, 0f, 2f);
+            });
+
+            var warnings = recipe.Generate();
+            Assert.AreEqual(1, warnings.Count, string.Join("\n", warnings));
+        }
+
+        /// <summary>A one-way chain says nothing, which is what makes the note above worth
+        /// reading when it does appear.</summary>
+        [Test]
+        public void Gadgets_SayNothingAboutAChainThatOnlyFlowsForward()
+        {
+            var controller = Track(new AnimatorController());
+            var recipe = NewRecipe(controller, c =>
+            {
+                var x = c.FloatParameter("X");
+                c.Layer("Base").NewState("S");
+                c.Gadgets("Math")
+                    .Not(x, "X/Not")
+                    .Not("X/Not", "X/Back")
+                    .ReciprocalRanged("X/Back", "X/Inv", 0.01f, 1f);
+            });
+
+            Assert.IsEmpty(recipe.Generate());
+        }
+
         /// <summary>A behaviour can sit on a state machine as well as on a state, and the
         /// recipe API has to be able to say so — otherwise regenerating a layer silently
         /// strips whatever the controller had there.</summary>

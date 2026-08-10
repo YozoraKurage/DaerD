@@ -359,9 +359,14 @@ namespace Yozolab.DaerD.Tests
             rack.Gadget(AapGadgets.Kind.Remap, "Norm", "Slope",
                 configure: r => { r.inMin = -100f; r.inMax = 100f; r.rangeMin = 0f; r.rangeMax = 1f; });
 
-            // Division, both ways round.
+            // Division, every way round: the laddered pair, and the pair that skips the ladder
+            // because the divisor's window is declared.
             rack.Gadget(AapGadgets.Kind.Reciprocal, "Inv", "Sum");
             rack.Gadget(AapGadgets.Kind.Divide, "Ratio", "Scale", "Sum");
+            rack.Gadget(AapGadgets.Kind.ReciprocalRanged, "InvExact", "Sum",
+                configure: r => { r.inMin = 0.25f; r.inMax = 4f; });
+            rack.Gadget(AapGadgets.Kind.DivideRanged, "RatioExact", "Scale", "Sum",
+                configure: r => { r.inMin = 0.25f; r.inMax = 4f; });
 
             // The three that are about time rather than value.
             rack.Gadget(AapGadgets.Kind.SmoothLinear, "Tracked", "Throttle",
@@ -422,6 +427,10 @@ namespace Yozolab.DaerD.Tests
 
                 Assert.AreEqual(1f / 0.9f, rig.Get("Inv"), 4e-3f, "Inv = 1 / Sum");
                 Assert.AreEqual(0.2f / 0.9f, rig.Get("Ratio"), 2e-3f, "Ratio = Scale / Sum");
+                // The same two numbers with no lookup ladder in them, so the tolerance is the
+                // float's rather than the table's.
+                Assert.AreEqual(1f / 0.9f, rig.Get("InvExact"), 1e-4f, "InvExact = 1 / Sum");
+                Assert.AreEqual(0.2f / 0.9f, rig.Get("RatioExact"), 1e-4f, "RatioExact = Scale / Sum");
 
                 Assert.AreEqual(0.5f, rig.Get("Tracked"), 5e-3f, "Tracked caught up to Throttle");
                 Assert.AreEqual(0.5f, rig.Get("Eased"), 5e-3f, "Eased caught up to Throttle");

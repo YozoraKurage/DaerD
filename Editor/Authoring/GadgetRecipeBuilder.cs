@@ -123,6 +123,7 @@ namespace Yozolab.DaerD.Authoring
                 warnings.Add(entry.Value);
                 if (_requireAligned) refused.Add(entry.Key);
             }
+            OpenTheLoops(controller, warnings);
 
             foreach (var request in _requests)
             {
@@ -285,6 +286,13 @@ namespace Yozolab.DaerD.Authoring
         ///
         ///   var gadgets = c.Gadgets("Math").Divide(a, b, "Q").Not(flag, "Off");
         ///   gadgets.Buffer("Off", "Off/Aligned", gadgets.FramesBehind("Q") - gadgets.FramesBehind("Off"));
+        ///
+        /// An age is a feed-forward idea. Feed a chain back into itself — an integrator, a
+        /// filter of your own, an iteration like Newton's — and the parameter no longer holds
+        /// information of one age: it holds a little of every frame that has passed. The number
+        /// here then describes only how fresh the newest ingredient is, which is why both
+        /// smoothings are documented as filters rather than as stages. Generate says so out
+        /// loud when a chain feeds back; see <see cref="Run"/>.
         /// </summary>
         public int FramesBehind(ParamRef parameter) =>
             parameter.Name != null && _ages.TryGetValue(parameter.Name, out int age) ? age : 0;
@@ -350,6 +358,68 @@ namespace Yozolab.DaerD.Authoring
             if (first != null) roots.UnionWith(SourcesOf(first));
             if (second != null) roots.UnionWith(SourcesOf(second));
             RecordAges(request, oldest + AapGadgets.Latency(request), roots);
+        }
+
+        /// <summary>
+        /// Makes a chain that feeds back into itself buildable, and says that it does.
+        ///
+        /// Two separate things go wrong when a gadget reads a parameter a later gadget writes.
+        ///
+        /// It would not build at all. Every output is swept before the chain runs and recreated
+        /// by the gadget that owns it, so whichever gadget reads the loop first finds nothing
+        /// there and is refused for reading a parameter that does not exist — and a loop always
+        /// has one, whichever order it is written in. So those names are created up front, at
+        /// zero, and marked on the writing request as not-a-collision. Zero is also the loop's
+        /// initial value, which is the other thing a loop needs and a one-way chain does not.
+        ///
+        /// And the frame counts stop describing it. The ages above come from walking the chain
+        /// once from its inputs, adding each gadget's cost to the oldest thing it reads: that is
+        /// arithmetic on a one-way flow. A parameter inside a loop does not hold information of
+        /// one age at all — it holds a little of every frame that has passed, the way an
+        /// exponential smoothing does. So <see cref="FramesBehind"/> and the alignment check
+        /// stop applying around the loop, and whether the thing settles becomes a question for
+        /// a running animator rather than for arithmetic. Said once per chain: the useful fact
+        /// is that the arithmetic no longer holds, and repeating it per edge would bury the
+        /// misalignment reports that still do.
+        /// </summary>
+        void OpenTheLoops(AnimatorController controller, List<string> warnings)
+        {
+            string reader = null, written = null, writer = null;
+            var opened = new Dictionary<AapGadgets.Request, List<string>>();
+
+            for (int i = 0; i < _requests.Count; i++)
+                foreach (var input in ValueInputs(_requests[i]))
+                    for (int later = i; later < _requests.Count; later++)
+                    {
+                        if (Array.IndexOf(AapGadgets.OutputParameters(_requests[later]), input) < 0)
+                            continue;
+                        if (reader == null)
+                        {
+                            reader = _requests[i].output;
+                            written = input;
+                            writer = _requests[later].output;
+                        }
+                        if (!opened.TryGetValue(_requests[later], out var names))
+                            opened[_requests[later]] = names = new List<string>();
+                        if (!names.Contains(input)) names.Add(input);
+                        break;
+                    }
+
+            if (reader == null) return;
+
+            foreach (var entry in opened)
+            {
+                foreach (var name in entry.Value)
+                    DbtBuilder.EnsureFloatParameter(controller, name, 0f);
+                entry.Key.preCreated = entry.Value.ToArray();
+            }
+
+            warnings.Add(L.Tr(
+                "DBT gadget '{0}' in layer '{1}' reads '{2}', which '{3}' writes later in the "
+                + "same chain — the chain feeds back. It is built, starting from zero, but frame "
+                + "counts describe one-way chains: FramesBehind and the alignment check no "
+                + "longer apply around the loop. Measure whether it settles instead.",
+                reader, _layerName, written, writer));
         }
 
         /// <summary>The inputs whose values the gadget combines. A smoothing amount is left out
@@ -501,6 +571,32 @@ namespace Yozolab.DaerD.Authoring
                 output = output.Name,
             }, Line("Reciprocal", new[] { P(input), P(output) }));
 
+        /// <summary>
+        /// output = 1 / input for a divisor that stays inside min..max, both positive. Three
+        /// frames, and none of <see cref="Reciprocal"/>'s ceiling.
+        ///
+        /// The plain reciprocal stops at 240 because of the lookup table covering inputs below
+        /// 1. Saying where the divisor lives lets this one lift it above 1 first, where the
+        /// exact half carries the answer with no table involved — so there is no cap, and the
+        /// accuracy is the float's rather than a sampled ladder's ~8e-4. Outside the window the
+        /// answer is the reciprocal of the clamped divisor: 1/min below it, 1/max above.
+        ///
+        /// Prefer this whenever the divisor's range is known, which is most of the time.
+        /// </summary>
+        public GadgetRecipeBuilder ReciprocalRanged(ParamRef input, ParamRef output,
+            float min, float max) =>
+            Queue(new AapGadgets.Request
+            {
+                kind = AapGadgets.Kind.ReciprocalRanged,
+                inputA = input.Name,
+                output = output.Name,
+                inMin = min,
+                inMax = max,
+            }, Line("ReciprocalRanged", new[]
+            {
+                P(input), P(output), RecipeScript.F(min), RecipeScript.F(max),
+            }));
+
         /// <summary>output = A / B for positive inputs: B's reciprocal, then A times it. Three
         /// frames — <see cref="Reciprocal"/>'s two and one for the multiply, with the numerator
         /// held back so both sides of it describe the same frame.</summary>
@@ -512,6 +608,25 @@ namespace Yozolab.DaerD.Authoring
                 inputB = b.Name,
                 output = output.Name,
             }, Line("Divide", new[] { P(a), P(b), P(output) }));
+
+        /// <summary>output = A / B for a divisor that stays inside min..max, both positive:
+        /// <see cref="ReciprocalRanged"/> and a multiply, four frames, with the numerator held
+        /// back to meet it. No ceiling and no ladder — the one to reach for when the divisor's
+        /// range is known.</summary>
+        public GadgetRecipeBuilder DivideRanged(ParamRef a, ParamRef b, ParamRef output,
+            float min, float max) =>
+            Queue(new AapGadgets.Request
+            {
+                kind = AapGadgets.Kind.DivideRanged,
+                inputA = a.Name,
+                inputB = b.Name,
+                output = output.Name,
+                inMin = min,
+                inMax = max,
+            }, Line("DivideRanged", new[]
+            {
+                P(a), P(b), P(output), RecipeScript.F(min), RecipeScript.F(max),
+            }));
 
         /// <summary>
         /// output = A / B for signed inputs, in four frames: |B| from a 1D tree with a corner at

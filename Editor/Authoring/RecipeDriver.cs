@@ -250,6 +250,12 @@ namespace Yozolab.DaerD.Authoring
                         gadgets.Remap(r.inputA, r.output, r.inMin, r.inMax, r.rangeMin, r.rangeMax);
                         break;
                     case AapGadgets.Kind.Reciprocal: gadgets.Reciprocal(r.inputA, r.output); break;
+                    case AapGadgets.Kind.ReciprocalRanged:
+                        gadgets.ReciprocalRanged(r.inputA, r.output, r.inMin, r.inMax);
+                        break;
+                    case AapGadgets.Kind.DivideRanged:
+                        gadgets.DivideRanged(r.inputA, r.inputB, r.output, r.inMin, r.inMax);
+                        break;
                     case AapGadgets.Kind.Divide:
                         gadgets.Divide(r.inputA, r.inputB, r.output);
                         break;
