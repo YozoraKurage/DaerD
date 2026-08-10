@@ -164,6 +164,23 @@ namespace Yozolab.DaerD.Tests
                     Assert.IsTrue(HasCondition(transition, "Async/Index", AnimatorConditionMode.Equals, 1f));
         }
 
+        /// <summary>
+        /// The driver on a state, read as data rather than cast to a type. The builder looks
+        /// its driver class up by NAME, so in a project that also has the real VRChat SDK
+        /// installed it is the SDK's VRCAvatarParameterDriver that gets attached, not the
+        /// stub beside these tests, and a cast would come back null there while passing
+        /// here. Reading it the way the product does — through the SerializedObject
+        /// accessor — asserts the same thing whichever class won the lookup.
+        /// </summary>
+        static ControllerIR.DriverSpec DriverOn(AnimatorState state, int index = 0)
+        {
+            Assert.Greater(state.behaviours.Length, index, "no behaviour on '" + state.name + "'");
+            var behaviour = state.behaviours[index];
+            Assert.IsTrue(VrcParameterDriver.Is(behaviour),
+                "behaviour " + index + " on '" + state.name + "' is not a parameter driver");
+            return VrcParameterDriver.ReadSpec(behaviour);
+        }
+
         static AnimatorState FindState(AnimatorStateMachine stateMachine, string name)
         {
             foreach (var child in stateMachine.states)
@@ -1111,15 +1128,14 @@ namespace Yozolab.DaerD.Tests
             Assert.AreEqual(5, sm.states.Length);
             Assert.AreEqual(2, sm.anyStateTransitions.Length);
 
-            var driver = FindState(sm, "Send F +1").behaviours[0] as VRCAvatarParameterDriver;
-            Assert.IsNotNull(driver);
+            var driver = DriverOn(FindState(sm, "Send F +1"));
             // The Bool rides Bool channel 0 even though it sits second in the step.
-            Assert.AreEqual("F", driver.parameters[0].source);
-            Assert.AreEqual("Async/Float", driver.parameters[0].name);
-            Assert.AreEqual("B", driver.parameters[1].source);
-            Assert.AreEqual("Async/Bool", driver.parameters[1].name);
-            Assert.AreEqual("Async/Index", driver.parameters[2].name);
-            Assert.AreEqual(0f, driver.parameters[2].value);
+            Assert.AreEqual("F", driver.entries[0].source);
+            Assert.AreEqual("Async/Float", driver.entries[0].name);
+            Assert.AreEqual("B", driver.entries[1].source);
+            Assert.AreEqual("Async/Bool", driver.entries[1].name);
+            Assert.AreEqual("Async/Index", driver.entries[2].name);
+            Assert.AreEqual(0f, driver.entries[2].value);
 
             Object.DestroyImmediate(controller);
         }
@@ -1362,17 +1378,15 @@ namespace Yozolab.DaerD.Tests
             Assert.IsTrue(AsyncSyncBuilder.Apply(request));
 
             var sm = controller.layers[1].stateMachine;
-            var first = FindState(sm, "Send F").behaviours[0] as VRCAvatarParameterDriver;
-            var second = FindState(sm, "Send F (2)").behaviours[0] as VRCAvatarParameterDriver;
-            Assert.IsNotNull(first);
-            Assert.IsNotNull(second);
+            var first = DriverOn(FindState(sm, "Send F"));
+            var second = DriverOn(FindState(sm, "Send F (2)"));
             // Same copy, different index: the payload repeats and the index does not.
-            Assert.AreEqual("F", first.parameters[0].source);
-            Assert.AreEqual("F", second.parameters[0].source);
-            Assert.AreEqual("Async/Index", first.parameters[1].name);
-            Assert.AreEqual(0f, first.parameters[1].value);
-            Assert.AreEqual("Async/Index", second.parameters[1].name);
-            Assert.AreEqual(1f, second.parameters[1].value);
+            Assert.AreEqual("F", first.entries[0].source);
+            Assert.AreEqual("F", second.entries[0].source);
+            Assert.AreEqual("Async/Index", first.entries[1].name);
+            Assert.AreEqual(0f, first.entries[1].value);
+            Assert.AreEqual("Async/Index", second.entries[1].name);
+            Assert.AreEqual(1f, second.entries[1].value);
 
             Object.DestroyImmediate(controller);
         }
@@ -1683,23 +1697,21 @@ namespace Yozolab.DaerD.Tests
             Assert.IsTrue(AsyncSyncBuilder.Apply(request));
 
             var sendB = FindState(controller.layers[1].stateMachine, "Send B");
-            var driver = sendB.behaviours[0] as VRCAvatarParameterDriver;
-            Assert.IsNotNull(driver);
+            var driver = DriverOn(sendB);
             Assert.IsTrue(driver.localOnly);
 
-            Assert.AreEqual(3, driver.parameters.Count);
-            Assert.AreEqual(3, driver.parameters[0].type);   // Copy: B -> channel
-            Assert.AreEqual("B", driver.parameters[0].source);
-            Assert.AreEqual("Async/Index", driver.parameters[1].name);
-            Assert.AreEqual(1f, driver.parameters[1].value);
-            Assert.AreEqual(0, driver.parameters[2].type);   // Set: flag down
-            Assert.AreEqual("Async/Req/B", driver.parameters[2].name);
-            Assert.AreEqual(0f, driver.parameters[2].value);
+            Assert.AreEqual(3, driver.entries.Count);
+            Assert.AreEqual(3, driver.entries[0].kind);   // Copy: B -> channel
+            Assert.AreEqual("B", driver.entries[0].source);
+            Assert.AreEqual("Async/Index", driver.entries[1].name);
+            Assert.AreEqual(1f, driver.entries[1].value);
+            Assert.AreEqual(0, driver.entries[2].kind);   // Set: flag down
+            Assert.AreEqual("Async/Req/B", driver.entries[2].name);
+            Assert.AreEqual(0f, driver.entries[2].value);
 
             // States that don't serve the slot don't touch the flag.
             var sendF = FindState(controller.layers[1].stateMachine, "Send F");
-            var sendFDriver = sendF.behaviours[0] as VRCAvatarParameterDriver;
-            Assert.IsFalse(sendFDriver.parameters.Exists(p => p.name == "Async/Req/B"));
+            Assert.IsFalse(DriverOn(sendF).entries.Exists(e => e.name == "Async/Req/B"));
         }
 
         // ---- Empty clip -----------------------------------------------------
