@@ -334,10 +334,6 @@ namespace Yozolab.DaerD
                 }
         }
 
-        /// <summary>A DBT gadget added parameters, possibly a layer and a blend tree — let
-        /// every panel and the graph pick that up.</summary>
-        void OnDbtGadgetApplied() => Context.NotifyLayerStructureChanged();
-
         void ShowUsagesMenu(string parameterName, int index)
         {
             var controller = Context.Controller;
@@ -490,15 +486,12 @@ namespace Yozolab.DaerD
                 menu.AddItem(new GUIContent(type.ToString()), false, () => AddParameter(captured));
             }
 
-            // Computed parameters: a DBT gadget adds its output (and helper) parameters and
-            // the Direct-blend-tree machinery that drives them.
-            menu.AddSeparator(string.Empty);
-            menu.AddItem(new GUIContent("DBT Gadget (AAP)"), false, () =>
-                AapGadgetWindow.Open(Context.Controller, OnDbtGadgetApplied));
-            menu.AddItem(new GUIContent("Object Toggle"), false, () =>
-                ToggleBuilderWindow.Open(Context.Controller, _ => OnDbtGadgetApplied()));
-            menu.AddItem(new GUIContent("Async Sync"), false, () =>
-                AsyncSyncWindow.Open(Context.Controller, _ => OnDbtGadgetApplied()));
+            // The generators that add computed parameters — DBT gadgets and async sync — are
+            // reached from the home screen, which lists what a controller already has as well
+            // as offering to add more. Adding one is not the part that needs an entry point:
+            // finding the four you built last month is, and this menu could never show that.
+            // Object Toggle is not on the home screen either, by an older decision — it records
+            // nothing in the controller, so there is nothing for a management surface to list.
 
             // VRChat built-in parameters. Already-present ones show as a checked, disabled entry so
             // the menu doubles as a quick "which standard parameters does this controller have?".
