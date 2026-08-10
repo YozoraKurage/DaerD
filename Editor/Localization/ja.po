@@ -541,6 +541,12 @@ msgstr "入力の最小値"
 msgid "Input Max"
 msgstr "入力の最大値"
 
+msgid "Divisor Min"
+msgstr "除数の最小値"
+
+msgid "Divisor Max"
+msgstr "除数の最大値"
+
 msgid "Threshold"
 msgstr "しきい値"
 
@@ -552,6 +558,9 @@ msgstr "出力パラメーターには入力と異なる名前が必要です。
 
 msgid "Input Min must be smaller than Input Max."
 msgstr "入力の最小値は最大値より小さくしてください。"
+
+msgid "The input range must start above zero for this gadget."
+msgstr "このガジェットでは、入力範囲を 0 より大きい値から始めてください。"
 
 msgid "output = lerp(input, output, smoothing) — exponential smoothing recalculated every frame."
 msgstr "output = lerp(入力, 出力, スムージング量)。毎フレーム再計算される指数スムージングです。"
@@ -568,8 +577,11 @@ msgstr "output = A - B。正の値専用です。負の値を扱う場合は Sub
 msgid "output = A - B over the given range; use a symmetric range (Min = -Max)."
 msgstr "指定した範囲で output = A - B を計算します。範囲は対称（最小値 = -最大値）にしてください。"
 
-msgid "output = A × B via nested Direct trees. Positive values only."
-msgstr "Direct ツリーのネストで output = A × B を計算します。正の値専用です。"
+msgid "output = A × B via nested Direct trees. Positive values only; use Multiply (Signed) for negative ones. One frame."
+msgstr "Direct ツリーのネストで output = A × B を計算します。正の値専用です。負の値を扱う場合は Multiply (Signed) を使用してください。1 フレーム。"
+
+msgid "output = A × B for signed values: each input is split into its positive and negative halves and the four products are summed. The range bounds the inputs, not the result. Two frames."
+msgstr "符号付きの output = A × B。各入力を正の半分と負の半分に分け、4 つの積を合計します。範囲が制限するのは入力であって、結果ではありません。2 フレーム。"
 
 msgid "output = A AND B, for 0/1 inputs."
 msgstr "output = A AND B（0/1 の入力用）。"
@@ -589,11 +601,20 @@ msgstr "入力範囲を出力範囲へ線形にリマップします（出力範
 msgid "output = 1 / input, for positive inputs. The result trails the input by two frames."
 msgstr "output = 1 / 入力（正の入力専用）。結果は入力より 2 フレーム遅れます。"
 
-msgid "output = 1 / input, for positive inputs: exact from 1 up, a lookup table below it (capped at 240). The result trails the input by two frames."
-msgstr "output = 1 / 入力（正の入力専用）。1 以上は厳密に、1 未満は LUT で求めます（出力の上限は 240）。結果は入力より 2 フレーム遅れます。"
+msgid "output = 1 / input, for positive inputs: exact from 1 up, a lookup table below it (capped at 240). Two frames. If you know the range the divisor stays in, Reciprocal (Ranged) has no cap and no table."
+msgstr "output = 1 / 入力（正の入力専用）。1 以上は厳密に、1 未満は LUT で求めます（出力の上限は 240）。2 フレーム。除数が収まる範囲が分かっている場合は、上限も LUT も無い Reciprocal (Ranged) を使用してください。"
+
+msgid "output = 1 / input for a divisor inside Divisor Min…Max, both above zero. Lifts the divisor above 1 so the exact half answers on its own — no 240 cap, no lookup table. Three frames. Outside the range the answer is the reciprocal of the clamped divisor."
+msgstr "除数の最小値〜最大値（ともに 0 より大きい）に収まる除数に対して output = 1 / 入力 を計算します。除数を 1 以上へ持ち上げ、厳密な側だけで答えを出すため、240 の上限も LUT もありません。3 フレーム。範囲外では、クランプされた除数の逆数が返ります。"
 
 msgid "output = A / B, for positive inputs. Builds B's reciprocal first, so the result trails by three frames."
 msgstr "output = A / B（正の入力専用）。先に B の逆数を作るため、結果は 3 フレーム遅れます。"
+
+msgid "output = A / B for a divisor inside Divisor Min…Max, both above zero. No cap and no lookup table; four frames. Prefer this over Divide whenever B's range is known."
+msgstr "除数の最小値〜最大値（ともに 0 より大きい）に収まる除数に対して output = A / B を計算します。上限も LUT もありません。4 フレーム。B の範囲が分かっているときは、Divide よりこちらを使用してください。"
+
+msgid "output = A / B for signed values: |B|'s reciprocal, then A times it with B's sign. Four frames. A divisor near zero has no sign to read, and the quotient fades to 0 there."
+msgstr "符号付きの output = A / B。|B| の逆数を求め、それに A と B の符号を掛けます。4 フレーム。0 に近い除数には読み取れる符号が無いため、その付近では商が 0 へ薄れていきます。"
 
 msgid "output = the seconds since the previous frame. Add only one per controller — the clock it runs is shared machinery."
 msgstr "output = 前フレームからの経過秒数。動かす時計は共有の仕掛けなので、1 つのコントローラーにつき 1 個だけ追加してください。"
@@ -628,6 +649,21 @@ msgstr "カーブを 1D Blend Tree の LUT にベイクします。カーブの�
 msgid "output = atan2(Y, X) in turns: 0..1 counter-clockwise from +X, ready to feed the Sine / Cosine gadgets. Values near the origin collapse toward 0 — gate by magnitude. The 0/1 seam sits in a narrow band at +X."
 msgstr "output = atan2(Y, X) を「周」単位で返します。+X 方向が 0 で、反時計回りに 0..1。そのまま Sine / Cosine ガジェットへ渡せます。原点付近では出力が 0 へ縮退するので、ベクトルの大きさでゲートしてください。0 と 1 の継ぎ目は +X 方向の細い帯に収まります。"
 
+msgid "output = the square root of the input, over the window Input Min…Max (above zero). A lookup table sampled where a square root turns hardest, so one frame and no iteration. Outside the window the answer is the root of the nearer end."
+msgstr "入力の最小値〜最大値（0 より大きい範囲）で output = 入力の平方根 を計算します。平方根が最も強く曲がるあたりへサンプルを寄せた LUT なので、反復なしの 1 フレームで求まります。範囲外では、近い側の端の平方根が返ります。"
+
+msgid "output = 1 / the square root of the input, over Input Min…Max (above zero). One frame — what a normalisation wants, without paying for a root and a reciprocal in a row."
+msgstr "入力の最小値〜最大値（0 より大きい範囲）で output = 1 / 入力の平方根 を計算します。1 フレーム。正規化で必要になる値を、平方根と逆数を続けて計算する手間なしに得られます。"
+
+msgid "output = log2(input) over Input Min…Max (above zero). One frame. Another base is this times a constant, which a Remap does for free."
+msgstr "入力の最小値〜最大値（0 より大きい範囲）で output = log2(入力) を計算します。1 フレーム。他の底にしたい場合は定数倍するだけなので、Remap で追加コストなく行えます。"
+
+msgid "output = 2 to the power of the input, over Input Min…Max. One frame."
+msgstr "入力の最小値〜最大値の範囲で output = 2 の入力乗 を計算します。1 フレーム。"
+
+msgid "output = A to the power of B, with both of them parameters: log2 of the base, times the exponent, back through exp2. Four frames. Input Min…Max is the base's window (above zero) and Range Min…Max bounds the exponent; the intermediate range follows from those."
+msgstr "A と B の両方をパラメーターとして output = A の B 乗 を計算します。底の log2 を取り、指数を掛け、exp2 で戻します。4 フレーム。入力の最小値〜最大値が底の範囲（0 より大きい範囲）、範囲の最小値〜最大値が指数の範囲で、中間の範囲はそこから決まります。"
+
 msgid "Preset"
 msgstr "プリセット"
 
@@ -660,6 +696,9 @@ msgstr "サンプル数"
 
 msgid "How many points the curve is sampled at. The tree interpolates linearly between them, so corners want a sample of their own."
 msgstr "カーブをサンプリングする点の数。点と点の間はツリーが線形補間するため、折れ曲がる箇所にはサンプル点を置いてください。"
+
+msgid "How many points the function is sampled at. The tree interpolates linearly between them."
+msgstr "関数をサンプリングする点の数。点と点の間はツリーが線形補間します。"
 
 msgid "The LUT needs a curve with at least two keys."
 msgstr "LUT には 2 つ以上のキーを持つカーブが必要です。"
@@ -2197,6 +2236,12 @@ msgstr "この Recipe には後段ステップ（Raw・巡回同期・DBT ガジ
 
 msgid "DBT gadget '{0}' in layer '{1}': {2}"
 msgstr "レイヤー '{1}' の DBT ガジェット '{0}': {2}"
+
+msgid "DBT gadget '{0}' in layer '{1}' reads two different frames of the same signal: '{2}' is {3} frame(s) behind and '{4}' is {5}. Buffer the newer one by {6} frame(s) and read the copy — Buffer(\"{4}\", \"{4}/Aligned\", {6})."
+msgstr "レイヤー '{1}' の DBT ガジェット '{0}' が、同じ信号の異なるフレームを読んでいます。'{2}' は {3} フレーム遅れ、'{4}' は {5} フレーム遅れです。新しい方を {6} フレーム Buffer して、その複製を読んでください — Buffer(\"{4}\", \"{4}/Aligned\", {6})。"
+
+msgid "DBT gadget '{0}' in layer '{1}' reads '{2}', which '{3}' writes later in the same chain — the chain feeds back. It is built, starting from zero, but frame counts describe one-way chains: FramesBehind and the alignment check no longer apply around the loop. Measure whether it settles instead."
+msgstr "レイヤー '{1}' の DBT ガジェット '{0}' が '{2}' を読んでいますが、これは同じ連鎖の後段で '{3}' が書き込む値です。連鎖が輪になっています。0 から始まる形で生成はされますが、フレーム数は一方向の連鎖を前提とした値です。輪の周りでは FramesBehind も整列検査も当てはまらないため、収束するかどうかは実測してください。"
 
 msgid "Transition from '{0}' to '{1}' could not be resolved — skipped."
 msgstr "'{0}' から '{1}' への Transition を解決できなかったため、スキップしました。"
