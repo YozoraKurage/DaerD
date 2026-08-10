@@ -193,12 +193,19 @@ namespace Yozolab.DaerD
             // requested slot at the step boundary. These are added BEFORE the ring
             // transition, so they win when their flag is up; the same exit time keeps the
             // current slot's dwell (the values just sent still need their sync window).
-            // No route targets the state's own slot: back-to-back sends of one index are
-            // invisible to the decoder (canTransitionToSelf is off), and the routes of the
-            // steps that follow — one per OTHER slot — pick the still-raised flag up. A clock
-            // could carry such a jump, but only onto a send state of the opposite phase, and a
-            // slot the pass visits once has none; the flag is cleared either way, because the
-            // slot's own driver clears it every time it sends.
+            // No route targets the state's own slot. The plain reason is that back-to-back
+            // sends of one index are invisible to the decoder (canTransitionToSelf is off),
+            // and the steps that follow carry a route each, so a flag still up is picked up
+            // one boundary later.
+            //
+            // The load-bearing reason is that this is what makes the pass advance at all. A
+            // clock could carry a jump to the same slot — a grid may visit one twice, and two
+            // visits in neighbouring steps take opposite phases, which the decoder does tell
+            // apart — but the only direction of that jump worth having is from the run's last
+            // step back to its first, and a flag raised again during each dwell would then
+            // walk that pair forever and no other slot would ever send. The other direction
+            // is where the ring already goes. So the rule buys a floor: however hard a request
+            // is driven, one other slot gets a turn between two services of the same one.
             for (int k = 0; k < sendStates.Count; k++)
                 foreach (var name in requestable)
                 {

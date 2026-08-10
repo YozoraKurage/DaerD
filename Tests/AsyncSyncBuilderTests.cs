@@ -1714,6 +1714,142 @@ namespace Yozolab.DaerD.Tests
             Assert.IsFalse(DriverOn(sendF).entries.Exists(e => e.name == "Async/Req/B"));
         }
 
+        /// <summary>
+        /// Requests and a hand-built grid, together. The redirect machinery was written for a
+        /// pass that visits each slot once, and a grid may visit one several times — so every
+        /// step that is not the requested slot still gets a route, and they all land on the
+        /// slot's FIRST appearance rather than the nearest one. Landing anywhere is correct
+        /// (the ring resumes from wherever it arrives); landing consistently is what makes the
+        /// route buildable at all, since a step has no notion of which visit is "next".
+        /// </summary>
+        [Test]
+        public void Apply_WithRequests_AndAGrid_RedirectsToTheSlotsFirstVisit()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            Sends(request, "F");
+            Sends(request, "B");
+            Sends(request, "F");   // the same slot again, which only a grid can ask for
+            Sends(request, "I");
+            request.requestTargets.Add("B");
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var sm = controller.layers[1].stateMachine;
+            var sendF = FindState(sm, "Send F");
+            var sendB = FindState(sm, "Send B");
+            var sendFAgain = FindState(sm, "Send F (2)");
+            var sendI = FindState(sm, "Send I");
+
+            foreach (var state in new[] { sendF, sendFAgain, sendI })
+            {
+                Assert.AreEqual(2, state.transitions.Length, state.name + " keeps redirect + ring");
+                Assert.AreEqual(sendB, state.transitions[0].destinationState,
+                    state.name + " redirects to the first visit of B's slot");
+                Assert.IsTrue(HasCondition(state.transitions[0], "Async/Req/B",
+                    AnimatorConditionMode.If, 0f));
+                Assert.AreEqual(0, state.transitions[1].conditions.Length, "the ring is the fallback");
+            }
+
+            // Still no self-redirect, and a repeated slot does not become one by repeating.
+            Assert.AreEqual(1, sendB.transitions.Length);
+        }
+
+        /// <summary>
+        /// A grid may send one slot twice in a pass, and the flag has to come down whichever
+        /// visit serves it — the clearing lives on the send driver, so a visit that skipped it
+        /// would leave the flag raised behind a value that already went out and spend the next
+        /// boundary re-sending it.
+        /// </summary>
+        [Test]
+        public void Apply_WithRequests_ForARepeatedSlot_ClearsTheFlagAtEveryVisit()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.skipDrivers = false;
+            Sends(request, "F");
+            Sends(request, "B");
+            Sends(request, "F");
+            Sends(request, "I");
+            request.requestTargets.Add("F");
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var sm = controller.layers[1].stateMachine;
+            foreach (var name in new[] { "Send F", "Send F (2)" })
+            {
+                var entries = DriverOn(FindState(sm, name)).entries;
+                Assert.IsTrue(entries.Exists(e => e.name == "Async/Req/F" && e.value == 0f),
+                    name + " serves the request too, so it lowers the flag");
+            }
+
+            // And the steps that are not F route to F's first visit.
+            var sendF = FindState(sm, "Send F");
+            foreach (var name in new[] { "Send B", "Send I" })
+                Assert.AreEqual(sendF, FindState(sm, name).transitions[0].destinationState);
+        }
+
+        /// <summary>
+        /// The one configuration where a jump to the state's own slot would be legal — a grid
+        /// that visits a slot in neighbouring steps, with a clock giving those two visits
+        /// opposite phases, so the index does change. It is still not built, and that is the
+        /// decision this pins rather than an oversight: the only such jump worth having runs
+        /// from the run's last step back to its first, and a flag raised again during each
+        /// dwell would walk that pair forever with every other slot starved. One other slot
+        /// gets a turn between two services of the same one, however hard a request is driven.
+        /// </summary>
+        [Test]
+        public void Apply_WithAClockAndARepeatedSlot_StillNeverRedirectsToItsOwnSlot()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.allowRepeatSteps = true;
+            Sends(request, "F");
+            Sends(request, "F");   // neighbours, so the clock gives them opposite phases
+            Sends(request, "B");
+            Sends(request, "I");
+            request.requestTargets.Add("F");
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var slots = AsyncSyncBuilder.BuildSlots(request);
+            var clock = AsyncSyncBuilder.BuildClock(request, slots,
+                AsyncSyncBuilder.EffectiveSchedule(request, slots));
+            Assert.AreNotEqual(clock.stepPhases[0], clock.stepPhases[1],
+                "the premise: the decoder can tell these two sends of one slot apart");
+
+            var sm = controller.layers[1].stateMachine;
+            var sendF = FindState(sm, "Send F");
+            var sendFAgain = FindState(sm, "Send F (2)");
+
+            // Both F steps keep the ring alone — no route back into their own slot.
+            Assert.AreEqual(1, sendF.transitions.Length);
+            Assert.AreEqual(1, sendFAgain.transitions.Length);
+            Assert.AreEqual(0, sendF.transitions[0].conditions.Length, "the ring is unconditional");
+
+            // The steps that are not F still route to it, so the request is served either way.
+            Assert.AreEqual(sendF, FindState(sm, "Send B").transitions[0].destinationState);
+            Assert.AreEqual(sendF, FindState(sm, "Send I").transitions[0].destinationState);
+        }
+
+        /// <summary>
+        /// The redirect builder looks a requestable target's slot up by name, and a grid is
+        /// free to leave a target out of every step — which would leave it belonging to no
+        /// slot. Validation refuses that before the build reaches the lookup, so the answer is
+        /// a sentence rather than an exception out of a dictionary.
+        /// </summary>
+        [Test]
+        public void Apply_WithARequestableTargetNoStepCarries_IsRefused()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            Sends(request, "F");
+            Sends(request, "I");   // B is a target, and nothing sends it
+            request.requestTargets.Add("B");
+
+            var refusal = AsyncSyncBuilder.Validate(request);
+            Assert.IsNotNull(refusal, "a target no step carries cannot be built");
+            StringAssert.Contains("'B'", refusal);
+            Assert.IsFalse(AsyncSyncBuilder.Apply(request));
+        }
+
         // ---- Empty clip -----------------------------------------------------
 
         /// <summary>A clip with an actual length — normalized exit times need one.</summary>
