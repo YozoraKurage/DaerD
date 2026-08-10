@@ -77,6 +77,15 @@ namespace Yozolab.DaerD.Authoring
             foreach (var request in _requests)
                 foreach (var name in AapGadgets.SupportingLayerNames(request))
                     if (!layerNames.Contains(name)) layerNames.Add(name);
+
+            // Where they sit now, so the rebuild can put them back. Removing a layer and
+            // adding it again lands it at the end of the list, and a layer's index is what
+            // decides which of two writers to the same property wins — a second Generate
+            // that shuffled them would change what the controller does without anyone
+            // touching the recipe. The declared layers already do this (BuildLayer moves each
+            // one back to the index it was found at); this is the same courtesy for the ones
+            // a post step owns.
+            var previousIndices = PreviousIndices(controller, layerNames);
             RemoveLayers(controller, layerNames);
             RemoveOwnedParameters(controller);
 
@@ -108,6 +117,7 @@ namespace Yozolab.DaerD.Authoring
                 AapGadgets.Apply(request, commitSubAssets: false);
             }
             DbtBuilder.CommitSubAssets(controller);
+            RestoreIndices(controller, previousIndices);
 
             // These layers are the recipe's, exactly like the ones it declares: the next
             // Generate rebuilds them by name, and the layer list says so.
@@ -122,6 +132,35 @@ namespace Yozolab.DaerD.Authoring
             for (int i = controller.layers.Length - 1; i >= 0; i--)
                 if (names.Contains(controller.layers[i].name))
                     controller.RemoveLayer(i);
+        }
+
+        /// <summary>The layers among <paramref name="names"/> that already exist, paired with
+        /// where they sit, nearest the front first.</summary>
+        static List<KeyValuePair<string, int>> PreviousIndices(
+            AnimatorController controller, List<string> names)
+        {
+            var found = new List<KeyValuePair<string, int>>();
+            var layers = controller.layers;
+            for (int i = 0; i < layers.Length; i++)
+                if (names.Contains(layers[i].name))
+                    found.Add(new KeyValuePair<string, int>(layers[i].name, i));
+            return found;
+        }
+
+        /// <summary>
+        /// Puts the rebuilt layers back at the indices they were found at. Walked front to
+        /// back, so each move lands against an arrangement that already has the earlier ones
+        /// in place. A layer that did not exist before this run keeps wherever it was added —
+        /// there is no old index to honour, and appending is what a new layer does anyway.
+        /// </summary>
+        static void RestoreIndices(
+            AnimatorController controller, List<KeyValuePair<string, int>> previous)
+        {
+            foreach (var entry in previous)
+            {
+                int now = FindLayer(controller, entry.Key);
+                if (now >= 0) controller.MoveLayer(now, entry.Value);
+            }
         }
 
         /// <summary>Drops every parameter the declared gadgets own — the output itself and

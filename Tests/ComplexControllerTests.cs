@@ -525,15 +525,13 @@ namespace Yozolab.DaerD.Tests
         }
 
         /// <summary>
-        /// What the rebuild does to the order, written down rather than left as a surprise.
-        /// A layer's index decides what it overrides in an animator, so two post steps
-        /// trading places across a Generate is not the same kind of nothing that a reordered
-        /// parameter list is. Recorded, not endorsed: if the intent is that a regenerate
-        /// leaves the controller byte-for-byte where it was, this test is the one to delete
-        /// and the post steps are what to fix.
+        /// A layer's index decides which of two writers to the same property wins, so a
+        /// second Generate that shuffled them would change what the controller does with
+        /// nobody having touched the recipe. A post step rebuilds by removing its layer and
+        /// adding it again, which lands it at the end — it has to put it back.
         /// </summary>
         [Test]
-        public void ReGenerate_ReordersWhatThePostStepsOwn()
+        public void ReGenerate_LeavesEveryLayerWhereItWas()
         {
             WithSavedController(controller =>
             {
@@ -542,12 +540,9 @@ namespace Yozolab.DaerD.Tests
                 var before = LayerNames(controller);
 
                 recipe.Generate();
-                var after = LayerNames(controller);
+                recipe.Generate();
 
-                CollectionAssert.AreEquivalent(before, after, "a layer went missing or doubled");
-                CollectionAssert.AreNotEqual(before, after,
-                    "the post steps kept their order this time — if that is now guaranteed, "
-                    + "this test has outlived its point and the rebuild is order-stable");
+                CollectionAssert.AreEqual(before, LayerNames(controller));
             });
         }
 

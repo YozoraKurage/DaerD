@@ -9,6 +9,24 @@ namespace Yozolab.DaerD
     /// </summary>
     static class AnimatorControllerExtensions
     {
+        /// <summary>Moves the layer at <paramref name="from"/> to <paramref name="to"/>,
+        /// shifting the ones between; returns the final index. Rebuilding a layer means
+        /// removing it and adding a new one, which lands at the end — this is how a rebuild
+        /// puts it back where it was, and a layer's index decides what it overrides.</summary>
+        public static int MoveLayer(this AnimatorController controller, int from, int to)
+        {
+            var layers = controller.layers;
+            if (from == to || from < 0 || to < 0 || from >= layers.Length || to >= layers.Length)
+                return from;
+            var moved = layers[from];
+            int step = from < to ? 1 : -1;
+            for (int i = from; i != to; i += step)
+                layers[i] = layers[i + step];
+            layers[to] = moved;
+            controller.layers = layers;
+            return to;
+        }
+
         public static IEnumerable<AnimatorStateMachine> SelfAndDescendants(this AnimatorStateMachine sm)
         {
             if (sm == null) yield break;
