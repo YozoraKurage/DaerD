@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using UnityEngine;
 // The math is stated in AsyncSyncBuilder's vocabulary because it moved out of that class
 // unchanged; aliasing the two DTOs keeps every signature reading as it always did.
+using Clock = Yozolab.DaerD.AsyncSyncBuilder.Clock;
 using Request = Yozolab.DaerD.AsyncSyncBuilder.Request;
 using Slot = Yozolab.DaerD.AsyncSyncBuilder.Slot;
 using StepSpec = Yozolab.DaerD.GraphFrameData.AsyncSyncConfig.StepSpec;
@@ -167,8 +168,13 @@ namespace Yozolab.DaerD
         /// (see <see cref="EffectiveWeights"/>), and the result never places one slot in
         /// adjacent steps — including across the wrap — because the decoder's Any-State
         /// transitions have canTransitionToSelf off and would not re-trigger.
+        ///
+        /// <paramref name="allowRepeats"/> is that last clause paid off by a clock. The
+        /// placement is unchanged — evenly spread is what a rate means, whatever is allowed —
+        /// but the rounding artefact is left where it landed instead of repaired, because the
+        /// repair's last resort is to DROP a visit and the clock would have shown it.
         /// </summary>
-        public static List<int> BuildSchedule(List<Slot> slots)
+        public static List<int> BuildSchedule(List<Slot> slots, bool allowRepeats = false)
         {
             var schedule = new List<int>();
             if (slots == null || slots.Count == 0) return schedule;
@@ -195,8 +201,70 @@ namespace Yozolab.DaerD
                 }
             schedule.AddRange(cells);
 
-            RepairAdjacency(schedule);
+            if (!allowRepeats) RepairAdjacency(schedule);
             return schedule;
+        }
+
+        /// <summary>
+        /// The clock over a pass: which phase each step sends, and how many phases each slot
+        /// is therefore decoded in. With <see cref="Request.allowRepeatSteps"/> off every step
+        /// is phase 0 and every slot has one phase — the index-is-the-slot-number the setup
+        /// had before clocks existed — so the off path is this path with a degenerate table
+        /// rather than a branch of its own.
+        ///
+        /// Phases alternate only where they must: a step takes the opposite phase of the one
+        /// before it when the two send the same slot, and phase 0 otherwise, so a slot the
+        /// pass never repeats keeps a single decoder state. Reading the pass from a step that
+        /// STARTS a run leaves the wrap unconstrained, which is what lets one linear walk
+        /// colour a run that straddles it. The single shape with no colouring is a pass
+        /// sending one slot from end to end in an odd number of steps — an odd ring — and
+        /// <see cref="Clock.separates"/> is how that gets refused instead of built.
+        /// </summary>
+        public static Clock BuildClock(Request r, List<Slot> slots, List<int> schedule)
+        {
+            int steps = schedule?.Count ?? 0;
+            int count = slots?.Count ?? 0;
+            var stepPhases = new int[steps];
+            var slotPhases = new int[count];
+            for (int i = 0; i < count; i++) slotPhases[i] = 1;
+            if (r == null || !r.allowRepeatSteps || steps == 0)
+                return new Clock(stepPhases, slotPhases, true);
+
+            // A step whose predecessor sends another slot is where a run begins.
+            int start = -1;
+            for (int k = 0; k < steps && start < 0; k++)
+                if (schedule[k] != schedule[(k - 1 + steps) % steps]) start = k;
+            if (start < 0)
+            {
+                // No run begins anywhere, so every step sends the one slot and the alternation
+                // is the plain parity of the position — which closes on the wrap only when the
+                // pass is even. `separates` reports the odd one rather than papering over it.
+                for (int k = 0; k < steps; k++) stepPhases[k] = k % 2;
+            }
+            else
+            {
+                for (int i = 1; i < steps; i++)
+                {
+                    int k = (start + i) % steps, previous = (start + i - 1) % steps;
+                    stepPhases[k] = schedule[k] == schedule[previous]
+                        ? 1 - stepPhases[previous] : 0;
+                }
+            }
+
+            // Read back off the assignment rather than derived beside it: a slot needs its
+            // second decoder state exactly when some step actually sends its phase 1, and the
+            // pass is separated exactly when no neighbouring pair repeats slot AND phase.
+            bool separates = true;
+            for (int k = 0; k < steps; k++)
+            {
+                int next = (k + 1) % steps;
+                if (schedule[k] == schedule[next] && stepPhases[k] == stepPhases[next])
+                    separates = false;
+                int slot = schedule[k];
+                if (slot >= 0 && slot < count)
+                    slotPhases[slot] = Mathf.Max(slotPhases[slot], stepPhases[k] + 1);
+            }
+            return new Clock(stepPhases, slotPhases, separates);
         }
 
         /// <summary>
@@ -310,12 +378,15 @@ namespace Yozolab.DaerD
                 errors?.Add(L.Tr("The explicit schedule never visits some slots — every parameter must appear at least once."));
                 return null;
             }
-            for (int i = 0; i < schedule.Count; i++)
-                if (schedule.Count > 1 && schedule[i] == schedule[(i + 1) % schedule.Count])
-                {
-                    errors?.Add(L.Tr("The explicit schedule puts one slot in adjacent steps (position {0}) — the decoder would not re-trigger.", i));
-                    return null;
-                }
+            // A clock alternates the index's phase between neighbours, so a slot beside itself
+            // re-triggers after all — which is the whole of what the option buys.
+            if (!r.allowRepeatSteps)
+                for (int i = 0; i < schedule.Count; i++)
+                    if (schedule.Count > 1 && schedule[i] == schedule[(i + 1) % schedule.Count])
+                    {
+                        errors?.Add(L.Tr("The explicit schedule puts one slot in adjacent steps (position {0}) — the decoder would not re-trigger.", i));
+                        return null;
+                    }
             return schedule;
         }
 
@@ -359,15 +430,19 @@ namespace Yozolab.DaerD
 
             // Only repeats that were already there can remain, and RepairAdjacency cannot
             // uncover a slot: the occurrence it drops as a last resort is by construction one
-            // of two adjacent equals, so a second one is always left behind.
-            RepairAdjacency(steps);
+            // of two adjacent equals, so a second one is always left behind. A clock is the
+            // one case with nothing to repair — a slot beside itself is what its author asked
+            // for, and moving it would rewrite the cycle they wrote.
+            if (!r.allowRepeatSteps) RepairAdjacency(steps);
 
             // Dropping is how RepairAdjacency gives up, so a cycle it could not settle comes
             // back here still broken. Rates are a better answer than a layer that won't decode.
+            // The floor of two steps holds either way: one step is no cycle at all.
             if (steps.Count < 2) return repaired;
-            for (int i = 0; i < steps.Count; i++)
-                if (steps[i] == steps[(i + 1) % steps.Count])
-                    return repaired;
+            if (!r.allowRepeatSteps)
+                for (int i = 0; i < steps.Count; i++)
+                    if (steps[i] == steps[(i + 1) % steps.Count])
+                        return repaired;
 
             foreach (var step in steps) repaired.Add(slots[step].targets[0]);
             return repaired;
@@ -413,7 +488,12 @@ namespace Yozolab.DaerD
                 var resolved = ResolveScheduleOverride(r, slots, null);
                 if (resolved != null) return resolved;
             }
-            return BuildSchedule(slots);
+            // A single slot has no other slot to alternate with, so the clock IS the cycle:
+            // two steps of the one slot, phases 0 and 1. Without a clock the pass stays the
+            // single step BuildSchedule gives it, and Validate refuses the setup outright.
+            if (r != null && r.allowRepeatSteps && slots != null && slots.Count == 1)
+                return new List<int> { 0, 0 };
+            return BuildSchedule(slots, r != null && r.allowRepeatSteps);
         }
 
         /// <summary>
@@ -444,9 +524,10 @@ namespace Yozolab.DaerD
         /// A saved grid brought back into line with the request: steps lose the names that are
         /// no longer targets, a step carrying more of a type than the channels hold is trimmed
         /// to what fits, steps left with nothing go, a target no step sends is given one, and a
-        /// step repeating its neighbour is dropped. Returns the repaired grid, or an empty list
-        /// when nothing schedulable is left — which the caller reads as "fall back to the
-        /// rates", the same contract <see cref="RepairScheduleOverride"/> has.
+        /// step repeating its neighbour is dropped (unless a clock is paying for it). Returns
+        /// the repaired grid, or an empty list when nothing schedulable is left — which the
+        /// caller reads as "fall back to the rates", the same contract
+        /// <see cref="RepairScheduleOverride"/> has.
         ///
         /// Termination is structural rather than argued: every stage is one bounded pass, and
         /// none of them loops to a fixed point. That is affordable because the stages are
@@ -472,7 +553,9 @@ namespace Yozolab.DaerD
             if (sets.Count == 0) return repaired;
 
             Cover(r, sets);
-            Collapse(sets);
+            // A clock separates equal neighbours by phase, so there is nothing to collapse —
+            // and collapsing anyway would delete steps the author drew on purpose.
+            if (!r.allowRepeatSteps) Collapse(sets);
             // One step is not a cycle: the index would never change and the decoder would fire
             // once and go deaf. Rates are a better answer than a layer that won't decode.
             if (sets.Count < 2) return repaired;

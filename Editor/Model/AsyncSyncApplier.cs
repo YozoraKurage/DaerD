@@ -13,10 +13,11 @@ namespace Yozolab.DaerD
     /// Writes the layer an <see cref="AsyncSyncBuilder.Request"/> describes: the generated
     /// parameters, the local send ring (one state per schedule step, each driving the value
     /// channels and then the index), the request routes that let a raised flag jump the ring
-    /// at a step boundary, and the remote Any-State decoder (one state per slot). Finishes by
-    /// syncing the generated parameters in the store and saving the setup on the controller so
-    /// the wizard can regenerate this same layer later. See <see cref="AsyncSyncBuilder"/> for
-    /// why the technique looks like this; everything here happens inside one UndoScope.
+    /// at a step boundary, and the remote Any-State decoder (one state per slot, or per clock
+    /// phase of a slot the pass puts beside itself). Finishes by syncing the generated
+    /// parameters in the store and saving the setup on the controller so the wizard can
+    /// regenerate this same layer later. See <see cref="AsyncSyncBuilder"/> for why the
+    /// technique looks like this; everything here happens inside one UndoScope.
     /// </summary>
     static class AsyncSyncApplier
     {
@@ -36,11 +37,12 @@ namespace Yozolab.DaerD
                 var schedule = EffectiveSchedule(r, slots);
                 var encoding = ResolveEncoding(r);
                 var empty = ResolveOrCreateEmptyClip(controller, r);
-                var indexBits = IndexBitNames(r, encoding, slots);
+                var clock = BuildClock(r, slots, schedule);
+                var indexBits = IndexBitNames(r, encoding, clock);
 
-                var sendStates = BuildSendRing(stateMachine, r, slots, schedule, encoding,
+                var sendStates = BuildSendRing(stateMachine, r, slots, schedule, clock, encoding,
                     indexBits, empty);
-                var idle = BuildDecoder(stateMachine, r, slots, encoding, indexBits, empty);
+                var idle = BuildDecoder(stateMachine, r, slots, clock, encoding, indexBits, empty);
 
                 // Entry: locals fall through to the first send slot; remotes branch to Idle.
                 stateMachine.defaultState = sendStates[0];
@@ -112,13 +114,14 @@ namespace Yozolab.DaerD
         }
 
         /// <summary>The synced Bools carrying the index, LSB-first — null under Int
-        /// encoding, where the index is one parameter.</summary>
-        static string[] IndexBitNames(Request r, IndexEncoding encoding, List<Slot> slots)
+        /// encoding, where the index is one parameter. Wide enough for the clock's values
+        /// rather than for the slots, which are the same count until a slot repeats.</summary>
+        static string[] IndexBitNames(Request r, IndexEncoding encoding, Clock clock)
         {
             string[] indexBits = null;
             if (encoding == IndexEncoding.Bool)
             {
-                int bits = NetworkSyncBuilder.BitsRequired(slots.Count);
+                int bits = NetworkSyncBuilder.BitsRequired(clock.indexValues);
                 indexBits = new string[bits];
                 for (int i = 0; i < bits; i++)
                     indexBits[i] = BitParameter(r.baseName, i);
@@ -128,8 +131,8 @@ namespace Yozolab.DaerD
 
         /// <summary>Builds the local send cycle and returns its states in schedule order.</summary>
         static List<AnimatorState> BuildSendRing(AnimatorStateMachine stateMachine, Request r,
-            List<Slot> slots, List<int> schedule, IndexEncoding encoding, string[] indexBits,
-            AnimationClip empty)
+            List<Slot> slots, List<int> schedule, Clock clock, IndexEncoding encoding,
+            string[] indexBits, AnimationClip empty)
         {
             // Local side: the cycle, one state per SCHEDULE step — a priority slot appears
             // several times, and each appearance needs its own state to keep the ring a
@@ -168,14 +171,17 @@ namespace Yozolab.DaerD
                 if (driver == null) continue;
                 Undo.RegisterCompleteObjectUndo(driver, "Async Sync");
                 VrcParameterDriver.SetLocalOnly(driver, true);
-                // Values first, then the index — remotes react to the index change.
+                // Values first, then the index — remotes react to the index change. The index
+                // is the slot's, in this step's clock phase: with no clock that is the slot
+                // number it always was, and with one it is what makes a repeat a change.
                 AddChannelCopies(driver, r, slot, toChannels: true);
+                int index = clock.Index(slotIndex, clock.stepPhases[k]);
                 if (encoding == IndexEncoding.Int)
-                    VrcParameterDriver.AddSetEntry(driver, IndexParameter(r.baseName), slotIndex);
+                    VrcParameterDriver.AddSetEntry(driver, IndexParameter(r.baseName), index);
                 else
                     for (int bit = 0; bit < indexBits.Length; bit++)
                         VrcParameterDriver.AddSetEntry(driver, indexBits[bit],
-                            ((slotIndex >> bit) & 1) == 1 ? 1f : 0f);
+                            ((index >> bit) & 1) == 1 ? 1f : 0f);
                 // Entering this state IS the service: the fresh value was just copied, so
                 // any pending request for this slot's targets is satisfied — clear it.
                 foreach (var name in slot.targets)
@@ -188,9 +194,11 @@ namespace Yozolab.DaerD
             // transition, so they win when their flag is up; the same exit time keeps the
             // current slot's dwell (the values just sent still need their sync window).
             // No route targets the state's own slot: back-to-back sends of one index are
-            // invisible to the decoder (canTransitionToSelf is off), and the next step's
-            // routes — one per OTHER slot, and the ring never repeats a slot — pick the
-            // still-raised flag up one step later.
+            // invisible to the decoder (canTransitionToSelf is off), and the routes of the
+            // steps that follow — one per OTHER slot — pick the still-raised flag up. A clock
+            // could carry such a jump, but only onto a send state of the opposite phase, and a
+            // slot the pass visits once has none; the flag is cleared either way, because the
+            // slot's own driver clears it every time it sends.
             for (int k = 0; k < sendStates.Count; k++)
                 foreach (var name in requestable)
                 {
@@ -220,48 +228,61 @@ namespace Yozolab.DaerD
         /// <summary>Builds the remote side and returns its Idle state — the one the entry
         /// transition branches to.</summary>
         static AnimatorState BuildDecoder(AnimatorStateMachine stateMachine, Request r,
-            List<Slot> slots, IndexEncoding encoding, string[] indexBits, AnimationClip empty)
+            List<Slot> slots, Clock clock, IndexEncoding encoding, string[] indexBits,
+            AnimationClip empty)
         {
-            // Remote side: Any-State decoder — one state per SLOT (revisits reuse it).
+            // Remote side: Any-State decoder — one state per SLOT (revisits reuse it), and one
+            // per PHASE of a slot the pass repeats. The two states of such a slot copy exactly
+            // the same channels, and that redundancy IS the mechanism: the route is refused
+            // when it would re-enter the state the machine is already in, so a slot sending
+            // twice running needs somewhere else to land.
             var idle = stateMachine.AddState("Remote Idle", new Vector3(620f, 60f, 0f));
             idle.writeDefaultValues = true;
             idle.motion = empty;
             var slotNames = SlotNames(slots);
+            int row = 0;
             for (int i = 0; i < slots.Count; i++)
             {
                 var slot = slots[i];
-                var state = stateMachine.AddState(
-                    SlotStateName("Recv", slotNames[i], 0),
-                    new Vector3(620f, 130f + i * 70f, 0f));
-                state.writeDefaultValues = true;
-                state.motion = empty;
-
-                if (!r.skipDrivers)
+                for (int phase = 0; phase < clock.slotPhases[i]; phase++)
                 {
-                    var driver = VrcParameterDriver.AddTo(state, "Async Recv");
-                    if (driver != null)
-                    {
-                        Undo.RegisterCompleteObjectUndo(driver, "Async Sync");
-                        VrcParameterDriver.SetLocalOnly(driver, false);
-                        AddChannelCopies(driver, r, slot, toChannels: false);
-                    }
-                }
+                    // The second phase takes the "(2)" a second visit would take on the send
+                    // side; a slot only ever had one Recv state, so nothing can collide.
+                    var state = stateMachine.AddState(
+                        SlotStateName("Recv", slotNames[i], phase),
+                        new Vector3(620f, 130f + row++ * 70f, 0f));
+                    state.writeDefaultValues = true;
+                    state.motion = empty;
 
-                var transition = stateMachine.AddAnyStateTransition(state);
-                transition.canTransitionToSelf = false;
-                transition.hasExitTime = false;
-                transition.hasFixedDuration = true;
-                transition.duration = 0f;
-                transition.AddCondition(AnimatorConditionMode.IfNot, 0f,
-                    NetworkSyncBuilder.IsLocalParameter);
-                if (encoding == IndexEncoding.Int)
-                    transition.AddCondition(AnimatorConditionMode.Equals, i, IndexParameter(r.baseName));
-                else
-                    for (int bit = 0; bit < indexBits.Length; bit++)
-                        transition.AddCondition(((i >> bit) & 1) == 1
-                                ? AnimatorConditionMode.If : AnimatorConditionMode.IfNot,
-                            0f, indexBits[bit]);
-                EditorUtility.SetDirty(transition);
+                    if (!r.skipDrivers)
+                    {
+                        var driver = VrcParameterDriver.AddTo(state, "Async Recv");
+                        if (driver != null)
+                        {
+                            Undo.RegisterCompleteObjectUndo(driver, "Async Sync");
+                            VrcParameterDriver.SetLocalOnly(driver, false);
+                            AddChannelCopies(driver, r, slot, toChannels: false);
+                        }
+                    }
+
+                    int index = clock.Index(i, phase);
+                    var transition = stateMachine.AddAnyStateTransition(state);
+                    transition.canTransitionToSelf = false;
+                    transition.hasExitTime = false;
+                    transition.hasFixedDuration = true;
+                    transition.duration = 0f;
+                    transition.AddCondition(AnimatorConditionMode.IfNot, 0f,
+                        NetworkSyncBuilder.IsLocalParameter);
+                    if (encoding == IndexEncoding.Int)
+                        transition.AddCondition(AnimatorConditionMode.Equals, index,
+                            IndexParameter(r.baseName));
+                    else
+                        for (int bit = 0; bit < indexBits.Length; bit++)
+                            transition.AddCondition(((index >> bit) & 1) == 1
+                                    ? AnimatorConditionMode.If : AnimatorConditionMode.IfNot,
+                                0f, indexBits[bit]);
+                    EditorUtility.SetDirty(transition);
+                }
             }
             return idle;
         }
@@ -329,10 +350,10 @@ namespace Yozolab.DaerD
 
         /// <summary>
         /// The states <see cref="Apply"/> would give this request: the send ring in schedule
-        /// order, the decoder's Idle, and one Recv per slot. Kept beside the code that names
-        /// them so the two cannot drift — the exporter compares a live layer against this to
-        /// decide whether it may be written back as an AsyncSync call, and a name it got
-        /// wrong would quietly rewrite a layer someone had edited by hand.
+        /// order, the decoder's Idle, and one Recv per slot per clock phase. Kept beside the
+        /// code that names them so the two cannot drift — the exporter compares a live layer
+        /// against this to decide whether it may be written back as an AsyncSync call, and a
+        /// name it got wrong would quietly rewrite a layer someone had edited by hand.
         /// </summary>
         internal static List<string> ExpectedStateNames(Request r)
         {
@@ -342,8 +363,10 @@ namespace Yozolab.DaerD
             if (slots.Count == 0) return names;
 
             var slotNames = SlotNames(slots);
+            var schedule = EffectiveSchedule(r, slots);
+            var clock = BuildClock(r, slots, schedule);
             var visits = new Dictionary<int, int>();
-            foreach (var slotIndex in EffectiveSchedule(r, slots))
+            foreach (var slotIndex in schedule)
             {
                 visits.TryGetValue(slotIndex, out int visit);
                 visits[slotIndex] = visit + 1;
@@ -351,7 +374,8 @@ namespace Yozolab.DaerD
             }
             names.Add("Remote Idle");
             for (int i = 0; i < slots.Count; i++)
-                names.Add(SlotStateName("Recv", slotNames[i], 0));
+                for (int phase = 0; phase < clock.slotPhases[i]; phase++)
+                    names.Add(SlotStateName("Recv", slotNames[i], phase));
             return names;
         }
 

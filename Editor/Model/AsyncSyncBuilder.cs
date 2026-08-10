@@ -52,6 +52,15 @@ namespace Yozolab.DaerD
     /// step that was running when a flag went up still spends its full dwell and the jump
     /// happens at the boundary. One request is serviced per boundary — the first in cycle
     /// order — and flags that lost the boundary stay raised for the next one.
+    ///
+    /// A slot may not send twice in a row, because the decoder fires on the index CHANGING
+    /// and a repeated index is a step nobody sees. <see cref="Request.allowRepeatSteps"/>
+    /// buys that restriction off with a clock: a phase folded into the index, alternating
+    /// between neighbouring steps, so one slot twice running still shows the decoder two
+    /// different values. It is paid for in decoder states — a slot that repeats needs one per
+    /// phase — which is why it is asked for rather than assumed. It does not lift the
+    /// back-to-back rule on requests: a redirect would have to land on a send state of the
+    /// opposite phase, and the ring has no second state for a slot it visits once.
     /// </summary>
     static class AsyncSyncBuilder
     {
@@ -136,6 +145,16 @@ namespace Yozolab.DaerD
             /// </summary>
             public List<StepSpec> steps = new List<StepSpec>();
 
+            /// <summary>
+            /// Let a slot occupy adjacent steps — the wrap included — by giving the pass a
+            /// clock: a phase folded into the index that alternates between neighbours, so
+            /// the decoder sees a different index even when the payload is the same. Off by
+            /// default, because a slot that repeats then needs a decoder state (and an
+            /// Any-State route) per phase, and a setup that never repeats would pay for
+            /// nothing. Also what lets a single-slot setup build at all.
+            /// </summary>
+            public bool allowRepeatSteps;
+
             /// <summary>Layer to create; defaults to the base name.</summary>
             public string layerName;
             /// <summary>Existing async-sync layer to REGENERATE in place (its states are
@@ -167,6 +186,53 @@ namespace Yozolab.DaerD
         {
             public readonly List<string> targets = new List<string>();
             public int rate = 1;
+        }
+
+        /// <summary>
+        /// The clock over one pass: the phase each step sends, the phases each slot is decoded
+        /// in, and the index value a (slot, phase) pair puts on the wire.
+        ///
+        /// Phases are laid end to end rather than multiplied out — a slot that never repeats
+        /// still spends one index value, not two — which is what keeps the clock cheap on a
+        /// pass where only one slot needs it. With <see cref="Request.allowRepeatSteps"/> off
+        /// every slot has exactly one phase and <see cref="Index"/> is the slot number it has
+        /// always been, so the whole build runs the same path either way.
+        /// </summary>
+        public class Clock
+        {
+            /// <summary>The phase each step of the schedule sends, one entry per step.</summary>
+            public readonly int[] stepPhases;
+            /// <summary>Phases each slot is decoded in: 2 for one the pass puts beside
+            /// itself, 1 for every other slot.</summary>
+            public readonly int[] slotPhases;
+            /// <summary>Distinct values the index takes — what it has to be wide enough for,
+            /// and the slot count exactly when no slot repeats.</summary>
+            public readonly int indexValues;
+            /// <summary>
+            /// Whether the phases actually separate every pair of neighbouring steps that
+            /// sends one slot. False only for a pass sending ONE slot from end to end in an
+            /// odd number of steps: that closes the alternation into a ring of odd length,
+            /// which two phases cannot colour. <see cref="Validate"/> refuses it.
+            /// </summary>
+            public readonly bool separates;
+            /// <summary>Each slot's first index value: the phases before it, added up.</summary>
+            readonly int[] _first;
+
+            internal Clock(int[] stepPhases, int[] slotPhases, bool separates)
+            {
+                this.stepPhases = stepPhases;
+                this.slotPhases = slotPhases;
+                this.separates = separates;
+                _first = new int[slotPhases.Length];
+                for (int i = 0; i < slotPhases.Length; i++)
+                {
+                    _first[i] = indexValues;
+                    indexValues += slotPhases[i];
+                }
+            }
+
+            /// <summary>The index value one slot sends in one of its phases.</summary>
+            public int Index(int slot, int phase) => _first[slot] + phase;
         }
 
         // Spelled out in AsyncSyncNaming; the facade keeps the names its callers know.
@@ -203,6 +269,9 @@ namespace Yozolab.DaerD
 
         public static List<int> BuildSchedule(List<Slot> slots) =>
             AsyncSyncSchedule.BuildSchedule(slots);
+
+        public static Clock BuildClock(Request r, List<Slot> slots, List<int> schedule) =>
+            AsyncSyncSchedule.BuildClock(r, slots, schedule);
 
         public static int[] EffectiveWeights(List<Slot> slots) =>
             AsyncSyncSchedule.EffectiveWeights(slots);
@@ -249,6 +318,8 @@ namespace Yozolab.DaerD
             AsyncSyncCost.RefreshIntervals(r);
 
         public static int FreeSlots(Request r) => AsyncSyncCost.FreeSlots(r);
+
+        public static int IndexValues(Request r) => AsyncSyncCost.IndexValues(r);
 
         public static int CompressedBits(Request r) => AsyncSyncCost.CompressedBits(r);
 
@@ -353,12 +424,24 @@ namespace Yozolab.DaerD
             }
 
             int slotCount = BuildSlots(r).Count;
-            if (slotCount > 255)
+            // The index values, not the slots: a clock gives some slots two of them, which is
+            // what the encoding actually has to hold.
+            if (IndexValues(r) > 255)
                 return L.Tr("Int encoding supports up to 255 states.");
             // With one slot the index never changes, and the decoder — which fires on the
-            // index changing — would copy exactly once and then go deaf.
-            if (slotCount < 2)
+            // index changing — would copy exactly once and then go deaf. A clock changes the
+            // index by itself, so it is the one thing that makes a single slot decodable.
+            if (slotCount < 2 && !r.allowRepeatSteps)
                 return L.Tr("Everything fits into a single slot, so the index would never change and remotes would stop decoding. Lower the channel count, or add parameters.");
+            // The clock alternates between neighbours, so a pass that sends ONE slot from end
+            // to end closes the alternation into a ring — and a ring of odd length has no
+            // alternating colouring: the wrap would repeat a phase and lose that step.
+            if (r.allowRepeatSteps)
+            {
+                var clockSlots = BuildSlots(r);
+                if (!BuildClock(r, clockSlots, EffectiveSchedule(r, clockSlots)).separates)
+                    return L.Tr("Every step sends the same parameters, so only the clock tells them apart — and the clock alternates, which an odd number of steps can't do. Add or drop a step.");
+            }
 
             // A grid says which targets share a step as well as when, so a cycle saved beside
             // one is not the pass being built and must not be judged as though it were.
@@ -397,7 +480,9 @@ namespace Yozolab.DaerD
         /// step, and no two neighbouring steps — the wrap included — send the same set. That
         /// last one is the physical rule the whole technique rests on: the decoder's Any-State
         /// routes fire on the index CHANGING, so a step that repeats its neighbour's payload
-        /// spends an index nobody ever sees.
+        /// spends an index nobody ever sees. It is also the rule
+        /// <see cref="Request.allowRepeatSteps"/> pays to lift, and the only one checked here
+        /// that a clock makes untrue.
         ///
         /// Names in a step that are not multiplexed are dropped rather than reported, the same
         /// contract <see cref="Request.rates"/> keeps — a stale saved entry must not block
@@ -438,6 +523,10 @@ namespace Yozolab.DaerD
                 if (!covered.Contains(name))
                     return L.Tr("'{0}' is never sent — no step of the pass carries it.", name);
 
+            // Both of these are what a clock buys off, so with one they are not rules at all:
+            // the phase changes the index between neighbours, and Validate's own check on the
+            // clock takes over from here.
+            if (r.allowRepeatSteps) return null;
             for (int k = 0; k < sets.Count && sets.Count > 1; k++)
             {
                 int next = (k + 1) % sets.Count;
@@ -468,6 +557,12 @@ namespace Yozolab.DaerD
                         r.targets.Count, compressed, direct));
             }
 
+            // Refused outright without a clock; with one it builds and decodes, and is still
+            // every target on the wire every step — direct sync wearing a cycle.
+            if (r.allowRepeatSteps && r.targets.Count >= 2 && BuildSlots(r).Count < 2)
+                warnings.Add(L.Tr(
+                    "Everything fits into a single slot, so every step sends every target. The clock keeps remotes decoding, but this is direct sync with the index on top — lower the channel count to get a cycle back."));
+
             float cycle = CycleSeconds(r);
             if (cycle > 3f)
                 warnings.Add(L.Tr(
@@ -482,7 +577,10 @@ namespace Yozolab.DaerD
             {
                 var slots = BuildSlots(r);
                 var weights = EffectiveWeights(slots);
-                var schedule = BuildSchedule(slots);
+                // The pass that will be built, which with no override and no grid is the
+                // rate-derived one — except that a clock lets it keep an adjacent visit the
+                // repair would otherwise have dropped, and this counts visits.
+                var schedule = EffectiveSchedule(r, slots);
                 var occurrences = new int[slots.Count];
                 foreach (var step in schedule) occurrences[step]++;
 
@@ -585,7 +683,7 @@ namespace Yozolab.DaerD
                 generated.Add((IndexParameter(r.baseName), AnimatorControllerParameterType.Int));
             else
             {
-                int bits = NetworkSyncBuilder.BitsRequired(Mathf.Max(2, BuildSlots(r).Count));
+                int bits = NetworkSyncBuilder.BitsRequired(Mathf.Max(2, IndexValues(r)));
                 for (int i = 0; i < bits; i++)
                     generated.Add((BitParameter(r.baseName, i), AnimatorControllerParameterType.Bool));
             }

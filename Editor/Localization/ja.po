@@ -2007,6 +2007,9 @@ msgstr "同期レートは 1〜{0} の範囲で指定してください（'{1}'�
 msgid "Everything fits into a single slot, so the index would never change and remotes would stop decoding. Lower the channel count, or add parameters."
 msgstr "すべてが 1 スロットに収まってしまうため、インデックスが変化せず、リモート側が最初の 1 回しかデコードしません。チャンネル数を下げるか、パラメーターを追加してください。"
 
+msgid "Everything fits into a single slot, so every step sends every target. The clock keeps remotes decoding, but this is direct sync with the index on top — lower the channel count to get a cycle back."
+msgstr "すべてが 1 スロットに収まるため、毎ステップすべての対象を送ることになります。クロックがあるのでリモートはデコードを続けますが、これはインデックスの分だけ余計にかかる直接同期です。巡回に戻すにはチャンネル数を下げてください。"
+
 msgid "Step {0} sends nothing — an empty step spends an index without carrying a value."
 msgstr "ステップ {0} は何も送信しません。空のステップはインデックスを 1 つ消費するだけで、値を運びません。"
 
@@ -2018,6 +2021,9 @@ msgstr "ステップ {0} と {1} は同じパラメーターを送るため、�
 
 msgid "Every step sends the same parameters, so the index would never change and remotes would stop decoding. Give at least two steps different parameters."
 msgstr "すべてのステップが同じパラメーターを送るため、インデックスが変化せず、リモート側がデコードを止めます。少なくとも 2 つのステップに異なるパラメーターを割り当ててください。"
+
+msgid "Every step sends the same parameters, so only the clock tells them apart — and the clock alternates, which an odd number of steps can't do. Add or drop a step."
+msgstr "すべてのステップが同じパラメーターを送るため、両者を区別できるのはクロックだけです。クロックは位相を交互に反転させるので、ステップ数が奇数だと 1 周のつなぎ目で同じ位相が並びます。ステップを 1 つ足すか減らしてください。"
 
 msgid "The ×{0} rate on '{1}' can't be separated by the other slots; it effectively runs at ×{2}. Add parameters or lower the rate."
 msgstr "'{1}' の ×{0} レートは他のスロットでは間隔を空けきれず、実効 ×{2} で動作します。パラメーターを追加するか、レートを下げてください。"

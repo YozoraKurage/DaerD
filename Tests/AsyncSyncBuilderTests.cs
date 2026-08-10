@@ -1267,6 +1267,220 @@ namespace Yozolab.DaerD.Tests
             Object.DestroyImmediate(controller);
         }
 
+        // ---- clock phase ------------------------------------------------------
+
+        /// <summary>The index value the decoder's Any-State route to this state fires on.</summary>
+        static void AssertDecodes(AnimatorStateMachine stateMachine, string state, int index)
+        {
+            var destination = FindState(stateMachine, state);
+            foreach (var transition in stateMachine.anyStateTransitions)
+                if (transition.destinationState == destination)
+                {
+                    Assert.IsTrue(
+                        HasCondition(transition, "Async/Index", AnimatorConditionMode.Equals, index),
+                        "'" + state + "' should decode index " + index);
+                    return;
+                }
+            Assert.Fail("No Any-State route to '" + state + "'.");
+        }
+
+        [Test]
+        public void Clock_LetsOneSlotHoldTwoStepsInARow()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.allowRepeatSteps = true;
+            Sends(request, "F");
+            Sends(request, "F");
+            Sends(request, "B");
+            Sends(request, "I");
+
+            Assert.IsNull(AsyncSyncBuilder.Validate(request),
+                "the clock is exactly what pays for the repeated step");
+            var expected = AsyncSyncApplier.ExpectedStateNames(request);
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var sm = controller.layers[1].stateMachine;
+            // 4 send + idle + 3 recv, and a second Recv for the slot that repeats.
+            Assert.AreEqual(9, sm.states.Length);
+            Assert.AreEqual(4, sm.anyStateTransitions.Length);
+
+            // The two steps of F land on two states, on two index values — which is the whole
+            // mechanism: the route is refused when it would re-enter the state already active.
+            AssertDecodes(sm, "Recv F", 0);
+            AssertDecodes(sm, "Recv F (2)", 1);
+            AssertDecodes(sm, "Recv B", 2);
+            AssertDecodes(sm, "Recv I", 3);
+
+            // The exporter decides whether a layer may be rewritten as one AsyncSync call by
+            // comparing it against these names, and the clock adds states it has to know about.
+            var built = new List<string>();
+            foreach (var child in sm.states) built.Add(child.state.name);
+            expected.Sort(System.StringComparer.Ordinal);
+            built.Sort(System.StringComparer.Ordinal);
+            CollectionAssert.AreEqual(built, expected);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void Clock_SendsTheTwoStepsOfOneSlotOnDifferentIndices()
+        {
+            if (!VrcParameterDriver.SdkAvailable)
+                Assert.Ignore("Reading the index the send driver writes needs the Parameter Driver behaviour.");
+
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.allowRepeatSteps = true;
+            request.skipDrivers = false;
+            Sends(request, "F");
+            Sends(request, "F");
+            Sends(request, "B");
+            Sends(request, "I");
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var sm = controller.layers[1].stateMachine;
+            var first = FindState(sm, "Send F").behaviours[0] as VRCAvatarParameterDriver;
+            var second = FindState(sm, "Send F (2)").behaviours[0] as VRCAvatarParameterDriver;
+            Assert.IsNotNull(first);
+            Assert.IsNotNull(second);
+            // Same copy, different index: the payload repeats and the index does not.
+            Assert.AreEqual("F", first.parameters[0].source);
+            Assert.AreEqual("F", second.parameters[0].source);
+            Assert.AreEqual("Async/Index", first.parameters[1].name);
+            Assert.AreEqual(0f, first.parameters[1].value);
+            Assert.AreEqual("Async/Index", second.parameters[1].name);
+            Assert.AreEqual(1f, second.parameters[1].value);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void Clock_CostsNothingUntilThePassActuallyRepeats()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.allowRepeatSteps = true;
+
+            // Nothing repeats, so no slot needs a second phase: the index still runs 0,1,2 and
+            // the layer is the one the same setup builds with the clock off.
+            Assert.AreEqual(3, AsyncSyncBuilder.IndexValues(request));
+            Assert.AreEqual(25, AsyncSyncBuilder.CompressedBits(request));
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var sm = controller.layers[1].stateMachine;
+            Assert.AreEqual(7, sm.states.Length);
+            Assert.AreEqual(3, sm.anyStateTransitions.Length);
+            AssertDecodes(sm, "Recv B", 1);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void Clock_IsFreeUnderTheIntIndex_AndWidensTheBoolOneOnlyOnOverflow()
+        {
+            var controller = FloatController(4);
+            var request = NewRequest(controller, "F1", "F2", "F3", "F4");
+            request.encoding = AsyncSyncBuilder.IndexEncoding.Bool;
+            request.allowRepeatSteps = true;
+            Sends(request, "F1");
+            Sends(request, "F2");
+            Sends(request, "F3");
+            Sends(request, "F4");
+            // 4 slots, 4 index values: two bits, and one Float channel.
+            Assert.AreEqual(4, AsyncSyncBuilder.IndexValues(request));
+            Assert.AreEqual(2 + 8, AsyncSyncBuilder.CompressedBits(request));
+
+            // A fifth step repeating F4 gives that slot a second value, and five values need
+            // a third bit — the tail of the range being free is what makes this the exception.
+            Sends(request, "F4");
+            Assert.IsNull(AsyncSyncBuilder.Validate(request));
+            Assert.AreEqual(5, AsyncSyncBuilder.IndexValues(request));
+            Assert.AreEqual(3 + 8, AsyncSyncBuilder.CompressedBits(request));
+
+            // The Int index holds 255 values however they are shared out, so it pays nothing.
+            request.encoding = AsyncSyncBuilder.IndexEncoding.Int;
+            Assert.AreEqual(8 + 8, AsyncSyncBuilder.CompressedBits(request));
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void Clock_RefusesAPassOfOneSlotWithAnOddNumberOfSteps()
+        {
+            var controller = NewController();
+            var odd = NewRequest(controller, "F", "B");
+            odd.allowRepeatSteps = true;
+            Sends(odd, "F", "B");
+            Sends(odd, "F", "B");
+            Sends(odd, "F", "B");
+            Assert.IsNotNull(AsyncSyncBuilder.Validate(odd),
+                "three steps of one slot close the alternation into a ring that can't alternate");
+
+            var even = NewRequest(controller, "F", "B");
+            even.allowRepeatSteps = true;
+            Sends(even, "F", "B");
+            Sends(even, "F", "B");
+            Assert.IsNull(AsyncSyncBuilder.Validate(even));
+            Assert.IsTrue(AsyncSyncBuilder.Apply(even));
+
+            var sm = controller.layers[1].stateMachine;
+            // One slot, two phases: 2 send + idle + 2 recv.
+            Assert.AreEqual(5, sm.states.Length);
+            Assert.AreEqual(2, sm.anyStateTransitions.Length);
+            AssertDecodes(sm, "Recv F +1", 0);
+            AssertDecodes(sm, "Recv F +1 (2)", 1);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void Clock_MakesASingleSlotSetupBuildable_AndSaysWhatItCosts()
+        {
+            var controller = new AnimatorController();
+            controller.AddLayer("Base");
+            for (int i = 1; i <= 4; i++)
+                controller.AddParameter("B" + i, AnimatorControllerParameterType.Bool);
+
+            var request = NewRequest(controller, "B1", "B2", "B3", "B4");
+            request.boolChannels = 4;
+            Assert.AreEqual(1, AsyncSyncBuilder.BuildSlots(request).Count);
+            Assert.IsNotNull(AsyncSyncBuilder.Validate(request),
+                "without a clock the index would never change");
+
+            request.allowRepeatSteps = true;
+            Assert.IsNull(AsyncSyncBuilder.Validate(request));
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+            Assert.AreEqual(5, controller.layers[1].stateMachine.states.Length,
+                "2 send + idle + 2 recv: the one slot alternates against itself");
+
+            Assert.IsTrue(AsyncSyncBuilder.Warnings(request)
+                    .Exists(w => w.Contains("every step sends every target")),
+                "one slot is direct sync wearing a cycle, and that has to be said");
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void Clock_LetsAnExplicitScheduleRepeatASlot()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.scheduleOverride.AddRange(new[] { "F", "F", "B", "I" });
+            Assert.IsNotNull(AsyncSyncBuilder.Validate(request), "unclocked, this is refused");
+
+            request.allowRepeatSteps = true;
+            Assert.IsNull(AsyncSyncBuilder.Validate(request));
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var sm = controller.layers[1].stateMachine;
+            Assert.AreEqual(9, sm.states.Length);
+            AssertDecodes(sm, "Recv F", 0);
+            AssertDecodes(sm, "Recv F (2)", 1);
+
+            Object.DestroyImmediate(controller);
+        }
+
         // ---- sync requests ---------------------------------------------------
 
         [Test]

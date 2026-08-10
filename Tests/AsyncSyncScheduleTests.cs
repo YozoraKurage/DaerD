@@ -551,5 +551,149 @@ namespace Yozolab.DaerD.Tests
 
             Object.DestroyImmediate(controller);
         }
+
+        // ---- the clock -------------------------------------------------------
+
+        static AsyncSyncBuilder.Request Clocked() =>
+            new AsyncSyncBuilder.Request { allowRepeatSteps = true };
+
+        static bool HasAdjacency(List<int> schedule)
+        {
+            for (int i = 0; i < schedule.Count; i++)
+                if (schedule.Count > 1 && schedule[i] == schedule[(i + 1) % schedule.Count])
+                    return true;
+            return false;
+        }
+
+        [Test]
+        public void BuildClock_WithoutOne_LeavesTheIndexAsTheSlotNumber()
+        {
+            // The property everything else rests on: an unclocked setup runs the same code
+            // and comes out of it exactly as it did before clocks existed.
+            var clock = AsyncSyncSchedule.BuildClock(new AsyncSyncBuilder.Request(), Slots(1, 1, 1),
+                new List<int> { 0, 1, 2 });
+            CollectionAssert.AreEqual(new[] { 0, 0, 0 }, clock.stepPhases);
+            CollectionAssert.AreEqual(new[] { 1, 1, 1 }, clock.slotPhases);
+            Assert.AreEqual(3, clock.indexValues);
+            for (int i = 0; i < 3; i++) Assert.AreEqual(i, clock.Index(i, 0));
+            Assert.IsTrue(clock.separates);
+        }
+
+        [Test]
+        public void BuildClock_AlternatesOnlyWhereASlotSitsBesideItself()
+        {
+            var clock = AsyncSyncSchedule.BuildClock(Clocked(), Slots(1, 1, 1),
+                new List<int> { 0, 0, 1, 2 });
+
+            CollectionAssert.AreEqual(new[] { 0, 1, 0, 0 }, clock.stepPhases);
+            CollectionAssert.AreEqual(new[] { 2, 1, 1 }, clock.slotPhases,
+                "only the slot that repeats needs a second decoder state");
+            // Phases laid end to end, so the slots that don't repeat cost one value each.
+            Assert.AreEqual(4, clock.indexValues);
+            Assert.AreEqual(0, clock.Index(0, 0));
+            Assert.AreEqual(1, clock.Index(0, 1));
+            Assert.AreEqual(2, clock.Index(1, 0));
+            Assert.AreEqual(3, clock.Index(2, 0));
+            Assert.IsTrue(clock.separates);
+        }
+
+        [Test]
+        public void BuildClock_ColoursARunThatStraddlesTheWrap()
+        {
+            // Steps 3, 0 and 1 are one run of slot 0 read around the wrap. Walking the pass
+            // from the step that STARTS a run is what gets all three coloured; a walk from
+            // position 0 would have split the run and left the wrap repeating a phase.
+            var clock = AsyncSyncSchedule.BuildClock(Clocked(), Slots(1, 1),
+                new List<int> { 0, 0, 1, 0 });
+
+            CollectionAssert.AreEqual(new[] { 1, 0, 0, 0 }, clock.stepPhases);
+            CollectionAssert.AreEqual(new[] { 2, 1 }, clock.slotPhases);
+            Assert.IsTrue(clock.separates);
+        }
+
+        [Test]
+        public void BuildClock_CannotColourAnOddPassOfOneSlot()
+        {
+            // Every step sending one slot closes the alternation into a ring, and an odd ring
+            // has no two-colouring — the one shape Validate has to refuse outright.
+            Assert.IsFalse(
+                AsyncSyncSchedule.BuildClock(Clocked(), Slots(1), new List<int> { 0, 0, 0 }).separates);
+            Assert.IsFalse(
+                AsyncSyncSchedule.BuildClock(Clocked(), Slots(1), new List<int> { 0 }).separates);
+
+            var even = AsyncSyncSchedule.BuildClock(Clocked(), Slots(1), new List<int> { 0, 0 });
+            Assert.IsTrue(even.separates);
+            CollectionAssert.AreEqual(new[] { 0, 1 }, even.stepPhases);
+            Assert.AreEqual(2, even.indexValues);
+        }
+
+        [Test]
+        public void EffectiveSchedule_WithOneSlotAndAClock_RunsItTwice()
+        {
+            var slots = Slots(1);
+            CollectionAssert.AreEqual(new[] { 0 },
+                AsyncSyncSchedule.EffectiveSchedule(new AsyncSyncBuilder.Request(), slots),
+                "unclocked, a lone slot is the single step Validate refuses");
+            CollectionAssert.AreEqual(new[] { 0, 0 },
+                AsyncSyncSchedule.EffectiveSchedule(Clocked(), slots),
+                "the clock is the whole cycle when there is no other slot to alternate with");
+        }
+
+        [Test]
+        public void BuildSchedule_WithAClock_LeavesTheRoundingArtefactWhereItLanded()
+        {
+            // ×3/×6/×7 is one of the mixes whose even spread rounds two visits of one slot
+            // into neighbouring cells. Unclocked they are traded apart; with a clock there is
+            // nothing to trade — and trading is what can cost a visit outright.
+            var slots = Slots(3, 6, 7);
+            var traded = AsyncSyncSchedule.BuildSchedule(slots);
+            var asPlaced = AsyncSyncSchedule.BuildSchedule(slots, allowRepeats: true);
+
+            Assert.IsFalse(HasAdjacency(traded), "the unclocked pass is repaired as it always was");
+            Assert.IsTrue(HasAdjacency(asPlaced), "the clocked pass keeps the placement as spread");
+            Assert.AreEqual(16, asPlaced.Count, "and every visit the weights asked for");
+        }
+
+        [Test]
+        public void ResolveScheduleOverride_TakesARepeatWhenAClockPaysForIt()
+        {
+            var slots = Slots(1, 1, 1);
+            var request = Clocked();
+            request.scheduleOverride.AddRange(new[] { "P0", "P0", "P1", "P2" });
+
+            var errors = new List<string>();
+            CollectionAssert.AreEqual(new[] { 0, 0, 1, 2 },
+                AsyncSyncSchedule.ResolveScheduleOverride(request, slots, errors));
+            CollectionAssert.IsEmpty(errors);
+        }
+
+        [Test]
+        public void RepairScheduleOverride_KeepsARepeatWhenAClockPaysForIt()
+        {
+            var controller = Floats("A", "B", "C");
+            var request = Multiplexing(controller, "A", "B", "C");
+            request.allowRepeatSteps = true;
+
+            CollectionAssert.AreEqual(new[] { "A", "A", "B", "C" },
+                Repair(request, "A", "A", "B", "C"));
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void RepairSteps_KeepsARepeatedStepWhenAClockPaysForIt()
+        {
+            var controller = Floats("A", "B");
+            var request = Sending(controller, new[] { "A", "B" },
+                new[] { "A" }, new[] { "A" }, new[] { "B" });
+            request.allowRepeatSteps = true;
+
+            // The run of A collapses without a clock (see the test above); with one it is the
+            // pass its author drew, and the repair has nothing to say about it.
+            AssertGrid(AsyncSyncSchedule.RepairSteps(request, request.steps),
+                new[] { "A" }, new[] { "A" }, new[] { "B" });
+
+            Object.DestroyImmediate(controller);
+        }
     }
 }

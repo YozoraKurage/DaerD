@@ -20,15 +20,28 @@ namespace Yozolab.DaerD
         /// <summary>
         /// The encoding a request actually builds with. Auto weighs the two: the Bool index
         /// costs ceil(log2 N) bits against the Int's flat 8, so it wins for anything under 256
-        /// slots. A tie goes to the Int purely on tidiness — one parameter in the store and one
-        /// condition per decoder route instead of eight. Both are equally safe on the wire:
-        /// expression parameters arrive together, so the index bits can't be read half-updated.
+        /// index values. A tie goes to the Int purely on tidiness — one parameter in the store
+        /// and one condition per decoder route instead of eight. Both are equally safe on the
+        /// wire: expression parameters arrive together, so the index bits can't be read
+        /// half-updated.
         /// </summary>
         public static IndexEncoding ResolveEncoding(Request r)
         {
             if (r == null || r.encoding != IndexEncoding.Auto) return r?.encoding ?? IndexEncoding.Int;
-            int slots = Mathf.Max(2, BuildSlots(r).Count);
-            return NetworkSyncBuilder.BitsRequired(slots) < 8 ? IndexEncoding.Bool : IndexEncoding.Int;
+            int values = Mathf.Max(2, IndexValues(r));
+            return NetworkSyncBuilder.BitsRequired(values) < 8 ? IndexEncoding.Bool : IndexEncoding.Int;
+        }
+
+        /// <summary>
+        /// Distinct values the index takes: one per slot, and one more for every slot a clock
+        /// gives a second phase to (see <see cref="AsyncSyncSchedule.BuildClock"/>). This, not
+        /// the slot count, is what the index has to be wide enough for — and with no clock the
+        /// two are the same number, which is why nothing about an unclocked setup moves.
+        /// </summary>
+        public static int IndexValues(Request r)
+        {
+            var slots = BuildSlots(r);
+            return BuildClock(r, slots, EffectiveSchedule(r, slots)).indexValues;
         }
 
         /// <summary>
@@ -138,11 +151,14 @@ namespace Yozolab.DaerD
         /// Slots that can still be added without spending another synced bit. The Bool index
         /// only grows at powers of two, so the tail of each range is free; an Int index has room
         /// for 255 slots from the start.
+        ///
+        /// Counted in index values, which is a slot each until a clock is paying for a repeat —
+        /// a new slot that ends up beside itself then takes two of these rather than one.
         /// </summary>
         public static int FreeSlots(Request r)
         {
             if (r?.targets == null || ResolveEncoding(r) != IndexEncoding.Bool) return 0;
-            int count = Mathf.Max(2, BuildSlots(r).Count);
+            int count = Mathf.Max(2, IndexValues(r));
             int capacity = 1 << NetworkSyncBuilder.BitsRequired(count);
             return Mathf.Max(0, capacity - count);
         }
@@ -150,9 +166,12 @@ namespace Yozolab.DaerD
         /// <summary>Synced bits the generated parameters will occupy.</summary>
         public static int CompressedBits(Request r)
         {
+            // A clock is free under the Int index — 8 bits hold 255 values however they are
+            // shared out — and under the Bool index costs a bit only when the phases push the
+            // count past the power of two the slots alone sat under.
             int bits = ResolveEncoding(r) == IndexEncoding.Int
                 ? 8
-                : NetworkSyncBuilder.BitsRequired(Mathf.Max(2, BuildSlots(r).Count));
+                : NetworkSyncBuilder.BitsRequired(Mathf.Max(2, IndexValues(r)));
             foreach (var type in ChannelTypes(r))
                 bits += type == AnimatorControllerParameterType.Bool ? BoolChannelsUsed(r)
                     : type == AnimatorControllerParameterType.Float ? FloatChannelsUsed(r) * 8
