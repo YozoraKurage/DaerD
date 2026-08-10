@@ -50,11 +50,27 @@ args=(
 [[ -n "$FILTER"   ]] && args+=(-testFilter "$FILTER")
 [[ -n "$CATEGORY" ]] && args+=(-testCategory "$CATEGORY")
 
+run_unity() {
+  set +e
+  "$UNITY_EDITOR" "${args[@]}"
+  unity_status=$?
+  set -e
+}
+
 info "実行中… (ログ: $LOG)"
-set +e
-"$UNITY_EDITOR" "${args[@]}"
-unity_status=$?
-set -e
+run_unity
+
+# パッケージを足した直後などは、Unity がまだコンパイルを終えていないうちにテストが
+# 始まることがある。そうなると AddStateMachineBehaviour が黙って null を返し、
+# 何十件もの無関係な NullReference になって出てくる。原因はログのこの一行だけ。
+# 一度通せば Library が温まって解消するので、黙って一回やり直す。
+if grep -q "Please fix compile errors" "$LOG" 2>/dev/null; then
+  warn "コンパイルが終わらないうちにテストが走った。インポートを通してからやり直す"
+  "$UNITY_EDITOR" -nographics -projectPath "$UNITY_PROJECT" \
+    -logFile "$UNITY_LOG_DIR/import.log" -quit || true
+  rm -f "$RESULTS"
+  run_unity
+fi
 
 # コンパイルエラーだと結果 XML すら出ない。その場合はログから CS エラーだけ拾う。
 if [[ ! -f "$RESULTS" ]]; then

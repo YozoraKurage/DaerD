@@ -127,5 +127,14 @@ RUN sh -c "$(wget -O- https://github.com/deluan/zsh-in-docker/releases/download/
 ARG CLAUDE_CODE_VERSION=latest
 RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}
 
+# vrc-get: VPM パッケージ (VRChat SDK など) をコンテナ内で入れるための CLI。
+# 静的リンクの単一バイナリなので置くだけでよい。
+ARG VRC_GET_VERSION=1.9.2
+RUN mkdir -p /home/node/.local/bin \
+  && wget -qO /home/node/.local/bin/vrc-get \
+  "https://github.com/vrc-get/vrc-get/releases/download/v${VRC_GET_VERSION}/x86_64-unknown-linux-musl-vrc-get" \
+  && chmod +x /home/node/.local/bin/vrc-get
+ENV PATH=$PATH:/home/node/.local/bin
+
 # テスト用スクリプトをどこからでも呼べるように PATH に通す。
 ENV PATH=$PATH:/workspace/.devcontainer/unity

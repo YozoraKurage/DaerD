@@ -40,3 +40,23 @@ Editor イメージ）。EditMode テストはコンテナ内で完結する。
 - 初回だけ Unity Personal ライセンスの有効化が要る:
   `.devcontainer/unity/activate-license.sh --status` で状態を確認できる。
   未設定なら手順が表示されるが、ブラウザ操作を含むのでユーザーに依頼すること。
+
+## VRChat SDK の有無で挙動が変わる
+
+テストプロジェクトには vrc-get で VRChat SDK を入れてある（`add-vpm.sh --list`
+で確認できる）。SDK 側にも 7 件テストがあるので、全件実行の件数は DaerD 分より
+多く出る。
+
+```
+.devcontainer/unity/add-vpm.sh com.vrchat.avatars    # 入れる
+.devcontainer/unity/add-vpm.sh --remove com.vrchat.avatars
+```
+
+**ビヘイビアやドライバに触る変更は、SDK 有りと無しの両方で走らせること。**
+製品コードは型を名前で探すので、SDK があるとテスト側スタブではなく SDK の型が
+実際に付く。型でキャストするテストはこの差で「SDK 有りでだけ落ちる」ようになる
+（読むときは `VrcParameterDriver.ReadSpec` のような型非依存のアクセサを使う）。
+
+パッケージを足した直後の 1 回目は、Unity のコンパイルが終わらないうちにテストが
+始まって大量の NullReference になることがある。`run-tests.sh` はこれを検出して
+自動でやり直すので、そのまま任せてよい。
