@@ -63,6 +63,29 @@ namespace Yozolab.DaerD.Tests
             Assert.AreEqual(-1, VrcMenuAccess.AddControl(menu));   // cap reached
         }
 
+        /// <summary>
+        /// A control added after a puppet used to arrive holding the puppet's sub-parameters,
+        /// because the serialized array grows by cloning its last element and only some of
+        /// the fields were being cleared afterwards.
+        /// </summary>
+        [Test]
+        public void AddControl_DoesNotInheritTheControlBeforeIt()
+        {
+            var menu = NewMenu();
+            int puppet = VrcMenuAccess.AddControl(menu);
+            VrcMenuAccess.SetType(menu, puppet, VrcMenuAccess.ControlType.FourAxisPuppet);
+            VrcMenuAccess.SetSubParameter(menu, puppet, 0, "Spin");
+            VrcMenuAccess.SetLabel(menu, puppet, 0, "Up");
+
+            int fresh = VrcMenuAccess.AddControl(menu);
+
+            var control = VrcMenuAccess.Read(menu)[fresh];
+            Assert.AreEqual(VrcMenuAccess.ControlType.Toggle, control.type);
+            Assert.IsEmpty(control.subParameters);
+            Assert.IsEmpty(control.labels);
+            Assert.AreEqual(1f, control.value);
+        }
+
         [Test]
         public void SetType_GrowsPuppetArrays()
         {

@@ -236,6 +236,18 @@ namespace Yozolab.DaerD
             if (icon != null) icon.objectReferenceValue = null;
             var subMenu = element.FindPropertyRelative("subMenu");
             if (subMenu != null) subMenu.objectReferenceValue = null;
+            // InsertArrayElementAtIndex clones the element before it, so everything not
+            // overwritten here arrives already filled in with the previous control's data.
+            // A new control is a Toggle, which uses neither array; leaving them behind would
+            // hand the fresh control the last one's puppet parameters — invisible in the
+            // inspector for a Toggle, but live data that a rename cascade or a "find usages"
+            // would still walk into, and that would reappear the moment the type changed.
+            var value = element.FindPropertyRelative("value");
+            if (value != null) value.floatValue = 1f;
+            var subParameters = element.FindPropertyRelative("subParameters");
+            if (subParameters != null) subParameters.arraySize = 0;
+            var labels = element.FindPropertyRelative("labels");
+            if (labels != null) labels.arraySize = 0;
             so.ApplyModifiedProperties();
             EditorUtility.SetDirty(asset);
             return index;

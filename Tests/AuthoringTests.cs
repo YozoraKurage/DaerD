@@ -588,10 +588,10 @@ namespace Yozolab.DaerD.Tests
             var recipe = NewRecipe(controller, c =>
             {
                 var layer = c.Layer("L");
-                layer.BehaviourJson("IRTestBehaviour", "{\"payload\":\"root\"}");
+                layer.BehaviourJson("IRTestBehaviour", Snapshot<IRTestBehaviour>(b => b.payload = "root"));
                 layer.NewState("S");
                 var sub = layer.NewSubStateMachine("Sub");
-                sub.BehaviourJson("IRTestBehaviour", "{\"number\":7}");
+                sub.BehaviourJson("IRTestBehaviour", Snapshot<IRTestBehaviour>(b => b.number = 7));
                 sub.NewState("Inner");
             });
 
@@ -656,6 +656,22 @@ namespace Yozolab.DaerD.Tests
 
             Assert.IsFalse(recipe.HasGeneratedHalf);
             Assert.AreEqual(1, recipe.Compare().Count);
+        }
+
+        /// <summary>
+        /// The JSON a BehaviourJson call takes is an EditorJsonUtility snapshot, the same
+        /// thing the exporter writes — not a bare field bag. FromJsonOverwrite reads the
+        /// type-wrapped shape and silently does nothing with anything else, so hand-writing
+        /// `{"payload":"root"}` here would leave the behaviour at its defaults and the test
+        /// would be asserting against a rebuild that never happened.
+        /// </summary>
+        static string Snapshot<T>(Action<T> configure) where T : StateMachineBehaviour
+        {
+            var template = ScriptableObject.CreateInstance<T>();
+            configure(template);
+            var json = UnityEditor.EditorJsonUtility.ToJson(template);
+            UnityEngine.Object.DestroyImmediate(template);
+            return json;
         }
 
         static int IndexOfLayer(AnimatorController controller, string name)

@@ -20,6 +20,10 @@ namespace Yozolab.DaerD.Tests
             _context = new DaerDContext();
             // Subscribed after the controller is set, so the counters only see what a test does.
             _context.SetController(_controller);
+            // NUnit builds one fixture instance and runs every test on it, so the counters
+            // carry over from the test before unless they are cleared here.
+            _homeChanged = 0;
+            _selectionChanged = 0;
             _context.HomeChanged += () => _homeChanged++;
             _context.SelectionChanged += () => _selectionChanged++;
         }

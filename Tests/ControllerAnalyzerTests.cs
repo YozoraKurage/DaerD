@@ -253,7 +253,14 @@ namespace Yozolab.DaerD.Tests
         {
             var controller = NewController(out var sm);
             var a = sm.AddState("A");
-            a.behaviours = new StateMachineBehaviour[] { null };
+            // Assigning an array with a null in it does not produce a null entry — the setter
+            // drops it, and the state comes back with no behaviours at all. The way a real
+            // controller ends up with one is the script behind a behaviour going away, so
+            // that is what this reproduces: add a behaviour, then destroy the object. The
+            // slot stays, holding a reference to something no longer there.
+            var doomed = a.AddStateMachineBehaviour(typeof(IRTestBehaviour));
+            Object.DestroyImmediate(doomed);
+            Assert.AreEqual(1, a.behaviours.Length, "expected a surviving slot with nothing in it");
 
             var issues = OfKind(controller, IssueKind.MissingBehaviour);
 

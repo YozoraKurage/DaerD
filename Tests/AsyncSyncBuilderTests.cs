@@ -1761,7 +1761,13 @@ namespace Yozolab.DaerD.Tests
         public void Apply_IgnoresAZeroLengthEmptyClip()
         {
             var controller = NewController();
+            // A clip with no curves at all is not zero length — Unity reports one second for
+            // it. Length only reaches zero once there is a curve whose every key sits at
+            // time zero, which is the shape a hand-made "do nothing" clip actually takes.
             var clip = new AnimationClip { name = "Zero" };
+            clip.SetCurve("", typeof(Transform), "localPosition.x",
+                new AnimationCurve(new Keyframe(0f, 0f)));
+            Assert.AreEqual(0f, clip.length, "the clip under test has to be zero length");
             var request = NewRequest(controller, "F", "B");
             request.emptyClip = clip;
             Assert.IsNull(AsyncSyncBuilder.ResolveEmptyClip(request));
