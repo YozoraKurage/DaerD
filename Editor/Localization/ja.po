@@ -1952,6 +1952,9 @@ msgstr "（リクエスト可）"
 msgid "Top to bottom is the cycle order. The timing itself is set by hand in the timeline below."
 msgstr "上から下が巡回の順序です。タイミングそのものは下のタイムラインで手動指定しています。"
 
+msgid "Top to bottom is only the listing order here — what each step sends is set cell by cell in the grid below."
+msgstr "ここでの上下は並び順にすぎません。各ステップが何を送るかは、下のグリッドでセル単位に指定します。"
+
 msgid "Steps in the pass that send this parameter. Set it by clicking the timeline; go back to rates to have it worked out for you."
 msgstr "1 周のうちこのパラメーターを送るステップ数です。タイムラインをクリックして決めます。自動で決めさせたい場合はレートに戻してください。"
 

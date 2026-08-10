@@ -336,7 +336,7 @@ namespace Yozolab.DaerD
             }
             EditorGUILayout.LabelField(
                 Manual
-                    ? L.Tr("Top to bottom is the cycle order. The timing itself is set by hand in the timeline below.")
+                    ? L.Tr("Top to bottom is only the listing order here — what each step sends is set cell by cell in the grid below.")
                     : L.Tr("Top to bottom is the cycle order. ×N syncs a parameter N times per pass; everything else shares the steps in between."),
                 EditorStyles.miniLabel);
 
