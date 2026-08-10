@@ -392,7 +392,11 @@ namespace Yozolab.DaerD
                         new GUIContent(L.Tr("Split"),
                             L.Tr("Give this parameter a step of its own instead of sharing one with the row above. Parameters sharing a step are sent together and cannot be timed apart.")),
                         EditorStyles.miniButton, GUILayout.Width(40));
-                    if (split != row.split)
+                    // Only a toggle the user could actually reach writes back. A disabled one
+                    // hands back the value it was drawn with — the greyed-out false — and
+                    // taking that for an edit would clear a mark the channel count is merely
+                    // too narrow for at this moment, silently and with no click involved.
+                    if (splittable && split != row.split)
                     {
                         row.split = split;
                         _stepsStale = true;
