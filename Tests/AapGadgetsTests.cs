@@ -217,7 +217,7 @@ namespace Yozolab.DaerD.Tests
         }
 
         [Test]
-        public void Smooth_DelegatesToAapSmoothing()
+        public void Smooth_IsBuiltThroughTheSamePathAsEveryOtherKind()
         {
             var controller = NewController("A");
             var request = NewRequest(controller, AapGadgets.Kind.Smooth);
@@ -1058,6 +1058,49 @@ namespace Yozolab.DaerD.Tests
                 Assert.AreEqual(1, saved.Count);
                 Assert.AreSame(root.children[0].motion, saved[0].tree, "the record points at the new tree");
                 Assert.AreEqual(before, CountSubAssets(path), "the old trees and clips went with it");
+            });
+        }
+
+        /// <summary>
+        /// Smoothing regenerates like every other kind. Worth its own case because it is the
+        /// one gadget whose output is also one of its inputs: the sweep takes the output
+        /// parameter with it, and the rebuild has to put back a feedback branch reading the
+        /// parameter it just recreated. A layer left holding two of these would be two trees
+        /// writing one parameter — a gadget that still looks right in the graph and smooths at
+        /// the wrong rate.
+        /// </summary>
+        [Test]
+        public void Apply_WithReplaces_RebuildsSmoothingInPlace()
+        {
+            WithSavedController(controller =>
+            {
+                controller.AddParameter("A", AnimatorControllerParameterType.Float);
+                var request = NewRequest(controller, AapGadgets.Kind.Smooth);
+                request.inputB = null;
+                request.output = "A/Smoothed";
+                request.smoothing = "A/Smoothing";
+                Assert.IsTrue(AapGadgets.Apply(request));
+
+                string path = AssetDatabase.GetAssetPath(controller);
+                int before = CountSubAssets(path);
+
+                var config = GraphFrameData.GetGadgets(controller)[0];
+                var again = AapGadgets.ToRequest(config, controller);
+                again.replaces = config;
+                Assert.IsTrue(AapGadgets.Apply(again));
+
+                var root = (BlendTree)controller.layers[1].stateMachine.states[0].state.motion;
+                Assert.AreEqual(1, root.children.Length, "the layer holds one smoother, not two");
+                Assert.AreEqual(2, controller.layers.Length, "and one layer, not two");
+                Assert.AreEqual(before, CountSubAssets(path), "the old trees and clips went with it");
+
+                // The rebuilt gadget reads its own output again, through the parameter the
+                // sweep removed and this run put back.
+                var smooth = (BlendTree)root.children[0].motion;
+                Assert.AreEqual("A/Smoothing", smooth.blendParameter);
+                var feedback = (BlendTree)smooth.children[1].motion;
+                Assert.AreEqual("A/Smoothed", feedback.blendParameter);
+                Assert.IsNotNull(DbtBuilder.FindParameter(controller, "A/Smoothed"));
             });
         }
 

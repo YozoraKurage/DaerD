@@ -463,9 +463,6 @@ msgstr "コントローラーがありません。"
 msgid "The source must be an existing Float parameter."
 msgstr "元パラメーターには既存の Float パラメーターを指定してください。"
 
-msgid "The output parameter needs a name different from the source."
-msgstr "出力パラメーターには元パラメーターと異なる名前が必要です。"
-
 msgid "A parameter named '{0}' already exists."
 msgstr "パラメーター '{0}' は既に存在します。"
 

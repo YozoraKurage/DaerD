@@ -5,7 +5,12 @@ using UnityEngine;
 
 namespace Yozolab.DaerD.Tests
 {
-    public class AapSmoothingTests
+    /// <summary>
+    /// The exponential smoothing gadget, end to end — the one whose tree reads the parameter it
+    /// writes, which is why it is worth a file of its own even though it is a kind like any
+    /// other.
+    /// </summary>
+    public class SmoothGadgetTests
     {
         static AnimatorController NewController(out AnimatorStateMachine sm)
         {
@@ -15,11 +20,13 @@ namespace Yozolab.DaerD.Tests
             return controller;
         }
 
-        static AapSmoothing.Request NewRequest(AnimatorController controller, string source) =>
-            new AapSmoothing.Request
+        /// <summary>Through <see cref="AapGadgets"/>, the way the wizard and a recipe do.</summary>
+        static AapGadgets.Request NewRequest(AnimatorController controller, string source) =>
+            new AapGadgets.Request
             {
                 controller = controller,
-                source = source,
+                kind = AapGadgets.Kind.Smooth,
+                inputA = source,
                 output = source + "/Smoothed",
                 smoothing = source + "/Smoothing",
                 smoothingDefault = 0.9f,
@@ -42,8 +49,8 @@ namespace Yozolab.DaerD.Tests
             var controller = NewController(out _);
             controller.AddParameter("Speed", AnimatorControllerParameterType.Float);
 
-            Assert.IsNull(AapSmoothing.Validate(NewRequest(controller, "Speed")));
-            Assert.IsTrue(AapSmoothing.Apply(NewRequest(controller, "Speed")));
+            Assert.IsNull(AapGadgets.Validate(NewRequest(controller, "Speed")));
+            Assert.IsTrue(AapGadgets.Apply(NewRequest(controller, "Speed")));
 
             // Parameters: smoothed copy, smoothing amount (default 0.9) and the constant One.
             Assert.AreEqual(AnimatorControllerParameterType.Float, FindParameter(controller, "Speed/Smoothed").type);
@@ -100,10 +107,10 @@ namespace Yozolab.DaerD.Tests
             controller.AddParameter("A", AnimatorControllerParameterType.Float);
             controller.AddParameter("B", AnimatorControllerParameterType.Float);
 
-            Assert.IsTrue(AapSmoothing.Apply(NewRequest(controller, "A")));
+            Assert.IsTrue(AapGadgets.Apply(NewRequest(controller, "A")));
             var second = NewRequest(controller, "B");
             second.layerIndex = 1;   // the DBT layer created by the first run
-            Assert.IsTrue(AapSmoothing.Apply(second));
+            Assert.IsTrue(AapGadgets.Apply(second));
 
             Assert.AreEqual(2, controller.layers.Length);
             var layer = controller.layers[1];
@@ -127,21 +134,21 @@ namespace Yozolab.DaerD.Tests
             controller.AddParameter("Speed", AnimatorControllerParameterType.Float);
             controller.AddParameter("Flag", AnimatorControllerParameterType.Bool);
 
-            Assert.IsNotNull(AapSmoothing.Validate(NewRequest(controller, "Missing")));
-            Assert.IsNotNull(AapSmoothing.Validate(NewRequest(controller, "Flag")));   // not a Float
+            Assert.IsNotNull(AapGadgets.Validate(NewRequest(controller, "Missing")));
+            Assert.IsNotNull(AapGadgets.Validate(NewRequest(controller, "Flag")));   // not a Float
 
             var clash = NewRequest(controller, "Speed");
             clash.output = "Flag";   // name already taken
-            Assert.IsNotNull(AapSmoothing.Validate(clash));
+            Assert.IsNotNull(AapGadgets.Validate(clash));
 
             var range = NewRequest(controller, "Speed");
             range.rangeMin = 1f;
             range.rangeMax = 1f;
-            Assert.IsNotNull(AapSmoothing.Validate(range));
+            Assert.IsNotNull(AapGadgets.Validate(range));
 
             var sameName = NewRequest(controller, "Speed");
             sameName.output = "Speed";
-            Assert.IsNotNull(AapSmoothing.Validate(sameName));
+            Assert.IsNotNull(AapGadgets.Validate(sameName));
 
             Object.DestroyImmediate(controller);
         }

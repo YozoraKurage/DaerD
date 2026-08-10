@@ -309,11 +309,6 @@ namespace Yozolab.DaerD
             var controller = r.controller;
             if (controller == null) return L.Tr("No controller.");
 
-            // Smoothing has its own parameter rules (feedback output, shared smoothing
-            // amount); the whole request is delegated to AapSmoothing.
-            if (r.kind == Kind.Smooth)
-                return AapSmoothing.Validate(ToSmoothingRequest(r));
-
             if (NeedsInput(r.kind) && !IsFloat(controller, r.inputA))
                 return L.Tr("The source must be an existing Float parameter.");
             if (IsBinary(r.kind))
@@ -337,9 +332,13 @@ namespace Yozolab.DaerD
                     return L.Tr("Parameter '{0}' exists but is not a Float.", r.smoothing);
             }
 
-            if ((r.kind == Kind.AddRanged || r.kind == Kind.SubRanged || r.kind == Kind.SmoothLinear
-                || r.kind == Kind.Buffer
-                || r.kind == Kind.MultiplySigned || r.kind == Kind.DivideSigned)
+            // Every kind whose range is a window values travel inside. Remap is the one kind
+            // that uses the range without being in this list: its range is a destination, and
+            // reversing it is how a recipe asks for an inverted slope.
+            if ((r.kind == Kind.Smooth || r.kind == Kind.AddRanged || r.kind == Kind.SubRanged
+                || r.kind == Kind.SmoothLinear || r.kind == Kind.Buffer
+                || r.kind == Kind.MultiplySigned || r.kind == Kind.DivideSigned
+                || r.kind == Kind.Power)
                 && !(r.rangeMin < r.rangeMax))
                 return L.Tr("Range Min must be smaller than Range Max.");
             if (UsesInputRange(r.kind) && !(r.inMin < r.inMax))
@@ -351,8 +350,6 @@ namespace Yozolab.DaerD
                 return L.Tr("The input range must start above zero for this gadget.");
             if (UsesSamples(r.kind) && (r.lutSamples < MinLutSamples || r.lutSamples > MaxLutSamples))
                 return L.Tr("Samples must be between 2 and 128.");
-            if (r.kind == Kind.Power && !(r.rangeMin < r.rangeMax))
-                return L.Tr("Range Min must be smaller than Range Max.");
             if (r.kind == Kind.Lut1D)
             {
                 if (r.curve == null || r.curve.length < 2)
@@ -367,7 +364,7 @@ namespace Yozolab.DaerD
                 && (r.bufferFrames < MinBufferFrames || r.bufferFrames > MaxBufferFrames))
                 return L.Tr("Frames must be between 1 and 8.");
 
-            return AapSmoothing.ValidateLayerChoice(controller, r.layerIndex, r.newLayerName);
+            return DbtBuilder.ValidateLayerChoice(controller, r.layerIndex, r.newLayerName);
         }
 
         /// <summary>Whether the name is one the gadget being regenerated already owns. Those
@@ -378,28 +375,12 @@ namespace Yozolab.DaerD
             (r.replaces != null && r.replaces.Owns(name))
             || (r.preCreated != null && System.Array.IndexOf(r.preCreated, name) >= 0);
 
-        static AapSmoothing.Request ToSmoothingRequest(Request r) => new AapSmoothing.Request
-        {
-            replaces = r.replaces,
-            controller = r.controller,
-            source = r.inputA,
-            output = r.output,
-            smoothing = r.smoothing,
-            smoothingDefault = r.smoothingDefault,
-            rangeMin = r.rangeMin,
-            rangeMax = r.rangeMax,
-            layerIndex = r.layerIndex,
-            newLayerName = r.newLayerName,
-        };
-
         /// <summary>Runs the (pre-validated) request; returns false when validation fails.
         /// Turning <paramref name="commitSubAssets"/> off leaves the flush to the caller: a
         /// batch that applies several gadgets in a row pays one reimport at the end instead
         /// of one per gadget.</summary>
         public static bool Apply(Request r, bool commitSubAssets = true)
         {
-            if (r.kind == Kind.Smooth) return ApplySmooth(r, commitSubAssets);
-
             if (Validate(r) != null) return false;
             var controller = r.controller;
 
@@ -419,11 +400,9 @@ namespace Yozolab.DaerD
                 if (r.replaces != null) RemoveGadget(controller, r.replaces);
 
                 foreach (var name in OutputParameters(r))
-                    DbtBuilder.EnsureFloatParameter(controller, name, 0f);
-                // A step size below zero would drive the output away from the input; the
-                // wizard offers no such value, but a recipe could ask for one.
-                if (r.kind == Kind.SmoothLinear)
-                    DbtBuilder.EnsureFloatParameter(controller, r.smoothing, Mathf.Max(0f, r.smoothingDefault));
+                    DbtBuilder.EnsureFloatParameter(controller, name, OutputDefault(r, controller));
+                if (UsesSmoothing(r.kind))
+                    DbtBuilder.EnsureFloatParameter(controller, r.smoothing, SmoothingDefault(r));
 
                 var child = Build(r, controller, one);
                 DbtBuilder.AddDirectChild(root, child, one);
@@ -435,35 +414,33 @@ namespace Yozolab.DaerD
             return true;
         }
 
-        /// <summary>The <see cref="Kind.Smooth"/> branch of <see cref="Apply"/>. Smoothing has
-        /// parameter rules of its own and builds its own tree, so the request is handed over
-        /// whole — but the record of what was built belongs here, with every other kind's.</summary>
-        static bool ApplySmooth(Request r, bool commitSubAssets)
+        /// <summary>
+        /// What the gadget's output parameter rests at before anything drives it. Zero for a
+        /// chain, whose output is written from its inputs every frame and so is only ever seen
+        /// at its default on the frame the controller loads.
+        ///
+        /// <see cref="Kind.Smooth"/> is the exception, because its output is also one of its
+        /// inputs: the feedback branch reads the value the gadget wrote last frame. Seeding it
+        /// with the input's own resting value starts the loop settled — from zero it would
+        /// instead be seen easing up to the input on load, which is a real movement and not a
+        /// rounding artefact.
+        /// </summary>
+        static float OutputDefault(Request r, AnimatorController controller)
         {
-            var smoothing = ToSmoothingRequest(r);
-            // Validated up front rather than left to AapSmoothing.Apply's own check: the sweep
-            // must not run for a request that was going to be refused anyway.
-            if (AapSmoothing.Validate(smoothing) != null) return false;
-
-            BlendTree child = null;
-            bool applied;
-            using (new UndoScope("DBT Gadget"))
-            {
-                if (r.replaces != null)
-                {
-                    // The target layer is an index, and the sweep can drop layers before it.
-                    // Hold it by its machine over the removal and look the index up again.
-                    var target = LayerMachineAt(r.controller, smoothing.layerIndex);
-                    RemoveGadget(r.controller, r.replaces);
-                    if (target != null) smoothing.layerIndex = LayerIndexOf(r.controller, target);
-                }
-                applied = AapSmoothing.Apply(smoothing, commitSubAssets: false, out child);
-                if (applied)
-                    SaveConfig(r, DbtBuilder.HostingMachine(r.controller, child), child);
-            }
-            if (applied && commitSubAssets) DbtBuilder.CommitSubAssets(r.controller);
-            return applied;
+            if (r.kind != Kind.Smooth) return 0f;
+            var source = DbtBuilder.FindParameter(controller, r.inputA);
+            return source != null ? source.defaultFloat : 0f;
         }
+
+        /// <summary>
+        /// The follow-speed parameter's default. The two smoothing kinds read it on different
+        /// scales — a 0..1 blend for the exponential one, parameter units per frame for the
+        /// linear one — so all they share is that the value must not run backwards. A step
+        /// below zero would drive the output away from its input; the wizard offers no such
+        /// value, but a recipe could ask for one.
+        /// </summary>
+        static float SmoothingDefault(Request r) =>
+            r.kind == Kind.Smooth ? Mathf.Clamp01(r.smoothingDefault) : Mathf.Max(0f, r.smoothingDefault);
 
         // ---- removing a gadget --------------------------------------------------
 
@@ -649,10 +626,6 @@ namespace Yozolab.DaerD
         static AnimationCurve CopyCurve(AnimationCurve curve) =>
             curve == null ? null : new AnimationCurve(curve.keys);
 
-        static AnimatorStateMachine LayerMachineAt(AnimatorController controller, int index) =>
-            controller != null && index >= 0 && index < controller.layers.Length
-                ? controller.layers[index].stateMachine : null;
-
         static int LayerIndexOf(AnimatorController controller, AnimatorStateMachine machine)
         {
             if (controller == null || machine == null) return -1;
@@ -667,6 +640,8 @@ namespace Yozolab.DaerD
             string a = r.inputA, b = r.inputB, output = r.output;
             switch (r.kind)
             {
+                case Kind.Smooth:
+                    return Smooth(c, a, output, r.smoothing, r.rangeMin, r.rangeMax);
                 case Kind.Add: return Add(c, a, b, output);
                 case Kind.AddRanged: return AddRanged(c, a, b, output, one, r.rangeMin, r.rangeMax);
                 case Kind.Sub: return Sub(c, a, b, output);
@@ -1273,7 +1248,43 @@ namespace Yozolab.DaerD
             AddSupportingState(stateMachine, "Clock", new Vector3(300f, 60f, 0f), clip);
         }
 
-        // ---- linear smoothing ---------------------------------------------------
+        // ---- smoothing ----------------------------------------------------------
+
+        /// <summary>
+        /// Every frame, <c>output = lerp(input, output, smoothing)</c>: a 1D tree over the
+        /// smoothing amount cross-fades between a tree that follows the input (at 0) and one
+        /// driven by the output itself (at 1). Both leaves are the same pair of AAP clips —
+        /// one-key clips animating the output parameter on the Animator — so whichever branch
+        /// carries the weight writes the same parameter, and the blend between them is the
+        /// smoothing.
+        ///
+        /// The one gadget whose tree is a loop rather than a chain: the output is both what it
+        /// writes and what one of its branches reads. That is also why
+        /// <see cref="OutputDefault"/> seeds the output with the input's resting value — read
+        /// on the frame it is written, an output starting at 0 would have the gadget ease up
+        /// from 0 on load rather than begin settled.
+        /// Reference: https://vrc.school/docs/Other/Advanced-BlendTrees
+        /// </summary>
+        public static BlendTree Smooth(AnimatorController c, string input, string output,
+            string smoothing, float min, float max)
+        {
+            // The two AAP leaves, shared by the input and the feedback tree.
+            var clipMin = DbtBuilder.ParameterClip(c, output, min);
+            var clipMax = DbtBuilder.ParameterClip(c, output, max);
+
+            var inputTree = DbtBuilder.Tree1D(c, DbtBuilder.Sanitize(input) + " (Input)", input);
+            inputTree.AddChild(clipMin, min);
+            inputTree.AddChild(clipMax, max);
+
+            var feedbackTree = DbtBuilder.Tree1D(c, DbtBuilder.Sanitize(output) + " (Feedback)", output);
+            feedbackTree.AddChild(clipMin, min);
+            feedbackTree.AddChild(clipMax, max);
+
+            var smoothTree = DbtBuilder.Tree1D(c, "Smooth " + DbtBuilder.Sanitize(input), smoothing);
+            smoothTree.AddChild(inputTree, 0f);
+            smoothTree.AddChild(feedbackTree, 1f);
+            return smoothTree;
+        }
 
         /// <summary>Where the step ramp saturates, in parameter units. The convention this
         /// technique is written against; see <see cref="SmoothLinear"/>.</summary>
@@ -1281,7 +1292,7 @@ namespace Yozolab.DaerD
 
         /// <summary>
         /// Moves the output toward the input at a constant speed — stepSize per frame — where
-        /// <see cref="AapSmoothing"/> eases in and never quite arrives. Four Direct children:
+        /// <see cref="Smooth"/> eases in and never quite arrives. Four Direct children:
         /// three remaps write the difference into "output/Delta" (the input added, the output
         /// subtracted) and hold the output at its current value, and a 1D tree over Delta adds
         /// ±1 × stepSize, ramping through 0 inside the last ±<see cref="StepRamp"/> so the

@@ -26,6 +26,31 @@ namespace Yozolab.DaerD
         }
 
         /// <summary>
+        /// Human-readable reason the chosen layer can't host a gadget, or null when it can. The
+        /// question every builder that adds a Direct child asks first — gadgets, toggles wired
+        /// as a tree — because the answer is about the layer, not about what is being added:
+        /// an index that no longer resolves, or a layer already carrying states that are not
+        /// Direct trees and would be joined rather than shared.
+        /// </summary>
+        public static string ValidateLayerChoice(AnimatorController controller, int layerIndex,
+            string newLayerName)
+        {
+            if (layerIndex >= 0)
+            {
+                if (layerIndex >= controller.layers.Length)
+                    return L.Tr("The target layer no longer exists.");
+                var layer = controller.layers[layerIndex];
+                if (!IsLayerEmpty(layer) && !ControllerAnalyzer.IsDirectBlendTreeOnlyLayer(layer))
+                    return L.Tr("The target layer must be empty or contain only Direct blend tree states.");
+            }
+            else if (string.IsNullOrEmpty(newLayerName))
+            {
+                return L.Tr("The new layer needs a name.");
+            }
+            return null;
+        }
+
+        /// <summary>
         /// Returns the root Direct blend tree of the target layer, creating the layer and/or
         /// its single Write-Defaults-ON state as needed. The state sits directly at Entry
         /// (it is the layer's only, and therefore default, state).
