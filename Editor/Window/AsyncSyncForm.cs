@@ -840,6 +840,22 @@ namespace Yozolab.DaerD
                     L.Tr("{0} more slot(s) fit in the current index at no extra synced cost.", free),
                     EditorStyles.miniLabel);
 
+            // What the clock is costing right now. It charges only for the slots that actually
+            // repeat, so the number moves as the pass is edited — and reading 0 is the answer
+            // to "is this option doing anything yet".
+            if (request.allowRepeatSteps)
+            {
+                var clock = AsyncSyncBuilder.BuildClock(request, slots,
+                    AsyncSyncBuilder.EffectiveSchedule(request, slots));
+                int phased = 0;
+                foreach (var phases in clock.slotPhases)
+                    if (phases > 1) phased++;
+                EditorGUILayout.LabelField(
+                    L.Tr("Repeated steps: {0} of {1} slot(s) need a second decoder state.",
+                        phased, slots.Count),
+                    EditorStyles.miniLabel);
+            }
+
             int requests = AsyncSyncBuilder.RequestableTargets(request).Count;
             if (requests > 0)
                 EditorGUILayout.LabelField(

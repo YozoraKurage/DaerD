@@ -923,6 +923,9 @@ msgstr "'{0}' に同期リクエストが設定されていますが、ここで
 msgid "Accept sync requests: a state's Sync Request (or anything setting the '{0}' flag) makes the cycle send this parameter at the next step instead of waiting a full pass. Costs no synced bits."
 msgstr "同期リクエストを受け付けます。State の同期リクエスト（または '{0}' フラグを立てる任意の仕組み）で、1 周を待たずに次のステップでこのパラメーターを送信させられます。同期 bit は消費しません。"
 
+msgid "Repeated steps: {0} of {1} slot(s) need a second decoder state."
+msgstr "連続送信: {1} スロット中 {0} 個にデコーダー State がもう 1 つ必要です。"
+
 msgid "Sync requests: {0} local Bool flag(s), nothing synced."
 msgstr "同期リクエスト: ローカル Bool フラグ {0} 個（同期コストなし）"
 
