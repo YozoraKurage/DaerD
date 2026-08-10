@@ -32,11 +32,42 @@ protected override void Build(ControllerBuilder c) => BuildGenerated(c);
 フィールドと `Build`）。その場合はそのファイルを直接整理するか、先に DaerD から
 再エクスポートして 2 分割へ移行する（移行時は旧ファイルが `.cs.bak` に退避される）。
 
+## API の定義場所
+
+Recipe が書けるものはすべて `Editor/Authoring/` にある。名前空間は
+`Yozolab.DaerD.Authoring` で、**このフォルダの public 型だけが Recipe から見える API**
+（`Editor/Model/` 以下は内部実装で、Recipe から触れない）。シグネチャや引数の意味を
+確かめたいときは、生成 cs 冒頭のチートシートではなくこちらを読む — チートシートは
+要約なので、既定値・オーバーロード・XML コメントの注意書きは載っていない。
+
+| ファイル | 何が定義されているか |
+|---|---|
+| `ControllerBuilder.cs` | `Build(ControllerBuilder c)` の `c`。パラメーター宣言、`Layer` / `SyncedLayer` / `NewBlendTree` / `Raw` / `AsyncSync` / `Gadgets` の入口 |
+| `MachineScope.cs` | レイヤー根とサブマシンの共通面: `NewState` / `NewSubStateMachine` / `AnyTransitionsTo` / `EntryTransitionsTo` / `BehaviourJson` / ノード座標 |
+| `LayerBuilder.cs` / `MachineBuilder.cs` | 上の派生。レイヤー設定（重み・加算・IK・マスク）と、サブマシン自身からの遷移 |
+| `StateBuilder.cs` | ステートの設定（速度・モーションタイム・ミラー・WD・タグ…）、そこからの遷移、**ドライバー**、ステートの Behaviour |
+| `TransitionBuilder.cs` | 条件（`When`/`And`）と遷移の時間・割り込み・Solo/Mute |
+| `TreeBuilder.cs` / `TreeChildBuilder.cs` | ブレンドツリーの種類と子（閾値・座標・時間スケール等） |
+| `SyncedLayerBuilder.cs` | 同期レイヤーと `Override` / `OverrideBehaviourJson` |
+| `GadgetRecipeBuilder.cs` | DBT ガジェット。**利用できるガジェットの全一覧はここ** |
+| `AsyncSyncRecipeBuilder.cs` | 巡回同期の設定一式 |
+| `ParamHandle.cs` / `FloatParam.cs` / `IntParam.cs` / `BoolParam.cs` / `TriggerParam.cs` / `Condition.cs` | パラメーターハンドルと、型ごとに作れる条件（`IsTrue` / `IsGreaterThan` / `IsEqualTo` …） |
+| `ControllerRecipe.cs` | `Build` / `BuildGenerated` の契約と、`Generate` / `Verify` / `Compare`、`targetController`・`exclusive` |
+
+Compare が何を見ているかを知りたいときは `Editor/Model/ControllerIR.cs`（IR が持つ項目
+＝比較され得るものの全体）と `Editor/Model/ControllerIRDiff.cs`（実際の比較と、意図的に
+比較していない箇所）を読む。
+
+動く用例としては `Tests/AuthoringTests.cs` と `Tests/ComplexControllerTests.cs`。
+後者は API のほぼ全面を 1 つの宣言で使っているので、書き方に迷ったらここが早い。
+
 ## 進め方
 
 1. `<Name>.Generated.cs` を通しで読み、レイヤー構成と各レイヤーの役割を把握する
    （ステート名・パラメーター名・遷移条件から推測する。分からない役割は推測をコメントに
-   書かず、構造の整理だけに留める）。冒頭に API チートシートがある。
+   書かず、構造の整理だけに留める）。冒頭に API チートシートがあるが、これは
+   コメントで書かれた**例文**であって呼び出しコードではない。「この API は無い」「この
+   引数は要らない」の判断は、上表の定義ファイルで確かめてから下すこと。
 2. リファクタ後の骨格を決める: `Build` はレイヤーごとのメソッド呼び出しだけにする。
    複数レイヤーから使うパラメーターハンドルは `Params` クラスに集める。
 3. 下の不変条件を守りながら、手編集側 `<Name>.cs` に書く。
