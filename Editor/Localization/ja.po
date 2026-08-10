@@ -1964,6 +1964,9 @@ msgstr "上から下が巡回の順序です。タイミングそのものは下
 msgid "Top to bottom is only the listing order here — what each step sends is set cell by cell in the grid below."
 msgstr "ここでの上下は並び順にすぎません。各ステップが何を送るかは、下のグリッドでセル単位に指定します。"
 
+msgid "This setup carries an explicit cycle written in C#, so top to bottom is only the listing order and ×N only decides which parameters share a step. The pass itself is the timeline below."
+msgstr "このセットアップは C# で書かれた明示スケジュールを持っているため、ここでの上下は並び順にすぎず、×N はどのパラメーターが同じステップに乗るかだけを決めます。1 周そのものは下のタイムラインです。"
+
 msgid "Steps in the pass that send this parameter. Set it by clicking the timeline; go back to rates to have it worked out for you."
 msgstr "1 周のうちこのパラメーターを送るステップ数です。タイムラインをクリックして決めます。自動で決めさせたい場合はレートに戻してください。"
 
@@ -1999,6 +2002,9 @@ msgstr "レートに戻す"
 
 msgid "Discard the hand-written pass and let the ×N rates lay the cycle out again."
 msgstr "手動で書いた 1 周を破棄し、×N レートから巡回を組み直します。"
+
+msgid "Discard the explicit cycle this setup carries and let the ×N rates lay the pass out again."
+msgstr "このセットアップが持つ明示スケジュールを破棄し、×N レートから 1 周を組み直します。"
 
 msgid "'{0}' is never sent — no step of the pass carries it."
 msgstr "'{0}' は送信されません — 1 周のどのステップもこのパラメーターを運んでいません。"

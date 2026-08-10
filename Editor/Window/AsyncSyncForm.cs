@@ -62,6 +62,17 @@ namespace Yozolab.DaerD
         /// running it unprompted still invites steps to move on their own. Toggling a cell is
         /// deliberately NOT such an edit — see <see cref="PaintCell"/>.</summary>
         bool _stepsStale;
+        /// <summary>
+        /// An explicit cycle the setup already carries: target names, one per step — the
+        /// vocabulary <c>c.AsyncSync().Schedule(…)</c> writes. Carried through rather than
+        /// edited, because the grid replaced the wizard's own cycle editor and there is no
+        /// control here for one. A form that simply dropped what it cannot draw would rebuild
+        /// the layer on the rates and then save THAT over its author's pass, which is a silent
+        /// way to lose work. Empty for every setup that never had one, and ignored while
+        /// <see cref="_steps"/> is present — a grid answers the same question with more of the
+        /// picture.
+        /// </summary>
+        readonly List<string> _schedule = new List<string>();
 
         // Parameters animation writes (AAP). The scan walks every state, every blend tree and
         // every clip's curve bindings — far too much for the per-event redraw the warnings live
@@ -101,6 +112,7 @@ namespace Yozolab.DaerD
             _rows.Clear();
             _order.Clear();
             _steps.Clear();
+            _schedule.Clear();
             if (controller == null) return;
             foreach (var parameter in controller.parameters)
             {
@@ -154,6 +166,11 @@ namespace Yozolab.DaerD
             if (config.steps != null)
                 foreach (var step in config.steps)
                     _steps.Add(StepOf(step?.targets));
+            // Restored beside the grid rather than converted into one: the two are different
+            // vocabularies, and a recipe that said Schedule(…) must still export as Schedule(…)
+            // after a round trip through this form.
+            _schedule.Clear();
+            if (config.schedule != null) _schedule.AddRange(config.schedule);
             _stepsStale = true;
             _fullStep = -1;
 
@@ -217,8 +234,37 @@ namespace Yozolab.DaerD
                 _fullStep = -1;
             }
             _stepsStale = false;
+            ApplyScheduleOverride(request);
             Snapshot(request);
             return request;
+        }
+
+        /// <summary>
+        /// Puts the carried explicit cycle onto the request, so a setup that has one is
+        /// rebuilt on it instead of on the rates. A grid outranks it and is left to win on its
+        /// own — <see cref="AsyncSyncSchedule.EffectiveSchedule"/> reads the two in that order.
+        ///
+        /// A cycle the current slots can still run is passed through EXACTLY as written: a
+        /// panel opened and applied without an edit has to give back the setup it was handed,
+        /// and a repair that renamed a batched step's spokesman would show up as drift in the
+        /// author's C#. Only one the slots have outgrown — a target unticked, channels widened
+        /// until two steps merged — is repaired, and one the repair cannot settle comes back
+        /// empty, which is how this form spells "use the rates".
+        /// </summary>
+        void ApplyScheduleOverride(AsyncSyncBuilder.Request request)
+        {
+            request.scheduleOverride.Clear();
+            if (_steps.Count > 0 || _schedule.Count == 0) return;
+
+            request.scheduleOverride.AddRange(_schedule);
+            var slots = AsyncSyncBuilder.BuildSlots(request);
+            if (AsyncSyncBuilder.ResolveScheduleOverride(request, slots, null) != null) return;
+
+            var repaired = AsyncSyncBuilder.RepairScheduleOverride(request, _schedule);
+            _schedule.Clear();
+            _schedule.AddRange(repaired);
+            request.scheduleOverride.Clear();
+            request.scheduleOverride.AddRange(_schedule);
         }
 
         /// <summary>Copies the grid into the request the rest of the pass reads. Copied rather
@@ -379,7 +425,12 @@ namespace Yozolab.DaerD
             EditorGUILayout.LabelField(
                 Manual
                     ? L.Tr("Top to bottom is only the listing order here — what each step sends is set cell by cell in the grid below.")
-                    : L.Tr("Top to bottom is the cycle order. ×N syncs a parameter N times per pass; everything else shares the steps in between."),
+                    : _schedule.Count > 0
+                        // Rates are not inert under a carried cycle, only demoted: the pass is
+                        // the cycle's, but BuildSlots still groups by (type, rate), so the ×N
+                        // popup goes on deciding which parameters share a step.
+                        ? L.Tr("This setup carries an explicit cycle written in C#, so top to bottom is only the listing order and ×N only decides which parameters share a step. The pass itself is the timeline below.")
+                        : L.Tr("Top to bottom is the cycle order. ×N syncs a parameter N times per pass; everything else shares the steps in between."),
                 EditorStyles.miniLabel);
 
             var intervals = AsyncSyncBuilder.RefreshIntervals(request);
@@ -741,11 +792,27 @@ namespace Yozolab.DaerD
                         EditorStyles.miniButton, GUILayout.Width(150)))
                 {
                     foreach (var column in columns) _steps.Add(StepOf(column));
+                    // The grid starts as whatever pass was showing, a carried cycle included,
+                    // and says everything that cycle said plus which targets share each step.
+                    // Keeping both would leave the weaker one as dead data in the saved setup.
+                    _schedule.Clear();
                     _stepsStale = false;
                     _fullStep = -1;
                     Snapshot(request);
                     // Switching modes changes which controls the rest of this pass draws, and
                     // IMGUI counts those across the layout and repaint passes both.
+                    GUIUtility.ExitGUI();
+                }
+                // The wizard has no editor for a cycle written in C#, so the one thing it can
+                // offer is the way out of it — without which the rate controls above would sit
+                // there overridden by something nothing on screen can reach.
+                if (_schedule.Count > 0 && GUILayout.Button(new GUIContent(L.Tr("Back To Rates"),
+                        L.Tr("Discard the explicit cycle this setup carries and let the ×N rates lay the pass out again.")),
+                        EditorStyles.miniButton, GUILayout.Width(110)))
+                {
+                    // Nothing to snapshot: the cycle reaches the request through
+                    // ApplyScheduleOverride, and this frame's request is abandoned below.
+                    _schedule.Clear();
                     GUIUtility.ExitGUI();
                 }
             }
