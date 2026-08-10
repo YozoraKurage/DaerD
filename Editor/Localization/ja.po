@@ -1958,6 +1958,12 @@ msgstr "1 周のうちこのパラメーターを送るステップ数です。�
 msgid "Click a row to make that step send it. Every step sends exactly one slot, so a click moves the step rather than adding one."
 msgstr "行をクリックすると、そのステップがその行を送るようになります。1 ステップが送るスロットは常にちょうど 1 つなので、クリックはステップの追加ではなく置き換えです。"
 
+msgid "Click a cell to add or remove that parameter from the step; drag along a row to paint several. Everything in one column is sent together, in one go."
+msgstr "セルをクリックすると、そのステップの送信対象にパラメーターを追加／解除します。行に沿ってドラッグすればまとめて塗れます。同じ列にあるものは 1 回でまとめて送信されます。"
+
+msgid "That step already carries as many parameters of this type as its channels allow. Raise the channel count, or use another step."
+msgstr "このステップは、この型のチャンネル数の上限までパラメーターを積んでいます。チャンネル数を増やすか、別のステップを使ってください。"
+
 msgid "Split"
 msgstr "分離"
 

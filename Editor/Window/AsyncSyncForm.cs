@@ -13,6 +13,10 @@ namespace Yozolab.DaerD
     /// marks, and the cost/cycle preview. The host owns the layer choice and the apply
     /// button; the form owns every input that ends up in the
     /// <see cref="AsyncSyncBuilder.Request"/>.
+    ///
+    /// "Set Timing By Hand" turns the cycle preview into a grid of toggles, one column per
+    /// step, and that is the opt-in: nothing about the rate-derived pass changes until it is
+    /// pressed, and someone who only wants ordinary multiplexing never meets a cell.
     /// </summary>
     class AsyncSyncForm
     {
@@ -45,13 +49,23 @@ namespace Yozolab.DaerD
         string _search = string.Empty;
         Vector2 _pickScroll;
         bool _timelineOpen = true;
-        /// <summary>The cycle spelled out step by step, as target names. Empty means the pass
-        /// is derived from the rates, so this list doubles as the manual/automatic mode.</summary>
-        readonly List<string> _schedule = new List<string>();
-        /// <summary>Set by anything that can reshape the slots the schedule refers to. The
-        /// repair runs once per such edit rather than every repaint: it is stable on a valid
-        /// cycle, but running it unprompted still invites steps to move on their own.</summary>
-        bool _scheduleStale;
+        /// <summary>The pass written out as a grid: one entry per step, naming what that step
+        /// sends. Empty means the pass is derived from the rates, so this list doubles as the
+        /// manual/automatic mode.</summary>
+        readonly List<GraphFrameData.AsyncSyncConfig.StepSpec> _steps =
+            new List<GraphFrameData.AsyncSyncConfig.StepSpec>();
+        /// <summary>Set by anything that can reshape what the grid refers to. The repair runs
+        /// once per such edit rather than every repaint: it is stable on a valid grid, but
+        /// running it unprompted still invites steps to move on their own. Toggling a cell is
+        /// deliberately NOT such an edit — see <see cref="PaintCell"/>.</summary>
+        bool _stepsStale;
+        /// <summary>The row a drag is painting and what it is painting (in, or out), so a
+        /// stroke across a half-filled row fills it rather than inverting it.</summary>
+        string _paintTarget;
+        bool _paintAdd;
+        /// <summary>The step whose last click was refused for want of a channel, or -1. Held
+        /// only to colour it: a click that does nothing and says nothing reads as a dead UI.</summary>
+        int _fullStep = -1;
 
         // ×1 is "no rate" — the popup only offers meaningful multipliers beyond it.
         static readonly int[] RateValues = { 1, 2, 3, 4 };
@@ -75,7 +89,7 @@ namespace Yozolab.DaerD
             _controller = controller;
             _rows.Clear();
             _order.Clear();
-            _schedule.Clear();
+            _steps.Clear();
             if (controller == null) return;
             foreach (var parameter in controller.parameters)
             {
@@ -104,9 +118,12 @@ namespace Yozolab.DaerD
             _stepSeconds = config.stepSeconds;
             _floatChannels = Mathf.Clamp(config.FloatChannelsOrDefault, 1, 8);
             _boolChannels = Mathf.Clamp(config.BoolChannelsOrDefault, 1, 8);
-            _schedule.Clear();
-            if (config.schedule != null) _schedule.AddRange(config.schedule);
-            _scheduleStale = true;
+            _steps.Clear();
+            if (config.steps != null)
+                foreach (var step in config.steps)
+                    _steps.Add(StepOf(step?.targets));
+            _stepsStale = true;
+            _fullStep = -1;
 
             var rates = config.RateMap();
             foreach (var row in _rows)
@@ -157,17 +174,34 @@ namespace Yozolab.DaerD
             }
 
             // The repair needs the slots, which need the request — hence here, once the
-            // targets are in and before the override goes on. A cycle it cannot settle comes
-            // back empty, which is exactly how this form spells "use the rates".
-            if (_scheduleStale && _schedule.Count > 0)
+            // targets are in and before the grid goes on. A grid it cannot settle comes back
+            // empty, which is exactly how this form spells "use the rates".
+            if (_stepsStale && _steps.Count > 0)
             {
-                var repaired = AsyncSyncBuilder.RepairScheduleOverride(request, _schedule);
-                _schedule.Clear();
-                _schedule.AddRange(repaired);
+                var repaired = AsyncSyncBuilder.RepairSteps(request, _steps);
+                _steps.Clear();
+                _steps.AddRange(repaired);
+                _fullStep = -1;
             }
-            _scheduleStale = false;
-            request.scheduleOverride.AddRange(_schedule);
+            _stepsStale = false;
+            Snapshot(request);
             return request;
+        }
+
+        /// <summary>Copies the grid into the request the rest of the pass reads. Copied rather
+        /// than shared: the request is handed to the model, which is entitled to assume it
+        /// describes one moment, while this form goes on rewriting the grid as the mouse moves.</summary>
+        void Snapshot(AsyncSyncBuilder.Request request)
+        {
+            request.steps.Clear();
+            foreach (var step in _steps) request.steps.Add(StepOf(step.targets));
+        }
+
+        static GraphFrameData.AsyncSyncConfig.StepSpec StepOf(List<string> targets)
+        {
+            var step = new GraphFrameData.AsyncSyncConfig.StepSpec();
+            if (targets != null) step.targets.AddRange(targets);
+            return step;
         }
 
         // ---- sections --------------------------------------------------------
@@ -229,7 +263,7 @@ namespace Yozolab.DaerD
                     new GUIContent(hasFloat ? L.Tr("Bool Channels") : L.Tr("Channels"),
                         L.Tr("Synced Bool channels. Each step carries up to this many Bool parameters at once — fewer slots and a faster cycle, at 1 synced bit per extra channel.")),
                     _boolChannels, 1, 8);
-            if (EditorGUI.EndChangeCheck()) _scheduleStale = true;
+            if (EditorGUI.EndChangeCheck()) _stepsStale = true;
         }
 
         /// <summary>The tick list with its search filter. Ticking appends the parameter to
@@ -281,7 +315,7 @@ namespace Yozolab.DaerD
                 row.request = false;
                 row.split = false;
             }
-            _scheduleStale = true;
+            _stepsStale = true;
         }
 
         /// <summary>
@@ -307,13 +341,14 @@ namespace Yozolab.DaerD
                 EditorStyles.miniLabel);
 
             var intervals = AsyncSyncBuilder.RefreshIntervals(request);
-            var visits = Manual ? VisitCounts(request) : null;
+            var visits = Manual ? VisitCounts(ColumnSets(request)) : null;
             // Batching is why two rows can move as one, and until now nothing said so. The
             // slot number is shown whenever channels could group anything — a condition that
             // cannot change mid-draw, unlike "is anything actually grouped", which the Split
-            // buttons below would flip and take the layout's control count with it.
+            // buttons below would flip and take the layout's control count with it. A grid
+            // shows the grouping cell by cell, so neither has anything left to say there.
             var slots = AsyncSyncBuilder.BuildSlots(request);
-            bool grouping = _floatChannels > 1 || _boolChannels > 1;
+            bool grouping = !Manual && (_floatChannels > 1 || _boolChannels > 1);
             var slotOfRow = new Dictionary<string, int>();
             for (int i = 0; i < slots.Count; i++)
                 foreach (var name in slots[i].targets)
@@ -346,17 +381,16 @@ namespace Yozolab.DaerD
                     if (split != row.split)
                     {
                         row.split = split;
-                        _scheduleStale = true;
+                        _stepsStale = true;
                     }
                     EditorGUI.EndDisabledGroup();
                 }
 
                 if (Manual)
                 {
-                    // A count, not a control: under a hand-written cycle the rate no longer
-                    // decides how often a slot comes round, so showing it as an input would
-                    // be a lie. (It still decides which targets batch together, which is why
-                    // changing it means leaving manual timing first.)
+                    // A count, not a control: under a hand-written grid neither the rate nor
+                    // the batching is the model's to decide any more, so showing the rate as
+                    // an input would be a lie.
                     visits.TryGetValue(row.name, out int times);
                     EditorGUILayout.LabelField(
                         new GUIContent("×" + times,
@@ -390,7 +424,7 @@ namespace Yozolab.DaerD
                 _order.RemoveAt(from);
                 _order.Insert(to, moved);
                 // Batches fill in listed order, so reordering can regroup the slots.
-                _scheduleStale = true;
+                _stepsStale = true;
             });
 
             DrawCycleTimeline(request);
@@ -406,45 +440,42 @@ namespace Yozolab.DaerD
         const float TimelineLabelGap = 4f;
         const int MaxManualSteps = 64;
 
-        /// <summary>True while the cycle is spelled out step by step rather than derived from
-        /// the rates — the two are the same switch, an explicit cycle being what overrides.</summary>
-        bool Manual => _schedule.Count > 0;
+        /// <summary>True while the pass is written out as a grid rather than derived from the
+        /// rates — the two are the same switch, a grid being what overrides.</summary>
+        bool Manual => _steps.Count > 0;
 
         /// <summary>How many steps of the pass send each target, by name.</summary>
-        Dictionary<string, int> VisitCounts(AsyncSyncBuilder.Request request)
+        static Dictionary<string, int> VisitCounts(List<List<string>> columns)
         {
             var counts = new Dictionary<string, int>();
-            var slots = AsyncSyncBuilder.BuildSlots(request);
-            var schedule = CurrentSchedule(request, slots, out _);
-            var visits = new int[slots.Count];
-            foreach (var step in schedule) visits[step]++;
-            for (int i = 0; i < slots.Count; i++)
-                foreach (var name in slots[i].targets)
-                    counts[name] = visits[i];
+            foreach (var column in columns)
+                foreach (var name in column)
+                {
+                    counts.TryGetValue(name, out int times);
+                    counts[name] = times + 1;
+                }
             return counts;
         }
 
         /// <summary>
-        /// The pass as slot indices, plus the name→slot map the rows are drawn against. A
-        /// hand-written cycle is read straight from <see cref="_schedule"/> rather than through
-        /// <see cref="AsyncSyncBuilder.EffectiveSchedule"/>: that one falls back to the rates
-        /// the moment the cycle stops being runnable, and an editor that redrew someone else's
-        /// pass the instant an edit went wrong would be unusable.
+        /// What each step of the pass sends, in order — the columns of the view below. A grid
+        /// is read straight from <see cref="_steps"/> rather than through the slots: nothing
+        /// else can draw a step that is momentarily empty or overfull, and an editor that
+        /// redrew someone else's pass the instant an edit went wrong would be unusable.
         /// </summary>
-        List<int> CurrentSchedule(AsyncSyncBuilder.Request request,
-            List<AsyncSyncBuilder.Slot> slots, out Dictionary<string, int> slotOf)
+        List<List<string>> ColumnSets(AsyncSyncBuilder.Request request)
         {
-            slotOf = new Dictionary<string, int>();
-            for (int i = 0; i < slots.Count; i++)
-                foreach (var name in slots[i].targets)
-                    slotOf[name] = i;
-
-            var schedule = new List<int>();
-            if (!Manual) return AsyncSyncBuilder.EffectiveSchedule(request, slots);
-            foreach (var name in _schedule)
-                if (slotOf.TryGetValue(name, out int slot))
-                    schedule.Add(slot);
-            return schedule;
+            var columns = new List<List<string>>();
+            if (Manual)
+            {
+                foreach (var step in _steps)
+                    columns.Add(AsyncSyncBuilder.NormalizeStep(request, step));
+                return columns;
+            }
+            var slots = AsyncSyncBuilder.BuildSlots(request);
+            foreach (var step in AsyncSyncBuilder.EffectiveSchedule(request, slots))
+                columns.Add(slots[step].targets);
+            return columns;
         }
 
         /// <summary>
@@ -453,36 +484,35 @@ namespace Yozolab.DaerD
         /// opposite ends of the pass — and spacing is the one thing a line of names can't
         /// show. Names stay in a readable column on the left rather than inside the marks,
         /// so the view survives long parameter names and 60-step passes alike.
+        ///
+        /// Under a grid the same picture is the editor: every cell is a toggle, so what a step
+        /// sends is set where it is read. Nothing is corrected on click — a step that moved
+        /// out from under the pointer would be worse than a red cell saying what is wrong.
         /// </summary>
         void DrawCycleTimeline(AsyncSyncBuilder.Request request)
         {
-            var slots = AsyncSyncBuilder.BuildSlots(request);
-            var schedule = CurrentSchedule(request, slots, out var slotOf);
-            if (schedule.Count < 2)
+            var columns = ColumnSets(request);
+            if (columns.Count < 2)
             {
                 // Too little left to draw, and in manual mode that would take the way back to
                 // the rates down with it. Ask for a repair instead: one that finds nothing
                 // schedulable returns empty, which is the way back.
-                if (Manual) _scheduleStale = true;
+                if (Manual) _stepsStale = true;
                 return;
             }
 
             _timelineOpen = EditorGUILayout.Foldout(_timelineOpen,
                 L.Tr("Cycle Timeline ({0} steps, {1:0.#} s)",
-                    schedule.Count, schedule.Count * request.stepSeconds),
+                    columns.Count, columns.Count * request.stepSeconds),
                 true);
             if (!_timelineOpen) return;
 
-            DrawTimingMode(slots, schedule);
+            DrawTimingMode(request, columns);
+            // The step count above may have just rewritten the grid.
+            columns = ColumnSets(request);
+            if (columns.Count < 2) return;
 
-            // A step beside itself, and a parameter the pass never sends, are both refused by
-            // Validate — which says so under the form. Colouring the cells says WHERE, which
-            // is the part a sentence cannot carry.
-            var clashing = new bool[schedule.Count];
-            for (int k = 0; k < schedule.Count; k++)
-                if (schedule[k] == schedule[(k + 1) % schedule.Count])
-                    clashing[k] = clashing[(k + 1) % schedule.Count] = true;
-
+            var flagged = Violations(request, columns);
             var intervals = AsyncSyncBuilder.RefreshIntervals(request);
             float rowHeight = Manual ? ManualRowHeight : TimelineRowHeight;
             var mark = EditorGUIUtility.isProSkin
@@ -491,69 +521,166 @@ namespace Yozolab.DaerD
             var clash = EditorGUIUtility.isProSkin
                 ? new Color(0.85f, 0.35f, 0.30f)
                 : new Color(0.75f, 0.20f, 0.15f);
+            var flag = new Color(clash.r, clash.g, clash.b, 0.22f);
             var track = EditorGUIUtility.isProSkin
                 ? new Color(1f, 1f, 1f, 0.06f)
                 : new Color(0f, 0f, 0f, 0.06f);
 
+            // A mouse-up anywhere ends the stroke; the rows below only see the events that
+            // land on them, and one that ended off the grid would leave it painting.
+            if (Event.current.type == EventType.MouseUp) _paintTarget = null;
+
             foreach (var row in _order)
             {
-                if (!slotOf.TryGetValue(row.name, out int slot)) continue;
                 // One control per row whatever the width — the layout and repaint passes
                 // must agree on how many there are.
                 var line = EditorGUILayout.GetControlRect(false, rowHeight);
                 var lane = new Rect(line.x + TimelineLabelWidth + TimelineLabelGap, line.y,
                     Mathf.Max(1f, line.width - TimelineLabelWidth - TimelineLabelGap), line.height);
 
-                bool sent = schedule.Contains(slot);
+                bool sent = false;
+                foreach (var column in columns)
+                    if (column.Contains(row.name)) { sent = true; break; }
                 GUI.Label(new Rect(line.x, line.y, TimelineLabelWidth, line.height),
                     new GUIContent(row.name, RowTooltip(row, intervals, sent)),
                     TimelineLabelStyle(sent ? (Color?)null : clash));
                 EditorGUI.DrawRect(lane, track);
 
-                float cell = lane.width / schedule.Count;
-                for (int k = 0; k < schedule.Count; k++)
+                float cell = lane.width / columns.Count;
+                for (int k = 0; k < columns.Count; k++)
                 {
-                    if (schedule[k] != slot) continue;
-                    EditorGUI.DrawRect(
-                        new Rect(lane.x + k * cell, lane.y + 1f,
-                            Mathf.Max(2f, cell - 1f), lane.height - 2f),
-                        clashing[k] ? clash : mark);
+                    var box = new Rect(lane.x + k * cell, lane.y + 1f,
+                        Mathf.Max(2f, cell - 1f), lane.height - 2f);
+                    // The whole column is tinted, not just its marks: an empty step and two
+                    // steps sending the same set are both invisible in the marks alone.
+                    if (flagged[k]) EditorGUI.DrawRect(box, flag);
+                    if (columns[k].Contains(row.name))
+                        EditorGUI.DrawRect(box, flagged[k] ? clash : mark);
                 }
 
-                if (Manual) HandleLaneClick(lane, cell, schedule.Count, row);
+                if (Manual) HandleGridCell(request, lane, cell, columns.Count, row);
             }
 
-            DrawTimelineAxis(schedule.Count * request.stepSeconds);
+            DrawTimelineAxis(columns.Count * request.stepSeconds);
             if (Manual)
                 EditorGUILayout.LabelField(
-                    L.Tr("Click a row to make that step send it. Every step sends exactly one slot, so a click moves the step rather than adding one."),
+                    _fullStep >= 0
+                        ? L.Tr("That step already carries as many parameters of this type as its channels allow. Raise the channel count, or use another step.")
+                        : L.Tr("Click a cell to add or remove that parameter from the step; drag along a row to paint several. Everything in one column is sent together, in one go."),
                     WrappedMiniLabel());
         }
 
         /// <summary>
-        /// Assigning a step to a row, by click or by dragging across several. Nothing here
-        /// enforces the two rules a cycle has to keep — a repair that moved steps out from
-        /// under the pointer would be worse than the red cells that say what is wrong.
+        /// The steps to draw in red: one that sends nothing, one that sends more of a type
+        /// than the channels carry, one that repeats its neighbour (the wrap included), and
+        /// the one whose last click was refused. All but the last are refused by Validate,
+        /// which says so in words under the form; colouring says WHERE, which is the part a
+        /// sentence cannot carry.
         /// </summary>
-        void HandleLaneClick(Rect lane, float cell, int steps, Row row)
+        bool[] Violations(AsyncSyncBuilder.Request request, List<List<string>> columns)
         {
-            var e = Event.current;
-            if (e.type != EventType.MouseDown && e.type != EventType.MouseDrag) return;
-            if (e.button != 0 || !lane.Contains(e.mousePosition)) return;
-
-            int step = Mathf.Clamp((int)((e.mousePosition.x - lane.x) / Mathf.Max(1f, cell)),
-                0, Mathf.Min(steps, _schedule.Count) - 1);
-            if (_schedule[step] != row.name)
+            var flagged = new bool[columns.Count];
+            for (int k = 0; k < columns.Count; k++)
             {
-                _schedule[step] = row.name;
-                GUI.changed = true;
+                int next = (k + 1) % columns.Count;
+                if (columns[k].Count == 0) flagged[k] = true;
+                if (columns.Count > 1 && SameSet(columns[k], columns[next]))
+                    flagged[k] = flagged[next] = true;
+                foreach (var name in columns[k])
+                {
+                    var parameter = DbtBuilder.FindParameter(_controller, name);
+                    // Room "for one more" is measured against the rest of the step, so this
+                    // reads as "does this member fit at all".
+                    if (parameter == null || Fits(request, columns[k], name, parameter.type))
+                        continue;
+                    flagged[k] = true;
+                    break;
+                }
             }
-            e.Use();
+            if (_fullStep >= 0 && _fullStep < flagged.Length) flagged[_fullStep] = true;
+            return flagged;
         }
 
-        /// <summary>The switch between a pass worked out from the rates and one written out
-        /// step by step, plus the length of the hand-written one.</summary>
-        void DrawTimingMode(List<AsyncSyncBuilder.Slot> slots, List<int> schedule)
+        static bool Fits(AsyncSyncBuilder.Request request, List<string> column, string name,
+            AnimatorControllerParameterType type)
+        {
+            var others = new List<string>(column);
+            others.Remove(name);
+            return AsyncSyncBuilder.StepHasRoom(request, others, type);
+        }
+
+        static bool SameSet(List<string> a, List<string> b)
+        {
+            if (a.Count != b.Count) return false;
+            foreach (var name in a)
+                if (!b.Contains(name)) return false;
+            return true;
+        }
+
+        /// <summary>
+        /// Toggling a cell, by click or by dragging along the row. The stroke remembers which
+        /// way it started so dragging across a half-filled row fills it rather than inverting
+        /// it, and it stays on the row it began on — a stroke that flipped every row it passed
+        /// over would be unusable at 13 px a row.
+        /// </summary>
+        void HandleGridCell(AsyncSyncBuilder.Request request, Rect lane, float cell, int columns,
+            Row row)
+        {
+            var e = Event.current;
+            if (e.button != 0) return;
+            if (e.type == EventType.MouseDown && lane.Contains(e.mousePosition))
+            {
+                int step = StepAt(lane, cell, columns, e.mousePosition.x);
+                _paintTarget = row.name;
+                _paintAdd = step < _steps.Count && !_steps[step].targets.Contains(row.name);
+                PaintCell(request, step, row);
+                e.Use();
+            }
+            else if (e.type == EventType.MouseDrag && _paintTarget == row.name
+                     && e.mousePosition.x >= lane.x && e.mousePosition.x <= lane.xMax)
+            {
+                PaintCell(request, StepAt(lane, cell, columns, e.mousePosition.x), row);
+                e.Use();
+            }
+        }
+
+        static int StepAt(Rect lane, float cell, int columns, float x) =>
+            Mathf.Clamp((int)((x - lane.x) / Mathf.Max(1f, cell)), 0, columns - 1);
+
+        /// <summary>
+        /// Puts the row into the step or takes it out. Capacity is the one rule enforced here
+        /// rather than shown: a step with no channel left for the type cannot carry the target
+        /// at all, so the click is refused — and the step is marked, since a click that does
+        /// nothing and says nothing reads as a dead UI. The grid is NOT marked stale: a cell
+        /// cannot change which slots exist, only whether the pass over them is legal, and that
+        /// is what the red cells and the blocking problem are for.
+        /// </summary>
+        void PaintCell(AsyncSyncBuilder.Request request, int step, Row row)
+        {
+            if (step < 0 || step >= _steps.Count) return;
+            var targets = _steps[step].targets;
+            if (_paintAdd == targets.Contains(row.name)) return;
+            if (_paintAdd)
+            {
+                if (!AsyncSyncBuilder.StepHasRoom(request, targets, row.type))
+                {
+                    _fullStep = step;
+                    return;
+                }
+                targets.Add(row.name);
+            }
+            else
+            {
+                targets.Remove(row.name);
+            }
+            _fullStep = -1;
+            Snapshot(request);
+            GUI.changed = true;
+        }
+
+        /// <summary>The switch between a pass worked out from the rates and one written out as
+        /// a grid, plus the length of the grid.</summary>
+        void DrawTimingMode(AsyncSyncBuilder.Request request, List<List<string>> columns)
         {
             EditorGUILayout.BeginHorizontal();
             if (!Manual)
@@ -562,8 +689,10 @@ namespace Yozolab.DaerD
                         L.Tr("Write the pass out step by step instead of deriving it from the rates. It starts as the pass shown here, so nothing changes until you move something.")),
                         EditorStyles.miniButton, GUILayout.Width(150)))
                 {
-                    foreach (var step in schedule) _schedule.Add(slots[step].targets[0]);
-                    _scheduleStale = false;
+                    foreach (var column in columns) _steps.Add(StepOf(column));
+                    _stepsStale = false;
+                    _fullStep = -1;
+                    Snapshot(request);
                     // Switching modes changes which controls the rest of this pass draws, and
                     // IMGUI counts those across the layout and repaint passes both.
                     GUIUtility.ExitGUI();
@@ -571,48 +700,50 @@ namespace Yozolab.DaerD
             }
             else
             {
-                int max = Mathf.Max(MaxManualSteps, _schedule.Count);
-                int steps = EditorGUILayout.IntSlider(L.Tr("Steps"), _schedule.Count,
-                    Mathf.Max(2, slots.Count), max);
-                if (steps != _schedule.Count) SetStepCount(steps, slots);
+                int max = Mathf.Max(MaxManualSteps, _steps.Count);
+                // Two is the floor for any grid — the index has to change — and no longer the
+                // slot count: a grid's steps carry sets, so one step can cover several slots'
+                // worth of targets at once.
+                int steps = EditorGUILayout.IntSlider(L.Tr("Steps"), _steps.Count, 2, max);
+                if (steps != _steps.Count) SetStepCount(request, steps);
                 if (GUILayout.Button(new GUIContent(L.Tr("Back To Rates"),
                         L.Tr("Discard the hand-written pass and let the ×N rates lay the cycle out again.")),
                         EditorStyles.miniButton, GUILayout.Width(110)))
                 {
-                    _schedule.Clear();
+                    _steps.Clear();
+                    _fullStep = -1;
+                    Snapshot(request);
                     GUIUtility.ExitGUI();
                 }
             }
             EditorGUILayout.EndHorizontal();
         }
 
-        /// <summary>Lengthens or shortens the hand-written pass. Growing hands each new step
-        /// to the slot that has waited longest; shrinking takes them off the end and leaves
-        /// the repair to put back any slot that lost its last visit.</summary>
-        void SetStepCount(int steps, List<AsyncSyncBuilder.Slot> slots)
+        /// <summary>Lengthens or shortens the grid. Growing repeats the set that has waited
+        /// longest and clashes with neither end — the slot <see cref="AsyncSyncSchedule.NextStepSlot"/>
+        /// would have picked, read back as the targets it stands for; shrinking takes steps off
+        /// the end and leaves the repair to give a target that lost its last step a new one.</summary>
+        void SetStepCount(AsyncSyncBuilder.Request request, int count)
         {
-            while (_schedule.Count > steps && _schedule.Count > 2)
-                _schedule.RemoveAt(_schedule.Count - 1);
+            while (_steps.Count > count && _steps.Count > 2)
+                _steps.RemoveAt(_steps.Count - 1);
 
-            var slotOf = new Dictionary<string, int>();
-            for (int i = 0; i < slots.Count; i++)
-                foreach (var name in slots[i].targets)
-                    slotOf[name] = i;
-
-            while (_schedule.Count < steps)
+            while (_steps.Count < count)
             {
-                var indices = new List<int>();
-                foreach (var name in _schedule)
-                    if (slotOf.TryGetValue(name, out int slot)) indices.Add(slot);
-
-                // Two slots can only alternate, so there is no slot free of both ends and the
-                // pass can only grow in pairs; NextStepSlot gives up the far end for that case
-                // and the repair settles the wrap afterwards.
-                int picked = AsyncSyncBuilder.NextStepSlot(indices, slots.Count);
+                // The picks read the grid through the request, so it has to keep up.
+                Snapshot(request);
+                var slots = AsyncSyncBuilder.BuildSlots(request);
+                // Two sets can only alternate, so there is none free of both ends and the pass
+                // can only grow in pairs; NextStepSlot gives up the far end for that case and
+                // the repair settles the wrap afterwards.
+                int picked = AsyncSyncBuilder.NextStepSlot(
+                    AsyncSyncBuilder.EffectiveSchedule(request, slots), slots.Count);
                 if (picked < 0) break;
-                _schedule.Add(slots[picked].targets[0]);
+                _steps.Add(StepOf(slots[picked].targets));
             }
-            _scheduleStale = true;
+            Snapshot(request);
+            _fullStep = -1;
+            _stepsStale = true;
         }
 
         /// <summary>Both ends of the pass, so the marks have a scale to read against.</summary>
@@ -696,7 +827,9 @@ namespace Yozolab.DaerD
                     L.Tr("Sync requests: {0} local Bool flag(s), nothing synced.", requests),
                     EditorStyles.miniLabel);
 
-            int steps = AsyncSyncBuilder.BuildSchedule(slots).Count;
+            // The pass actually being built, not the one the rates would lay out — the seconds
+            // beside it come from the same place, and the two disagreeing read as a bug.
+            int steps = AsyncSyncBuilder.EffectiveSchedule(request, slots).Count;
             EditorGUILayout.LabelField(
                 L.Tr("One full pass: {0:0.#} s ({1} steps × {2:0.##} s)",
                     AsyncSyncBuilder.CycleSeconds(request), steps, _stepSeconds),
