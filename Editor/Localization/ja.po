@@ -1998,6 +1998,18 @@ msgstr "同期レートは 1〜{0} の範囲で指定してください（'{1}'�
 msgid "Everything fits into a single slot, so the index would never change and remotes would stop decoding. Lower the channel count, or add parameters."
 msgstr "すべてが 1 スロットに収まってしまうため、インデックスが変化せず、リモート側が最初の 1 回しかデコードしません。チャンネル数を下げるか、パラメーターを追加してください。"
 
+msgid "Step {0} sends nothing — an empty step spends an index without carrying a value."
+msgstr "ステップ {0} は何も送信しません。空のステップはインデックスを 1 つ消費するだけで、値を運びません。"
+
+msgid "Step {0} sends {1} {2} parameters, but only {3} channel(s) of that type exist."
+msgstr "ステップ {0} は {2} パラメーターを {1} 個送ろうとしていますが、この型のチャンネルは {3} 本しかありません。"
+
+msgid "Steps {0} and {1} send the same parameters, so the index would not change between them and remotes would not decode the second one."
+msgstr "ステップ {0} と {1} は同じパラメーターを送るため、その間でインデックスが変化せず、リモート側は 2 つ目をデコードしません。"
+
+msgid "Every step sends the same parameters, so the index would never change and remotes would stop decoding. Give at least two steps different parameters."
+msgstr "すべてのステップが同じパラメーターを送るため、インデックスが変化せず、リモート側がデコードを止めます。少なくとも 2 つのステップに異なるパラメーターを割り当ててください。"
+
 msgid "The ×{0} rate on '{1}' can't be separated by the other slots; it effectively runs at ×{2}. Add parameters or lower the rate."
 msgstr "'{1}' の ×{0} レートは他のスロットでは間隔を空けきれず、実効 ×{2} で動作します。パラメーターを追加するか、レートを下げてください。"
 

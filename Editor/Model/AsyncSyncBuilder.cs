@@ -2,6 +2,9 @@ using System.Collections.Generic;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
+// One step of an explicit grid is saved data first and a request field second, so the shape
+// is declared with the rest of the saved setup; the alias keeps the request reading plainly.
+using StepSpec = Yozolab.DaerD.GraphFrameData.AsyncSyncConfig.StepSpec;
 
 namespace Yozolab.DaerD
 {
@@ -15,9 +18,11 @@ namespace Yozolab.DaerD
     /// channels back. The targets themselves stay unsynced.
     ///
     /// A slot carries one Int target, up to <see cref="Request.floatChannels"/> Float targets
-    /// or up to <see cref="Request.boolChannels"/> Bool targets at once — more channels mean
+    /// and up to <see cref="Request.boolChannels"/> Bool targets at once — more channels mean
     /// fewer slots and a shorter cycle, at 8 synced bits per extra Float channel and 1 per
-    /// extra Bool channel. Each target has a sync rate: a ×N slot is
+    /// extra Bool channel. The automatic batching only ever fills a slot with targets of one
+    /// type; <see cref="Request.steps"/> is how a slot is told to carry several. Each target
+    /// has a sync rate: a ×N slot is
     /// placed N times per pass, spread as evenly as the other slots allow, so it
     /// refreshes N times as often as a ×1 slot. Rates sharing a common factor are
     /// normalized away (all-×2 is the same cycle as all-×1), and a rate the other slots
@@ -111,9 +116,25 @@ namespace Yozolab.DaerD
             /// Explicit cycle, as a sequence of target names (a batched Float stands for its
             /// whole slot). When non-empty this IS the schedule — rates are ignored — and
             /// validation enforces what the decoder needs: every slot visited, no slot in
-            /// adjacent steps. The deepest control the recipe API exposes.
+            /// adjacent steps. Ignored entirely when <see cref="steps"/> is non-empty: a grid
+            /// says which targets share a step as well as when, so a cycle written in the
+            /// older vocabulary can only contradict it.
             /// </summary>
             public List<string> scheduleOverride = new List<string>();
+
+            /// <summary>
+            /// The pass written out as sets: one entry per step, each naming the targets that
+            /// step sends. When non-empty this replaces the automatic batching AND the rates
+            /// AND <see cref="scheduleOverride"/> — the slots become the distinct sets, in
+            /// first-appearance order, and every step is the slot its set names.
+            ///
+            /// This is the only way to put targets of different types in one step: the
+            /// automatic batching groups by type and rate, so it can pack Floats with Floats
+            /// but never a Float with the Bool that belongs beside it. Which targets share a
+            /// step is not a timing choice — one driver copies a step in one go, so they are
+            /// sent together by construction — which is why it has to be said outright.
+            /// </summary>
+            public List<StepSpec> steps = new List<StepSpec>();
 
             /// <summary>Layer to create; defaults to the base name.</summary>
             public string layerName;
@@ -139,8 +160,9 @@ namespace Yozolab.DaerD
         /// separated by fewer other steps than it occupies.</summary>
         public const int MaxRate = 8;
 
-        /// <summary>One step's payload: a single Bool / Int target, or a batch of Floats
-        /// sent through the Float channels together.</summary>
+        /// <summary>One step's payload: the targets copied into the channels together. The
+        /// automatic batching fills it with one type at a time; a step written out by hand
+        /// (see <see cref="Request.steps"/>) may carry one of each.</summary>
         public class Slot
         {
             public readonly List<string> targets = new List<string>();
@@ -195,6 +217,16 @@ namespace Yozolab.DaerD
 
         public static List<string> RepairScheduleOverride(Request r, List<string> schedule) =>
             AsyncSyncSchedule.RepairScheduleOverride(r, schedule);
+
+        public static List<StepSpec> RepairSteps(Request r, List<StepSpec> steps) =>
+            AsyncSyncSchedule.RepairSteps(r, steps);
+
+        public static List<string> NormalizeStep(Request r, StepSpec step) =>
+            AsyncSyncSchedule.NormalizeStep(r, step);
+
+        public static bool StepHasRoom(Request r, List<string> members,
+            AnimatorControllerParameterType type) =>
+            AsyncSyncSchedule.StepHasRoom(r, members, type);
 
         public static int NextStepSlot(List<int> steps, int slotCount) =>
             AsyncSyncSchedule.NextStepSlot(steps, slotCount);
@@ -314,6 +346,12 @@ namespace Yozolab.DaerD
                     if (rate.Value < 1 || rate.Value > MaxRate)
                         return L.Tr("Sync rates must be between 1 and {0} ('{1}').", MaxRate, rate.Key);
 
+            if (r.steps != null && r.steps.Count > 0)
+            {
+                string problem = ValidateSteps(r);
+                if (problem != null) return problem;
+            }
+
             int slotCount = BuildSlots(r).Count;
             if (slotCount > 255)
                 return L.Tr("Int encoding supports up to 255 states.");
@@ -322,7 +360,10 @@ namespace Yozolab.DaerD
             if (slotCount < 2)
                 return L.Tr("Everything fits into a single slot, so the index would never change and remotes would stop decoding. Lower the channel count, or add parameters.");
 
-            if (r.scheduleOverride != null && r.scheduleOverride.Count > 0)
+            // A grid says which targets share a step as well as when, so a cycle saved beside
+            // one is not the pass being built and must not be judged as though it were.
+            if ((r.steps == null || r.steps.Count == 0)
+                && r.scheduleOverride != null && r.scheduleOverride.Count > 0)
             {
                 var errors = new List<string>();
                 if (ResolveScheduleOverride(r, BuildSlots(r), errors) == null && errors.Count > 0)
@@ -346,6 +387,66 @@ namespace Yozolab.DaerD
 
             if (!r.skipDrivers && !VrcParameterDriver.SdkAvailable)
                 return L.Tr("VRChat SDK not found — the Parameter Driver behaviour is required.");
+            return null;
+        }
+
+        /// <summary>
+        /// What the decoder needs of an explicit grid, in the vocabulary
+        /// <see cref="AsyncSyncSchedule.ResolveScheduleOverride"/> uses for the same rules:
+        /// every step sends something it has the channels for, every target is sent by some
+        /// step, and no two neighbouring steps — the wrap included — send the same set. That
+        /// last one is the physical rule the whole technique rests on: the decoder's Any-State
+        /// routes fire on the index CHANGING, so a step that repeats its neighbour's payload
+        /// spends an index nobody ever sees.
+        ///
+        /// Names in a step that are not multiplexed are dropped rather than reported, the same
+        /// contract <see cref="Request.rates"/> keeps — a stale saved entry must not block
+        /// regeneration.
+        /// </summary>
+        static string ValidateSteps(Request r)
+        {
+            var controller = r.controller;
+            var sets = new List<List<string>>();
+            foreach (var step in r.steps) sets.Add(NormalizeStep(r, step));
+
+            var covered = new HashSet<string>();
+            for (int k = 0; k < sets.Count; k++)
+            {
+                if (sets[k].Count == 0)
+                    return L.Tr("Step {0} sends nothing — an empty step spends an index without carrying a value.", k + 1);
+                // Counted in a fixed order rather than off a map, so a step that overruns two
+                // kinds of channel at once always names the same one first.
+                foreach (var type in new[]
+                         {
+                             AnimatorControllerParameterType.Float,
+                             AnimatorControllerParameterType.Bool,
+                             AnimatorControllerParameterType.Int,
+                         })
+                {
+                    int count = 0;
+                    foreach (var name in sets[k])
+                        if (DbtBuilder.FindParameter(controller, name).type == type) count++;
+                    int capacity = AsyncSyncSchedule.StepCapacity(r, type);
+                    if (count > capacity)
+                        return L.Tr("Step {0} sends {1} {2} parameters, but only {3} channel(s) of that type exist.",
+                            k + 1, count, type, capacity);
+                }
+                foreach (var name in sets[k]) covered.Add(name);
+            }
+
+            foreach (var name in r.targets)
+                if (!covered.Contains(name))
+                    return L.Tr("'{0}' is never sent — no step of the pass carries it.", name);
+
+            for (int k = 0; k < sets.Count && sets.Count > 1; k++)
+            {
+                int next = (k + 1) % sets.Count;
+                if (AsyncSyncSchedule.SameStep(sets[k], sets[next]))
+                    return L.Tr("Steps {0} and {1} send the same parameters, so the index would not change between them and remotes would not decode the second one.",
+                        k + 1, next + 1);
+            }
+            if (BuildSlots(r).Count < 2)
+                return L.Tr("Every step sends the same parameters, so the index would never change and remotes would stop decoding. Give at least two steps different parameters.");
             return null;
         }
 
@@ -375,8 +476,9 @@ namespace Yozolab.DaerD
 
             // Say when a rate could not be honored: normalization (common factor) is
             // intentional and invisible, but a cap changes what the user asked for. An
-            // explicit schedule replaces rates entirely, so the check would only mislead.
-            if (r.scheduleOverride == null || r.scheduleOverride.Count == 0)
+            // explicit schedule or grid replaces rates entirely, so the check would only mislead.
+            if ((r.scheduleOverride == null || r.scheduleOverride.Count == 0)
+                && (r.steps == null || r.steps.Count == 0))
             {
                 var slots = BuildSlots(r);
                 var weights = EffectiveWeights(slots);

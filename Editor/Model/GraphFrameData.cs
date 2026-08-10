@@ -102,6 +102,21 @@ namespace Yozolab.DaerD
                 public int rate = 1;
             }
 
+            /// <summary>
+            /// One step of a cycle written out as sets: the targets that step sends. A class
+            /// rather than a bare list because Unity does not serialize a list of lists — and
+            /// it lives here, beside the other saved shapes, for the reason
+            /// <see cref="AsyncSyncConfig.encoding"/> is an int: saved data has no business
+            /// depending on the model, so the model reads this rather than the other way round.
+            /// </summary>
+            [Serializable]
+            public class StepSpec
+            {
+                /// <summary>Names in any order — the slots normalize them against the target
+                /// list, so a step is a set and two steps naming the same targets are one slot.</summary>
+                public List<string> targets = new List<string>();
+            }
+
             public int FloatChannelsOrDefault => floatChannels < 1 ? 1 : floatChannels;
 
             public int BoolChannelsOrDefault => boolChannels < 1 ? 1 : boolChannels;

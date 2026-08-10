@@ -1039,6 +1039,135 @@ namespace Yozolab.DaerD.Tests
             Object.DestroyImmediate(controller);
         }
 
+        // ---- explicit grid ----------------------------------------------------
+
+        static void Sends(AsyncSyncBuilder.Request request, params string[] targets)
+        {
+            var step = new GraphFrameData.AsyncSyncConfig.StepSpec();
+            step.targets.AddRange(targets);
+            request.steps.Add(step);
+        }
+
+        /// <summary>A grid is the only way to put two types in one step, and the cost model
+        /// has to charge it one channel per type rather than one per target.</summary>
+        [Test]
+        public void Steps_MixedStep_BillsOneChannelOfEachType()
+        {
+            var controller = NewController();
+            controller.AddParameter("F2", AnimatorControllerParameterType.Float);
+            var request = NewRequest(controller, "F", "F2", "B", "I");
+            Sends(request, "F", "B");
+            Sends(request, "F2", "I");
+
+            Assert.IsNull(AsyncSyncBuilder.Validate(request));
+            Assert.AreEqual(1, AsyncSyncBuilder.FloatChannelsUsed(request));
+            Assert.AreEqual(1, AsyncSyncBuilder.BoolChannelsUsed(request));
+            // 8 index + 8 Float channel + 1 Bool channel + 8 Int channel.
+            Assert.AreEqual(25, AsyncSyncBuilder.CompressedBits(request));
+            Assert.IsFalse(AsyncSyncBuilder.GeneratedParameters(request)
+                .Exists(g => g.name == "Async/Float2"));
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void Apply_WithSteps_SendsEachStepAndDecodesOneStatePerSet()
+        {
+            var controller = NewController();
+            controller.AddParameter("F2", AnimatorControllerParameterType.Float);
+            var request = NewRequest(controller, "F", "F2", "B", "I");
+            request.skipDrivers = false;
+            Sends(request, "F", "B");
+            Sends(request, "F2", "I");
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var sm = controller.layers[1].stateMachine;
+            // 2 steps -> 2 send + idle + 2 recv, and one Any-State route per set.
+            Assert.AreEqual(5, sm.states.Length);
+            Assert.AreEqual(2, sm.anyStateTransitions.Length);
+
+            var driver = FindState(sm, "Send F +1").behaviours[0] as VRCAvatarParameterDriver;
+            Assert.IsNotNull(driver);
+            // The Bool rides Bool channel 0 even though it sits second in the step.
+            Assert.AreEqual("F", driver.parameters[0].source);
+            Assert.AreEqual("Async/Float", driver.parameters[0].name);
+            Assert.AreEqual("B", driver.parameters[1].source);
+            Assert.AreEqual("Async/Bool", driver.parameters[1].name);
+            Assert.AreEqual("Async/Index", driver.parameters[2].name);
+            Assert.AreEqual(0f, driver.parameters[2].value);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void Steps_Validate_RefusesWhatTheDecoderCouldNotRun()
+        {
+            var controller = NewController();
+            controller.AddParameter("F2", AnimatorControllerParameterType.Float);
+
+            var empty = NewRequest(controller, "F", "B");
+            Sends(empty, "F");
+            Sends(empty);
+            Assert.IsNotNull(AsyncSyncBuilder.Validate(empty), "an empty step carries nothing");
+
+            var overrun = NewRequest(controller, "F", "F2", "B");
+            Sends(overrun, "F", "F2");
+            Sends(overrun, "B");
+            Assert.IsNotNull(AsyncSyncBuilder.Validate(overrun),
+                "two Floats in one step need two Float channels");
+            overrun.floatChannels = 2;
+            Assert.IsNull(AsyncSyncBuilder.Validate(overrun));
+
+            var uncovered = NewRequest(controller, "F", "B", "I");
+            Sends(uncovered, "F");
+            Sends(uncovered, "B");
+            Assert.IsNotNull(AsyncSyncBuilder.Validate(uncovered), "'I' is never sent");
+
+            var repeat = NewRequest(controller, "F", "B", "I");
+            Sends(repeat, "F");
+            Sends(repeat, "F");
+            Sends(repeat, "B");
+            Sends(repeat, "I");
+            Assert.IsNotNull(AsyncSyncBuilder.Validate(repeat));
+
+            var wrap = NewRequest(controller, "F", "B", "I");
+            Sends(wrap, "F");
+            Sends(wrap, "B");
+            Sends(wrap, "I");
+            Sends(wrap, "F");
+            Assert.IsNotNull(AsyncSyncBuilder.Validate(wrap),
+                "the last and first step are adjacent too — the cycle wraps");
+
+            var single = NewRequest(controller, "F", "B");
+            single.floatChannels = 1;
+            Sends(single, "F", "B");
+            Sends(single, "B", "F");
+            Assert.IsNotNull(AsyncSyncBuilder.Validate(single),
+                "one set spelled twice is still one index");
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void Steps_LetOneTargetRunTwoStepsInARow()
+        {
+            var controller = FloatController(3);
+            var request = NewRequest(controller, "F1", "F2", "F3");
+            request.floatChannels = 2;
+            // {F1,F2} then {F1,F3}: the sets differ, so the index changes and the decoder
+            // fires — while F1 is refreshed by both steps. The automatic batching cannot
+            // express this, and neither could the older step-by-step cycle.
+            Sends(request, "F1", "F2");
+            Sends(request, "F1", "F3");
+
+            Assert.IsNull(AsyncSyncBuilder.Validate(request));
+            var intervals = AsyncSyncBuilder.RefreshIntervals(request);
+            Assert.AreEqual(request.stepSeconds, intervals["F1"], 0.0001f);
+            Assert.AreEqual(2f * request.stepSeconds, intervals["F2"], 0.0001f);
+
+            Object.DestroyImmediate(controller);
+        }
+
         [Test]
         public void ExpectedStateNames_MatchWhatApplyReallyBuilds()
         {
