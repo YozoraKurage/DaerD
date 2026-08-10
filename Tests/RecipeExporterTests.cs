@@ -248,11 +248,12 @@ namespace Yozolab.DaerD.Tests
         // ---- gadget layers -----------------------------------------------------
 
         /// <summary>Runs the body against a controller that really exists on disk: the gadget
-        /// records the exporter reads live in a hidden sub-asset of the .controller, and an
-        /// in-memory controller has nowhere to keep one.</summary>
+        /// and async-sync records the exporter reads live in a hidden sub-asset of the
+        /// .controller, and an in-memory controller has nowhere to keep one — a test that
+        /// forgot this would pass on an empty plan without exporting anything.</summary>
         static void WithSavedController(System.Action<AnimatorController> body)
         {
-            const string path = "Assets/DaerDRecipeGadgetExportTest.controller";
+            const string path = "Assets/DaerDRecipeExportTest.controller";
             AssetDatabase.CreateAsset(new AnimatorController(), path);
             try
             {
@@ -521,6 +522,107 @@ namespace Yozolab.DaerD.Tests
             Assert.IsNull(RecipeExportQueue.NormalizeProjectFolder("/Users/me/MyAssetsPile/Foo"),
                 "'Assets' inside a folder name is not the Assets folder");
             Assert.IsNull(RecipeExportQueue.NormalizeProjectFolder("AssetsExtra/Foo"));
+        }
+
+        // ---- async sync layers -------------------------------------------------
+
+        /// <summary>Builds the "Zip" sync layer on the saved controller. Drivers are skipped:
+        /// the VRChat SDK is not a test dependency, and nothing the exporter reads lives in
+        /// them — the setup comes from the saved config and the shape check from state names.
+        /// </summary>
+        static void ApplySync(AnimatorController controller,
+            System.Action<AsyncSyncBuilder.Request> tweak = null)
+        {
+            controller.AddParameter("T", AnimatorControllerParameterType.Bool);
+            controller.AddParameter("N", AnimatorControllerParameterType.Int);
+            var request = new AsyncSyncBuilder.Request
+            {
+                controller = controller,
+                baseName = "Zip",
+                encoding = AsyncSyncBuilder.IndexEncoding.Int,
+                skipDrivers = true,
+            };
+            request.targets.AddRange(new[] { "A", "B", "T", "N" });
+            tweak?.Invoke(request);
+            Assert.IsNull(AsyncSyncBuilder.Validate(request));
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+        }
+
+        [Test]
+        public void Export_AsyncSyncLayer_ComesBackAsOneCall()
+        {
+            WithSavedController(controller =>
+            {
+                ApplySync(controller, r =>
+                {
+                    r.floatChannels = 2;
+                    r.rates["A"] = 2;
+                    r.requestTargets.Add("T");
+                    r.slotBreaks.Add("B");
+                });
+
+                var result = RecipeExporter.Export(controller, null, "SyncRecipe", null);
+                string code = result.code;
+
+                StringAssert.Contains("// ---- Layer: Zip (async sync) ", code);
+                StringAssert.Contains("c.AsyncSync(\"Zip\")", code);
+                StringAssert.Contains(".Targets(\"A\", \"B\", \"T\", \"N\")", code);
+                StringAssert.Contains(".Rate(\"A\", 2)", code);
+                StringAssert.Contains(".Requestable(\"T\")", code);
+                StringAssert.Contains(".Split(\"B\")", code);
+                StringAssert.Contains(".FloatChannels(2)", code);
+                StringAssert.Contains(".EncodingInt()", code);
+
+                // Arguments that match the method's own default are not restated.
+                StringAssert.DoesNotContain(".Step(", Body(code));
+                StringAssert.DoesNotContain(".BoolChannels(", Body(code));
+                StringAssert.DoesNotContain(".EncodingAuto()", Body(code));
+                StringAssert.DoesNotContain(".LayerName(", Body(code));
+
+                // None of the send ring or decoder the call stands for.
+                StringAssert.DoesNotContain("c.Layer(\"Zip\")", code);
+                StringAssert.DoesNotContain("Send A", Body(code));
+                StringAssert.DoesNotContain("Remote Idle", Body(code));
+
+                // The multiplexed targets stay declared; the machinery the call mints does not.
+                StringAssert.Contains("FloatParameter(\"A\")", code);
+                StringAssert.DoesNotContain("\"Zip/Index\"", code);
+                StringAssert.DoesNotContain("\"Zip/Float\"", code);
+                StringAssert.DoesNotContain("\"Zip/Req/T\"", code);
+            });
+        }
+
+        [Test]
+        public void Export_AsyncSyncLayer_KeepsAnExplicitSchedule()
+        {
+            WithSavedController(controller =>
+            {
+                ApplySync(controller,
+                    r => r.scheduleOverride.AddRange(new[] { "A", "B", "A", "T", "N" }));
+
+                string code = RecipeExporter.Export(controller, null, "SyncRecipe", null).code;
+                StringAssert.Contains(".Schedule(\"A\", \"B\", \"A\", \"T\", \"N\")", code);
+            });
+        }
+
+        [Test]
+        public void Export_HandEditedSyncLayer_StaysRawAndSaysSo()
+        {
+            WithSavedController(controller =>
+            {
+                ApplySync(controller);
+                // A state the call would not rebuild. Rewriting the layer as one call would
+                // drop it silently, so the layer has to come back as the states it now is.
+                controller.layers[IndexOfLayer(controller, "Zip")].stateMachine
+                    .AddState("Hand Written", new Vector3(0f, 400f, 0f));
+
+                var result = RecipeExporter.Export(controller, null, "SyncRecipe", null);
+
+                Assert.IsTrue(result.warnings.Exists(w => w.Contains("Zip")),
+                    string.Join("\n", result.warnings));
+                StringAssert.DoesNotContain("c.AsyncSync(", result.code);
+                StringAssert.Contains("c.Layer(\"Zip\")", result.code);
+            });
         }
 
         [Test]

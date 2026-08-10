@@ -2066,6 +2066,12 @@ msgstr "C# Recipe をエクスポート"
 msgid "Export Layer To C#"
 msgstr "レイヤーを C# にエクスポート"
 
+msgid "Async sync layers are regenerated at the end of the controller; the layer order will differ from the original."
+msgstr "巡回同期のレイヤーはコントローラーの末尾に再生成されます。元のレイヤー順とは変わります。"
+
+msgid "Layer '{0}' no longer holds the states its saved async-sync setup would build; exported as raw states instead of an AsyncSync call."
+msgstr "レイヤー '{0}' は、保存された巡回同期の設定が生成するはずのステートと一致しません（手で編集された可能性があります）。AsyncSync 呼び出しではなく生のステートとして書き出します。"
+
 msgid "Gadget layers are regenerated at the end of the controller; the layer order will differ from the original."
 msgstr "ガジェットのレイヤーはコントローラーの末尾に再生成されます。元のレイヤー順とは変わります。"
 

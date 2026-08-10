@@ -20,19 +20,23 @@ namespace Yozolab.DaerD.Authoring
         /// <summary>The layers that can be written back as gadget calls (empty for a
         /// controller that saved none).</summary>
         readonly RecipeExporter.GadgetPlan _gadgets;
+        /// <summary>The layers that can be written back as one AsyncSync call.</summary>
+        readonly RecipeExporter.AsyncSyncPlan _asyncSyncs;
         readonly Dictionary<string, ParamHandle> _handles =
             new Dictionary<string, ParamHandle>();
         readonly Dictionary<string, AnimatorControllerParameterType> _types =
             new Dictionary<string, AnimatorControllerParameterType>();
 
         public RecipeDriver(ControllerBuilder c, ControllerIR ir, List<string> warnings,
-            RecipeExporter.GadgetPlan gadgets = null)
+            RecipeExporter.GadgetPlan gadgets = null,
+            RecipeExporter.AsyncSyncPlan asyncSyncs = null)
         {
             _c = c;
             _ir = ir;
             _warnings = warnings;
             _folds = new RecipeFoldPlanner(this, c);
             _gadgets = gadgets ?? new RecipeExporter.GadgetPlan();
+            _asyncSyncs = asyncSyncs ?? new RecipeExporter.AsyncSyncPlan();
             foreach (var p in ir.parameters)
                 _types[p.name] = p.type;
         }
@@ -48,6 +52,8 @@ namespace Yozolab.DaerD.Authoring
                 // A covered gadget's own parameters are created by its call further down; a
                 // declaration here would only restate what the next Generate rebuilds anyway.
                 if (_gadgets.Owns(p.name)) continue;
+                // Likewise the index, channels and request flags a sync setup mints.
+                if (_asyncSyncs.Owns(p.name)) continue;
                 _handles[p.name] = Declare(p);
             }
 
@@ -67,6 +73,12 @@ namespace Yozolab.DaerD.Authoring
                 {
                     _c.Script.Comment(RecipeExporter.Header("Layer: " + layer.name + " (DBT gadgets)"));
                     EmitGadgets(layer.name, gadgets);
+                    continue;
+                }
+                if (_asyncSyncs.layers.TryGetValue(layer.name, out var sync))
+                {
+                    _c.Script.Comment(RecipeExporter.Header("Layer: " + layer.name + " (async sync)"));
+                    EmitAsyncSync(layer.name, sync);
                     continue;
                 }
                 if (_gadgets.supporting.Contains(layer.name))
@@ -137,6 +149,62 @@ namespace Yozolab.DaerD.Authoring
         /// construction — and the replayed builder carries the same post step the generated
         /// code will run, which is what makes the export verifiable rather than merely printed.
         /// </summary>
+        /// <summary>
+        /// One sync setup as the call that rebuilds it. Arguments that match the method's own
+        /// default are left out entirely — same reasoning as the gadget calls' trailing-argument
+        /// trimming, except each of these is its own method, so "left out" means not called.
+        ///
+        /// Two of the wizard's switches are not in the saved setup and are read off the result
+        /// instead: whether the generated parameters reached the store, and whether the states
+        /// were given a motion. Both are inferences, and both are only ever wrong in the
+        /// direction of restating a default.
+        /// </summary>
+        void EmitAsyncSync(string layerName, AsyncSyncBuilder.Request r)
+        {
+            var sync = _c.AsyncSync(r.baseName);
+            sync.Targets(r.targets.ToArray());
+            foreach (var target in r.targets)
+            {
+                int rate = r.RateOf(target);
+                if (rate > 1) sync.Rate(target, rate);
+            }
+            var requestable = AsyncSyncBuilder.RequestableTargets(r);
+            if (requestable.Count > 0) sync.Requestable(requestable.ToArray());
+            if (r.slotBreaks.Count > 0) sync.Split(r.slotBreaks.ToArray());
+            if (r.scheduleOverride.Count > 0) sync.Schedule(r.scheduleOverride.ToArray());
+            if (r.floatChannels != 1) sync.FloatChannels(r.floatChannels);
+            if (r.boolChannels != 1) sync.BoolChannels(r.boolChannels);
+            if (!Mathf.Approximately(r.stepSeconds, 0.3f)) sync.Step(r.stepSeconds);
+            if (r.encoding == AsyncSyncBuilder.IndexEncoding.Int) sync.EncodingInt();
+            else if (r.encoding == AsyncSyncBuilder.IndexEncoding.Bool) sync.EncodingBool();
+            if (layerName != r.baseName) sync.LayerName(layerName);
+            if (!StoreHasGenerated(r)) sync.NoStore();
+            if (!StatesHaveMotion(r)) sync.NoEmptyClip();
+        }
+
+        /// <summary>Whether the setup's synced parameters are in the store the controller is
+        /// associated with. No store at all is not evidence either way — the call would find
+        /// none to write to, so it may as well keep its default.</summary>
+        static bool StoreHasGenerated(AsyncSyncBuilder.Request r)
+        {
+            var store = ParameterStore.Of(r.controller);
+            if (store == null) return true;
+            foreach (var (name, _) in AsyncSyncBuilder.GeneratedParameters(r))
+                if (store.Find(name) == null) return false;
+            return true;
+        }
+
+        static bool StatesHaveMotion(AsyncSyncBuilder.Request r)
+        {
+            if (r.layerIndex < 0 || r.layerIndex >= r.controller.layers.Length) return true;
+            var machine = r.controller.layers[r.layerIndex].stateMachine;
+            if (machine == null) return true;
+            foreach (var child in machine.states)
+                if (child.state != null && child.state.motion == null)
+                    return false;
+            return true;
+        }
+
         void EmitGadgets(string layerName, List<AapGadgets.Request> requests)
         {
             var gadgets = _c.Gadgets(layerName);

@@ -971,6 +971,32 @@ namespace Yozolab.DaerD.Tests
             Object.DestroyImmediate(controller);
         }
 
+        [Test]
+        public void ExpectedStateNames_MatchWhatApplyReallyBuilds()
+        {
+            var controller = NewController();
+            controller.AddParameter("F2", AnimatorControllerParameterType.Float);
+            var request = NewRequest(controller, "F", "F2", "B", "I");
+            request.floatChannels = 2;
+            request.rates["B"] = 2;
+
+            // The export decides whether a layer may be rewritten as one AsyncSync call by
+            // comparing it against these names, so a rule that drifted from the builder would
+            // quietly rewrite a layer somebody had edited by hand.
+            var expected = AsyncSyncApplier.ExpectedStateNames(request);
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var built = new List<string>();
+            foreach (var child in controller.layers[1].stateMachine.states)
+                built.Add(child.state.name);
+
+            expected.Sort(System.StringComparer.Ordinal);
+            built.Sort(System.StringComparer.Ordinal);
+            CollectionAssert.AreEqual(built, expected);
+
+            Object.DestroyImmediate(controller);
+        }
+
         // ---- sync requests ---------------------------------------------------
 
         [Test]

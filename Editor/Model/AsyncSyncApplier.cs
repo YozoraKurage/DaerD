@@ -307,6 +307,33 @@ namespace Yozolab.DaerD
             });
         }
 
+        /// <summary>
+        /// The states <see cref="Apply"/> would give this request: the send ring in schedule
+        /// order, the decoder's Idle, and one Recv per slot. Kept beside the code that names
+        /// them so the two cannot drift — the exporter compares a live layer against this to
+        /// decide whether it may be written back as an AsyncSync call, and a name it got
+        /// wrong would quietly rewrite a layer someone had edited by hand.
+        /// </summary>
+        internal static List<string> ExpectedStateNames(Request r)
+        {
+            var names = new List<string>();
+            if (r == null) return names;
+            var slots = BuildSlots(r);
+            if (slots.Count == 0) return names;
+
+            var visits = new Dictionary<int, int>();
+            foreach (var slotIndex in EffectiveSchedule(r, slots))
+            {
+                visits.TryGetValue(slotIndex, out int visit);
+                visits[slotIndex] = visit + 1;
+                names.Add(SlotStateName("Send", slots[slotIndex], visit));
+            }
+            names.Add("Remote Idle");
+            foreach (var slot in slots)
+                names.Add(SlotStateName("Recv", slot, 0));
+            return names;
+        }
+
         /// <summary>"Send X", "Send X +2" for a batch, "(2)" suffixed on repeat visits so
         /// state names stay unique inside the machine.</summary>
         static string SlotStateName(string prefix, Slot slot, int visit)
