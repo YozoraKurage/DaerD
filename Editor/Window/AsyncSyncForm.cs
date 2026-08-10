@@ -526,9 +526,13 @@ namespace Yozolab.DaerD
                 ? new Color(1f, 1f, 1f, 0.06f)
                 : new Color(0f, 0f, 0f, 0.06f);
 
-            // A mouse-up anywhere ends the stroke; the rows below only see the events that
-            // land on them, and one that ended off the grid would leave it painting.
-            if (Event.current.type == EventType.MouseUp) _paintTarget = null;
+            // Any press or release outside a lane ends the stroke — the row that owns the
+            // press claims it again below. Rows only see the events that land on them, so a
+            // stroke that began or ended off the grid would otherwise still be held by the
+            // row it last touched, and the next drag would paint that one.
+            if (Event.current.type == EventType.MouseUp
+                || Event.current.type == EventType.MouseDown)
+                _paintTarget = null;
 
             foreach (var row in _order)
             {
