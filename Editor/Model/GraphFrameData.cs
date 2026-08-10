@@ -102,6 +102,11 @@ namespace Yozolab.DaerD
             /// <see cref="slotBreaks"/>, all of which it answers on its own.</summary>
             public List<StepSpec> steps = new List<StepSpec>();
 
+            /// <summary>Whether the pass may put one slot in adjacent steps, paid for with a
+            /// clock phase in the index. False in data saved before the field existed, which
+            /// is the pass those setups already had.</summary>
+            public bool allowRepeatSteps;
+
             [Serializable]
             public class SyncRate
             {

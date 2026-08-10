@@ -1462,6 +1462,50 @@ namespace Yozolab.DaerD.Tests
         }
 
         [Test]
+        public void Clock_SurvivesTheSavedSetup()
+        {
+            // Regenerating outside the wizard — a state's sync request, the layer panel —
+            // starts from the saved setup, and one that lost the clock would rebuild a layer
+            // whose own grid it then refuses. The setup only persists on a controller that has
+            // an asset to hold it, hence the file.
+            const string path = "Assets/DaerDAsyncSyncClockTest.controller";
+            AssetDatabase.CreateAsset(new AnimatorController(), path);
+            try
+            {
+                var controller = AssetDatabase.LoadAssetAtPath<AnimatorController>(path);
+                controller.AddLayer("Base");
+                controller.AddParameter("F", AnimatorControllerParameterType.Float);
+                controller.AddParameter("B", AnimatorControllerParameterType.Bool);
+
+                var request = NewRequest(controller, "F", "B");
+                request.allowRepeatSteps = true;
+                Sends(request, "F");
+                Sends(request, "F");
+                Sends(request, "B");
+                Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+                var configs = GraphFrameData.GetAsyncSyncs(controller);
+                Assert.AreEqual(1, configs.Count);
+                Assert.IsTrue(configs[0].allowRepeatSteps);
+
+                var restored = AsyncSyncBuilder.FromConfig(controller, configs[0]);
+                Assert.IsTrue(restored.allowRepeatSteps);
+                restored.skipDrivers = true;
+                Assert.IsNull(AsyncSyncBuilder.Validate(restored),
+                    "the restored setup still describes the layer that was built");
+
+                // Data saved before the field existed deserializes to false, which is the pass
+                // those setups already had.
+                Assert.IsFalse(AsyncSyncBuilder.FromConfig(controller,
+                    new GraphFrameData.AsyncSyncConfig { baseName = "Async" }).allowRepeatSteps);
+            }
+            finally
+            {
+                AssetDatabase.DeleteAsset(path);
+            }
+        }
+
+        [Test]
         public void Clock_LetsAnExplicitScheduleRepeatASlot()
         {
             var controller = NewController();

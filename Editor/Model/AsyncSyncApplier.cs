@@ -328,6 +328,7 @@ namespace Yozolab.DaerD
                 slotBreaks = r.slotBreaks != null
                     ? new List<string>(r.slotBreaks) : new List<string>(),
                 steps = CopySteps(r.steps),
+                allowRepeatSteps = r.allowRepeatSteps,
             });
         }
 

@@ -860,6 +860,12 @@ msgstr "ステップ間隔（秒）"
 msgid "Dwell per slot. VRChat syncs roughly every 0.3 s — shorter steps risk remotes skipping slots."
 msgstr "1 スロットあたりの滞在時間です。VRChat の同期はおおよそ 0.3 秒間隔のため、それより短くするとリモートがスロットを取りこぼす可能性があります。"
 
+msgid "Allow Repeated Steps"
+msgstr "連続送信を許可"
+
+msgid "Let a step send what the step before it sent. A clock phase folded into the index tells the two apart, at one more decoder state per parameter set that actually repeats — and, under a Bool index, sometimes one more synced bit."
+msgstr "直前のステップと同じ内容を、次のステップでも送れるようにします。インデックスに畳み込んだクロック位相が両者を区別するため、実際に連続するパラメーターの組ごとにデコーダーの State が 1 つ増えます。Bool インデックスの場合は同期ビットが 1 増えることもあります。"
+
 msgid "Add Synced Params To Store"
 msgstr "同期パラメーターをストアに追加"
 

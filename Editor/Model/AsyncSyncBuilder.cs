@@ -758,6 +758,7 @@ namespace Yozolab.DaerD
                 stepSeconds = config.stepSeconds,
                 floatChannels = Mathf.Clamp(config.FloatChannelsOrDefault, 1, 8),
                 boolChannels = Mathf.Clamp(config.BoolChannelsOrDefault, 1, 8),
+                allowRepeatSteps = config.allowRepeatSteps,
                 store = ParameterStore.Of(controller),
                 emptyClip = GraphFrameData.GetEmptyClip(controller),
                 layerIndex = LayerIndexOf(controller, config),

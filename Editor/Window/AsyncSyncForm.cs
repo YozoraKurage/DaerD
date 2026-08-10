@@ -44,6 +44,9 @@ namespace Yozolab.DaerD
         float _stepSeconds = 0.3f;
         int _floatChannels = 1;
         int _boolChannels = 1;
+        /// <summary>Let a step send what the step before it sent, paid for with a clock
+        /// phase in the index (<see cref="AsyncSyncBuilder.Request.allowRepeatSteps"/>).</summary>
+        bool _allowRepeatSteps;
         bool _addToStore = true;
         bool _assignEmptyClip = true;
         string _search = string.Empty;
@@ -118,6 +121,7 @@ namespace Yozolab.DaerD
             _stepSeconds = config.stepSeconds;
             _floatChannels = Mathf.Clamp(config.FloatChannelsOrDefault, 1, 8);
             _boolChannels = Mathf.Clamp(config.BoolChannelsOrDefault, 1, 8);
+            _allowRepeatSteps = config.allowRepeatSteps;
             _steps.Clear();
             if (config.steps != null)
                 foreach (var step in config.steps)
@@ -159,6 +163,7 @@ namespace Yozolab.DaerD
                 stepSeconds = _stepSeconds,
                 floatChannels = _floatChannels,
                 boolChannels = _boolChannels,
+                allowRepeatSteps = _allowRepeatSteps,
                 store = ParameterStore.Of(_controller),
                 addToStore = _addToStore,
                 assignEmptyClip = _assignEmptyClip,
@@ -217,6 +222,15 @@ namespace Yozolab.DaerD
                 new GUIContent(L.Tr("Step Interval (s)"),
                     L.Tr("Dwell per slot. VRChat syncs roughly every 0.3 s — shorter steps risk remotes skipping slots.")),
                 _stepSeconds);
+
+            // Turning it off has to bring the pass back into line: a grid drawn with repeats
+            // in it is not a pass the decoder can run once the phase stops paying for them.
+            EditorGUI.BeginChangeCheck();
+            _allowRepeatSteps = EditorGUILayout.Toggle(
+                new GUIContent(L.Tr("Allow Repeated Steps"),
+                    L.Tr("Let a step send what the step before it sent. A clock phase folded into the index tells the two apart, at one more decoder state per parameter set that actually repeats — and, under a Bool index, sometimes one more synced bit.")),
+                _allowRepeatSteps);
+            if (EditorGUI.EndChangeCheck()) _stepsStale = true;
 
             // The generated states are machinery, but Unity (and the analyzer) still want a
             // motion on them; the controller's Empty clip is exactly what that is for. Offered
@@ -576,10 +590,10 @@ namespace Yozolab.DaerD
 
         /// <summary>
         /// The steps to draw in red: one that sends nothing, one that sends more of a type
-        /// than the channels carry, one that repeats its neighbour (the wrap included), and
-        /// the one whose last click was refused. All but the last are refused by Validate,
-        /// which says so in words under the form; colouring says WHERE, which is the part a
-        /// sentence cannot carry.
+        /// than the channels carry, one that repeats its neighbour (the wrap included) while
+        /// no clock is paying for it, and the one whose last click was refused. All but the
+        /// last are refused by Validate, which says so in words under the form; colouring says
+        /// WHERE, which is the part a sentence cannot carry.
         /// </summary>
         bool[] Violations(AsyncSyncBuilder.Request request, List<List<string>> columns)
         {
@@ -588,7 +602,8 @@ namespace Yozolab.DaerD
             {
                 int next = (k + 1) % columns.Count;
                 if (columns[k].Count == 0) flagged[k] = true;
-                if (columns.Count > 1 && SameSet(columns[k], columns[next]))
+                if (!request.allowRepeatSteps && columns.Count > 1
+                    && SameSet(columns[k], columns[next]))
                     flagged[k] = flagged[next] = true;
                 foreach (var name in columns[k])
                 {
