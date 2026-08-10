@@ -24,7 +24,14 @@ namespace Yozolab.DaerD
         /// <summary>Raised when the user asks for the underlying state machine graph.</summary>
         public Action ShowGraphRequested;
 
-        public AsyncSyncPanel(DaerDContext context) : base(context, "Async Sync") { }
+        public AsyncSyncPanel(DaerDContext context) : base(context, "Async Sync")
+        {
+            // The AAP set the warnings read is cached across repaints; these are the changes
+            // that can add or remove an animated write, and they are the same two
+            // ParametersPanel drops its own copy of the set on.
+            context.GraphStructureChanged += _form.InvalidateAnimatedParameters;
+            context.ParametersChanged += _form.InvalidateAnimatedParameters;
+        }
 
         /// <summary>The saved setup owning this machine, or null — this is what decides
         /// whether a layer gets this panel instead of the graph.</summary>
@@ -90,7 +97,7 @@ namespace Yozolab.DaerD
             _form.DrawOrderSection(request);
             _form.DrawPreview(request);
             _form.DrawBlockingProblem(request);
-            foreach (var warning in AsyncSyncBuilder.Warnings(request))
+            foreach (var warning in AsyncSyncBuilder.Warnings(request, _form.AnimatedParameters()))
                 EditorGUILayout.HelpBox(warning, MessageType.Warning);
             _form.DrawStoreFix(request);
 

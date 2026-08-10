@@ -412,6 +412,28 @@ namespace Yozolab.DaerD.Tests
             Object.DestroyImmediate(controller);
         }
 
+        /// <summary>
+        /// A caller that already holds the AAP set is believed rather than made to pay for the
+        /// scan again. The wizard's draw path leans on this: it runs per event, while the scan
+        /// walks every state, every blend tree and every clip of the controller.
+        /// </summary>
+        [Test]
+        public void Warnings_TakeAPrecomputedAapSet()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            // Nothing in this controller animates anything, so the passed-in set is the only
+            // thing the warning can be reading.
+            Assert.IsTrue(AsyncSyncBuilder.Warnings(request, new HashSet<string> { "F" })
+                .Exists(w => w.Contains("(AAP") && w.Contains("'F'")));
+
+            // An empty set is an answer ("nothing is animated"), not a request to go and look.
+            Assert.IsFalse(AsyncSyncBuilder.Warnings(request, new HashSet<string>())
+                .Exists(w => w.Contains("(AAP")));
+
+            Object.DestroyImmediate(controller);
+        }
+
         // ---- float channels ---------------------------------------------------
 
         [Test]

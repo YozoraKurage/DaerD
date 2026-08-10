@@ -539,8 +539,17 @@ namespace Yozolab.DaerD
             return null;
         }
 
-        /// <summary>Non-blocking observations shown in the wizard before running.</summary>
-        public static List<string> Warnings(Request r)
+        /// <summary>
+        /// Non-blocking observations shown in the wizard before running.
+        ///
+        /// <paramref name="animated"/> is the AAP set (<see cref="AapWriteScan"/>) when the
+        /// caller already holds one. That scan walks every state, every blend tree and every
+        /// clip's curve bindings, and this method is called straight from OnGUI — a draw path
+        /// that scanned per event would spend most of a mouse drag inside AnimationUtility.
+        /// Null means "work it out", which is what the one-shot callers (a recipe's build, the
+        /// tests) want and what keeps this method answerable on its own.
+        /// </summary>
+        public static List<string> Warnings(Request r, HashSet<string> animated = null)
         {
             var warnings = new List<string>();
             if (r.controller == null || r.targets == null) return warnings;
@@ -618,14 +627,14 @@ namespace Yozolab.DaerD
             // weight-0 layer or an unreachable state also satisfies — rejecting on that would
             // block a setup that is in fact fine, with no way past it. Refuse this once the
             // scan can tell a clip that plays from one that merely exists.
-            var animated = new List<string>();
-            var written = AapWriteScan.CollectWrittenParameters(r.controller);
+            var written = animated ?? AapWriteScan.CollectWrittenParameters(r.controller);
+            var animatedTargets = new List<string>();
             foreach (var name in r.targets)
-                if (written.Contains(name)) animated.Add("'" + name + "'");
-            if (animated.Count > 0)
+                if (written.Contains(name)) animatedTargets.Add("'" + name + "'");
+            if (animatedTargets.Count > 0)
                 warnings.Add(L.Tr(
                     "Animation writes {0} (AAP — a DBT gadget output or a hand-made AAP clip). The send cycle copies targets with a Parameter Driver, which can't read an animated value, so those never reach remotes.",
-                    string.Join(", ", animated)));
+                    string.Join(", ", animatedTargets)));
 
             if (r.assignEmptyClip)
             {

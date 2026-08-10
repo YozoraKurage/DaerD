@@ -62,6 +62,14 @@ namespace Yozolab.DaerD
         /// running it unprompted still invites steps to move on their own. Toggling a cell is
         /// deliberately NOT such an edit — see <see cref="PaintCell"/>.</summary>
         bool _stepsStale;
+
+        // Parameters animation writes (AAP). The scan walks every state, every blend tree and
+        // every clip's curve bindings — far too much for the per-event redraw the warnings live
+        // in, where a drag across the timing grid would pay for it dozens of times a second.
+        // Cached per controller and dropped the way ParametersPanel drops its own copy: on the
+        // structural edits that can change the answer.
+        HashSet<string> _animated;
+        AnimatorController _animatedController;
         /// <summary>The row a drag is painting and what it is painting (in, or out), so a
         /// stroke across a half-filled row fills it rather than inverting it.</summary>
         string _paintTarget;
@@ -113,6 +121,26 @@ namespace Yozolab.DaerD
             if (string.IsNullOrEmpty(name)) return;
             _baseName = name;
         }
+
+        /// <summary>
+        /// The AAP set for the bound controller, worked out at most once per invalidation.
+        /// Hosts hand this to <see cref="AsyncSyncBuilder.Warnings"/> so the draw path never
+        /// pays for the scan — see <see cref="InvalidateAnimatedParameters"/> for what makes
+        /// it stale.
+        /// </summary>
+        public HashSet<string> AnimatedParameters()
+        {
+            if (_animated != null && _animatedController == _controller) return _animated;
+            _animatedController = _controller;
+            return _animated = AapWriteScan.CollectWrittenParameters(_controller);
+        }
+
+        /// <summary>Drops the cached AAP set, so the next draw scans again. Hosts call this on
+        /// the structural changes that can add or remove an animated write; a clip edited in
+        /// another window shows up on the next such change or when the host regains focus,
+        /// which is the right trade for a warning banner against a per-frame walk of the whole
+        /// controller.</summary>
+        public void InvalidateAnimatedParameters() => _animated = null;
 
         public void LoadConfig(GraphFrameData.AsyncSyncConfig config)
         {
