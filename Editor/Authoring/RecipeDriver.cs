@@ -163,15 +163,23 @@ namespace Yozolab.DaerD.Authoring
         {
             var sync = _c.AsyncSync(r.baseName);
             sync.Targets(r.targets.ToArray());
-            foreach (var target in r.targets)
-            {
-                int rate = r.RateOf(target);
-                if (rate > 1) sync.Rate(target, rate);
-            }
+            // A grid answers what the rates, the splits and the cycle answer, and the builder
+            // ignores all three once it has one. Writing them out anyway would be restating
+            // inputs that do nothing — and worse than noise: .Rate("A", 2) beside a grid reads
+            // as a claim about how often A is sent, which only the grid decides.
+            bool grid = r.steps != null && r.steps.Count > 0;
+            if (!grid)
+                foreach (var target in r.targets)
+                {
+                    int rate = r.RateOf(target);
+                    if (rate > 1) sync.Rate(target, rate);
+                }
             var requestable = AsyncSyncBuilder.RequestableTargets(r);
             if (requestable.Count > 0) sync.Requestable(requestable.ToArray());
-            if (r.slotBreaks.Count > 0) sync.Split(r.slotBreaks.ToArray());
-            if (r.scheduleOverride.Count > 0) sync.Schedule(r.scheduleOverride.ToArray());
+            if (grid)
+                foreach (var step in r.steps) sync.Sends(step.targets.ToArray());
+            if (!grid && r.slotBreaks.Count > 0) sync.Split(r.slotBreaks.ToArray());
+            if (!grid && r.scheduleOverride.Count > 0) sync.Schedule(r.scheduleOverride.ToArray());
             if (r.floatChannels != 1) sync.FloatChannels(r.floatChannels);
             if (r.boolChannels != 1) sync.BoolChannels(r.boolChannels);
             if (!Mathf.Approximately(r.stepSeconds, 0.3f)) sync.Step(r.stepSeconds);

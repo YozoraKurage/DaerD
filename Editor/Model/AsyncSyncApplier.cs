@@ -304,7 +304,25 @@ namespace Yozolab.DaerD
                     ? new List<string>(r.scheduleOverride) : new List<string>(),
                 slotBreaks = r.slotBreaks != null
                     ? new List<string>(r.slotBreaks) : new List<string>(),
+                steps = CopySteps(r.steps),
             });
+        }
+
+        /// <summary>A grid copied down to its step lists. The shallow copy the other lists get
+        /// would leave the saved setup sharing step objects with the request that built it, and
+        /// the wizard goes on editing that request after applying.</summary>
+        static List<GraphFrameData.AsyncSyncConfig.StepSpec> CopySteps(
+            List<GraphFrameData.AsyncSyncConfig.StepSpec> steps)
+        {
+            var copy = new List<GraphFrameData.AsyncSyncConfig.StepSpec>();
+            if (steps == null) return copy;
+            foreach (var step in steps)
+            {
+                var clone = new GraphFrameData.AsyncSyncConfig.StepSpec();
+                if (step?.targets != null) clone.targets.AddRange(step.targets);
+                copy.Add(clone);
+            }
+            return copy;
         }
 
         /// <summary>

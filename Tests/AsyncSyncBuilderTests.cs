@@ -1041,12 +1041,15 @@ namespace Yozolab.DaerD.Tests
 
         // ---- explicit grid ----------------------------------------------------
 
-        static void Sends(AsyncSyncBuilder.Request request, params string[] targets)
+        static GraphFrameData.AsyncSyncConfig.StepSpec GridStep(params string[] targets)
         {
             var step = new GraphFrameData.AsyncSyncConfig.StepSpec();
             step.targets.AddRange(targets);
-            request.steps.Add(step);
+            return step;
         }
+
+        static void Sends(AsyncSyncBuilder.Request request, params string[] targets) =>
+            request.steps.Add(GridStep(targets));
 
         /// <summary>A grid is the only way to put two types in one step, and the cost model
         /// has to charge it one channel per type rather than one per target.</summary>
@@ -1144,6 +1147,45 @@ namespace Yozolab.DaerD.Tests
             Sends(single, "B", "F");
             Assert.IsNotNull(AsyncSyncBuilder.Validate(single),
                 "one set spelled twice is still one index");
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void Steps_SurviveTheSavedSetup()
+        {
+            var controller = NewController();
+            var saved = new GraphFrameData.AsyncSyncConfig
+            {
+                baseName = "Async",
+                targets = new List<string> { "F", "B", "I" },
+            };
+            saved.steps.Add(GridStep("F", "B"));
+            saved.steps.Add(GridStep("I"));
+
+            // The regression this closes for the older cycle applies here too: a sync request
+            // rebuilds the layer through FromConfig, and a grid that did not survive the trip
+            // would re-time the layer to the rates behind the user's back.
+            var restored = AsyncSyncBuilder.FromConfig(controller, saved);
+            Assert.AreEqual(2, restored.steps.Count);
+            CollectionAssert.AreEqual(new[] { "F", "B" }, restored.steps[0].targets);
+            CollectionAssert.AreEqual(new[] { 0, 1 },
+                AsyncSyncBuilder.EffectiveSchedule(restored,
+                    AsyncSyncBuilder.BuildSlots(restored)));
+
+            // Editing the restored grid must not reach back into what was saved: the wizard
+            // rewrites this list on every click, and the panel it came from is still open.
+            restored.steps[0].targets.Clear();
+            CollectionAssert.AreEqual(new[] { "F", "B" }, saved.steps[0].targets);
+
+            // Saved before the field existed: no grid, so the slots are batched as before.
+            var legacy = AsyncSyncBuilder.FromConfig(controller,
+                new GraphFrameData.AsyncSyncConfig
+                {
+                    baseName = "Async",
+                    targets = new List<string> { "F", "B", "I" },
+                });
+            Assert.AreEqual(0, legacy.steps.Count);
 
             Object.DestroyImmediate(controller);
         }

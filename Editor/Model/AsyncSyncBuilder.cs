@@ -645,8 +645,8 @@ namespace Yozolab.DaerD
         /// A runnable request rebuilt from a saved setup — what regenerating outside the
         /// wizard (per-state sync requests, the layer panel) starts from. Mirrors the wizard's
         /// own restore: layer resolved through the config's state machine, store and Empty
-        /// clip from the controller's current associations, and the explicit cycle when the
-        /// setup has one — without that last part, adding a sync request to a state would
+        /// clip from the controller's current associations, and the explicit cycle or grid when
+        /// the setup has one — without that last part, adding a sync request to a state would
         /// quietly rebuild a hand-timed (or recipe-timed) layer on the rate-derived pass.
         /// </summary>
         public static Request FromConfig(AnimatorController controller,
@@ -673,6 +673,15 @@ namespace Yozolab.DaerD
                 request.scheduleOverride.AddRange(config.schedule);
             if (config.slotBreaks != null)
                 request.slotBreaks.AddRange(config.slotBreaks);
+            // Copied down to the step lists: this request is handed to editors that go on
+            // rewriting its grid, and the saved setup must not move with them.
+            if (config.steps != null)
+                foreach (var step in config.steps)
+                {
+                    var copy = new StepSpec();
+                    if (step?.targets != null) copy.targets.AddRange(step.targets);
+                    request.steps.Add(copy);
+                }
             return request;
         }
 

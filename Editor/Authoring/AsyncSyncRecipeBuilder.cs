@@ -16,6 +16,9 @@ namespace Yozolab.DaerD.Authoring
     ///    .Rate("Hue", 2)                      // or spell the cycle out yourself:
     ///    .Schedule("Hue", "Outfit", "Hue", "TailState")
     ///    .FloatChannels(2).Step(0.3f);
+    ///
+    /// Sends() goes one deeper still, saying what each step carries rather than which slot it
+    /// visits — the only way to send two types in one step, or to overlap two steps.
     /// </summary>
     public sealed class AsyncSyncRecipeBuilder
     {
@@ -144,15 +147,41 @@ namespace Yozolab.DaerD.Authoring
         }
 
         /// <summary>
-        /// Spell the cycle out step by step, which is what the wizard's timeline writes. Every
-        /// multiplexed parameter must appear at least once and no slot may occupy adjacent
-        /// steps (including the wrap); Generate reports violations instead of applying.
+        /// Spell the cycle out step by step, naming one target per step (a batched target
+        /// stands for its whole slot). Every multiplexed parameter must appear at least once
+        /// and no slot may occupy adjacent steps (including the wrap); Generate reports
+        /// violations instead of applying. Ignored entirely when <see cref="Sends"/> is used,
+        /// which says the same thing and more.
         /// </summary>
         public AsyncSyncRecipeBuilder Schedule(params string[] stepsInOrder)
         {
             _request.scheduleOverride.Clear();
             _request.scheduleOverride.AddRange(stepsInOrder);
             return Record("Schedule", Names(stepsInOrder));
+        }
+
+        /// <summary>
+        /// Spell one step out as the set of targets it sends, and call it once per step. This
+        /// replaces the batching, the rates and <see cref="Schedule"/> together: the slots
+        /// become the distinct sets, so the call says which targets share a step as well as
+        /// when each step comes round.
+        ///
+        /// It is the only way to send targets of different types together (channels are per
+        /// type, and the automatic batching only ever groups like with like) and the only way
+        /// to have one target ride two steps in a row — neighbouring sets may overlap, they
+        /// just may not be equal. Every target must be sent by some step, and a step may not
+        /// carry more of a type than that type has channels.
+        ///
+        ///   c.AsyncSync("Zip").Targets("Hue", "Outfit", "Tail")
+        ///    .Sends("Hue", "Outfit")
+        ///    .Sends("Hue", "Tail");
+        /// </summary>
+        public AsyncSyncRecipeBuilder Sends(params string[] targets)
+        {
+            var step = new GraphFrameData.AsyncSyncConfig.StepSpec();
+            step.targets.AddRange(targets);
+            _request.steps.Add(step);
+            return Record("Sends", Names(targets));
         }
 
         /// <summary>Synced Float channels (1–8): each step carries up to this many Floats.</summary>

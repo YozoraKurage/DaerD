@@ -95,6 +95,13 @@ namespace Yozolab.DaerD
             /// which is the greedy batching those setups already had.</summary>
             public List<string> slotBreaks = new List<string>();
 
+            /// <summary>The pass written out as sets, one entry per step — empty when the
+            /// slots are batched automatically, which is what data saved before the field
+            /// existed deserializes to and so the behaviour those setups already had. Takes
+            /// precedence over <see cref="schedule"/>, <see cref="rates"/> and
+            /// <see cref="slotBreaks"/>, all of which it answers on its own.</summary>
+            public List<StepSpec> steps = new List<StepSpec>();
+
             [Serializable]
             public class SyncRate
             {

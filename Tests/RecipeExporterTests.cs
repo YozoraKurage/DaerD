@@ -606,6 +606,42 @@ namespace Yozolab.DaerD.Tests
         }
 
         [Test]
+        public void Export_AsyncSyncLayer_WritesAGridAsItsSteps()
+        {
+            WithSavedController(controller =>
+            {
+                ApplySync(controller, r =>
+                {
+                    r.floatChannels = 2;
+                    // Inert under a grid, which decides both batching and timing itself.
+                    r.rates["A"] = 2;
+                    r.slotBreaks.Add("B");
+                    r.scheduleOverride.AddRange(new[] { "A", "B" });
+                    foreach (var step in new[]
+                             {
+                                 new[] { "A", "B" }, new[] { "T", "N" }, new[] { "A", "T" },
+                             })
+                    {
+                        var spec = new GraphFrameData.AsyncSyncConfig.StepSpec();
+                        spec.targets.AddRange(step);
+                        r.steps.Add(spec);
+                    }
+                });
+
+                string code = RecipeExporter.Export(controller, null, "SyncRecipe", null).code;
+                StringAssert.Contains(".Sends(\"A\", \"B\")", code);
+                StringAssert.Contains(".Sends(\"T\", \"N\")", code);
+                StringAssert.Contains(".Sends(\"A\", \"T\")", code);
+
+                // The inputs the grid overrides are not restated: written out they would read
+                // as claims about batching and timing that the grid alone decides.
+                StringAssert.DoesNotContain(".Rate(", Body(code));
+                StringAssert.DoesNotContain(".Split(", Body(code));
+                StringAssert.DoesNotContain(".Schedule(", Body(code));
+            });
+        }
+
+        [Test]
         public void Export_HandEditedSyncLayer_StaysRawAndSaysSo()
         {
             WithSavedController(controller =>
