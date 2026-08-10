@@ -433,6 +433,37 @@ namespace Yozolab.DaerD.Tests
         }
 
         [Test]
+        public void AsyncSync_AllowRepeats_LetsOneSlotHoldTwoStepsRunning()
+        {
+            var controller = Track(new AnimatorController());
+            var recipe = NewRecipe(controller, c =>
+            {
+                c.FloatParameter("Hue");
+                c.IntParameter("Outfit");
+                c.BoolParameter("Tail");
+                c.Layer("Base").NewState("S");
+                c.AsyncSync("Zip")
+                    .Targets("Hue", "Outfit", "Tail")
+                    .AllowRepeats()
+                    .Schedule("Hue", "Hue", "Outfit", "Tail")
+                    .SkipDriversForTest();
+            });
+
+            var warnings = recipe.Generate();
+            Assert.IsFalse(warnings.Exists(w => w.Contains("Async Sync 'Zip':")),
+                string.Join("\n", warnings));
+
+            AnimatorStateMachine zip = null;
+            foreach (var layer in controller.layers)
+                if (layer.name == "Zip")
+                    zip = layer.stateMachine;
+            Assert.IsNotNull(zip);
+            // 4 send steps + idle + 3 recv, plus the second Recv the repeated slot decodes in.
+            Assert.AreEqual(9, zip.states.Length);
+            Assert.IsNotNull(FindState(zip, "Recv Hue (2)"));
+        }
+
+        [Test]
         public void AsyncSync_Unnamed_KeepsTheLegacyBaseName_WithoutAnAssetGuid()
         {
             var controller = Track(new AnimatorController());

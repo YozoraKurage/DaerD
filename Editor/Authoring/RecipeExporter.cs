@@ -430,6 +430,7 @@ namespace Yozolab.DaerD.Authoring
 //   Async sync   c.AsyncSync().Targets(""Hue"", ""Outfit"").Rate(""Hue"", 2).Requestable(""Hue"")
 //                    .Schedule(""Hue"", ""Outfit"", ""Hue"");            // the cycle, step by step
 //                    .Sends(""Hue"", ""Outfit"").Sends(""Hue"");   // or what each step carries
+//                    .AllowRepeats();       // and then a step may send what the one before did
 //   Fallbacks    s.BehaviourJson(typeName, json);   c.Raw(controller => { /* full API */ });
 // Assets are the [SerializeField] fields below — assign them on the recipe asset.
 // A build body is ordinary C#: loops, helpers and interpolation all work in your half.";

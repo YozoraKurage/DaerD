@@ -606,6 +606,27 @@ namespace Yozolab.DaerD.Tests
         }
 
         [Test]
+        public void Export_AsyncSyncLayer_KeepsTheClockItsRepeatRestsOn()
+        {
+            WithSavedController(controller =>
+            {
+                ApplySync(controller, r =>
+                {
+                    r.allowRepeatSteps = true;
+                    r.scheduleOverride.AddRange(new[] { "A", "A", "B", "T", "N" });
+                });
+
+                string code = RecipeExporter.Export(controller, null, "SyncRecipe", null).code;
+                // Written before the cycle it makes legal — without it the next Generate would
+                // refuse the very schedule on the line below.
+                StringAssert.Contains(".AllowRepeats()", code);
+                StringAssert.Contains(".Schedule(\"A\", \"A\", \"B\", \"T\", \"N\")", code);
+                Assert.Less(code.IndexOf(".AllowRepeats()", System.StringComparison.Ordinal),
+                    code.IndexOf(".Schedule(", System.StringComparison.Ordinal));
+            });
+        }
+
+        [Test]
         public void Export_AsyncSyncLayer_WritesAGridAsItsSteps()
         {
             WithSavedController(controller =>

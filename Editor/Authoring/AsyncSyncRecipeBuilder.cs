@@ -19,6 +19,8 @@ namespace Yozolab.DaerD.Authoring
     ///
     /// Sends() goes one deeper still, saying what each step carries rather than which slot it
     /// visits — the only way to send two types in one step, or to overlap two steps.
+    /// AllowRepeats() lifts the one rule both of them are otherwise bound by: that no slot may
+    /// occupy adjacent steps.
     /// </summary>
     public sealed class AsyncSyncRecipeBuilder
     {
@@ -182,6 +184,22 @@ namespace Yozolab.DaerD.Authoring
             step.targets.AddRange(targets);
             _request.steps.Add(step);
             return Record("Sends", Names(targets));
+        }
+
+        /// <summary>
+        /// Let a step send what the step before it sent — the wrap included. The decoder fires
+        /// on the index changing, so without this a repeated step is one nobody sees; with it,
+        /// a clock phase folded into the index tells the two apart. The price is a decoder
+        /// state per parameter set that actually repeats (and, under a Bool index, sometimes a
+        /// synced bit), so it is asked for rather than assumed.
+        ///
+        ///   c.AsyncSync("Zip").Targets("Hue", "Outfit").AllowRepeats()
+        ///    .Sends("Hue").Sends("Hue").Sends("Outfit");
+        /// </summary>
+        public AsyncSyncRecipeBuilder AllowRepeats()
+        {
+            _request.allowRepeatSteps = true;
+            return Record("AllowRepeats");
         }
 
         /// <summary>Synced Float channels (1–8): each step carries up to this many Floats.</summary>
