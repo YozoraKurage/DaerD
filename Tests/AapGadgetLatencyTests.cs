@@ -287,6 +287,59 @@ namespace Yozolab.DaerD.Tests
                 "and a numerator that moves instead");
         }
 
+        /// <summary>A sampled function is a table, and a table is one frame, whatever function
+        /// it holds — the same cost as a remap, and the reason a square root is worth having as
+        /// a table rather than as the iteration that also finds it.</summary>
+        [Test]
+        public void FunctionTables_CostOneFrame()
+        {
+            Assert.AreEqual(1, Latency(AapGadgets.Kind.Sqrt,
+                r => { r.inMin = 0.01f; r.inMax = 16f; r.lutSamples = 65; },
+                In(("A", 1f)), In(("A", 4f)), "Out", 2f, 5e-3f), "Sqrt");
+
+            Assert.AreEqual(1, Latency(AapGadgets.Kind.InverseSqrt,
+                r => { r.inMin = 0.05f; r.inMax = 16f; r.lutSamples = 65; },
+                In(("A", 1f)), In(("A", 4f)), "Out", 0.5f, 2e-3f), "InverseSqrt");
+
+            Assert.AreEqual(1, Latency(AapGadgets.Kind.Log2,
+                r => { r.inMin = 0.01f; r.inMax = 100f; r.lutSamples = 65; },
+                In(("A", 1f)), In(("A", 8f)), "Out", 3f, 1e-2f), "Log2");
+
+            Assert.AreEqual(1, Latency(AapGadgets.Kind.Exp2,
+                r => { r.inMin = -8f; r.inMax = 8f; r.lutSamples = 65; },
+                In(("A", 0f)), In(("A", 3f)), "Out", 8f, 5e-2f), "Exp2");
+        }
+
+        /// <summary>
+        /// Four: the log table, the signed multiply's two, and the exp table — and four whether
+        /// the base moved or the exponent did.
+        ///
+        /// That second half had to be arranged. The log table sits on the base's side only, so
+        /// left alone the exponent reached the multiply a frame earlier than the logarithm did
+        /// and the gadget cost three frames when you turned the exponent and four when you
+        /// turned the base. Holding the exponent back by the log's frame is what makes this one
+        /// number instead of two, and it is the same fix, for the same reason, as the one the
+        /// reciprocal's ladder needed.
+        /// </summary>
+        [Test]
+        public void Power_CostsFourFramesWhicheverInputMoves()
+        {
+            Action<AapGadgets.Request> window = r =>
+            {
+                r.inMin = 0.1f; r.inMax = 16f;
+                r.rangeMin = -4f; r.rangeMax = 4f;
+                r.lutSamples = 97;
+            };
+
+            Assert.AreEqual(4, Latency(AapGadgets.Kind.Power, window,
+                In(("A", 2f), ("B", 1f)), In(("A", 2f), ("B", 3f)), "Out", 8f, 0.12f),
+                "the exponent moved");
+
+            Assert.AreEqual(4, Latency(AapGadgets.Kind.Power, window,
+                In(("A", 2f), ("B", 3f)), In(("A", 3f), ("B", 3f)), "Out", 27f, 0.4f),
+                "the base moved");
+        }
+
         /// <summary>Three: the lift into the exact half's territory, the shift, and the core.
         /// One more than the plain reciprocal, and one number rather than two — the ladder it
         /// does without is also the half that used to answer at a different speed.</summary>

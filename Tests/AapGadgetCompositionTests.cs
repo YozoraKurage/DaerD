@@ -513,6 +513,27 @@ namespace Yozolab.DaerD.Tests
             rack.Gadget(AapGadgets.Kind.DivideSigned, "Quotient", "Blend", "Wave",
                 configure: r => { r.rangeMin = -2f; r.rangeMax = 2f; });
 
+            // The sampled functions, all over the window Sum lives in, and the power that is
+            // assembled from two of them rather than sampled.
+            rack.Gadget(AapGadgets.Kind.Sqrt, "Root", "Sum",
+                configure: r => { r.inMin = 0.1f; r.inMax = 4f; r.lutSamples = 65; });
+            rack.Gadget(AapGadgets.Kind.InverseSqrt, "InvRoot", "Sum",
+                configure: r => { r.inMin = 0.1f; r.inMax = 4f; r.lutSamples = 65; });
+            rack.Gadget(AapGadgets.Kind.Log2, "Lg", "Sum",
+                configure: r => { r.inMin = 0.1f; r.inMax = 4f; r.lutSamples = 65; });
+            rack.Gadget(AapGadgets.Kind.Exp2, "Back", "Lg",
+                configure: r =>
+                {
+                    r.inMin = Mathf.Log(0.1f, 2f); r.inMax = 2f; r.lutSamples = 65;
+                });
+            rack.Gadget(AapGadgets.Kind.Power, "Powered", "Sum", "Throttle",
+                r =>
+                {
+                    r.inMin = 0.1f; r.inMax = 4f;
+                    r.rangeMin = 0f; r.rangeMax = 2f;
+                    r.lutSamples = 97;
+                });
+
             // The tangent's ±100 band folded into 0..1.
             rack.Gadget(AapGadgets.Kind.Remap, "Norm", "Slope",
                 configure: r => { r.inMin = -100f; r.inMax = 100f; r.rangeMin = 0f; r.rangeMax = 1f; });
@@ -589,6 +610,14 @@ namespace Yozolab.DaerD.Tests
                 // float's rather than the table's.
                 Assert.AreEqual(1f / 0.9f, rig.Get("InvExact"), 1e-4f, "InvExact = 1 / Sum");
                 Assert.AreEqual(0.2f / 0.9f, rig.Get("RatioExact"), 1e-4f, "RatioExact = Scale / Sum");
+
+                Assert.AreEqual(Mathf.Sqrt(0.9f), rig.Get("Root"), 3e-3f, "Root = √Sum");
+                Assert.AreEqual(1f / Mathf.Sqrt(0.9f), rig.Get("InvRoot"), 3e-3f, "InvRoot = 1/√Sum");
+                Assert.AreEqual(Mathf.Log(0.9f, 2f), rig.Get("Lg"), 5e-3f, "Lg = log₂ Sum");
+                Assert.AreEqual(0.9f, rig.Get("Back"), 1e-2f, "Back = 2^Lg, which is Sum again");
+                // 0.9 to the power of the throttle's 0.5 — the same number the square root
+                // above found, by a different four gadgets.
+                Assert.AreEqual(Mathf.Sqrt(0.9f), rig.Get("Powered"), 1e-2f, "Powered = Sum^0.5");
 
                 Assert.AreEqual(0.5f, rig.Get("Tracked"), 5e-3f, "Tracked caught up to Throttle");
                 Assert.AreEqual(0.5f, rig.Get("Eased"), 5e-3f, "Eased caught up to Throttle");

@@ -61,6 +61,11 @@ namespace Yozolab.DaerD
             DivideSigned,
             ReciprocalRanged,
             DivideRanged,
+            Sqrt,
+            InverseSqrt,
+            Log2,
+            Exp2,
+            Power,
         }
 
         // Must stay in AapGadgets.Kind order.
@@ -72,7 +77,25 @@ namespace Yozolab.DaerD
             "Sine", "Cosine", "Tangent", "LUT (Curve)", "Atan2", "Buffer (Delay)",
             "Multiply (Signed)", "Divide (Signed)",
             "Reciprocal (Ranged)", "Divide (Ranged)",
+            "Square Root", "Inverse Square Root", "Log2", "Exp2", "Power",
         };
+
+        /// <summary>Kinds that are a fixed function sampled into a table, and so take the window
+        /// they are sampled over and the number of samples to spend on it.</summary>
+        public static bool IsFunctionTable(Kind kind) =>
+            kind == Kind.Sqrt || kind == Kind.InverseSqrt
+            || kind == Kind.Log2 || kind == Kind.Exp2;
+
+        /// <summary>Kinds that read <see cref="Request.lutSamples"/>.</summary>
+        public static bool UsesSamples(Kind kind) =>
+            kind == Kind.Lut1D || IsFunctionTable(kind) || kind == Kind.Power;
+
+        /// <summary>Function tables whose window has to stay above zero, because the function
+        /// does — and because their samples are spaced geometrically, which needs a ratio.</summary>
+        public static bool NeedsPositiveWindow(Kind kind) =>
+            kind == Kind.ReciprocalRanged || kind == Kind.DivideRanged
+            || kind == Kind.Sqrt || kind == Kind.InverseSqrt || kind == Kind.Log2
+            || kind == Kind.Power;
 
         public static bool IsBinary(Kind kind) =>
             kind == Kind.Add || kind == Kind.AddRanged || kind == Kind.Sub
@@ -80,18 +103,21 @@ namespace Yozolab.DaerD
             || kind == Kind.And || kind == Kind.Or || kind == Kind.Divide
             || kind == Kind.Atan2
             || kind == Kind.MultiplySigned || kind == Kind.DivideSigned
-            || kind == Kind.DivideRanged;
+            || kind == Kind.DivideRanged || kind == Kind.Power;
 
         /// <summary>Kinds that take an *input* range as well as (or instead of) an output one.
         /// Remap maps from it; the ranged reciprocal and divide use it to say where the divisor
         /// lives, which is what lets them skip the lookup ladder altogether.</summary>
         public static bool UsesInputRange(Kind kind) =>
-            kind == Kind.Remap || kind == Kind.ReciprocalRanged || kind == Kind.DivideRanged;
+            kind == Kind.Remap || kind == Kind.ReciprocalRanged || kind == Kind.DivideRanged
+            || IsFunctionTable(kind) || kind == Kind.Power;
 
         public static bool UsesRange(Kind kind) =>
             kind == Kind.Smooth || kind == Kind.AddRanged || kind == Kind.SubRanged
             || kind == Kind.Remap || kind == Kind.SmoothLinear || kind == Kind.Buffer
-            || kind == Kind.MultiplySigned || kind == Kind.DivideSigned;
+            || kind == Kind.MultiplySigned || kind == Kind.DivideSigned
+            // The exponent's range, which is what the intermediate product is sized from.
+            || kind == Kind.Power;
 
         /// <summary>Kinds that take a second, shareable Float setting how fast they follow.</summary>
         public static bool UsesSmoothing(Kind kind) => kind == Kind.Smooth || kind == Kind.SmoothLinear;
@@ -230,6 +256,9 @@ namespace Yozolab.DaerD
                 // The ranged reciprocal's three, and the multiply.
                 case Kind.DivideRanged:
                     return 4;
+                // A log table, a signed multiply, and an exp table.
+                case Kind.Power:
+                    return 4;
                 // The magnitude, its reciprocal's two, and the stage that puts the sign back.
                 case Kind.DivideSigned:
                     return 4;
@@ -315,18 +344,21 @@ namespace Yozolab.DaerD
                 return L.Tr("Range Min must be smaller than Range Max.");
             if (UsesInputRange(r.kind) && !(r.inMin < r.inMax))
                 return L.Tr("Input Min must be smaller than Input Max.");
-            // The lift divides by the window's lower end and needs the whole window on one side
-            // of zero, so that a divisor inside it is never zero and never changes sign.
-            if ((r.kind == Kind.ReciprocalRanged || r.kind == Kind.DivideRanged) && !(r.inMin > 0f))
-                return L.Tr("The divisor range must start above zero — it is what the reciprocal is scaled by.");
+            // The lift divides by the window's lower end, and the geometrically sampled tables
+            // take a ratio across it — both of which need the whole window above zero, which is
+            // also where 1/x, 1/√x and log x are defined at all.
+            if (NeedsPositiveWindow(r.kind) && !(r.inMin > 0f))
+                return L.Tr("The input range must start above zero for this gadget.");
+            if (UsesSamples(r.kind) && (r.lutSamples < MinLutSamples || r.lutSamples > MaxLutSamples))
+                return L.Tr("Samples must be between 2 and 128.");
+            if (r.kind == Kind.Power && !(r.rangeMin < r.rangeMax))
+                return L.Tr("Range Min must be smaller than Range Max.");
             if (r.kind == Kind.Lut1D)
             {
                 if (r.curve == null || r.curve.length < 2)
                     return L.Tr("The LUT needs a curve with at least two keys.");
                 if (!(r.curve.keys[r.curve.length - 1].time > r.curve.keys[0].time))
                     return L.Tr("The curve's keys must span a time range.");
-                if (r.lutSamples < MinLutSamples || r.lutSamples > MaxLutSamples)
-                    return L.Tr("Samples must be between 2 and 128.");
             }
             if (r.kind == Kind.Atan2
                 && (r.atan2Directions < MinAtan2Directions || r.atan2Directions > MaxAtan2Directions))
@@ -663,6 +695,14 @@ namespace Yozolab.DaerD
                 case Kind.Cosine:
                 case Kind.Tangent: return Trigonometry(c, r.kind, a, output);
                 case Kind.Lut1D: return Lut1D(c, a, output, r.curve, r.lutSamples);
+                case Kind.Sqrt: return Sqrt(c, a, output, r.inMin, r.inMax, r.lutSamples);
+                case Kind.InverseSqrt:
+                    return InverseSqrt(c, a, output, r.inMin, r.inMax, r.lutSamples);
+                case Kind.Log2: return Log2(c, a, output, r.inMin, r.inMax, r.lutSamples);
+                case Kind.Exp2: return Exp2(c, a, output, r.inMin, r.inMax, r.lutSamples);
+                case Kind.Power:
+                    return Power(c, a, b, output, one, r.inMin, r.inMax,
+                        r.rangeMin, r.rangeMax, r.lutSamples);
                 // Input A is the numerator of atan2 and input B the denominator, so the
                 // wizard's A/B pair reads in the order the function's arguments do.
                 case Kind.Atan2: return Atan2(c, a, b, output, r.atan2Directions);
@@ -1469,6 +1509,126 @@ namespace Yozolab.DaerD
                     clips[value] = clip = DbtBuilder.ParameterClip(c, output, value);
                 tree.AddChild(clip, t);
             }
+            return tree;
+        }
+
+        // ---- functions of one input ----------------------------------------------
+
+        /// <summary>
+        /// A fixed function over a declared window, sampled into a 1D tree — the same trick
+        /// <see cref="Lut1D"/> and the trigonometric kinds use, with the curve known in advance
+        /// so nobody has to draw it. One frame, like any other table.
+        ///
+        /// Where the samples go matters more than how many there are. Spaced evenly, a table of
+        /// √x or log x spends most of its samples where the function is nearly straight and none
+        /// where it turns hardest — √x over 0..4 in 33 even steps is out by 0.09 near zero, which
+        /// is not a rounding error. Spaced geometrically, the error of interpolating a power or a
+        /// logarithm depends only on the *ratio* between neighbouring samples, so it is the same
+        /// on every rung of the ladder, which is the same reasoning
+        /// <see cref="ReciprocalBelowOne"/> is built on. Exponentials are the other way round —
+        /// their relative error is flat under even spacing — so each kind says which it wants.
+        ///
+        /// Outside the window a 1D tree clamps, so the answer there is the function's value at
+        /// the nearer end. The window is the promise about the input.
+        /// </summary>
+        static BlendTree FunctionTable(AnimatorController c, string input, string output,
+            string label, System.Func<float, float> f, float min, float max, int samples,
+            bool geometric)
+        {
+            samples = Mathf.Clamp(samples, MinLutSamples, MaxLutSamples);
+            var tree = DbtBuilder.Tree1D(c, Name(label, input, null), input);
+            // Flat stretches would otherwise mint one identical clip per sample.
+            var clips = new Dictionary<float, AnimationClip>();
+            for (int i = 0; i < samples; i++)
+            {
+                float t = (float)i / (samples - 1);
+                float x = geometric ? min * Mathf.Pow(max / min, t) : Mathf.Lerp(min, max, t);
+                float value = f(x);
+                if (!clips.TryGetValue(value, out var clip))
+                    clips[value] = clip = DbtBuilder.ParameterClip(c, output, value);
+                tree.AddChild(clip, x);
+            }
+            return tree;
+        }
+
+        /// <summary>output = √input over min..max. Geometrically sampled, because √ turns hardest
+        /// at the bottom of its range and an even table would spend nothing there.</summary>
+        public static BlendTree Sqrt(AnimatorController c, string input, string output,
+            float min, float max, int samples) =>
+            FunctionTable(c, input, output, "Sqrt", Mathf.Sqrt, min, max, samples, true);
+
+        /// <summary>output = 1/√input over min..max — the one a normalisation wants, and cheaper
+        /// than a square root and a reciprocal in a row (one frame against three).</summary>
+        public static BlendTree InverseSqrt(AnimatorController c, string input, string output,
+            float min, float max, int samples) =>
+            FunctionTable(c, input, output, "InvSqrt", x => 1f / Mathf.Sqrt(x),
+                min, max, samples, true);
+
+        /// <summary>output = log₂(input) over min..max, both above zero. Base two because it is
+        /// the one <see cref="Exp2"/> undoes, and the pair is what <see cref="Power"/> is made
+        /// of; any other base is this times a constant, which a remap does for free.</summary>
+        public static BlendTree Log2(AnimatorController c, string input, string output,
+            float min, float max, int samples) =>
+            FunctionTable(c, input, output, "Log2", x => Mathf.Log(x, 2f),
+                min, max, samples, true);
+
+        /// <summary>output = 2^input over min..max. Evenly sampled: the relative error of
+        /// interpolating an exponential is the same everywhere under even spacing, which is the
+        /// opposite of what the power functions above want.</summary>
+        public static BlendTree Exp2(AnimatorController c, string input, string output,
+            float min, float max, int samples) =>
+            FunctionTable(c, input, output, "Exp2", x => Mathf.Pow(2f, x),
+                min, max, samples, false);
+
+        /// <summary>
+        /// output = base^exponent, with both of them parameters — which is the reason this is a
+        /// gadget and not a table. A table can hold any function of one input; a power of two
+        /// runtime values is a surface, and no 1D tree holds a surface.
+        ///
+        ///     x^y = 2^(y · log₂ x)
+        ///
+        /// so it is the two tables above with a signed multiply between them: log₂ of the base
+        /// (1 frame), times the exponent (2), back through exp₂ (1). Four frames.
+        ///
+        /// Three windows have to line up and this works them out from two. The base's window is
+        /// declared; the exponent's range is declared; the product's range is then the four
+        /// corners of the two, and that is what the exp₂ table is sampled over. Getting that
+        /// last one wrong would clamp the result rather than compute it, which is exactly the
+        /// arithmetic a caller should not have to do by hand.
+        /// </summary>
+        public static BlendTree Power(AnimatorController c, string b, string e, string output,
+            string one, float min, float max, float expMin, float expMax, int samples)
+        {
+            string log = output + "/Log", held = output + "/Exponent", product = output + "/Exp";
+            DbtBuilder.EnsureFloatParameter(c, log, 0f);
+            DbtBuilder.EnsureFloatParameter(c, held, 0f);
+            DbtBuilder.EnsureFloatParameter(c, product, 0f);
+
+            float lowLog = Mathf.Log(min, 2f), highLog = Mathf.Log(max, 2f);
+            float lowProduct = Mathf.Min(
+                Mathf.Min(lowLog * expMin, lowLog * expMax),
+                Mathf.Min(highLog * expMin, highLog * expMax));
+            float highProduct = Mathf.Max(
+                Mathf.Max(lowLog * expMin, lowLog * expMax),
+                Mathf.Max(highLog * expMin, highLog * expMax));
+            // The signed multiply reads both operands through tables spanning ±this, and its
+            // own result needs no range at all.
+            float span = Mathf.Max(Mathf.Max(Mathf.Abs(lowLog), Mathf.Abs(highLog)),
+                Mathf.Max(Mathf.Abs(expMin), Mathf.Abs(expMax)));
+
+            var tree = DbtBuilder.DirectTree(c, Name("Pow", b, e));
+            DbtBuilder.AddDirectChild(tree, Log2(c, b, log, min, max, samples), one);
+            // The exponent waits out the log table's frame. Without it the multiply would pair a
+            // logarithm of the base as it was last frame with an exponent as it is now, and the
+            // gadget would cost four frames when the base moved and three when the exponent did
+            // — a latency that is a property of which input you touched, which is exactly what
+            // nothing downstream can line up against.
+            DbtBuilder.AddDirectChild(tree,
+                Remap(c, e, held, expMin, expMax, expMin, expMax), one);
+            DbtBuilder.AddDirectChild(tree,
+                MultiplySigned(c, log, held, product, one, -span, span), one);
+            DbtBuilder.AddDirectChild(tree,
+                Exp2(c, product, output, lowProduct, highProduct, samples), one);
             return tree;
         }
 

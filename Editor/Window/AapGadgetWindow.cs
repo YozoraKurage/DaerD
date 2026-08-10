@@ -145,6 +145,11 @@ namespace Yozolab.DaerD
                 case AapGadgets.Kind.Lut1D: _output = a + "/Lut"; break;
                 case AapGadgets.Kind.Atan2: _output = a + "/Angle"; break;
                 case AapGadgets.Kind.Buffer: _output = a + "/Buffered"; break;
+                case AapGadgets.Kind.Sqrt: _output = a + "/Sqrt"; break;
+                case AapGadgets.Kind.InverseSqrt: _output = a + "/InvSqrt"; break;
+                case AapGadgets.Kind.Log2: _output = a + "/Log2"; break;
+                case AapGadgets.Kind.Exp2: _output = a + "/Exp2"; break;
+                case AapGadgets.Kind.Power: _output = a + "^" + b; break;
             }
         }
 
@@ -202,6 +207,16 @@ namespace Yozolab.DaerD
                     return L.Tr("Bakes the curve into a 1D blend tree lookup table: the curve's time axis is the input, its value the output, linearly interpolated between evenly spaced sample points. Lives entirely inside the blend tree layer.");
                 case AapGadgets.Kind.Atan2:
                     return L.Tr("output = atan2(Y, X) in turns: 0..1 counter-clockwise from +X, ready to feed the Sine / Cosine gadgets. Values near the origin collapse toward 0 — gate by magnitude. The 0/1 seam sits in a narrow band at +X.");
+                case AapGadgets.Kind.Sqrt:
+                    return L.Tr("output = the square root of the input, over the window Input Min…Max (above zero). A lookup table sampled where a square root turns hardest, so one frame and no iteration. Outside the window the answer is the root of the nearer end.");
+                case AapGadgets.Kind.InverseSqrt:
+                    return L.Tr("output = 1 / the square root of the input, over Input Min…Max (above zero). One frame — what a normalisation wants, without paying for a root and a reciprocal in a row.");
+                case AapGadgets.Kind.Log2:
+                    return L.Tr("output = log2(input) over Input Min…Max (above zero). One frame. Another base is this times a constant, which a Remap does for free.");
+                case AapGadgets.Kind.Exp2:
+                    return L.Tr("output = 2 to the power of the input, over Input Min…Max. One frame.");
+                case AapGadgets.Kind.Power:
+                    return L.Tr("output = A to the power of B, with both of them parameters: log2 of the base, times the exponent, back through exp2. Four frames. Input Min…Max is the base's window (above zero) and Range Min…Max bounds the exponent; the intermediate range follows from those.");
                 case AapGadgets.Kind.Buffer:
                     return L.Tr("output = the input, delayed by exactly N frames. Every blend tree stage costs one frame, so branches of different depth see different frames of the same parameter — insert a buffer on the shallower branch to line the two up again.");
             }
@@ -343,6 +358,13 @@ namespace Yozolab.DaerD
             }
             if (_kind == AapGadgets.Kind.FloatAsBool)
                 _threshold = EditorGUILayout.FloatField(L.Tr("Threshold"), _threshold);
+            // Lut1D draws its own beside the curve field; the rest of the sampled kinds have
+            // no curve to draw, so the sample count is all there is to say about their table.
+            if (AapGadgets.UsesSamples(_kind) && _kind != AapGadgets.Kind.Lut1D)
+                _lutSamples = EditorGUILayout.IntSlider(
+                    new GUIContent(L.Tr("Samples"),
+                        L.Tr("How many points the function is sampled at. The tree interpolates linearly between them.")),
+                    _lutSamples, AapGadgets.MinLutSamples, AapGadgets.MaxLutSamples);
 
             if (AapGadgets.UsesDbtLayer(_kind))
                 DrawLayerChoice();

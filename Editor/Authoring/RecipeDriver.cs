@@ -276,6 +276,22 @@ namespace Yozolab.DaerD.Authoring
                     case AapGadgets.Kind.Lut1D:
                         gadgets.Lut1D(r.inputA, r.output, r.curve, r.lutSamples);
                         break;
+                    case AapGadgets.Kind.Sqrt:
+                        gadgets.Sqrt(r.inputA, r.output, r.inMin, r.inMax, r.lutSamples);
+                        break;
+                    case AapGadgets.Kind.InverseSqrt:
+                        gadgets.InverseSqrt(r.inputA, r.output, r.inMin, r.inMax, r.lutSamples);
+                        break;
+                    case AapGadgets.Kind.Log2:
+                        gadgets.Log2(r.inputA, r.output, r.inMin, r.inMax, r.lutSamples);
+                        break;
+                    case AapGadgets.Kind.Exp2:
+                        gadgets.Exp2(r.inputA, r.output, r.inMin, r.inMax, r.lutSamples);
+                        break;
+                    case AapGadgets.Kind.Power:
+                        gadgets.Power(r.inputA, r.inputB, r.output, r.inMin, r.inMax,
+                            r.rangeMin, r.rangeMax, r.lutSamples);
+                        break;
                     // Input A is atan2's numerator and input B its denominator, which is the
                     // order the y, x pair the method takes reads in.
                     case AapGadgets.Kind.Atan2:

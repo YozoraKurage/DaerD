@@ -313,6 +313,47 @@ namespace Yozolab.DaerD.Tests
             return code.Substring(start);
         }
 
+        /// <summary>The sampled functions come back as their own calls with the window they were
+        /// sampled over. Written back as a bare Lut1D they would need the curve spelled out, and
+        /// as anything else they would be a different table.</summary>
+        [Test]
+        public void Export_FunctionGadgets_CarryTheirWindow()
+        {
+            WithSavedController(controller =>
+            {
+                ApplyGadget(controller, AapGadgets.Kind.Sqrt, r =>
+                {
+                    r.output = "A/Sqrt";
+                    r.inMin = 0.01f;
+                    r.inMax = 16f;
+                });
+                ApplyGadget(controller, AapGadgets.Kind.Log2, r =>
+                {
+                    r.output = "A/Log";
+                    r.inMin = 0.5f;
+                    r.inMax = 8f;
+                    r.lutSamples = 65;
+                });
+                ApplyGadget(controller, AapGadgets.Kind.Power, r =>
+                {
+                    r.output = "A^B";
+                    r.inMin = 0.1f;
+                    r.inMax = 4f;
+                    r.rangeMin = -2f;
+                    r.rangeMax = 2f;
+                });
+
+                var result = RecipeExporter.Export(controller, null, "GadgetRecipe", null);
+                Assert.IsEmpty(result.warnings, string.Join("\n", result.warnings));
+
+                // The default sample count stays out of the call; a chosen one does not.
+                StringAssert.Contains(".Sqrt(\"A\", \"A/Sqrt\", 0.01f, 16)", result.code);
+                StringAssert.Contains(".Log2(\"A\", \"A/Log\", 0.5f, 8, 65)", result.code);
+                StringAssert.Contains(".Power(\"A\", \"B\", \"A^B\", 0.1f, 4, -2, 2)", result.code);
+                StringAssert.DoesNotContain("NewBlendTree(", Body(result.code));
+            });
+        }
+
         /// <summary>The ranged division pair carries the divisor window it was built with;
         /// written back without it, the reciprocal would be the laddered one and the controller
         /// would cap at 240 where the original did not.</summary>

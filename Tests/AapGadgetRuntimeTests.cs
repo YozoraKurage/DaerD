@@ -638,6 +638,154 @@ namespace Yozolab.DaerD.Tests
             }
         }
 
+        // ---- functions of one input ------------------------------------------------
+
+        /// <summary>√x, sampled where a square root needs sampling. One frame, against the
+        /// thirty an iteration takes to reach the same answer.</summary>
+        [TestCase(0.25f, 0.5f)]
+        [TestCase(1f, 1f)]
+        [TestCase(2f, 1.41421356f)]
+        [TestCase(3f, 1.73205081f)]
+        [TestCase(4f, 2f)]
+        [TestCase(0.0625f, 0.25f)]
+        public void Sqrt_TakesASquareRoot(float a, float expected)
+        {
+            using (var rig = RigFor(AapGadgets.Kind.Sqrt,
+                r => { r.inMin = 0.01f; r.inMax = 16f; r.lutSamples = 65; }))
+                Assert.AreEqual(expected, rig.Evaluate("Out", Settle, ("A", a)), expected * 2e-3f);
+        }
+
+        /// <summary>
+        /// Why the samples are geometric. An evenly spaced table of the same size spends its
+        /// samples where √ is nearly straight and none where it turns, and is out by a
+        /// percent or more at the bottom of the window; the geometric one holds its relative
+        /// error flat across the whole span, which is the same reasoning the reciprocal's
+        /// ladder is built on.
+        /// </summary>
+        [Test]
+        public void Sqrt_HoldsItsAccuracyAtTheBottomOfTheWindow()
+        {
+            using (var rig = RigFor(AapGadgets.Kind.Sqrt,
+                r => { r.inMin = 0.01f; r.inMax = 16f; r.lutSamples = 65; }))
+            {
+                // Deliberately between samples, at both ends of a 1600:1 window.
+                Assert.AreEqual(Mathf.Sqrt(0.013f), rig.Evaluate("Out", Settle, ("A", 0.013f)),
+                    Mathf.Sqrt(0.013f) * 2e-3f, "near the floor");
+                Assert.AreEqual(Mathf.Sqrt(11.3f), rig.Evaluate("Out", Settle, ("A", 11.3f)),
+                    Mathf.Sqrt(11.3f) * 2e-3f, "near the ceiling");
+            }
+        }
+
+        [TestCase(0.25f, 2f)]
+        [TestCase(1f, 1f)]
+        [TestCase(4f, 0.5f)]
+        [TestCase(2f, 0.70710678f)]
+        public void InverseSqrt_TakesAnInverseSquareRoot(float a, float expected)
+        {
+            using (var rig = RigFor(AapGadgets.Kind.InverseSqrt,
+                r => { r.inMin = 0.05f; r.inMax = 16f; r.lutSamples = 65; }))
+                Assert.AreEqual(expected, rig.Evaluate("Out", Settle, ("A", a)), expected * 2e-3f);
+        }
+
+        [TestCase(1f, 0f)]
+        [TestCase(2f, 1f)]
+        [TestCase(8f, 3f)]
+        [TestCase(0.5f, -1f)]
+        [TestCase(0.125f, -3f)]
+        [TestCase(3f, 1.5849625f)]
+        public void Log2_TakesALogarithm(float a, float expected)
+        {
+            using (var rig = RigFor(AapGadgets.Kind.Log2,
+                r => { r.inMin = 0.01f; r.inMax = 100f; r.lutSamples = 65; }))
+                Assert.AreEqual(expected, rig.Evaluate("Out", Settle, ("A", a)), 5e-3f);
+        }
+
+        [TestCase(0f, 1f)]
+        [TestCase(1f, 2f)]
+        [TestCase(3f, 8f)]
+        [TestCase(-2f, 0.25f)]
+        [TestCase(0.5f, 1.41421356f)]
+        public void Exp2_RaisesTwoToTheInput(float a, float expected)
+        {
+            using (var rig = RigFor(AapGadgets.Kind.Exp2,
+                r => { r.inMin = -8f; r.inMax = 8f; r.lutSamples = 65; }))
+                Assert.AreEqual(expected, rig.Evaluate("Out", Settle, ("A", a)), expected * 3e-3f);
+        }
+
+        /// <summary>The pair undoes itself, which is the property everything built on them
+        /// leans on.</summary>
+        [Test]
+        public void Log2AndExp2_AreInverses()
+        {
+            var controller = NewController("A", "B");
+            var log = NewRequest(controller, AapGadgets.Kind.Log2);
+            log.output = "L";
+            log.inMin = 0.05f;
+            log.inMax = 20f;
+            log.lutSamples = 65;
+            Apply(log);
+
+            var exp = NewRequest(controller, AapGadgets.Kind.Exp2);
+            exp.inputA = "L";
+            exp.output = "Back";
+            exp.inMin = Mathf.Log(0.05f, 2f);
+            exp.inMax = Mathf.Log(20f, 2f);
+            exp.lutSamples = 65;
+            exp.layerIndex = 1;
+            Apply(exp);
+
+            using (var rig = new AnimatorRig(controller))
+                foreach (float x in new[] { 0.1f, 0.5f, 1f, 3f, 7f, 19f })
+                    Assert.AreEqual(x, rig.Evaluate("Back", Settle, ("A", x)), x * 8e-3f,
+                        "exp2(log2(" + x + "))");
+        }
+
+        /// <summary>
+        /// A power with both the base and the exponent as parameters, which is the one a table
+        /// cannot hold: a function of one input is a curve, and this is a surface.
+        /// </summary>
+        [TestCase(2f, 3f, 8f)]
+        [TestCase(2f, 0.5f, 1.41421356f)]
+        [TestCase(9f, 0.5f, 3f)]
+        [TestCase(4f, -1f, 0.25f)]
+        [TestCase(3f, 2f, 9f)]
+        [TestCase(1.5f, 4f, 5.0625f)]
+        [TestCase(5f, 0f, 1f)]
+        public void Power_RaisesOneParameterToAnother(float b, float e, float expected)
+        {
+            using (var rig = RigFor(AapGadgets.Kind.Power,
+                r =>
+                {
+                    r.inMin = 0.1f; r.inMax = 16f;      // the base's window
+                    r.rangeMin = -4f; r.rangeMax = 4f;  // the exponent's range
+                    r.lutSamples = 97;
+                }))
+                Assert.AreEqual(expected, rig.Evaluate("Out", Settle, ("A", b), ("B", e)),
+                    expected * 1.5e-2f);
+        }
+
+        /// <summary>The windows have to start above zero — log₂ is not defined below it, and the
+        /// geometric sampling needs a ratio across the window rather than a difference.</summary>
+        [Test]
+        public void FunctionTables_RefuseAWindowThatTouchesZero()
+        {
+            foreach (var kind in new[]
+                { AapGadgets.Kind.Sqrt, AapGadgets.Kind.InverseSqrt, AapGadgets.Kind.Log2,
+                  AapGadgets.Kind.Power })
+            {
+                var request = NewRequest(NewController("A", "B"), kind);
+                request.inMin = 0f;
+                request.inMax = 4f;
+                Assert.IsNotNull(AapGadgets.Validate(request), kind + " with a window at zero");
+            }
+
+            // Exp2 is defined everywhere and is sampled evenly, so it takes any window.
+            var exp = NewRequest(NewController("A", "B"), AapGadgets.Kind.Exp2);
+            exp.inMin = -8f;
+            exp.inMax = 8f;
+            Assert.IsNull(AapGadgets.Validate(exp), "exp2 over a window straddling zero");
+        }
+
         /// <summary>Input A is the numerator (y) and B the denominator (x), and the result is in
         /// turns counter-clockwise from +X. These are directions the ring samples exactly.</summary>
         [TestCase(1f, 0f, 0.25f)]      // +Y

@@ -862,6 +862,84 @@ namespace Yozolab.DaerD.Authoring
         }
 
         /// <summary>
+        /// output = √input over min..max, as a table sampled where a square root needs it — one
+        /// frame, and no iteration to wait out.
+        ///
+        /// The samples are spaced geometrically rather than evenly, because √ turns hardest at
+        /// the bottom of its range: an even table of √ over 0..4 is out by about 0.09 near zero.
+        /// The window has to start above zero for the same reason, and outside it the answer is
+        /// √ of the nearer end.
+        /// </summary>
+        public GadgetRecipeBuilder Sqrt(ParamRef input, ParamRef output,
+            float min, float max, int samples = 33) =>
+            Function(AapGadgets.Kind.Sqrt, "Sqrt", input, output, min, max, samples);
+
+        /// <summary>output = 1/√input over min..max. What a normalisation actually wants, and a
+        /// frame rather than the three a square root and a reciprocal in a row would cost.</summary>
+        public GadgetRecipeBuilder InverseSqrt(ParamRef input, ParamRef output,
+            float min, float max, int samples = 33) =>
+            Function(AapGadgets.Kind.InverseSqrt, "InverseSqrt", input, output, min, max, samples);
+
+        /// <summary>output = log₂(input) over min..max, both above zero. Base two is the one
+        /// <see cref="Exp2"/> undoes; another base is this times a constant, which a
+        /// <see cref="Remap"/> does for nothing.</summary>
+        public GadgetRecipeBuilder Log2(ParamRef input, ParamRef output,
+            float min, float max, int samples = 33) =>
+            Function(AapGadgets.Kind.Log2, "Log2", input, output, min, max, samples);
+
+        /// <summary>output = 2^input over min..max, evenly sampled — an exponential's relative
+        /// error is flat that way, which is the opposite of what √ and log want.</summary>
+        public GadgetRecipeBuilder Exp2(ParamRef input, ParamRef output,
+            float min, float max, int samples = 33) =>
+            Function(AapGadgets.Kind.Exp2, "Exp2", input, output, min, max, samples);
+
+        GadgetRecipeBuilder Function(AapGadgets.Kind kind, string call, ParamRef input,
+            ParamRef output, float min, float max, int samples) =>
+            Queue(new AapGadgets.Request
+            {
+                kind = kind,
+                inputA = input.Name,
+                output = output.Name,
+                inMin = min,
+                inMax = max,
+                lutSamples = samples,
+            }, Line(call, new[]
+            {
+                P(input), P(output), RecipeScript.F(min), RecipeScript.F(max),
+            }, (samples.ToString(), "33")));
+
+        /// <summary>
+        /// output = base^exponent, with both of them parameters. Four frames: log₂ of the base,
+        /// a signed multiply by the exponent, and exp₂ back.
+        ///
+        /// A table holds any function of one input, but a power of two runtime values is a
+        /// surface and no 1D tree holds a surface — which is why this one is assembled rather
+        /// than sampled. <paramref name="min"/> and <paramref name="max"/> are the base's window
+        /// (above zero, since log₂ is); <paramref name="expMin"/> and <paramref name="expMax"/>
+        /// bound the exponent. The window the intermediate exponential is sampled over follows
+        /// from those two, so it is not yours to get wrong.
+        /// </summary>
+        public GadgetRecipeBuilder Power(ParamRef b, ParamRef exponent, ParamRef output,
+            float min, float max, float expMin, float expMax, int samples = 33) =>
+            Queue(new AapGadgets.Request
+            {
+                kind = AapGadgets.Kind.Power,
+                inputA = b.Name,
+                inputB = exponent.Name,
+                output = output.Name,
+                inMin = min,
+                inMax = max,
+                rangeMin = expMin,
+                rangeMax = expMax,
+                lutSamples = samples,
+            }, Line("Power", new[]
+            {
+                P(b), P(exponent), P(output),
+                RecipeScript.F(min), RecipeScript.F(max),
+                RecipeScript.F(expMin), RecipeScript.F(expMax),
+            }, (samples.ToString(), "33")));
+
+        /// <summary>
         /// output = atan2(y, x) in turns: 0 at +X, counter-clockwise to 1, ready to feed
         /// <see cref="Sine"/> / <see cref="Cosine"/>. A ring of <paramref name="directions"/>
         /// children is the table, so accuracy is about 1/N turn; the result collapses toward
