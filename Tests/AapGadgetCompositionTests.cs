@@ -122,6 +122,57 @@ namespace Yozolab.DaerD.Tests
                 Assert.AreEqual(expected, rig.Evaluate("Product", 30, ("X", x), ("Y", y)), 3e-3f);
         }
 
+        /// <summary>
+        /// The reciprocal's ceiling is a property of its lookup ladder, not of the gadget — and
+        /// the ladder is only there for inputs below 1.
+        ///
+        /// Above 1 the exact half carries the answer on its own: it divides by a shift a sibling
+        /// computed, which is a float and has no range to clamp against, so 1/x holds for any x
+        /// however large. The ladder exists because that trick needs a weight that would have to
+        /// go negative below 1, and a ladder is a finite table, and a finite table ends — at
+        /// 1/240, which is why the output stops at 240.
+        ///
+        /// So the way past the ceiling is to not use the ladder: scale the divisor above 1 first,
+        /// take the reciprocal in the exact region, and scale the answer back by the same factor.
+        ///     1/x = (1/m) · 1/(x/m)
+        /// Four frames and two remaps, with nothing added to the gadgets themselves.
+        /// </summary>
+        [Test]
+        public void Reciprocal_ScaledAboveOne_GoesPastTheLaddersCeiling()
+        {
+            const float floor = 0.001f;    // the smallest divisor this rack is built for
+
+            var rack = new Rack("X");
+            // X over 0.001..1 becomes U over 1..1000, which is entirely in the exact half.
+            rack.Gadget(AapGadgets.Kind.Remap, "U", "X",
+                configure: r => { r.inMin = floor; r.inMax = 1f; r.rangeMin = 1f; r.rangeMax = 1f / floor; });
+            rack.Gadget(AapGadgets.Kind.Reciprocal, "InvU", "U");
+            // 1/U is 0..1, and scaling it by 1/floor undoes the scaling of the input.
+            rack.Gadget(AapGadgets.Kind.Remap, "Inv", "InvU",
+                configure: r => { r.inMin = 0f; r.inMax = 1f; r.rangeMin = 0f; r.rangeMax = 1f / floor; });
+
+            // The same divisors through the gadget on its own, for the comparison.
+            var plain = new Rack("X");
+            plain.Gadget(AapGadgets.Kind.Reciprocal, "Inv", "X");
+
+            using (var scaled = rack.Run())
+            using (var direct = plain.Run())
+            {
+                // Where the ladder still reaches, both agree.
+                Assert.AreEqual(10f, scaled.Evaluate("Inv", 12, ("X", 0.1f)), 0.05f, "1 / 0.1");
+                Assert.AreEqual(10f, direct.Evaluate("Inv", 12, ("X", 0.1f)), 0.05f);
+
+                // Past its floor, only the scaled one is still dividing.
+                Assert.AreEqual(240f, direct.Evaluate("Inv", 12, ("X", 0.001f)), 1f,
+                    "the ladder ends at 1/240 and holds there");
+                Assert.AreEqual(1000f, scaled.Evaluate("Inv", 12, ("X", 0.001f)), 5f,
+                    "while the exact half has no ceiling of its own");
+                Assert.AreEqual(500f, scaled.Evaluate("Inv", 12, ("X", 0.002f)), 3f);
+                Assert.AreEqual(1f, scaled.Evaluate("Inv", 12, ("X", 1f)), 0.01f,
+                    "and the top of the window still reads 1");
+            }
+        }
+
         // ---- depth, and the buffer that cancels it ---------------------------------
 
         /// <summary>
