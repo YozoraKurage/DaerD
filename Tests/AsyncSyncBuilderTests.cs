@@ -1152,6 +1152,37 @@ namespace Yozolab.DaerD.Tests
         }
 
         [Test]
+        public void Steps_OverlappingSets_GetStateNamesOfTheirOwn()
+        {
+            var controller = FloatController(3);
+            var request = NewRequest(controller, "F1", "F2", "F3");
+            request.floatChannels = 2;
+            // Both slots lead with F1 and hold two targets, so both want the same name.
+            Sends(request, "F1", "F2");
+            Sends(request, "F1", "F3");
+
+            var expected = AsyncSyncApplier.ExpectedStateNames(request);
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var built = new List<string>();
+            foreach (var child in controller.layers[1].stateMachine.states)
+                built.Add(child.state.name);
+            CollectionAssert.Contains(built, "Send F1 +1");
+            CollectionAssert.Contains(built, "Send F1 +1 #2");
+            CollectionAssert.Contains(built, "Recv F1 +1 #2");
+            Assert.AreEqual(built.Count, new HashSet<string>(built).Count,
+                "two states of one machine must not answer to one name");
+
+            // And the export's recognition rule has to name them the same way, or a grid
+            // would come back as raw states with a warning.
+            expected.Sort(System.StringComparer.Ordinal);
+            built.Sort(System.StringComparer.Ordinal);
+            CollectionAssert.AreEqual(built, expected);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
         public void Steps_SurviveTheSavedSetup()
         {
             var controller = NewController();

@@ -144,6 +144,7 @@ namespace Yozolab.DaerD
                 foreach (var name in slots[i].targets)
                     slotOfTarget[name] = i;
 
+            var slotNames = SlotNames(slots);
             var visits = new Dictionary<int, int>();
             var sendStates = new List<AnimatorState>(schedule.Count);
             var firstSendOfSlot = new Dictionary<int, AnimatorState>();
@@ -155,7 +156,7 @@ namespace Yozolab.DaerD
                 visits[slotIndex] = visit + 1;
 
                 var state = stateMachine.AddState(
-                    SlotStateName("Send", slot, visit),
+                    SlotStateName("Send", slotNames[slotIndex], visit),
                     new Vector3(260f, 60f + k * 70f, 0f));
                 state.writeDefaultValues = true;
                 state.motion = empty;
@@ -225,11 +226,12 @@ namespace Yozolab.DaerD
             var idle = stateMachine.AddState("Remote Idle", new Vector3(620f, 60f, 0f));
             idle.writeDefaultValues = true;
             idle.motion = empty;
+            var slotNames = SlotNames(slots);
             for (int i = 0; i < slots.Count; i++)
             {
                 var slot = slots[i];
                 var state = stateMachine.AddState(
-                    SlotStateName("Recv", slot, 0),
+                    SlotStateName("Recv", slotNames[i], 0),
                     new Vector3(620f, 130f + i * 70f, 0f));
                 state.writeDefaultValues = true;
                 state.motion = empty;
@@ -339,28 +341,48 @@ namespace Yozolab.DaerD
             var slots = BuildSlots(r);
             if (slots.Count == 0) return names;
 
+            var slotNames = SlotNames(slots);
             var visits = new Dictionary<int, int>();
             foreach (var slotIndex in EffectiveSchedule(r, slots))
             {
                 visits.TryGetValue(slotIndex, out int visit);
                 visits[slotIndex] = visit + 1;
-                names.Add(SlotStateName("Send", slots[slotIndex], visit));
+                names.Add(SlotStateName("Send", slotNames[slotIndex], visit));
             }
             names.Add("Remote Idle");
-            foreach (var slot in slots)
-                names.Add(SlotStateName("Recv", slot, 0));
+            for (int i = 0; i < slots.Count; i++)
+                names.Add(SlotStateName("Recv", slotNames[i], 0));
             return names;
         }
 
-        /// <summary>"Send X", "Send X +2" for a batch, "(2)" suffixed on repeat visits so
-        /// state names stay unique inside the machine.</summary>
-        static string SlotStateName(string prefix, Slot slot, int visit)
+        /// <summary>
+        /// What each slot is called: its first target, and "+2" for the ones riding with it.
+        /// That is unique as long as the slots partition the targets, which the automatic
+        /// batching's do — but a grid's slots overlap, and {A,B} beside {A,C} would leave two
+        /// states of one machine answering to "Send A +1". Later collisions take a "#n", so a
+        /// setup whose slots do partition (every one built before grids existed) keeps the
+        /// names it has, and the export can still recognise it.
+        /// </summary>
+        static List<string> SlotNames(List<Slot> slots)
         {
-            string name = prefix + " " + DbtBuilder.Sanitize(slot.targets[0]);
-            if (slot.targets.Count > 1) name += " +" + (slot.targets.Count - 1);
-            if (visit > 0) name += " (" + (visit + 1) + ")";
-            return name;
+            var names = new List<string>();
+            var taken = new HashSet<string>();
+            foreach (var slot in slots)
+            {
+                string stem = DbtBuilder.Sanitize(slot.targets[0]);
+                if (slot.targets.Count > 1) stem += " +" + (slot.targets.Count - 1);
+                string name = stem;
+                // Terminates: the taken set is finite and every candidate name is distinct.
+                for (int n = 2; !taken.Add(name); n++) name = stem + " #" + n;
+                names.Add(name);
+            }
+            return names;
         }
+
+        /// <summary>One state's name: the slot's, behind "Send" / "Recv", with "(2)" on repeat
+        /// visits so the ring's several states for one slot stay apart.</summary>
+        static string SlotStateName(string prefix, string slotName, int visit) =>
+            prefix + " " + slotName + (visit > 0 ? " (" + (visit + 1) + ")" : string.Empty);
 
         /// <summary>
         /// Adds the copy entries for one slot: each batched Float or Bool target pairs with the
