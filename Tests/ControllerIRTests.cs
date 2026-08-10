@@ -193,6 +193,49 @@ namespace Yozolab.DaerD.Tests
             Object.DestroyImmediate(rebuilt);
         }
 
+        /// <summary>
+        /// Motions are compared by identity, which is the strict reading and the right one —
+        /// two clips called "Idle" are two clips. The report has to say that in a way that
+        /// does not read as "'Idle' ≠ 'Idle'", because the case where it comes up is a
+        /// regenerated blend tree, whose AAP clips are rebuilt under the names they had.
+        /// </summary>
+        [Test]
+        public void Diff_SaysWhenTwoMotionsOnlyShareTheirName()
+        {
+            var first = NewController(out var smA, "Twin");
+            var second = NewController(out var smB, "Twin");
+
+            var diffs = ControllerIRDiff.Compare(ControllerIR.Parse(first), ControllerIR.Parse(second));
+
+            Assert.AreEqual(1, diffs.Count, string.Join("\n", diffs));
+            StringAssert.Contains("another asset of the same name", diffs[0]);
+            StringAssert.DoesNotContain("'Twin' ≠ 'Twin'", diffs[0]);
+
+            Object.DestroyImmediate(first);
+            Object.DestroyImmediate(second);
+        }
+
+        AnimatorController NewController(out AnimatorStateMachine sm, string clipName)
+        {
+            var controller = new AnimatorController();
+            controller.AddLayer("Base");
+            sm = controller.layers[0].stateMachine;
+            var clip = new AnimationClip { name = clipName };
+            _clips.Add(clip);
+            sm.AddState("S").motion = clip;
+            return controller;
+        }
+
+        readonly List<AnimationClip> _clips = new List<AnimationClip>();
+
+        [TearDown]
+        public void DestroyClips()
+        {
+            foreach (var clip in _clips)
+                if (clip != null) Object.DestroyImmediate(clip);
+            _clips.Clear();
+        }
+
         [Test]
         public void Diff_ReportsAnIntroducedChange()
         {

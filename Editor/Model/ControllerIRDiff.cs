@@ -147,7 +147,7 @@ namespace Yozolab.DaerD
             Motion assetB, ControllerIR.Tree treeB, List<string> diffs)
         {
             if (assetA != assetB)
-                diffs.Add(where + ": motion " + Name(assetA) + " ≠ " + Name(assetB));
+                diffs.Add(where + ": motion " + Mismatch(assetA, assetB));
             if ((treeA == null) != (treeB == null))
             {
                 diffs.Add(where + ": embedded tree present " + (treeA != null) + " ≠ " + (treeB != null));
@@ -304,7 +304,21 @@ namespace Yozolab.DaerD
 
         static void Asset(string where, string field, Object a, Object b, List<string> diffs)
         {
-            if (a != b) diffs.Add(where + ": " + field + " " + Name(a) + " ≠ " + Name(b));
+            if (a != b) diffs.Add(where + ": " + field + " " + Mismatch(a, b));
+        }
+
+        /// <summary>
+        /// Two assets that are not the same asset, said in a way that survives them sharing a
+        /// name. Assets are compared by identity and named in the report, so a clip rebuilt
+        /// under the name it had before — which is what a regenerated blend tree's AAP clips
+        /// are — printed as "'X' ≠ 'X'" and read as a fault in the comparison rather than the
+        /// difference it is.
+        /// </summary>
+        static string Mismatch(Object a, Object b)
+        {
+            if (a != null && b != null && a.name == b.name)
+                return "'" + a.name + "' ≠ another asset of the same name";
+            return Name(a) + " ≠ " + Name(b);
         }
 
         static string Name(Object asset) => asset == null ? "(none)" : "'" + asset.name + "'";
