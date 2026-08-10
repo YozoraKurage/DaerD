@@ -807,6 +807,74 @@ namespace Yozolab.DaerD.Tests
             Assert.IsNotNull(AsyncSyncBuilder.Validate(badChannels));
         }
 
+        // ---- slots that mix types ---------------------------------------------
+
+        /// <summary>A slot the automatic batching can never produce: it groups by type, so
+        /// only a hand-written grid puts a Float, a Bool and an Int in one step. Everything
+        /// that numbers channels has to count each type on its own, and these pin that.</summary>
+        static AsyncSyncBuilder.Slot MixedSlot(params string[] targets)
+        {
+            var slot = new AsyncSyncBuilder.Slot();
+            slot.targets.AddRange(targets);
+            return slot;
+        }
+
+        [Test]
+        public void ChannelsInSlot_CountsEachTypeSeparately()
+        {
+            var controller = NewController();
+            controller.AddParameter("F2", AnimatorControllerParameterType.Float);
+            var request = NewRequest(controller, "F", "F2", "B", "I");
+            var slot = MixedSlot("F", "B", "F2", "I");
+
+            // Reading the slot's size would have said 4 Float channels, and billed for them.
+            Assert.AreEqual(2, AsyncSyncCost.ChannelsInSlot(request, slot,
+                AnimatorControllerParameterType.Float));
+            Assert.AreEqual(1, AsyncSyncCost.ChannelsInSlot(request, slot,
+                AnimatorControllerParameterType.Bool));
+            Assert.AreEqual(1, AsyncSyncCost.ChannelsInSlot(request, slot,
+                AnimatorControllerParameterType.Int));
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void AddChannelCopies_NumbersEachTypesChannelsFromZero()
+        {
+            if (!VrcParameterDriver.SdkAvailable)
+                Assert.Ignore("Reading the copy entries needs the Parameter Driver behaviour.");
+
+            var controller = NewController();
+            controller.AddParameter("F2", AnimatorControllerParameterType.Float);
+            var request = NewRequest(controller, "F", "F2", "B", "I");
+            var slot = MixedSlot("F", "B", "F2", "I");
+            var machine = controller.layers[0].stateMachine;
+
+            var send = VrcParameterDriver.AddTo(machine.AddState("Send", Vector3.zero));
+            AsyncSyncApplier.AddChannelCopies(send, request, slot, toChannels: true);
+            var entries = VrcParameterDriver.ReadSpec(send).entries;
+            Assert.AreEqual(4, entries.Count);
+            // B sits second in the slot but is the FIRST Bool, and F2 the second Float.
+            CollectionAssert.AreEqual(new[] { "F", "B", "F2", "I" },
+                entries.ConvertAll(e => e.source));
+            CollectionAssert.AreEqual(
+                new[] { "Async/Float", "Async/Bool", "Async/Float2", "Async/Int" },
+                entries.ConvertAll(e => e.name));
+
+            // The decoder is the same call with the arrow reversed, so one numbering serves
+            // both — a per-type counter that only fixed the send side would desync the pair.
+            var recv = VrcParameterDriver.AddTo(machine.AddState("Recv", Vector3.zero));
+            AsyncSyncApplier.AddChannelCopies(recv, request, slot, toChannels: false);
+            var back = VrcParameterDriver.ReadSpec(recv).entries;
+            CollectionAssert.AreEqual(
+                new[] { "Async/Float", "Async/Bool", "Async/Float2", "Async/Int" },
+                back.ConvertAll(e => e.source));
+            CollectionAssert.AreEqual(new[] { "F", "B", "F2", "I" },
+                back.ConvertAll(e => e.name));
+
+            Object.DestroyImmediate(controller);
+        }
+
         // ---- slot breaks ------------------------------------------------------
 
         static AnimatorController FloatController(int count)

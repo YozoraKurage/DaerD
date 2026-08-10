@@ -344,20 +344,26 @@ namespace Yozolab.DaerD
             return name;
         }
 
-        /// <summary>Adds the copy entries for one slot: each batched Float or Bool target
-        /// pairs with the channel at its own position in the slot (a slot never mixes types,
-        /// so the position IS the channel number); an Int slot holds one target on the type's
-        /// channel.</summary>
-        static void AddChannelCopies(StateMachineBehaviour driver, Request r, Slot slot, bool toChannels)
+        /// <summary>
+        /// Adds the copy entries for one slot: each batched Float or Bool target pairs with the
+        /// channel at its own position AMONG THE TARGETS OF ITS OWN TYPE, and an Int rides the
+        /// type's single channel. The position in the slot would do while a slot held one type
+        /// only; a slot that mixes them has each type count from 0 of its own, or a Bool sitting
+        /// second behind a Float would be copied into Bool channel 1 — a parameter nothing
+        /// generates. Both directions go through here, so the numbering cannot disagree
+        /// between the send ring and the decoder.
+        /// </summary>
+        internal static void AddChannelCopies(StateMachineBehaviour driver, Request r, Slot slot,
+            bool toChannels)
         {
-            for (int j = 0; j < slot.targets.Count; j++)
+            int floats = 0, bools = 0;
+            foreach (var target in slot.targets)
             {
-                string target = slot.targets[j];
                 var type = DbtBuilder.FindParameter(r.controller, target).type;
                 string channel = type == AnimatorControllerParameterType.Float
-                    ? FloatChannelParameter(r.baseName, j)
+                    ? FloatChannelParameter(r.baseName, floats++)
                     : type == AnimatorControllerParameterType.Bool
-                        ? BoolChannelParameter(r.baseName, j)
+                        ? BoolChannelParameter(r.baseName, bools++)
                         : ChannelParameter(r.baseName, type);
                 if (toChannels)
                     VrcParameterDriver.AddCopyEntry(driver, target, channel);

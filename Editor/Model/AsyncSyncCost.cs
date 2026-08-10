@@ -5,6 +5,7 @@ using UnityEngine;
 using static Yozolab.DaerD.AsyncSyncSchedule;
 using IndexEncoding = Yozolab.DaerD.AsyncSyncBuilder.IndexEncoding;
 using Request = Yozolab.DaerD.AsyncSyncBuilder.Request;
+using Slot = Yozolab.DaerD.AsyncSyncBuilder.Slot;
 
 namespace Yozolab.DaerD
 {
@@ -52,17 +53,33 @@ namespace Yozolab.DaerD
         public static int BoolChannelsUsed(Request r) =>
             ChannelsUsed(r, AnimatorControllerParameterType.Bool);
 
-        /// <summary>The widest batch of one type across the slots — a slot only ever holds
-        /// targets of a single type, so its first target names the type of all of them.</summary>
+        /// <summary>The widest batch of one type across the slots.</summary>
         static int ChannelsUsed(Request r, AnimatorControllerParameterType type)
         {
             int used = 0;
             foreach (var slot in BuildSlots(r))
+                used = Mathf.Max(used, ChannelsInSlot(r, slot, type));
+            return used;
+        }
+
+        /// <summary>
+        /// Targets of one type inside a single slot — the channels of that type the slot needs,
+        /// and (taken as the maximum over the slots) the number the setup generates. Counted
+        /// per type rather than read off the slot's size: a slot may carry several types at
+        /// once, and each type numbers its channels from 0 of its own, so a slot's target
+        /// count says nothing about how many channels of any one type it wants.
+        ///
+        /// Its own method because the automatic batching cannot build a slot that mixes types
+        /// — only an explicit grid can — and this is where that rule is pinned.
+        /// </summary>
+        internal static int ChannelsInSlot(Request r, Slot slot,
+            AnimatorControllerParameterType type)
+        {
+            int used = 0;
+            foreach (var name in slot.targets)
             {
-                if (slot.targets.Count == 0) continue;
-                var parameter = DbtBuilder.FindParameter(r.controller, slot.targets[0]);
-                if (parameter != null && parameter.type == type)
-                    used = Mathf.Max(used, slot.targets.Count);
+                var parameter = DbtBuilder.FindParameter(r.controller, name);
+                if (parameter != null && parameter.type == type) used++;
             }
             return used;
         }
