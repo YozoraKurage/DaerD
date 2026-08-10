@@ -525,6 +525,39 @@ namespace Yozolab.DaerD.Tests
         }
 
         /// <summary>
+        /// A hand-built Direct blend tree layer is not the recipe's business. The gadget step
+        /// sweeps the layer it owns before rebuilding it, and "owns" has to mean the one it
+        /// was told to use — not every layer in the controller that happens to hold a Direct
+        /// tree. Someone's own DBT sitting beside a generated one has to come through a
+        /// Generate with its states, its tree and its position untouched.
+        /// </summary>
+        [Test]
+        public void AHandBuiltDbtLayer_SurvivesTheGadgetStepRebuildingItsOwn()
+        {
+            WithSavedController(controller =>
+            {
+                controller.AddLayer("Hand DBT");
+                var mine = controller.layers[0].stateMachine;
+                var handState = mine.AddState("Hand Written", new Vector3(0f, 0f, 0f));
+                var handTree = Track(new BlendTree { name = "Hand Root", blendType = BlendTreeType.Direct });
+                AssetDatabase.AddObjectToAsset(handTree, controller);
+                handState.motion = handTree;
+
+                var recipe = NewRecipe(controller, BuildWithPostSteps);
+                recipe.Generate();
+                recipe.Generate();
+
+                Assert.AreEqual(0, IndexOfLayer(controller, "Hand DBT"), "it moved");
+                var after = controller.layers[0].stateMachine;
+                Assert.AreEqual(1, after.states.Length);
+                Assert.AreSame(handState, after.states[0].state, "the state was rebuilt, not kept");
+                Assert.AreSame(handTree, handState.motion, "the tree was replaced");
+                Assert.GreaterOrEqual(IndexOfLayer(controller, "DBT"), 0,
+                    "the gadget layer did not get built beside it");
+            });
+        }
+
+        /// <summary>
         /// A layer's index decides which of two writers to the same property wins, so a
         /// second Generate that shuffled them would change what the controller does with
         /// nobody having touched the recipe. A post step rebuilds by removing its layer and
