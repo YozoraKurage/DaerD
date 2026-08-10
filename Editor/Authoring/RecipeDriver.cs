@@ -593,7 +593,7 @@ namespace Yozolab.DaerD.Authoring
                 if (built == null)
                     _warnings.Add(L.Tr("Any-State transition to '{0}' could not be resolved — skipped.", t.destination));
                 else
-                    EmitTransition(built, t);
+                    EmitTransition(built, t, fromAnyState: true);
             }
             foreach (var t in machine.entryTransitions)
             {
@@ -649,7 +649,8 @@ namespace Yozolab.DaerD.Authoring
         }
 
         /// <summary>Conditions, then only the settings that differ from authoring defaults.</summary>
-        void EmitTransition(TransitionBuilder tb, ControllerIR.Transition t)
+        void EmitTransition(TransitionBuilder tb, ControllerIR.Transition t,
+            bool fromAnyState = false)
         {
             if (tb == null) return;
             for (int i = 0; i < t.conditions.Count; i++)
@@ -676,7 +677,11 @@ namespace Yozolab.DaerD.Authoring
             if (t.interruptionSource != TransitionInterruptionSource.None)
                 tb.WithInterruption(t.interruptionSource);
             if (!t.orderedInterruption) tb.WithNoOrderedInterruption();
-            if (t.canTransitionToSelf) tb.WithTransitionToSelf();
+            // Any State is the only place this flag does anything, and the authoring default
+            // there is "do not re-trigger". Writing it whenever Unity's own true showed up
+            // put the call on nearly every line in the file, including the state-to-state
+            // transitions where the editor does not even offer the checkbox.
+            if (fromAnyState && t.canTransitionToSelf) tb.WithTransitionToSelf();
             if (t.solo) tb.Solo();
             if (t.mute) tb.Mute();
         }

@@ -128,7 +128,7 @@ namespace Yozolab.DaerD.Tests
             StringAssert.Contains("a.TransitionsTo(b).When(go.IsTrue()).WithTransitionDurationSeconds(0.1f);", code);
             StringAssert.Contains("b.Exits().When(go.IsFalse())", code);
             StringAssert.Contains("main.AnyTransitionsTo(a).When(blend.IsGreaterThan(0.9f))", code);
-            StringAssert.DoesNotContain("var t = ", code);
+            StringAssert.DoesNotContain("var t = ", Body(code));
 
             // The blend tree (a NewBlendTree variable the state references) and the
             // JSON-fallback behaviour both made it in.
@@ -234,9 +234,9 @@ namespace Yozolab.DaerD.Tests
             StringAssert.Contains("c.Layer(\"Second\")", code);
             StringAssert.DoesNotContain("c.Layer(\"Main\")", code);
             // "Second" references no parameters at all: none are exported.
-            StringAssert.DoesNotContain("c.FloatParameter(", code);
-            StringAssert.DoesNotContain("c.BoolParameter(", code);
-            StringAssert.DoesNotContain("\"Unused\"", code);
+            StringAssert.DoesNotContain("c.FloatParameter(", Body(code));
+            StringAssert.DoesNotContain("c.BoolParameter(", Body(code));
+            StringAssert.DoesNotContain("\"Unused\"", Body(code));
 
             result.replayed.Bake();
             var expected = ControllerIR.Parse(controller).FilterTo(
@@ -616,7 +616,10 @@ namespace Yozolab.DaerD.Tests
                     r.scheduleOverride.AddRange(new[] { "A", "A", "B", "T", "N" });
                 });
 
-                string code = RecipeExporter.Export(controller, null, "SyncRecipe", null).code;
+                // The banner spells the async-sync API out with .Schedule(…) above
+                // .AllowRepeats(), so an order check on the whole file only ever measures
+                // the cheat sheet — and reads backwards, at that.
+                string code = Body(RecipeExporter.Export(controller, null, "SyncRecipe", null).code);
                 // Written before the cycle it makes legal — without it the next Generate would
                 // refuse the very schedule on the line below.
                 StringAssert.Contains(".AllowRepeats()", code);
@@ -677,7 +680,7 @@ namespace Yozolab.DaerD.Tests
 
                 Assert.IsTrue(result.warnings.Exists(w => w.Contains("Zip")),
                     string.Join("\n", result.warnings));
-                StringAssert.DoesNotContain("c.AsyncSync(", result.code);
+                StringAssert.DoesNotContain("c.AsyncSync(", Body(result.code));
                 StringAssert.Contains("c.Layer(\"Zip\")", result.code);
             });
         }
