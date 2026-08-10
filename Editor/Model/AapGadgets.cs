@@ -54,6 +54,11 @@ namespace Yozolab.DaerD
             Lut1D,
             Atan2,
             Buffer,
+            // Appended, and to be appended to: a saved gadget records its kind as this enum's
+            // number, so inserting one anywhere else would rename every gadget after it in
+            // every controller already built.
+            MultiplySigned,
+            DivideSigned,
         }
 
         // Must stay in AapGadgets.Kind order.
@@ -63,17 +68,20 @@ namespace Yozolab.DaerD
             "And", "Or", "Not", "Float As Bool", "Remap",
             "Reciprocal", "Divide", "Frame Time", "Smooth (Linear)", "Separate Digits",
             "Sine", "Cosine", "Tangent", "LUT (Curve)", "Atan2", "Buffer (Delay)",
+            "Multiply (Signed)", "Divide (Signed)",
         };
 
         public static bool IsBinary(Kind kind) =>
             kind == Kind.Add || kind == Kind.AddRanged || kind == Kind.Sub
             || kind == Kind.SubRanged || kind == Kind.Multiply
             || kind == Kind.And || kind == Kind.Or || kind == Kind.Divide
-            || kind == Kind.Atan2;
+            || kind == Kind.Atan2
+            || kind == Kind.MultiplySigned || kind == Kind.DivideSigned;
 
         public static bool UsesRange(Kind kind) =>
             kind == Kind.Smooth || kind == Kind.AddRanged || kind == Kind.SubRanged
-            || kind == Kind.Remap || kind == Kind.SmoothLinear || kind == Kind.Buffer;
+            || kind == Kind.Remap || kind == Kind.SmoothLinear || kind == Kind.Buffer
+            || kind == Kind.MultiplySigned || kind == Kind.DivideSigned;
 
         /// <summary>Kinds that take a second, shareable Float setting how fast they follow.</summary>
         public static bool UsesSmoothing(Kind kind) => kind == Kind.Smooth || kind == Kind.SmoothLinear;
@@ -165,6 +173,59 @@ namespace Yozolab.DaerD
         public static string BufferStage(string output, int stage) => output + "/" + stage;
 
         /// <summary>
+        /// How many frames pass between an input of this gadget changing and its output holding
+        /// the answer. Fixed per kind, and the same whatever the values going in — which is not
+        /// a coincidence but a thing each gadget is built to guarantee, because a cost that
+        /// depended on the data would be a cost nothing could be lined up against.
+        ///
+        /// A gadget reading its inputs and writing AAP clips costs one frame: Mecanim evaluates
+        /// from the values the frame started with and applies the writes at the end. Every frame
+        /// beyond that is an intermediate parameter the gadget keeps for itself, because the
+        /// stage reading one sees what the previous evaluation wrote.
+        ///
+        /// Latencies add along a chain, which is what makes them worth stating: two branches off
+        /// one input that arrive at different totals are reading different frames of it, and the
+        /// difference is the number of frames a <see cref="Kind.Buffer"/> on the shallower branch
+        /// has to make up. <c>GadgetRecipeBuilder</c> does that arithmetic for a recipe.
+        ///
+        /// The two smoothings are filters rather than stages: their output is not their input
+        /// delayed but a running function of it, and the number here is only how long the first
+        /// response takes. Settling is a matter of the smoothing amount, not of the graph.
+        /// </summary>
+        public static int Latency(Request r)
+        {
+            switch (r.kind)
+            {
+                // The one whose cost is an argument rather than a consequence.
+                case Kind.Buffer:
+                    return Mathf.Clamp(r.bufferFrames, MinBufferFrames, MaxBufferFrames);
+                // The shift the exact core computes, and the delayed copy the ladder reads to
+                // stay level with it.
+                case Kind.Reciprocal:
+                    return 2;
+                // The four half-copies, then the four products of them.
+                case Kind.MultiplySigned:
+                    return 2;
+                // The reciprocal's two, and the multiply that reads it.
+                case Kind.Divide:
+                    return 3;
+                // The magnitude, its reciprocal's two, and the stage that puts the sign back.
+                case Kind.DivideSigned:
+                    return 4;
+                // The clamped copy, the offsets, the subnormal products, the read-back, and the
+                // differences that are the digits.
+                case Kind.SeparateDigits:
+                    return 5;
+                // The step reads a difference this gadget wrote last frame, so the constant-speed
+                // smoothing takes one frame longer than the exponential one to answer at all.
+                case Kind.SmoothLinear:
+                    return 2;
+                default:
+                    return 1;
+            }
+        }
+
+        /// <summary>
         /// The layers this request has to claim, under the exact names the builders give them.
         /// Anything that regenerates — a recipe rebuilds its gadget layer on every Generate —
         /// needs them by name: the builders take a free name when one is taken, so a leftover
@@ -227,7 +288,8 @@ namespace Yozolab.DaerD
             }
 
             if ((r.kind == Kind.AddRanged || r.kind == Kind.SubRanged || r.kind == Kind.SmoothLinear
-                || r.kind == Kind.Buffer)
+                || r.kind == Kind.Buffer
+                || r.kind == Kind.MultiplySigned || r.kind == Kind.DivideSigned)
                 && !(r.rangeMin < r.rangeMax))
                 return L.Tr("Range Min must be smaller than Range Max.");
             if (r.kind == Kind.Remap && !(r.inMin < r.inMax))
@@ -551,6 +613,10 @@ namespace Yozolab.DaerD
                 case Kind.Sub: return Sub(c, a, b, output);
                 case Kind.SubRanged: return SubRanged(c, a, b, output, one, r.rangeMin, r.rangeMax);
                 case Kind.Multiply: return Multiply(c, a, b, output);
+                case Kind.MultiplySigned:
+                    return MultiplySigned(c, a, b, output, one, r.rangeMin, r.rangeMax);
+                case Kind.DivideSigned:
+                    return DivideSigned(c, a, b, output, one, r.rangeMin, r.rangeMax);
                 case Kind.And: return And(c, a, b, output);
                 case Kind.Or: return Or(c, a, b, output);
                 case Kind.Not: return Not(c, a, output);
@@ -655,6 +721,174 @@ namespace Yozolab.DaerD
             return tree;
         }
 
+        // ---- signed multiplication and division ---------------------------------
+
+        /// <summary>
+        /// The symmetric span a signed gadget works in. Its copies are 1D remaps, and a remap
+        /// can only reach values inside the range it was given — so negating over an asymmetric
+        /// min..max would land outside it and clamp. Taking the wider end of the range and
+        /// working in ±that keeps every input's negation representable, at the cost of a table
+        /// slightly wider than asked for, which costs nothing: a 1D tree's accuracy does not
+        /// depend on how far apart its two thresholds are.
+        /// </summary>
+        static float SignedSpan(float min, float max) => Mathf.Max(Mathf.Abs(min), Mathf.Abs(max));
+
+        /// <summary>
+        /// Splits one signed input into a copy and a negated copy, both one frame late. Weighing
+        /// a Direct child by the copy gives max(x, 0) and by the negated copy max(−x, 0), because
+        /// a weight below zero is clamped away — so between them the two carry the whole signed
+        /// value as a pair of non-negative weights.
+        ///
+        /// Both are made, not just the negation: the pair has to be the same age as each other
+        /// and as the other input's pair, and a stage reading the live input beside a copy of it
+        /// would be reading two different frames.
+        /// </summary>
+        static void SignedCopies(AnimatorController c, BlendTree parent, string input,
+            string positive, string negative, string one, float span)
+        {
+            DbtBuilder.EnsureFloatParameter(c, positive, 0f);
+            DbtBuilder.EnsureFloatParameter(c, negative, 0f);
+            DbtBuilder.AddDirectChild(parent, Remap(c, input, positive, -span, span, -span, span), one);
+            DbtBuilder.AddDirectChild(parent, Remap(c, input, negative, span, -span, -span, span), one);
+        }
+
+        /// <summary>
+        /// Nested Direct trees, one per weight, with an "output = sign" clip at the bottom: the
+        /// whole thing contributes sign × the product of every weight, since weights multiply on
+        /// the way down. Each weight clamps at zero, which is what makes one of these a single
+        /// quadrant of a signed product rather than the product itself.
+        /// </summary>
+        static BlendTree WeightedProduct(AnimatorController c, string output, float sign,
+            params string[] weights)
+        {
+            Motion inner = DbtBuilder.ParameterClip(c, output, sign);
+            BlendTree tree = null;
+            for (int i = weights.Length - 1; i >= 0; i--)
+            {
+                tree = DbtBuilder.DirectTree(c, "× " + DbtBuilder.Sanitize(weights[i]));
+                DbtBuilder.AddDirectChild(tree, inner, weights[i]);
+                inner = tree;
+            }
+            return tree;
+        }
+
+        /// <summary>
+        /// output = A × B for signed inputs, in two frames.
+        ///
+        /// <see cref="Multiply"/> cannot: a Direct weight stops at zero, so a negative operand
+        /// is not multiplied by but dropped, and the product reads 0. That clamp is also the way
+        /// out, because weighing by x and by −x picks out x's two halves:
+        ///
+        ///     A·B = A⁺B⁺ + A⁻B⁻ − A⁺B⁻ − A⁻B⁺
+        ///
+        /// Four nested pairs, two of them writing a −1 clip instead of a +1, summed by the tree
+        /// they hang off. The first frame makes the four half-copies; the second reads them, so
+        /// the answer is A and B as they were two frames ago — the same two frames whichever
+        /// quadrant they are in, which is the point.
+        ///
+        /// The range bounds the *inputs*: outside ±<see cref="SignedSpan"/> the copies clamp.
+        /// The result does not need a range of its own — the clips only ever hold ±1 and the
+        /// weights carry the magnitude, so a product of two values at the end of the range comes
+        /// out exact rather than clipped to it.
+        /// </summary>
+        public static BlendTree MultiplySigned(AnimatorController c, string a, string b,
+            string output, string one, float min, float max)
+        {
+            float span = SignedSpan(min, max);
+            string aPos = output + "/A", aNeg = output + "/NegA";
+            string bPos = output + "/B", bNeg = output + "/NegB";
+
+            var tree = DbtBuilder.DirectTree(c, Name("Mul", a, b) + " (Signed)");
+            SignedCopies(c, tree, a, aPos, aNeg, one, span);
+            SignedCopies(c, tree, b, bPos, bNeg, one, span);
+
+            DbtBuilder.AddDirectChild(tree, WeightedProduct(c, output, 1f, aPos, bPos), one);
+            DbtBuilder.AddDirectChild(tree, WeightedProduct(c, output, 1f, aNeg, bNeg), one);
+            DbtBuilder.AddDirectChild(tree, WeightedProduct(c, output, -1f, aPos, bNeg), one);
+            DbtBuilder.AddDirectChild(tree, WeightedProduct(c, output, -1f, aNeg, bPos), one);
+            return tree;
+        }
+
+        /// <summary>How far from zero a divisor has to be before it counts as having a sign, as
+        /// a fraction of the span. Inside it the two indicators cross and the quotient fades
+        /// through zero rather than jumping between ±240.</summary>
+        const float SignDeadZone = 1e-3f;
+
+        /// <summary>
+        /// output = A / B for signed inputs, in four frames.
+        ///
+        ///     A / B = (A⁺ − A⁻) × (1 / |B|) × (sign⁺ − sign⁻)
+        ///
+        /// The magnitude is free: a 1D tree with a corner at zero *is* the absolute value, one
+        /// frame like any other table. Its reciprocal is <see cref="Reciprocal"/>'s two on top of
+        /// that, so it lands at three — and the numerator's halves and the divisor's sign are
+        /// walked through two identity remaps each so that they land at three as well. The last
+        /// stage weighs four nested products and is therefore the fourth frame, reading one
+        /// moment of A and B rather than three different ones.
+        ///
+        /// What <see cref="SignDeadZone"/> buys near zero is continuity, not accuracy. The two
+        /// indicators cross inside it, so their difference runs from −1 through 0 to +1 instead
+        /// of stepping: at a divisor of exactly 0 the answer is exactly 0, and either side of it
+        /// the answer keeps the divisor's sign and changes sign by passing through zero rather
+        /// than jumping the width of the cap. It does not stay *near* zero — a hair off, the
+        /// difference is still small but the reciprocal is already pinned at its ceiling, and the
+        /// product climbs quickly. |A| × 240 bounds it, because the ladder floors at 1/240.
+        /// </summary>
+        public static BlendTree DivideSigned(AnimatorController c, string a, string b,
+            string output, string one, float min, float max)
+        {
+            float span = SignedSpan(min, max), edge = span * SignDeadZone;
+            string magnitude = output + "/Abs", inverse = InverseParameter(output);
+            string aWait = output + "/A/1", aHeld = output + "/A/2";
+            string bWait = output + "/B/1", bHeld = output + "/B/2";
+            string aPos = output + "/A", aNeg = output + "/NegA";
+            string signPos = output + "/Sign", signNeg = output + "/NegSign";
+
+            foreach (var name in new[] { magnitude, aWait, aHeld, bWait, bHeld, signPos, signNeg })
+                DbtBuilder.EnsureFloatParameter(c, name, 0f);
+
+            var tree = DbtBuilder.DirectTree(c, Name("Div", a, b) + " (Signed)");
+
+            // |B|, and its reciprocal two frames after that.
+            var abs = DbtBuilder.Tree1D(c, Name("Abs", b, null), b);
+            abs.AddChild(DbtBuilder.ParameterClip(c, magnitude, span), -span);
+            abs.AddChild(DbtBuilder.ParameterClip(c, magnitude, 0f), 0f);
+            abs.AddChild(DbtBuilder.ParameterClip(c, magnitude, span), span);
+            DbtBuilder.AddDirectChild(tree, abs, one);
+            DbtBuilder.AddDirectChild(tree, Reciprocal(c, magnitude, inverse, one), one);
+
+            // Both inputs wait out those three frames before they are split.
+            DbtBuilder.AddDirectChild(tree, Remap(c, a, aWait, -span, span, -span, span), one);
+            DbtBuilder.AddDirectChild(tree, Remap(c, aWait, aHeld, -span, span, -span, span), one);
+            SignedCopies(c, tree, aHeld, aPos, aNeg, one, span);
+
+            DbtBuilder.AddDirectChild(tree, Remap(c, b, bWait, -span, span, -span, span), one);
+            DbtBuilder.AddDirectChild(tree, Remap(c, bWait, bHeld, -span, span, -span, span), one);
+            DbtBuilder.AddDirectChild(tree, SignIndicator(c, bHeld, signPos, span, edge, false), one);
+            DbtBuilder.AddDirectChild(tree, SignIndicator(c, bHeld, signNeg, span, edge, true), one);
+
+            DbtBuilder.AddDirectChild(tree, WeightedProduct(c, output, 1f, aPos, inverse, signPos), one);
+            DbtBuilder.AddDirectChild(tree, WeightedProduct(c, output, 1f, aNeg, inverse, signNeg), one);
+            DbtBuilder.AddDirectChild(tree, WeightedProduct(c, output, -1f, aPos, inverse, signNeg), one);
+            DbtBuilder.AddDirectChild(tree, WeightedProduct(c, output, -1f, aNeg, inverse, signPos), one);
+            return tree;
+        }
+
+        /// <summary>1 on one side of zero and 0 on the other, with the changeover squeezed into
+        /// the dead zone either side of it. A 1D tree cannot step, so the pair of thresholds at
+        /// ±edge is what stands in for one.</summary>
+        static BlendTree SignIndicator(AnimatorController c, string input, string output,
+            float span, float edge, bool negative)
+        {
+            float low = negative ? 1f : 0f, high = negative ? 0f : 1f;
+            var tree = DbtBuilder.Tree1D(c, Name("Sign", input, null), input);
+            tree.AddChild(DbtBuilder.ParameterClip(c, output, low), -span);
+            tree.AddChild(DbtBuilder.ParameterClip(c, output, low), -edge);
+            tree.AddChild(DbtBuilder.ParameterClip(c, output, high), edge);
+            tree.AddChild(DbtBuilder.ParameterClip(c, output, high), span);
+            return tree;
+        }
+
         /// <summary>Linear remap: input over [inMin, inMax] → output over [outMin, outMax]
         /// (reversed output ranges are allowed and invert the slope).</summary>
         public static BlendTree Remap(AnimatorController c, string input, string output,
@@ -748,9 +982,11 @@ namespace Yozolab.DaerD
         /// </summary>
         public static BlendTree Reciprocal(AnimatorController c, string input, string output, string one)
         {
-            string shift = output + "/Shift", name = Name("Reciprocal", input, null);
+            string shift = output + "/Shift", delayed = output + "/Delayed";
+            string name = Name("Reciprocal", input, null);
             DbtBuilder.EnsureFloatParameter(c, output, 0f);
             DbtBuilder.EnsureFloatParameter(c, shift, 0f);
+            DbtBuilder.EnsureFloatParameter(c, delayed, 0f);
 
             var core = DbtBuilder.DirectTree(c, name + " (Core)");
             DbtBuilder.SetNormalizedBlendValues(core, true);
@@ -759,8 +995,33 @@ namespace Yozolab.DaerD
 
             var tree = DbtBuilder.DirectTree(c, name);
             DbtBuilder.AddDirectChild(tree, Sub(c, input, one, shift), one);   // shift = input - 1
+            // The table reads a copy rather than the input, so that both halves are describing
+            // the same frame: the core is a frame behind by construction (it reads the shift a
+            // sibling computed), and a table reading the live input would be a frame ahead of
+            // it. Same age is what makes the sum a reciprocal at all times instead of only at
+            // rest — it is what closes the wrong frame at the crossing — and it is what makes
+            // this gadget cost two frames for every input rather than two above 1 and one below.
+            DbtBuilder.AddDirectChild(tree, Copy(c, input, delayed), one);
             DbtBuilder.AddDirectChild(tree, core, one);
-            DbtBuilder.AddDirectChild(tree, ReciprocalBelowOne(c, input, output, name), one);
+            DbtBuilder.AddDirectChild(tree, ReciprocalBelowOne(c, delayed, output, name), one);
+            return tree;
+        }
+
+        /// <summary>
+        /// output = input, one frame later, for a non-negative input — a Direct child weighing
+        /// an "output = 1" clip by the source, so the weight carries the value and the clip
+        /// carries nothing but the unit.
+        ///
+        /// Where <see cref="Buffer"/> would do the same job with a 1D remap, this needs no range
+        /// to interpolate over and so cannot clamp: the callers here are delaying values whose
+        /// magnitude is whatever the arithmetic before them produced, and there would be no
+        /// honest range to name. The cost is that a negative input arrives as zero, which is
+        /// the same bargain every positive-only gadget makes.
+        /// </summary>
+        static BlendTree Copy(AnimatorController c, string input, string output)
+        {
+            var tree = DbtBuilder.DirectTree(c, Name("Copy", input, null));
+            DbtBuilder.AddDirectChild(tree, DbtBuilder.ParameterClip(c, output, 1f), input);
             return tree;
         }
 
@@ -800,16 +1061,26 @@ namespace Yozolab.DaerD
         static string ReciprocalLayerName(string output) => output + " 1/x";
 
         /// <summary>output = A / B, for positive inputs: B's reciprocal into a parameter of its
-        /// own, then A × that. Inherits one more frame of lag on top of <see cref="Reciprocal"/>'s
-        /// two — the multiply reads last frame's reciprocal.</summary>
+        /// own, then A × that — three frames, on top of <see cref="Reciprocal"/>'s two.
+        ///
+        /// The numerator is held back by the same two frames the reciprocal takes. Without that
+        /// the multiply would pair this frame's A with a reciprocal of B from two frames ago,
+        /// which is a quotient of no particular moment: right once the inputs stop moving, and
+        /// wrong every frame they are moving. Delayed, the answer is A / B as they both were
+        /// three frames ago.</summary>
         public static BlendTree Divide(AnimatorController c, string a, string b, string output, string one)
         {
             string inverse = InverseParameter(output);
+            string stage = output + "/Num/1", numerator = output + "/Num";
             DbtBuilder.EnsureFloatParameter(c, output, 0f);
+            DbtBuilder.EnsureFloatParameter(c, stage, 0f);
+            DbtBuilder.EnsureFloatParameter(c, numerator, 0f);
 
             var tree = DbtBuilder.DirectTree(c, Name("Div", a, b));
             DbtBuilder.AddDirectChild(tree, Reciprocal(c, b, inverse, one), one);
-            DbtBuilder.AddDirectChild(tree, Multiply(c, a, inverse, output), one);
+            DbtBuilder.AddDirectChild(tree, Copy(c, a, stage), one);
+            DbtBuilder.AddDirectChild(tree, Copy(c, stage, numerator), one);
+            DbtBuilder.AddDirectChild(tree, Multiply(c, numerator, inverse, output), one);
             return tree;
         }
 
@@ -1019,6 +1290,10 @@ namespace Yozolab.DaerD
         /// value everywhere, comfortably inside the 1/127 a synced float can carry anyway — and
         /// it is divisible by four, which is what lets <see cref="TrigValue"/> put a sample
         /// exactly on tan's poles instead of near them.
+        ///
+        /// The table is one period and a 1D tree clamps past its outermost child, so this does
+        /// not wrap: 1.25 turns reads as 1 turn and −3 reads as 0. An angle that accumulates has
+        /// to be brought back into 0..1 before it arrives.
         /// Reference: https://vrc.school/docs/Other/Advanced-BlendTrees
         /// </summary>
         public static BlendTree Trigonometry(AnimatorController c, Kind kind, string input, string output)

@@ -123,14 +123,16 @@ namespace Yozolab.DaerD
                 case AapGadgets.Kind.AddRanged: _output = a + "+" + b; break;
                 case AapGadgets.Kind.Sub:
                 case AapGadgets.Kind.SubRanged: _output = a + "-" + b; break;
-                case AapGadgets.Kind.Multiply: _output = a + "*" + b; break;
+                case AapGadgets.Kind.Multiply:
+                case AapGadgets.Kind.MultiplySigned: _output = a + "*" + b; break;
                 case AapGadgets.Kind.And: _output = a + "&" + b; break;
                 case AapGadgets.Kind.Or: _output = a + "|" + b; break;
                 case AapGadgets.Kind.Not: _output = a + "/Not"; break;
                 case AapGadgets.Kind.FloatAsBool: _output = a + "/Bool"; break;
                 case AapGadgets.Kind.Remap: _output = a + "/Remapped"; break;
                 case AapGadgets.Kind.Reciprocal: _output = a + "/Inv"; break;
-                case AapGadgets.Kind.Divide: _output = a + "÷" + b; break;
+                case AapGadgets.Kind.Divide:
+                case AapGadgets.Kind.DivideSigned: _output = a + "÷" + b; break;
                 // No input to name it after — and one per controller is the idea anyway.
                 case AapGadgets.Kind.FrameTime: _output = "FrameTime"; break;
                 case AapGadgets.Kind.SmoothLinear: _output = a + "/Smoothed"; break;
@@ -159,7 +161,9 @@ namespace Yozolab.DaerD
                 case AapGadgets.Kind.SubRanged:
                     return L.Tr("output = A - B over the given range; use a symmetric range (Min = -Max).");
                 case AapGadgets.Kind.Multiply:
-                    return L.Tr("output = A × B via nested Direct trees. Positive values only.");
+                    return L.Tr("output = A × B via nested Direct trees. Positive values only; use Multiply (Signed) for negative ones. One frame.");
+                case AapGadgets.Kind.MultiplySigned:
+                    return L.Tr("output = A × B for signed values: each input is split into its positive and negative halves and the four products are summed. The range bounds the inputs, not the result. Two frames.");
                 case AapGadgets.Kind.And:
                     return L.Tr("output = A AND B, for 0/1 inputs.");
                 case AapGadgets.Kind.Or:
@@ -174,6 +178,8 @@ namespace Yozolab.DaerD
                     return L.Tr("output = 1 / input, for positive inputs: exact from 1 up, a lookup table below it (capped at 240). The result trails the input by two frames.");
                 case AapGadgets.Kind.Divide:
                     return L.Tr("output = A / B, for positive inputs. Builds B's reciprocal first, so the result trails by three frames.");
+                case AapGadgets.Kind.DivideSigned:
+                    return L.Tr("output = A / B for signed values: |B|'s reciprocal, then A times it with B's sign. Four frames. A divisor near zero has no sign to read, and the quotient fades to 0 there.");
                 case AapGadgets.Kind.FrameTime:
                     return L.Tr("output = the seconds since the previous frame. Add only one per controller — the clock it runs is shared machinery.");
                 case AapGadgets.Kind.SmoothLinear:

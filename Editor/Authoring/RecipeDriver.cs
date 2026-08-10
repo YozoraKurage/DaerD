@@ -237,6 +237,9 @@ namespace Yozolab.DaerD.Authoring
                     case AapGadgets.Kind.Multiply:
                         gadgets.Multiply(r.inputA, r.inputB, r.output);
                         break;
+                    case AapGadgets.Kind.MultiplySigned:
+                        gadgets.MultiplySigned(r.inputA, r.inputB, r.output, r.rangeMin, r.rangeMax);
+                        break;
                     case AapGadgets.Kind.And: gadgets.And(r.inputA, r.inputB, r.output); break;
                     case AapGadgets.Kind.Or: gadgets.Or(r.inputA, r.inputB, r.output); break;
                     case AapGadgets.Kind.Not: gadgets.Not(r.inputA, r.output); break;
@@ -249,6 +252,9 @@ namespace Yozolab.DaerD.Authoring
                     case AapGadgets.Kind.Reciprocal: gadgets.Reciprocal(r.inputA, r.output); break;
                     case AapGadgets.Kind.Divide:
                         gadgets.Divide(r.inputA, r.inputB, r.output);
+                        break;
+                    case AapGadgets.Kind.DivideSigned:
+                        gadgets.DivideSigned(r.inputA, r.inputB, r.output, r.rangeMin, r.rangeMax);
                         break;
                     case AapGadgets.Kind.FrameTime: gadgets.FrameTime(r.output); break;
                     case AapGadgets.Kind.SmoothLinear:

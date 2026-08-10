@@ -313,6 +313,38 @@ namespace Yozolab.DaerD.Tests
             return code.Substring(start);
         }
 
+        /// <summary>The signed pair export as their own calls, ranges and all — a signed
+        /// multiply written back as the plain one would come out positive-only, which is a
+        /// different controller.</summary>
+        [Test]
+        public void Export_SignedArithmeticGadgets_ComeBackAsTheSignedCalls()
+        {
+            WithSavedController(controller =>
+            {
+                ApplyGadget(controller, AapGadgets.Kind.MultiplySigned, r =>
+                {
+                    r.output = "A*B";
+                    r.rangeMin = -1f;
+                    r.rangeMax = 1f;
+                });
+                ApplyGadget(controller, AapGadgets.Kind.DivideSigned, r =>
+                {
+                    r.output = "A/B";
+                    r.rangeMin = -4f;
+                    r.rangeMax = 4f;
+                });
+
+                var result = RecipeExporter.Export(controller, null, "GadgetRecipe", null);
+                Assert.IsEmpty(result.warnings, string.Join("\n", result.warnings));
+
+                // The range matches the method's own defaults on the first, so it stays out.
+                StringAssert.Contains(".MultiplySigned(\"A\", \"B\", \"A*B\")", result.code);
+                StringAssert.Contains(".DivideSigned(\"A\", \"B\", \"A/B\", -4, 4)", result.code);
+                StringAssert.DoesNotContain(".Multiply(\"A\"", result.code);
+                StringAssert.DoesNotContain("NewBlendTree(", Body(result.code));
+            });
+        }
+
         /// <summary>A layer whose every child has a saved config comes back as the gadget calls
         /// that built it instead of the wall of trees they expand into — and the parameters
         /// those calls recreate stop being declared, while the shared ones stay.</summary>

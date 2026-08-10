@@ -578,6 +578,166 @@ namespace Yozolab.DaerD.Tests
                 "one bad request must not take the whole layer down with it");
         }
 
+        /// <summary>
+        /// The frame count a recipe can read while it is being written. Every gadget's cost is
+        /// fixed and they add along a chain, so the builder can carry a running age for each
+        /// parameter it produces — and a recipe that wants to line two branches up can ask for
+        /// the numbers instead of counting hops by hand.
+        /// </summary>
+        [Test]
+        public void Gadgets_ReportHowManyFramesBehindEachParameterIs()
+        {
+            var controller = Track(new AnimatorController());
+            GadgetRecipeBuilder math = null;
+            var recipe = NewRecipe(controller, c =>
+            {
+                var x = c.FloatParameter("X");
+                var y = c.FloatParameter("Y");
+                c.Layer("Base").NewState("S");
+                math = c.Gadgets("Math")
+                    .Not(x, "X/Not")                 // one frame
+                    .Not("X/Not", "X/Back")          // two
+                    .Divide(y, y, "Y/Q")             // three
+                    .Buffer(x, "X/Late", 3)          // three, one per stage
+                    .SeparateDigits(x, "X/Digits");  // five
+            });
+            recipe.Generate();
+
+            Assert.AreEqual(0, math.FramesBehind("X"), "an input the chain did not produce");
+            Assert.AreEqual(1, math.FramesBehind("X/Not"));
+            Assert.AreEqual(2, math.FramesBehind("X/Back"), "latencies add along a chain");
+            Assert.AreEqual(3, math.FramesBehind("Y/Q"), "a divide costs three on its own");
+
+            Assert.AreEqual(1, math.FramesBehind("X/Late/1"), "a buffer's stages are readable");
+            Assert.AreEqual(2, math.FramesBehind("X/Late/2"), "one frame apart");
+            Assert.AreEqual(3, math.FramesBehind("X/Late"));
+
+            Assert.AreEqual(5, math.FramesBehind("X/Digits/Tenths"), "all three digits together");
+            Assert.AreEqual(5, math.FramesBehind("X/Digits/Thousandths"));
+
+            Assert.AreEqual(0, math.FramesBehind("Nothing/Named/This"), "an unknown name");
+        }
+
+        /// <summary>
+        /// Two branches off one input, reaching the same gadget at different ages: it is being
+        /// handed two different frames of X, and no arithmetic fixes that after the fact. The
+        /// builder says so, names both ages, and spells out the buffer that closes the gap.
+        /// </summary>
+        [Test]
+        public void Gadgets_ReportAGadgetReadingTwoDifferentFramesOfItsInputs()
+        {
+            var controller = Track(new AnimatorController());
+            var recipe = NewRecipe(controller, c =>
+            {
+                var x = c.FloatParameter("X");
+                c.Layer("Base").NewState("S");
+                c.Gadgets("Math")
+                    .Not(x, "X/Not")                    // one frame behind X
+                    .Add("X/Not", x, "X/Sum");          // …added to X itself, which is current
+            });
+
+            var warnings = recipe.Generate();
+            Assert.AreEqual(1, warnings.Count, string.Join("\n", warnings));
+            Assert.IsTrue(warnings[0].Contains("X/Sum"), warnings[0]);
+            Assert.IsTrue(warnings[0].Contains("Buffer(\"X\""), "it should name the fix: " + warnings[0]);
+
+            // Reported, but still built: a difference in age is sometimes what the author meant.
+            Assert.IsNotNull(DbtBuilder.FindParameter(controller, "X/Sum"));
+        }
+
+        /// <summary>Buffering the newer branch is the fix, and the builder then has nothing to
+        /// say — which is the only way to tell a recipe that the alignment is right rather than
+        /// merely unreported.</summary>
+        [Test]
+        public void Gadgets_SayNothingOnceTheShallowBranchIsBuffered()
+        {
+            var controller = Track(new AnimatorController());
+            var recipe = NewRecipe(controller, c =>
+            {
+                var x = c.FloatParameter("X");
+                c.Layer("Base").NewState("S");
+                c.Gadgets("Math")
+                    .Not(x, "X/Not")
+                    .Buffer(x, "X/Aligned", 1)
+                    .Add("X/Not", "X/Aligned", "X/Sum");
+            });
+
+            Assert.IsEmpty(recipe.Generate());
+        }
+
+        /// <summary>Opting in to the strict reading: where the two inputs really are the same
+        /// signal down two paths, generating the gadget anyway is generating something that is
+        /// wrong every frame the input moves.</summary>
+        [Test]
+        public void Gadgets_RequireAligned_RefusesTheMisalignedGadgetAndKeepsTheRest()
+        {
+            var controller = Track(new AnimatorController());
+            var recipe = NewRecipe(controller, c =>
+            {
+                var x = c.FloatParameter("X");
+                c.Layer("Base").NewState("S");
+                c.Gadgets("Math")
+                    .RequireAligned()
+                    .Not(x, "X/Not")
+                    .Add("X/Not", x, "X/Sum")
+                    .Remap(x, "X01", -1f, 1f, 0f, 1f);
+            });
+
+            var warnings = recipe.Generate();
+            Assert.AreEqual(1, warnings.Count, string.Join("\n", warnings));
+            Assert.IsNull(DbtBuilder.FindParameter(controller, "X/Sum"), "refused");
+            Assert.IsNotNull(DbtBuilder.FindParameter(controller, "X/Not"), "and the rest still ran");
+            Assert.IsNotNull(DbtBuilder.FindParameter(controller, "X01"));
+        }
+
+        /// <summary>
+        /// Two inputs of different ages that did not come from the same place are not a
+        /// misalignment. A scaled reading two frames deep multiplied by an unrelated parameter
+        /// is two signals, not one signal down two paths, and there is no frame of anything to
+        /// line up — reporting it would bury the case that matters.
+        /// </summary>
+        [Test]
+        public void Gadgets_DoNotReportInputsThatCameFromDifferentPlaces()
+        {
+            var controller = Track(new AnimatorController());
+            var recipe = NewRecipe(controller, c =>
+            {
+                var raw = c.FloatParameter("Raw");
+                var other = c.FloatParameter("Other");
+                c.Layer("Base").NewState("S");
+                c.Gadgets("Math")
+                    .RequireAligned()
+                    .Not(raw, "Raw/Not")            // one frame behind Raw
+                    .Not("Raw/Not", "Raw/Back")     // two
+                    .Multiply("Raw/Back", other, "Mixed");   // …times something unrelated
+            });
+
+            Assert.IsEmpty(recipe.Generate());
+            Assert.IsNotNull(DbtBuilder.FindParameter(controller, "Mixed"));
+        }
+
+        /// <summary>The canonical frame-rate independent chain, which has to stay quiet on both
+        /// counts: the rate is unrelated to the clock, and the step size is a coefficient the
+        /// smoothing is tuned by rather than a sample of what it is filtering.</summary>
+        [Test]
+        public void Gadgets_AcceptTheFrameRateIndependentSmoothing()
+        {
+            var controller = Track(new AnimatorController());
+            var recipe = NewRecipe(controller, c =>
+            {
+                var target = c.FloatParameter("Target");
+                var rate = c.FloatParameter("Rate");
+                c.Layer("Base").NewState("S");
+                c.Gadgets("Math")
+                    .RequireAligned()
+                    .FrameTime("Dt")
+                    .Multiply("Dt", rate, "Step")
+                    .SmoothLinear(target, "Tracked", "Step", 0.05f, -1f, 1f);
+            });
+
+            Assert.IsEmpty(recipe.Generate());
+        }
+
         /// <summary>A behaviour can sit on a state machine as well as on a state, and the
         /// recipe API has to be able to say so — otherwise regenerating a layer silently
         /// strips whatever the controller had there.</summary>

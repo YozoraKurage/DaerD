@@ -48,6 +48,21 @@ namespace Yozolab.DaerD.Authoring
     ///
     /// Inputs must be Float parameters that already exist when the post step runs — declare
     /// them in the recipe, or let an earlier gadget in the same chain produce them.
+    ///
+    /// **A range is a unit, not a safety margin.** Every gadget that takes a min and a max
+    /// carries its values through 1D tables whose two thresholds sit at those ends, so a value
+    /// comes back with the precision of the *range* rather than of itself — measured, about one
+    /// part in two million of the span, which is coarser than the float's own 24 bits because
+    /// the value is recovered as a difference between two numbers the size of the span. Declaring
+    /// ±1,000,000 "to be safe" and then passing 0.001 does not give a slightly wrong answer: the
+    /// input lands on zero, and the product with it is zero. Declare the range the values are
+    /// actually in.
+    ///
+    /// **Every gadget costs a fixed number of frames** and they add along a chain — see
+    /// <see cref="AapGadgets.Latency"/> for the numbers and <see cref="FramesBehind"/> for what
+    /// this builder makes of them. Two branches off one signal that reach a gadget at different
+    /// depths are handing it two different frames of that signal; <see cref="Buffer"/> on the
+    /// shallower one is the fix, and the builder says so when it happens.
     /// </summary>
     public sealed class GadgetRecipeBuilder
     {
@@ -100,8 +115,18 @@ namespace Yozolab.DaerD.Authoring
                     break;
                 }
 
+            // Worked out as the chain was written; said out loud here, where a recipe's
+            // messages are collected.
+            var refused = new HashSet<AapGadgets.Request>();
+            foreach (var entry in _skew)
+            {
+                warnings.Add(entry.Value);
+                if (_requireAligned) refused.Add(entry.Key);
+            }
+
             foreach (var request in _requests)
             {
+                if (refused.Contains(request)) continue;
                 request.controller = controller;
                 request.newLayerName = _layerName;
                 request.layerIndex = FindLayer(controller, _layerName);
@@ -226,10 +251,131 @@ namespace Yozolab.DaerD.Authoring
         GadgetRecipeBuilder Queue(AapGadgets.Request request, string call)
         {
             _requests.Add(request);
+            TrackAges(request);
             // Recorded on this builder, so a run of gadget calls comes back out as the one
             // fluent chain the API is written to read as.
             _root.Script?.Call(this, call);
             return this;
+        }
+
+        // ---- frames -------------------------------------------------------------
+
+        /// <summary>The age, in frames, of every parameter the gadgets in this chain produce.
+        /// Anything not in here is driven from outside the chain and counts as current.</summary>
+        readonly Dictionary<string, int> _ages = new Dictionary<string, int>();
+
+        /// <summary>Gadgets whose inputs were not all of the same age, with what to say about
+        /// each. Collected as the chain is written and reported when it runs.</summary>
+        readonly List<KeyValuePair<AapGadgets.Request, string>> _skew =
+            new List<KeyValuePair<AapGadgets.Request, string>>();
+
+        bool _requireAligned;
+
+        /// <summary>
+        /// How many frames behind the chain's inputs the named parameter is.
+        ///
+        /// This is the number a recipe needs to place a <see cref="Buffer"/>: two branches off
+        /// one source that reach a gadget at different ages are handing it different frames of
+        /// the same signal, and the gap between their answers here is exactly how many frames
+        /// the shallower one has to be delayed by. Zero for anything this chain did not produce
+        /// — a parameter driven from outside is always current.
+        ///
+        /// Available while the recipe is being written, so it can be read, asserted on, or used
+        /// to compute the buffer length rather than counted by hand:
+        ///
+        ///   var gadgets = c.Gadgets("Math").Divide(a, b, "Q").Not(flag, "Off");
+        ///   gadgets.Buffer("Off", "Off/Aligned", gadgets.FramesBehind("Q") - gadgets.FramesBehind("Off"));
+        /// </summary>
+        public int FramesBehind(ParamRef parameter) =>
+            parameter.Name != null && _ages.TryGetValue(parameter.Name, out int age) ? age : 0;
+
+        /// <summary>
+        /// Refuses to generate a gadget whose inputs are of different ages, instead of
+        /// reporting it and building it anyway.
+        ///
+        /// Off by default because a difference in age is not always a mistake: gating a computed
+        /// flag by a menu toggle mixes a one-frame value with a current one, and for a toggle
+        /// nobody can flip within a frame that is a distinction without a difference. Where the
+        /// two inputs really are the same signal down two paths, it is always a mistake — and
+        /// this is how a recipe says which kind of chain it is.
+        /// </summary>
+        public GadgetRecipeBuilder RequireAligned()
+        {
+            _requireAligned = true;
+            return this;
+        }
+
+        /// <summary>Which of the chain's own inputs each parameter was computed from. A name
+        /// nothing here produced is its own source.</summary>
+        readonly Dictionary<string, HashSet<string>> _sources = new Dictionary<string, HashSet<string>>();
+
+        HashSet<string> SourcesOf(string name)
+        {
+            if (name != null && _sources.TryGetValue(name, out var known)) return known;
+            var self = new HashSet<string>();
+            if (name != null) self.Add(name);
+            return self;
+        }
+
+        /// <summary>Ages this gadget's outputs, and notes it down when two inputs that came from
+        /// the same place arrive at different times.</summary>
+        void TrackAges(AapGadgets.Request request)
+        {
+            string first = null, second = null;
+            foreach (var name in ValueInputs(request))
+                if (first == null) first = name; else second = name;
+
+            int firstAge = FramesBehind(first), secondAge = second == null ? 0 : FramesBehind(second);
+            int oldest = second == null ? firstAge : Mathf.Max(firstAge, secondAge);
+
+            // Two ages only disagree in a way anyone can act on when both inputs are the same
+            // signal down two paths of different depth. Inputs that came from different places
+            // are allowed to be different ages — a rate multiplied by a frame time is the
+            // documented way to build a frame-rate independent step, and holding those two to
+            // the same age would flag the very thing the gadgets are for.
+            if (second != null && firstAge != secondAge && SourcesOf(first).Overlaps(SourcesOf(second)))
+            {
+                bool firstIsOlder = firstAge > secondAge;
+                string older = firstIsOlder ? first : second, newer = firstIsOlder ? second : first;
+                int gap = Mathf.Abs(firstAge - secondAge);
+                _skew.Add(new KeyValuePair<AapGadgets.Request, string>(request, L.Tr(
+                    "DBT gadget '{0}' in layer '{1}' reads two different frames of the same "
+                    + "signal: '{2}' is {3} frame(s) behind and '{4}' is {5}. Buffer the newer "
+                    + "one by {6} frame(s) and read the copy — Buffer(\"{4}\", \"{4}/Aligned\", {6}).",
+                    request.output, _layerName, older, Mathf.Max(firstAge, secondAge),
+                    newer, Mathf.Min(firstAge, secondAge), gap)));
+            }
+
+            var roots = new HashSet<string>();
+            if (first != null) roots.UnionWith(SourcesOf(first));
+            if (second != null) roots.UnionWith(SourcesOf(second));
+            RecordAges(request, oldest + AapGadgets.Latency(request), roots);
+        }
+
+        /// <summary>The inputs whose values the gadget combines. A smoothing amount is left out
+        /// on purpose: it is a coefficient the gadget is tuned by rather than a sample of the
+        /// signal it is filtering, and holding it to the input's age would flag every smoothing
+        /// driven by a frame-time gadget.</summary>
+        static IEnumerable<string> ValueInputs(AapGadgets.Request request)
+        {
+            if (AapGadgets.NeedsInput(request.kind) && !string.IsNullOrEmpty(request.inputA))
+                yield return request.inputA;
+            if (AapGadgets.IsBinary(request.kind) && !string.IsNullOrEmpty(request.inputB))
+                yield return request.inputB;
+        }
+
+        void RecordAges(AapGadgets.Request request, int outputAge, HashSet<string> roots)
+        {
+            var names = AapGadgets.OutputParameters(request);
+            // A buffer's stages are one frame apart and listed in order, so each of them is
+            // readable at its own age rather than at the chain's end.
+            bool staged = request.kind == AapGadgets.Kind.Buffer && names.Length > 1;
+            int start = outputAge - names.Length;
+            for (int i = 0; i < names.Length; i++)
+            {
+                _ages[names[i]] = staged ? start + i + 1 : outputAge;
+                _sources[names[i]] = roots;
+            }
         }
 
         // ---- recording ----------------------------------------------------------
@@ -308,7 +454,9 @@ namespace Yozolab.DaerD.Authoring
             }, Line("SubRanged", new[] { P(a), P(b), P(output) },
                 (RecipeScript.F(min), "-1"), (RecipeScript.F(max), "1")));
 
-        /// <summary>output = A × B, via nested Direct trees. Positive inputs only.</summary>
+        /// <summary>output = A × B, via nested Direct trees. Positive inputs only — a negative
+        /// one is dropped, not multiplied, and the product reads 0. One frame;
+        /// <see cref="MultiplySigned"/> is the signed version, at two.</summary>
         public GadgetRecipeBuilder Multiply(ParamRef a, ParamRef b, ParamRef output) =>
             Queue(new AapGadgets.Request
             {
@@ -318,9 +466,33 @@ namespace Yozolab.DaerD.Authoring
                 output = output.Name,
             }, Line("Multiply", new[] { P(a), P(b), P(output) }));
 
+        /// <summary>
+        /// output = A × B for signed inputs, in two frames: each input is split into its
+        /// positive and negative halves, and the four products of those halves are summed with
+        /// the two cross terms negated.
+        ///
+        /// The range bounds the inputs — outside ±max(|min|, |max|) they clamp — but not the
+        /// result, which is exact wherever the inputs reach: 8 × 8 in a ±8 range comes out 64,
+        /// not clipped to 8. What the range does decide is the resolution the inputs are read
+        /// at; see the class summary, because a range chosen generously is how an operand
+        /// silently becomes zero.
+        /// </summary>
+        public GadgetRecipeBuilder MultiplySigned(ParamRef a, ParamRef b, ParamRef output,
+            float min = -1f, float max = 1f) =>
+            Queue(new AapGadgets.Request
+            {
+                kind = AapGadgets.Kind.MultiplySigned,
+                inputA = a.Name,
+                inputB = b.Name,
+                output = output.Name,
+                rangeMin = min,
+                rangeMax = max,
+            }, Line("MultiplySigned", new[] { P(a), P(b), P(output) },
+                (RecipeScript.F(min), "-1"), (RecipeScript.F(max), "1")));
+
         /// <summary>output = 1 / input for positive inputs, all inside the blend tree: exact
-        /// above 1, a geometric lookup ladder below it. The shift the exact half computes on
-        /// the way costs the result an extra frame of lag.</summary>
+        /// above 1, a geometric lookup ladder below it. Two frames — the exact half computes a
+        /// shift into a parameter of its own, and the ladder is delayed to match it.</summary>
         public GadgetRecipeBuilder Reciprocal(ParamRef input, ParamRef output) =>
             Queue(new AapGadgets.Request
             {
@@ -329,9 +501,9 @@ namespace Yozolab.DaerD.Authoring
                 output = output.Name,
             }, Line("Reciprocal", new[] { P(input), P(output) }));
 
-        /// <summary>output = A / B for positive inputs: B's reciprocal, then A times it.
-        /// Inherits <see cref="Reciprocal"/>'s extra frame of lag, and one more on top —
-        /// the multiply reads last frame's reciprocal.</summary>
+        /// <summary>output = A / B for positive inputs: B's reciprocal, then A times it. Three
+        /// frames — <see cref="Reciprocal"/>'s two and one for the multiply, with the numerator
+        /// held back so both sides of it describe the same frame.</summary>
         public GadgetRecipeBuilder Divide(ParamRef a, ParamRef b, ParamRef output) =>
             Queue(new AapGadgets.Request
             {
@@ -340,6 +512,32 @@ namespace Yozolab.DaerD.Authoring
                 inputB = b.Name,
                 output = output.Name,
             }, Line("Divide", new[] { P(a), P(b), P(output) }));
+
+        /// <summary>
+        /// output = A / B for signed inputs, in four frames: |B| from a 1D tree with a corner at
+        /// zero, its reciprocal, and the divisor's sign and the numerator's halves all held back
+        /// to meet it.
+        ///
+        /// Near zero the divisor has no dependable sign, and what the gadget buys there is
+        /// continuity rather than accuracy: at exactly 0 the answer is 0, either side of it the
+        /// answer keeps the divisor's sign, and it passes through zero to change sign instead of
+        /// jumping the whole way across. It does not stay near zero — a hair off, the sign
+        /// indicators have barely crossed but the reciprocal is already at its cap, so the
+        /// quotient climbs fast. |A| × 240 is the most it can ever be, because the reciprocal's
+        /// ladder floors at 1/240.
+        /// </summary>
+        public GadgetRecipeBuilder DivideSigned(ParamRef a, ParamRef b, ParamRef output,
+            float min = -1f, float max = 1f) =>
+            Queue(new AapGadgets.Request
+            {
+                kind = AapGadgets.Kind.DivideSigned,
+                inputA = a.Name,
+                inputB = b.Name,
+                output = output.Name,
+                rangeMin = min,
+                rangeMax = max,
+            }, Line("DivideSigned", new[] { P(a), P(b), P(output) },
+                (RecipeScript.F(min), "-1"), (RecipeScript.F(max), "1")));
 
         /// <summary>Linear remap: input over inMin..inMax → output over outMin..outMax,
         /// clamped outside. A reversed output range inverts the slope.</summary>
@@ -472,9 +670,18 @@ namespace Yozolab.DaerD.Authoring
 
         // ---- functions ----------------------------------------------------------
 
-        /// <summary>Splits a 0..1 input into its first three decimals, written as
-        /// "output/Tenths", "output/Hundredths" and "output/Thousandths" — each as its own
-        /// place value (0.4, 0.07, 0.003).</summary>
+        /// <summary>
+        /// Splits a 0..1 input into its first three decimals, written as "output/Tenths",
+        /// "output/Hundredths" and "output/Thousandths" — each as its own place value
+        /// (0.4, 0.07, 0.003). Five frames.
+        ///
+        /// These are the digits of the *fractional* part, and there is no "ones" output to see
+        /// the rest in. An input of exactly 1 therefore reads as three zeroes rather than as
+        /// 0.9 / 0.09 / 0.009, and so does anything above it, since the input clamps to 0..1
+        /// first. That is the same mechanism that stops 1 arriving as 0.999 — every digit is
+        /// measured against a quantizer for the ones place — but it means a recipe that has to
+        /// tell 1 from 0 needs a comparison of its own.
+        /// </summary>
         public GadgetRecipeBuilder SeparateDigits(ParamRef input, ParamRef outputBase) =>
             Queue(new AapGadgets.Request
             {
@@ -483,9 +690,14 @@ namespace Yozolab.DaerD.Authoring
                 output = outputBase.Name,
             }, Line("SeparateDigits", new[] { P(input), P(outputBase) }));
 
-        /// <summary>sin of the input in turns (0..1 is one whole period), as a 1D lookup
-        /// tree inside the blend tree — the period sampled evenly and interpolated straight
-        /// in between.</summary>
+        /// <summary>
+        /// sin of the input in turns (0..1 is one whole period), as a 1D lookup tree inside the
+        /// blend tree — the period sampled evenly and interpolated straight in between.
+        ///
+        /// The table holds exactly one period and does not wrap: past 1 turn a 1D tree clamps to
+        /// its last child, so 1.25 turns reads as 1.0 turns, not as 0.25, and −3 reads as 0.
+        /// An angle that accumulates has to be wrapped into 0..1 before it gets here.
+        /// </summary>
         public GadgetRecipeBuilder Sine(ParamRef input, ParamRef output) =>
             Trigonometry(AapGadgets.Kind.Sine, input, output);
 
