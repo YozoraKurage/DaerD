@@ -71,8 +71,17 @@ namespace Yozolab.DaerD.Tests
             DbtBuilder.SetNormalizedBlendValues(inner, true);
             tree.children = new[]
             {
-                new ChildMotion { motion = clipB, position = new Vector2(0.3f, 0.7f), mirror = true },
-                new ChildMotion { motion = inner, position = new Vector2(-0.5f, 0.1f), cycleOffset = 0.25f },
+                // timeScale is a child's playback speed and defaults to zero on a struct
+                // nobody sets it on — Unity warns about it, and the round trip below would
+                // be carrying a value no real tree has.
+                new ChildMotion
+                {
+                    motion = clipB, position = new Vector2(0.3f, 0.7f), mirror = true, timeScale = 1f,
+                },
+                new ChildMotion
+                {
+                    motion = inner, position = new Vector2(-0.5f, 0.1f), cycleOffset = 0.25f, timeScale = 1f,
+                },
             };
             b.motion = tree;
 

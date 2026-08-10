@@ -1,7 +1,9 @@
 using System.Collections.Generic;
+using System.Text.RegularExpressions;
 using NUnit.Framework;
 using UnityEditor.Animations;
 using UnityEngine;
+using UnityEngine.TestTools;
 
 namespace Yozolab.DaerD.Tests
 {
@@ -82,6 +84,10 @@ namespace Yozolab.DaerD.Tests
             a.children = new[] { new ChildMotion { motion = b, timeScale = 1f } };
             Assert.IsTrue(a.ContainsTree(b), "A → B before the loop is closed");
 
+            // The engine says so out loud, and it is the whole finding here — declared so it
+            // reads as the expected outcome rather than as noise in the run, and so this
+            // test starts failing if a future Unity ever accepts the cycle instead.
+            LogAssert.Expect(LogType.Warning, new Regex("BlendTree cycle detected"));
             b.children = new[] { new ChildMotion { motion = a, timeScale = 1f } };
 
             Assert.IsTrue(b.ContainsTree(a));
