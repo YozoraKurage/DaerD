@@ -66,6 +66,22 @@ namespace Yozolab.DaerD.Tests
                 return this;
             }
 
+            /// <summary>
+            /// Creates a parameter the rack will both read and write before any gadget runs.
+            ///
+            /// A loop always has one gadget that reads it before the gadget that writes it has
+            /// run, whichever order the rack is written in, and a gadget is refused for reading
+            /// a parameter that does not exist. Zero is also where the loop starts.
+            /// <c>GadgetRecipeBuilder</c> does this for a recipe; a rack assembled by hand says
+            /// it here, and hands the name to the writing gadget as <c>preCreated</c> so that it
+            /// is not read as a collision.
+            /// </summary>
+            public Rack Loop(string name)
+            {
+                DbtBuilder.EnsureFloatParameter(Controller, name, 0f);
+                return this;
+            }
+
             public AnimatorRig Run() => new AnimatorRig(Controller);
         }
 
@@ -170,6 +186,148 @@ namespace Yozolab.DaerD.Tests
                 Assert.AreEqual(500f, scaled.Evaluate("Inv", 12, ("X", 0.002f)), 3f);
                 Assert.AreEqual(1f, scaled.Evaluate("Inv", 12, ("X", 1f)), 0.01f,
                     "and the top of the window still reads 1");
+            }
+        }
+
+        // ---- iteration --------------------------------------------------------------
+
+        /// <summary>
+        /// The gadgets have no square root. This builds one out of the ones they do have, by
+        /// running Newton's method in the animator itself:
+        ///
+        ///     x ← (x + a / x) / 2
+        ///
+        /// which is the Newton step for x² − a, and converges on √a. Four gadgets in a ring —
+        /// divide, buffer, add, halve — with the ring's output fed back as its own input.
+        ///
+        /// Two things make this work that would not have a few commits ago. The divide is the
+        /// ranged one, so there is no lookup ladder in the loop and no 240 to bump into, and the
+        /// answer is limited by the float rather than by a sampled table — an iteration cannot
+        /// converge past the accuracy of the arithmetic it is built from. And the ring is a
+        /// loop, which a gadget chain could not express at all: the parameter it turns on has to
+        /// exist before the gadget that writes it runs.
+        ///
+        /// The buffer is the other half of it. The divide takes four frames, so the sum would
+        /// otherwise be adding this frame's x to a quotient computed from x four frames ago —
+        /// two different x's, which is not a Newton step. Holding x back by the divide's own
+        /// four frames makes both halves of the sum the same estimate.
+        /// </summary>
+        static Rack SquareRootRack(bool laddered)
+        {
+            // x is the estimate and the loop: read by the divide and the buffer, written by the
+            // halving at the end.
+            var rack = new Rack("A").Loop("X");
+
+            // q = a / x. The window is where the estimate lives: it starts at 0, which clamps to
+            // the bottom of the window and makes the first step a large one, and from there
+            // Newton comes down on the root from above.
+            if (laddered)
+                rack.Gadget(AapGadgets.Kind.Divide, "Q", "A", "X");
+            else
+                rack.Gadget(AapGadgets.Kind.DivideRanged, "Q", "A", "X",
+                    r => { r.inMin = 0.25f; r.inMax = 8f; });
+
+            // x, held back to the age q comes out at, so the sum below is one estimate's worth.
+            int depth = laddered ? 3 : 4;
+            rack.Gadget(AapGadgets.Kind.Buffer, "X/Held", "X",
+                configure: r => { r.bufferFrames = depth; r.rangeMin = 0f; r.rangeMax = 8f; });
+
+            // (x + a/x), then halved back into x — the write that closes the ring.
+            rack.Gadget(AapGadgets.Kind.Add, "Sum", "X/Held", "Q");
+            rack.Gadget(AapGadgets.Kind.Remap, "X", "Sum",
+                configure: r =>
+                {
+                    r.inMin = 0f; r.inMax = 16f;
+                    r.rangeMin = 0f; r.rangeMax = 8f;
+                    r.preCreated = new[] { "X" };
+                });
+            return rack;
+        }
+
+        [TestCase(0.25f, 0.5f)]
+        [TestCase(1f, 1f)]
+        [TestCase(2f, 1.41421356f)]
+        [TestCase(3f, 1.73205081f)]
+        [TestCase(4f, 2f)]
+        public void NewtonsMethod_FindsASquareRootTheGadgetsCannot(float a, float expected)
+        {
+            using (var rig = SquareRootRack(laddered: false).Run())
+            {
+                rig.Set("A", a).Step(240);
+                float actual = rig.Get("X");
+                Assert.AreEqual(expected, actual, expected * 1e-4f,
+                    "√" + a + " came out " + actual.ToString("R"));
+            }
+        }
+
+        /// <summary>
+        /// The iteration is delayed — a lap of the ring is six frames, so what it feeds back is
+        /// an estimate from six frames ago. Delay is not free in a feedback loop: one extra
+        /// frame is exactly what stops the constant-speed smoothing from settling, because there
+        /// the loop's gain at the target is 1 and the recurrence turns into a rotation.
+        ///
+        /// Newton is the opposite case, and for the same reason it converges quadratically: at
+        /// the root the derivative of the step is zero, so the delayed recurrence has no gain to
+        /// rotate. The delay costs frames and nothing else. This watches the error lap by lap —
+        /// it should fall, keep falling, and then stop dead rather than ring.
+        /// </summary>
+        [Test]
+        public void NewtonsMethod_ConvergesDespiteTheLoopBeingSixFramesLong()
+        {
+            const float a = 2f, root = 1.41421356f;
+            using (var rig = SquareRootRack(laddered: false).Run())
+            {
+                rig.Set("A", a);
+
+                var errors = new List<float>();
+                for (int lap = 0; lap < 10; lap++)
+                {
+                    rig.Step(6);
+                    errors.Add(Mathf.Abs(rig.Get("X") - root));
+                }
+                string trace = string.Join(", ", errors.ConvertAll(e => e.ToString("0.######")));
+
+                // The first laps are the ring filling and the estimate coming down from the
+                // clamp; from there the error only goes one way.
+                for (int lap = 3; lap < errors.Count; lap++)
+                    Assert.LessOrEqual(errors[lap], errors[lap - 1] + 1e-6f,
+                        "the error grew at lap " + lap + " — " + trace);
+                Assert.Less(errors[errors.Count - 1], 1e-4f, "it should have arrived — " + trace);
+
+                // And stays. A delayed loop that was going to ring would do it here.
+                float settled = rig.Get("X");
+                rig.Step(300);
+                Assert.AreEqual(settled, rig.Get("X"), 1e-6f, "it rang after settling");
+            }
+        }
+
+        /// <summary>
+        /// Why the loop wants the ranged divide. An iteration converges on the fixed point of
+        /// the arithmetic it is actually made of, not of the arithmetic it stands for — so a
+        /// Newton step built on a division that is good to about 8e-4 relative lands about that
+        /// far from the root and then stops, however many laps it is given. Taking the ladder
+        /// out of the loop is what lets the same iteration reach the float.
+        ///
+        /// Measured at √0.25, where the estimate sits below 1 and so inside the ladder's half.
+        /// </summary>
+        [Test]
+        public void NewtonsMethod_ReachesFurtherWithoutALookupLadderInTheLoop()
+        {
+            const float a = 0.25f, root = 0.5f;
+            using (var exact = SquareRootRack(laddered: false).Run())
+            using (var sampled = SquareRootRack(laddered: true).Run())
+            {
+                exact.Set("A", a).Step(300);
+                sampled.Set("A", a).Step(300);
+
+                float exactError = Mathf.Abs(exact.Get("X") - root);
+                float sampledError = Mathf.Abs(sampled.Get("X") - root);
+                string measured = "exact " + exact.Get("X").ToString("R")
+                    + ", laddered " + sampled.Get("X").ToString("R");
+
+                Assert.Less(exactError, 1e-5f, "the ladder-free loop reaches the float — " + measured);
+                Assert.Greater(sampledError, exactError,
+                    "and the laddered one stops short of it — " + measured);
             }
         }
 
