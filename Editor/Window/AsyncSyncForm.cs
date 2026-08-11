@@ -675,6 +675,7 @@ namespace Yozolab.DaerD
         bool[] Violations(AsyncSyncBuilder.Request request, List<List<string>> columns)
         {
             var flagged = new bool[columns.Count];
+            var byName = DbtBuilder.ParametersByName(_controller);
             for (int k = 0; k < columns.Count; k++)
             {
                 int next = (k + 1) % columns.Count;
@@ -684,7 +685,7 @@ namespace Yozolab.DaerD
                     flagged[k] = flagged[next] = true;
                 foreach (var name in columns[k])
                 {
-                    var parameter = DbtBuilder.FindParameter(_controller, name);
+                    var parameter = byName.Find(name);
                     // Room "for one more" is measured against the rest of the step, so this
                     // reads as "does this member fit at all".
                     if (parameter == null || Fits(request, columns[k], name, parameter.type))

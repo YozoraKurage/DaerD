@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
@@ -166,6 +167,30 @@ namespace Yozolab.DaerD
                 if (p.name == name) return p;
             return null;
         }
+
+        /// <summary>
+        /// Every parameter by name, read in one go. Use this instead of
+        /// <see cref="FindParameter"/> whenever a loop asks about more than a couple of names:
+        /// <c>AnimatorController.parameters</c> is a native property that builds and marshals a
+        /// fresh array on every access, so asking per item costs the whole parameter list per
+        /// item. On an avatar's worth of parameters, a loop over twenty targets was moving a
+        /// few thousand objects across to answer twenty questions.
+        /// </summary>
+        public static Dictionary<string, AnimatorControllerParameter> ParametersByName(
+            AnimatorController controller)
+        {
+            var byName = new Dictionary<string, AnimatorControllerParameter>();
+            if (controller == null) return byName;
+            foreach (var p in controller.parameters)
+                byName[p.name] = p;
+            return byName;
+        }
+
+        /// <summary>The parameter, or null — the dictionary form of <see cref="FindParameter"/>,
+        /// so a loop reads the same way whichever it uses.</summary>
+        public static AnimatorControllerParameter Find(
+            this Dictionary<string, AnimatorControllerParameter> byName, string name) =>
+            name != null && byName.TryGetValue(name, out var parameter) ? parameter : null;
 
         /// <summary>One-key clip animating the parameter itself on the Animator — the AAP.
         /// Left visible in the Project view so the generated pieces are discoverable.</summary>

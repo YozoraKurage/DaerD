@@ -89,9 +89,10 @@ namespace Yozolab.DaerD
             AnimatorControllerParameterType type)
         {
             int used = 0;
+            var byName = DbtBuilder.ParametersByName(r.controller);
             foreach (var name in slot.targets)
             {
-                var parameter = DbtBuilder.FindParameter(r.controller, name);
+                var parameter = byName.Find(name);
                 if (parameter != null && parameter.type == type) used++;
             }
             return used;
@@ -183,9 +184,10 @@ namespace Yozolab.DaerD
         public static int DirectBits(Request r)
         {
             int bits = 0;
+            var byName = DbtBuilder.ParametersByName(r.controller);
             foreach (var name in r.targets)
             {
-                var parameter = DbtBuilder.FindParameter(r.controller, name);
+                var parameter = byName.Find(name);
                 if (parameter == null) continue;
                 bits += parameter.type == AnimatorControllerParameterType.Bool ? 1 : 8;
             }
@@ -195,9 +197,10 @@ namespace Yozolab.DaerD
         internal static List<AnimatorControllerParameterType> ChannelTypes(Request r)
         {
             var types = new List<AnimatorControllerParameterType>();
+            var byName = DbtBuilder.ParametersByName(r.controller);
             foreach (var name in r.targets)
             {
-                var parameter = DbtBuilder.FindParameter(r.controller, name);
+                var parameter = byName.Find(name);
                 if (parameter != null && !types.Contains(parameter.type))
                     types.Add(parameter.type);
             }

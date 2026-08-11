@@ -42,10 +42,11 @@ namespace Yozolab.DaerD
             // Keyed by (type, rate): one open batch per kind of slot. An Int's capacity of 1
             // fills its batch immediately, which is how it keeps a slot to itself.
             var open = new Dictionary<(AnimatorControllerParameterType, int), Slot>();
+            var byName = DbtBuilder.ParametersByName(r.controller);
 
             foreach (var name in r.targets)
             {
-                var parameter = DbtBuilder.FindParameter(r.controller, name);
+                var parameter = byName.Find(name);
                 if (parameter == null) continue;
                 int rate = r.RateOf(name);
                 int capacity =
@@ -115,9 +116,10 @@ namespace Yozolab.DaerD
             var ordered = new List<string>();
             if (members == null || r?.targets == null) return ordered;
             var wanted = new HashSet<string>(members);
+            var byName = DbtBuilder.ParametersByName(r.controller);
             foreach (var name in r.targets)
                 if (wanted.Contains(name) && !ordered.Contains(name)
-                    && DbtBuilder.FindParameter(r.controller, name) != null)
+                    && byName.Find(name) != null)
                     ordered.Add(name);
             return ordered;
         }
@@ -152,9 +154,10 @@ namespace Yozolab.DaerD
             AnimatorControllerParameterType type)
         {
             int used = 0;
+            var byName = DbtBuilder.ParametersByName(r.controller);
             foreach (var name in members)
             {
-                var parameter = DbtBuilder.FindParameter(r.controller, name);
+                var parameter = byName.Find(name);
                 if (parameter != null && parameter.type == type) used++;
             }
             return used < StepCapacity(r, type);
@@ -576,9 +579,10 @@ namespace Yozolab.DaerD
         {
             var kept = new List<string>();
             var used = new Dictionary<AnimatorControllerParameterType, int>();
+            var byName = DbtBuilder.ParametersByName(r.controller);
             foreach (var name in members)
             {
-                var type = DbtBuilder.FindParameter(r.controller, name).type;
+                var type = byName.Find(name).type;
                 used.TryGetValue(type, out int count);
                 if (count >= StepCapacity(r, type)) continue;
                 used[type] = count + 1;
@@ -597,9 +601,10 @@ namespace Yozolab.DaerD
             foreach (var members in sets)
                 foreach (var name in members) covered.Add(name);
 
+            var byName = DbtBuilder.ParametersByName(r.controller);
             foreach (var name in r.targets)
             {
-                var parameter = DbtBuilder.FindParameter(r.controller, name);
+                var parameter = byName.Find(name);
                 if (parameter == null || !covered.Add(name)) continue;
                 var host = FindRoom(r, sets, parameter.type);
                 if (host == null) sets.Add(host = new List<string>());
