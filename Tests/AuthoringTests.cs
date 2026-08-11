@@ -419,11 +419,12 @@ namespace Yozolab.DaerD.Tests
                     zip = layer.stateMachine;
             Assert.IsNotNull(zip);
 
-            // From a step of another slot, the flag redirects the cycle to Send Hue ahead
-            // of the ring transition.
+            // From a step the origins rule allows, the flag sends the cycle on a detour ahead
+            // of the ring transition. Send Tail is not one: it is followed by Send Hue, and a
+            // detour returning there would repeat the index it had just written.
             var sendOutfit = FindState(zip, "Send Outfit");
             Assert.AreEqual(2, sendOutfit.transitions.Length);
-            Assert.AreEqual("Send Hue", sendOutfit.transitions[0].destinationState.name);
+            Assert.AreEqual("Send Hue (req)", sendOutfit.transitions[0].destinationState.name);
             bool conditioned = false;
             foreach (var condition in sendOutfit.transitions[0].conditions)
                 if (condition.parameter == "Zip/Req/Hue"

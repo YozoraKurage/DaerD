@@ -42,6 +42,13 @@ namespace Yozolab.DaerD
             baseName + "/Req/" + target;
 
         /// <summary>
+        /// Where the ring resumes after a request has been served: the step the detour left
+        /// from, written by every send state and read by the request states on their way back.
+        /// Local and never synced, like the request flags beside it.
+        /// </summary>
+        public static string ReturnParameter(string baseName) => baseName + "/Return";
+
+        /// <summary>
         /// The base name a new setup on this controller starts from: "DD" plus the first six
         /// hex digits of the controller's asset GUID. A fixed default collides as soon as two
         /// distributions that each bring a cycle meet on one avatar — both would own

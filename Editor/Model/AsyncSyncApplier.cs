@@ -12,8 +12,9 @@ namespace Yozolab.DaerD
     /// <summary>
     /// Writes the layer an <see cref="AsyncSyncBuilder.Request"/> describes: the generated
     /// parameters, the local send ring (one state per schedule step, each driving the value
-    /// channels and then the index), the request routes that let a raised flag jump the ring
-    /// at a step boundary, and the remote Any-State decoder (one state per slot, or per clock
+    /// channels and then the index), the detour states a raised request flag takes at a step
+    /// boundary before handing the ring back its place, and the remote Any-State decoder (one
+    /// state per slot, or per clock
     /// phase of a slot the pass puts beside itself). Finishes by syncing the generated
     /// parameters in the store and saving the setup on the controller so the wizard can
     /// regenerate this same layer later. See <see cref="AsyncSyncBuilder"/> for why the
@@ -150,7 +151,6 @@ namespace Yozolab.DaerD
             var slotNames = SlotNames(slots);
             var visits = new Dictionary<int, int>();
             var sendStates = new List<AnimatorState>(schedule.Count);
-            var firstSendOfSlot = new Dictionary<int, AnimatorState>();
             for (int k = 0; k < schedule.Count; k++)
             {
                 int slotIndex = schedule[k];
@@ -164,72 +164,139 @@ namespace Yozolab.DaerD
                 state.writeDefaultValues = true;
                 state.motion = empty;
                 sendStates.Add(state);
-                if (visit == 0) firstSendOfSlot[slotIndex] = state;
 
                 if (r.skipDrivers) continue;
-                var driver = VrcParameterDriver.AddTo(state, "Async Send");
-                if (driver == null) continue;
-                Undo.RegisterCompleteObjectUndo(driver, "Async Sync");
-                VrcParameterDriver.SetLocalOnly(driver, true);
-                // Values first, then the index — remotes react to the index change. The index
-                // is the slot's, in this step's clock phase: with no clock that is the slot
-                // number it always was, and with one it is what makes a repeat a change.
-                AddChannelCopies(driver, r, slot, toChannels: true);
-                int index = clock.Index(slotIndex, clock.stepPhases[k]);
-                if (encoding == IndexEncoding.Int)
-                    VrcParameterDriver.AddSetEntry(driver, IndexParameter(r.baseName), index);
-                else
-                    for (int bit = 0; bit < indexBits.Length; bit++)
-                        VrcParameterDriver.AddSetEntry(driver, indexBits[bit],
-                            ((index >> bit) & 1) == 1 ? 1f : 0f);
-                // Entering this state IS the service: the fresh value was just copied, so
-                // any pending request for this slot's targets is satisfied — clear it.
-                foreach (var name in slot.targets)
-                    if (requestable.Contains(name))
-                        VrcParameterDriver.AddSetEntry(driver,
-                            RequestParameter(r.baseName, name), 0f);
+                var driver = AddSendDriver(state, r, slot, requestable, clock, encoding,
+                    indexBits, clock.Index(slotIndex, clock.stepPhases[k]));
+                // Where a detour started, so the request state can put the ring back. Written
+                // by the ring and never by a detour, which is what makes it survive one.
+                if (driver != null && requestable.Count > 0)
+                    VrcParameterDriver.AddSetEntry(driver, ReturnParameter(r.baseName), k);
             }
-            // Sync requests: from every step, a raised flag redirects the cycle to the
-            // requested slot at the step boundary. These are added BEFORE the ring
-            // transition, so they win when their flag is up; the same exit time keeps the
-            // current slot's dwell (the values just sent still need their sync window).
-            // No route targets the state's own slot. The plain reason is that back-to-back
-            // sends of one index are invisible to the decoder (canTransitionToSelf is off),
-            // and the steps that follow carry a route each, so a flag still up is picked up
-            // one boundary later.
-            //
-            // The load-bearing reason is that this is what makes the pass advance at all. A
-            // clock could carry a jump to the same slot — a grid may visit one twice, and two
-            // visits in neighbouring steps take opposite phases, which the decoder does tell
-            // apart — but the only direction of that jump worth having is from the run's last
-            // step back to its first, and a flag raised again during each dwell would then
-            // walk that pair forever and no other slot would ever send. The other direction
-            // is where the ring already goes. So the rule buys a floor: however hard a request
-            // is driven, one other slot gets a turn between two services of the same one.
+            BuildDetours(stateMachine, r, slots, schedule, clock, encoding, indexBits, empty,
+                exitTime, requestable, slotOfTarget, slotNames, sendStates);
+
             for (int k = 0; k < sendStates.Count; k++)
-                foreach (var name in requestable)
-                {
-                    int slotIndex = slotOfTarget[name];
-                    if (slotIndex == schedule[k]) continue;
-                    var transition = sendStates[k].AddTransition(firstSendOfSlot[slotIndex]);
-                    transition.hasExitTime = true;
-                    transition.exitTime = exitTime;
-                    transition.hasFixedDuration = true;
-                    transition.duration = 0f;
-                    transition.AddCondition(AnimatorConditionMode.If, 0f,
-                        RequestParameter(r.baseName, name));
-                    EditorUtility.SetDirty(transition);
-                }
-            for (int k = 0; k < sendStates.Count; k++)
-            {
-                var transition = sendStates[k].AddTransition(sendStates[(k + 1) % sendStates.Count]);
-                transition.hasExitTime = true;
-                transition.exitTime = exitTime;
-                transition.hasFixedDuration = true;
-                transition.duration = 0f;
-                EditorUtility.SetDirty(transition);
-            }
+                Step(sendStates[k], sendStates[(k + 1) % sendStates.Count], exitTime);
             return sendStates;
+        }
+
+        /// <summary>
+        /// The request detours: one state per slot anything can ask for, reached from the steps
+        /// <see cref="AsyncSyncSchedule.RequestOrigins"/> allows and leaving again for the step
+        /// after the one it was reached from.
+        ///
+        /// The detours are wired BEFORE the ring transition on each send state, so a raised
+        /// flag wins over the plain next step; they carry the ring's own exit time, so the step
+        /// that was running still spends its full dwell. Several requests on one boundary are
+        /// tried in cycle order and the losers keep their flags for the next boundary.
+        ///
+        /// A detour state carries no request routes itself. That is the whole starvation
+        /// guarantee: two flags held up can only ever produce detour, step, detour, step, so
+        /// the ring advances on every other step and every slot still comes around — at worst
+        /// in twice the nominal pass.
+        /// </summary>
+        static void BuildDetours(AnimatorStateMachine stateMachine, Request r, List<Slot> slots,
+            List<int> schedule, Clock clock, IndexEncoding encoding, string[] indexBits,
+            AnimationClip empty, float exitTime, List<string> requestable,
+            Dictionary<string, int> slotOfTarget, List<string> slotNames,
+            List<AnimatorState> sendStates)
+        {
+            if (requestable.Count == 0) return;
+
+            // One detour per requested SLOT, not per target: a slot goes out whole, so two
+            // requestable targets riding together are served by the same extra step.
+            var detourOfSlot = new Dictionary<int, AnimatorState>();
+            var originsOfSlot = new Dictionary<int, List<int>>();
+            int row = 0;
+            foreach (var name in requestable)
+            {
+                int slotIndex = slotOfTarget[name];
+                if (detourOfSlot.ContainsKey(slotIndex)) continue;
+                var origins = AsyncSyncSchedule.RequestOrigins(schedule, clock, slotIndex);
+                // Nowhere to be asked from — a slot that occupies every other step of the pass
+                // is already as fresh as a detour could make it. Warnings says so; here it
+                // simply means there is nothing to build.
+                if (origins.Count == 0) continue;
+                originsOfSlot[slotIndex] = origins;
+
+                var state = stateMachine.AddState(
+                    RequestStateName(slotNames[slotIndex]),
+                    new Vector3(440f, 60f + row++ * 70f, 0f));
+                state.writeDefaultValues = true;
+                state.motion = empty;
+                detourOfSlot[slotIndex] = state;
+
+                if (r.skipDrivers) continue;
+                // Same payload as the slot's ordinary step, in the phase the origins were
+                // computed against — and no Return entry, because the ring's place is exactly
+                // what this state is carrying back.
+                AddSendDriver(state, r, slots[slotIndex], requestable, clock, encoding, indexBits,
+                    clock.Index(slotIndex, AsyncSyncSchedule.RequestPhase));
+            }
+
+            foreach (var name in requestable)
+            {
+                int slotIndex = slotOfTarget[name];
+                if (!detourOfSlot.TryGetValue(slotIndex, out var detour)) continue;
+                foreach (int k in originsOfSlot[slotIndex])
+                    Step(sendStates[k], detour, exitTime)
+                        .AddCondition(AnimatorConditionMode.If, 0f,
+                            RequestParameter(r.baseName, name));
+            }
+
+            foreach (var pair in detourOfSlot)
+            {
+                var origins = originsOfSlot[pair.Key];
+                foreach (int k in origins)
+                    Step(pair.Value, sendStates[(k + 1) % sendStates.Count], exitTime)
+                        .AddCondition(AnimatorConditionMode.Equals, k, ReturnParameter(r.baseName));
+                // Last, so it only answers when no return matched. It never should — every
+                // origin has a route above — but a send ring that wedges stops the whole
+                // avatar's sync, and one unconditional transition is a cheap floor under that.
+                Step(pair.Value, sendStates[(origins[0] + 1) % sendStates.Count], exitTime);
+            }
+        }
+
+        /// <summary>One boundary of the cycle: full dwell, then switch with no blend.</summary>
+        static AnimatorStateTransition Step(AnimatorState from, AnimatorState to, float exitTime)
+        {
+            var transition = from.AddTransition(to);
+            transition.hasExitTime = true;
+            transition.exitTime = exitTime;
+            transition.hasFixedDuration = true;
+            transition.duration = 0f;
+            EditorUtility.SetDirty(transition);
+            return transition;
+        }
+
+        /// <summary>
+        /// What a step puts on the wire: the slot's values into the channels, then the index —
+        /// remotes react to the index change, so the values have to be there first. Entering
+        /// the state IS the service, so any pending request for the slot's targets is satisfied
+        /// and its flag comes down. Shared by the ring and the detours, which send the same
+        /// payload and differ only in the index they write and where they go next.
+        /// </summary>
+        static StateMachineBehaviour AddSendDriver(AnimatorState state, Request r, Slot slot,
+            List<string> requestable, Clock clock, IndexEncoding encoding, string[] indexBits,
+            int index)
+        {
+            var driver = VrcParameterDriver.AddTo(state, "Async Send");
+            if (driver == null) return null;
+            Undo.RegisterCompleteObjectUndo(driver, "Async Sync");
+            VrcParameterDriver.SetLocalOnly(driver, true);
+            AddChannelCopies(driver, r, slot, toChannels: true);
+            if (encoding == IndexEncoding.Int)
+                VrcParameterDriver.AddSetEntry(driver, IndexParameter(r.baseName), index);
+            else
+                for (int bit = 0; bit < indexBits.Length; bit++)
+                    VrcParameterDriver.AddSetEntry(driver, indexBits[bit],
+                        ((index >> bit) & 1) == 1 ? 1f : 0f);
+            foreach (var name in slot.targets)
+                if (requestable.Contains(name))
+                    VrcParameterDriver.AddSetEntry(driver,
+                        RequestParameter(r.baseName, name), 0f);
+            return driver;
         }
 
         /// <summary>Builds the remote side and returns its Idle state — the one the entry
@@ -380,6 +447,20 @@ namespace Yozolab.DaerD
                 visits[slotIndex] = visit + 1;
                 names.Add(SlotStateName("Send", slotNames[slotIndex], visit));
             }
+            // In the order BuildDetours creates them: cycle order, first mention of a slot,
+            // and only the slots that have somewhere to be requested from.
+            var detoured = new HashSet<int>();
+            var slotOfTarget = new Dictionary<string, int>();
+            for (int i = 0; i < slots.Count; i++)
+                foreach (var target in slots[i].targets)
+                    slotOfTarget[target] = i;
+            foreach (var target in RequestableTargets(r))
+            {
+                if (!slotOfTarget.TryGetValue(target, out int slotIndex)) continue;
+                if (!detoured.Add(slotIndex)) continue;
+                if (AsyncSyncSchedule.RequestOrigins(schedule, clock, slotIndex).Count == 0) continue;
+                names.Add(RequestStateName(slotNames[slotIndex]));
+            }
             names.Add("Remote Idle");
             for (int i = 0; i < slots.Count; i++)
                 for (int phase = 0; phase < clock.slotPhases[i]; phase++)
@@ -415,6 +496,10 @@ namespace Yozolab.DaerD
         /// visits so the ring's several states for one slot stay apart.</summary>
         static string SlotStateName(string prefix, string slotName, int visit) =>
             prefix + " " + slotName + (visit > 0 ? " (" + (visit + 1) + ")" : string.Empty);
+
+        /// <summary>The detour state's name. "(req)" rather than a visit number: it is not one
+        /// of the pass's steps, and a slot has at most one of these however often it is sent.</summary>
+        static string RequestStateName(string slotName) => "Send " + slotName + " (req)";
 
         /// <summary>
         /// Adds the copy entries for one slot: each batched Float or Bool target pairs with the

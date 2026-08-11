@@ -977,8 +977,17 @@ msgstr "同期リクエストを受け付けます。State の同期リクエス
 msgid "Repeated steps: {0} of {1} slot(s) need a second decoder state."
 msgstr "連続送信: {1} スロット中 {0} 個にデコーダー State がもう 1 つ必要です。"
 
-msgid "Sync requests: {0} local Bool flag(s), nothing synced."
-msgstr "同期リクエスト: ローカル Bool フラグ {0} 個（同期コストなし）"
+msgid "Sync requests: {0} local Bool flag(s) and one Int, nothing synced."
+msgstr "同期リクエスト: ローカル Bool フラグ {0} 個と Int 1 個（同期コストなし）"
+
+msgid "With requests running: up to {0:0.#} s per pass."
+msgstr "リクエストが動いているとき: 1 周あたり最大 {0:0.#} 秒"
+
+msgid "Sync requests make a pass take up to {0:0.#} s instead of {1:0.#} s — a request spends an extra step before the cycle carries on where it left. That is the ceiling however often they are raised, but a target driven on every state change spends it."
+msgstr "同期リクエストがあると、1 周は {1:0.#} 秒ではなく最大 {0:0.#} 秒かかります。リクエストは 1 ステップぶん寄り道してから、巡回を離れた場所へ戻すためです。どれだけ頻繁に上げてもこれが上限ですが、ステートが変わるたびに叩くターゲットはこの上限を使い切ります。"
+
+msgid "'{0}' is sent so often that no step is left to request it from — the flag is built, but the cycle reaches the slot as fast as a request could. Lower its rate, or drop the request."
+msgstr "'{0}' は送信頻度が高すぎて、リクエストの起点にできるステップが残っていません。フラグは作られますが、巡回のほうがリクエストと同じ速さでこのスロットに到達します。レートを下げるか、リクエストをやめてください。"
 
 msgid "This controller has no saved async sync setup — create one first."
 msgstr "このコントローラーには保存された巡回同期設定がありません。先に作成してください。"

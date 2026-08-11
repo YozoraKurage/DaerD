@@ -104,6 +104,16 @@ namespace Yozolab.DaerD
             r == null ? 0f : EffectiveSchedule(r, BuildSlots(r)).Count * r.stepSeconds;
 
         /// <summary>
+        /// The longest one pass can take once requests are in play. A detour spends a step and
+        /// gives the ring's place back, and a detour state carries no routes of its own, so the
+        /// worst a pass can be driven to is one detour between every two steps — twice the
+        /// nominal, and no worse however hard the flags are raised. Equal to
+        /// <see cref="CycleSeconds"/> for a setup nobody can request from.
+        /// </summary>
+        public static float WorstCycleSeconds(Request r) =>
+            CycleSeconds(r) * (AsyncSyncBuilder.RequestableTargets(r).Count > 0 ? 2f : 1f);
+
+        /// <summary>
         /// The longest a target can go without being sent, from the actual schedule: the
         /// widest gap between two steps that carry it, counted around the wrap, × the step.
         /// This is what the wizard shows per row — the honest number, after weight

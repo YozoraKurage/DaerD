@@ -43,24 +43,38 @@ namespace Yozolab.DaerD
     /// Targets marked requestable additionally accept sync REQUESTS: a local, unsynced Bool
     /// ("base/Req/target") that anything on the avatar can raise — DaerD's per-state sync
     /// request drives it from a Parameter Driver. At each step boundary the cycle checks the
-    /// flags and jumps to a requested slot instead of the ring's next step, so a fresh value
-    /// reaches remotes after at most one step instead of a full pass; the slot's send driver
-    /// clears the flag as it services it. A request for the slot that just sent is picked up
-    /// one step later — never back-to-back, which the decoder couldn't see.
+    /// flags and takes a DETOUR: one extra step that sends the requested slot and then rejoins
+    /// the ring where it left, so a fresh value reaches remotes after at most one step instead
+    /// of a full pass. The detour state clears the flag as it services it.
     ///
-    /// Requests queue, they don't interrupt: a redirect carries the ring's exit time, so the
-    /// step that was running when a flag went up still spends its full dwell and the jump
+    /// Rejoining where it left is what makes the pass survive being interrupted. A jump that
+    /// simply resumed from the requested slot's own position would move the ring's place in
+    /// the pass, and a request that keeps being raised at the same point would then pin the
+    /// cycle to one stretch of the pass and starve everything outside it — remotes would wait
+    /// forever for values that are never sent. The detour spends a step and gives the place
+    /// back, so the pass always advances: the step it left from is written to
+    /// "base/Return" by every send state, and the request state reads it on the way back.
+    ///
+    /// A detour carries no routes of its own, so requests never chain. That bounds the whole
+    /// cost of them: worst case the pass alternates detour, step, detour, step, which is one
+    /// pass in twice the time — and never more, however hard the flags are driven.
+    ///
+    /// Requests queue, they don't interrupt: a detour carries the ring's exit time, so the
+    /// step that was running when a flag went up still spends its full dwell and the detour
     /// happens at the boundary. One request is serviced per boundary — the first in cycle
     /// order — and flags that lost the boundary stay raised for the next one.
+    /// <see cref="AsyncSyncSchedule.RequestOrigins"/> says which steps may start a detour: not
+    /// the ones already sending that slot, and not the ones whose successor would repeat the
+    /// index the detour wrote.
     ///
     /// A slot may not send twice in a row, because the decoder fires on the index CHANGING
     /// and a repeated index is a step nobody sees. <see cref="Request.allowRepeatSteps"/>
     /// buys that restriction off with a clock: a phase folded into the index, alternating
     /// between neighbouring steps, so one slot twice running still shows the decoder two
     /// different values. It is paid for in decoder states — a slot that repeats needs one per
-    /// phase — which is why it is asked for rather than assumed. It does not lift the
-    /// back-to-back rule on requests: a redirect would have to land on a send state of the
-    /// opposite phase, and the ring has no second state for a slot it visits once.
+    /// phase — which is why it is asked for rather than assumed. A detour sends its slot in
+    /// one fixed phase (<see cref="AsyncSyncSchedule.RequestPhase"/>), so a clock changes
+    /// which steps may start one rather than whether any may.
     /// </summary>
     static class AsyncSyncBuilder
     {
@@ -255,6 +269,9 @@ namespace Yozolab.DaerD
         public static string RequestParameter(string baseName, string target) =>
             AsyncSyncNaming.RequestParameter(baseName, target);
 
+        public static string ReturnParameter(string baseName) =>
+            AsyncSyncNaming.ReturnParameter(baseName);
+
         public static string DefaultBaseName(AnimatorController controller) =>
             AsyncSyncNaming.DefaultBaseName(controller);
 
@@ -300,6 +317,9 @@ namespace Yozolab.DaerD
         public static int NextStepSlot(List<int> steps, int slotCount) =>
             AsyncSyncSchedule.NextStepSlot(steps, slotCount);
 
+        public static List<int> RequestOrigins(List<int> schedule, Clock clock, int slot) =>
+            AsyncSyncSchedule.RequestOrigins(schedule, clock, slot);
+
         // ---- resolution and cost ---------------------------------------------
 
         // Worked out in AsyncSyncCost; the facade stays the single entry point.
@@ -313,6 +333,8 @@ namespace Yozolab.DaerD
         public static int BoolChannelsUsed(Request r) => AsyncSyncCost.BoolChannelsUsed(r);
 
         public static float CycleSeconds(Request r) => AsyncSyncCost.CycleSeconds(r);
+
+        public static float WorstCycleSeconds(Request r) => AsyncSyncCost.WorstCycleSeconds(r);
 
         public static Dictionary<string, float> RefreshIntervals(Request r) =>
             AsyncSyncCost.RefreshIntervals(r);
@@ -663,6 +685,34 @@ namespace Yozolab.DaerD
                         break;
                     }
 
+            var requestable = RequestableTargets(r);
+            if (requestable.Count > 0)
+            {
+                // The price of requests, said in seconds rather than left to be discovered:
+                // a detour is an extra step, and the pass is what waits for it.
+                warnings.Add(L.Tr(
+                    "Sync requests make a pass take up to {0:0.#} s instead of {1:0.#} s — a request spends an extra step before the cycle carries on where it left. That is the ceiling however often they are raised, but a target driven on every state change spends it.",
+                    WorstCycleSeconds(r), CycleSeconds(r)));
+
+                // A slot the pass already visits every other step has no boundary a detour
+                // could be inserted at without repeating an index the decoder would miss.
+                var requestSlots = BuildSlots(r);
+                var requestSchedule = EffectiveSchedule(r, requestSlots);
+                var requestClock = BuildClock(r, requestSlots, requestSchedule);
+                for (int i = 0; i < requestSlots.Count; i++)
+                {
+                    bool asked = false;
+                    foreach (var name in requestSlots[i].targets)
+                        if (requestable.Contains(name)) asked = true;
+                    if (!asked) continue;
+                    if (RequestOrigins(requestSchedule, requestClock, i).Count > 0) continue;
+                    warnings.Add(L.Tr(
+                        "'{0}' is sent so often that no step is left to request it from — the flag is built, but the cycle reaches the slot as fast as a request could. Lower its rate, or drop the request.",
+                        requestSlots[i].targets[0]));
+                    break;
+                }
+            }
+
             if (r.stepSeconds < 0.3f)
                 warnings.Add(L.Tr("Steps shorter than VRChat's ~0.3 s sync cadence risk remotes skipping slots."));
             foreach (var type in ChannelTypes(r))
@@ -719,10 +769,11 @@ namespace Yozolab.DaerD
         }
 
         /// <summary>
-        /// The request flags this request will create (all Bool). Unlike
-        /// <see cref="GeneratedParameters"/> these stay local: they are never synced and never
-        /// added to the parameter store — a request is raised and serviced on the wearer's
-        /// client, and remotes just see the slot arrive early.
+        /// What the request machinery needs: one Bool flag per requestable target, and the Int
+        /// holding the step a detour has to come back to. Unlike <see cref="GeneratedParameters"/>
+        /// these stay local: they are never synced and never added to the parameter store — a
+        /// request is raised and serviced on the wearer's client, and remotes just see the slot
+        /// arrive early. A setup nobody can request from creates none of them.
         /// </summary>
         public static List<(string name, AnimatorControllerParameterType type)> RequestParameters(Request r)
         {
@@ -730,6 +781,8 @@ namespace Yozolab.DaerD
             foreach (var target in RequestableTargets(r))
                 generated.Add((RequestParameter(r.baseName, target),
                     AnimatorControllerParameterType.Bool));
+            if (generated.Count > 0)
+                generated.Add((ReturnParameter(r.baseName), AnimatorControllerParameterType.Int));
             return generated;
         }
 

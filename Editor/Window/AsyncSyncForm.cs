@@ -953,7 +953,7 @@ namespace Yozolab.DaerD
             int requests = AsyncSyncBuilder.RequestableTargets(request).Count;
             if (requests > 0)
                 EditorGUILayout.LabelField(
-                    L.Tr("Sync requests: {0} local Bool flag(s), nothing synced.", requests),
+                    L.Tr("Sync requests: {0} local Bool flag(s) and one Int, nothing synced.", requests),
                     EditorStyles.miniLabel);
 
             // The pass actually being built, not the one the rates would lay out — the seconds
@@ -963,6 +963,15 @@ namespace Yozolab.DaerD
                 L.Tr("One full pass: {0:0.#} s ({1} steps × {2:0.##} s)",
                     AsyncSyncBuilder.CycleSeconds(request), steps, _stepSeconds),
                 EditorStyles.miniLabel);
+
+            // What requests cost, as a number rather than as advice to use them sparingly. A
+            // detour spends a step and hands the ring its place back, and detours can't chain,
+            // so this is the ceiling however often the flags are raised.
+            if (requests > 0)
+                EditorGUILayout.LabelField(
+                    L.Tr("With requests running: up to {0:0.#} s per pass.",
+                        AsyncSyncBuilder.WorstCycleSeconds(request)),
+                    EditorStyles.miniLabel);
         }
 
         /// <summary>

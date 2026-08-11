@@ -271,6 +271,43 @@ namespace Yozolab.DaerD
         }
 
         /// <summary>
+        /// The clock phase a request state sends its slot in. A slot the pass puts beside
+        /// itself has two, and the detour has to pick one: phase 0 costs at most two origins
+        /// (the step that sends that phase, and the step before it), which is the same handful
+        /// either phase would cost.
+        /// </summary>
+        public const int RequestPhase = 0;
+
+        /// <summary>
+        /// The steps a request for <paramref name="slot"/> may be served from — the origins of
+        /// its detour. Two rules, both about the index actually changing:
+        ///
+        /// A step that sends the slot itself is out. Its driver has already lowered the flag,
+        /// so the route could never fire, and building it would only suggest otherwise.
+        ///
+        /// A step whose SUCCESSOR sends the same index is out too, and that is the load-bearing
+        /// one: the detour returns to that successor, and a successor repeating the index the
+        /// detour just wrote is a step the decoder never sees (it fires on the index changing).
+        /// Compared as index values rather than as slots, because a clock can give two visits
+        /// of one slot different indices — and then the successor is decodable after all.
+        /// </summary>
+        public static List<int> RequestOrigins(List<int> schedule, Clock clock, int slot)
+        {
+            var origins = new List<int>();
+            int steps = schedule?.Count ?? 0;
+            if (steps == 0 || clock == null) return origins;
+            int index = clock.Index(slot, RequestPhase);
+            for (int k = 0; k < steps; k++)
+            {
+                if (schedule[k] == slot) continue;
+                int next = (k + 1) % steps;
+                if (clock.Index(schedule[next], clock.stepPhases[next]) == index) continue;
+                origins.Add(k);
+            }
+            return origins;
+        }
+
+        /// <summary>
         /// Slot rates turned into schedulable weights: divided by their common factor
         /// (all-×2 is the same cycle as all-×1, just twice the states), then any weight
         /// larger than the sum of the others is lowered to that sum — with fewer separating
