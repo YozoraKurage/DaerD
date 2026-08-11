@@ -54,11 +54,11 @@ namespace Yozolab.DaerD
             // the body interior, so clicks still fall through to the states they hit.
             layer = 5;
 
-            tooltip = "Drag the border to move the frame alone";
+            tooltip = L.Tr("Drag the border to move the frame alone");
 
             _titleBar = new VisualElement
             {
-                tooltip = "Drag to move the frame and the nodes inside it. Double-click or F2 to rename.",
+                tooltip = L.Tr("Drag to move the frame and the nodes inside it. Double-click or F2 to rename."),
             };
             _titleBar.AddToClassList("dd-frame__title");
             _titleBar.style.height = TitleHeight;
@@ -67,7 +67,7 @@ namespace Yozolab.DaerD
             _titleBar.Add(_titleLabel);
 
             // Inspector-style lock toggle in the frame's top-right corner.
-            _lockButton = new Image { tooltip = "Lock / unlock this frame" };
+            _lockButton = new Image { tooltip = L.Tr("Lock / unlock this frame") };
             _lockButton.AddToClassList("dd-frame__lock");
             _lockButton.RegisterCallback<MouseDownEvent>(evt =>
             {

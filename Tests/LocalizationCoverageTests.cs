@@ -9,11 +9,15 @@ using UnityEngine;
 namespace Yozolab.DaerD.Tests
 {
     /// <summary>
-    /// Guards the Japanese catalog against the one way it goes stale: a feature lands, the
-    /// English strings go in with it, and nobody comes back to translate them. An untranslated
-    /// string falls through to English silently — <see cref="L.Tr"/> is built that way on purpose
-    /// — so nothing looks broken until a Japanese user opens the window. This reads the call
-    /// sites out of the source and fails instead.
+    /// Guards the Japanese catalog against the two ways it goes stale, which are not the same
+    /// way. The first is a string that goes through <see cref="L.Tr"/> and has no entry: the
+    /// call site asks and the catalog has no answer. The second is a string that never asks at
+    /// all — written straight into a GUIContent or a label argument — and no amount of checking
+    /// the catalog can see it, because from the catalog's side nothing is missing.
+    ///
+    /// This class used to check only the first, and reported full coverage while roughly fifty
+    /// strings were permanently English, seventeen of them with a translation sitting in the
+    /// catalog that nothing asked for. Both halves are here now.
     /// </summary>
     public class LocalizationCoverageTests
     {
@@ -46,6 +50,70 @@ namespace Yozolab.DaerD.Tests
             Assert.IsEmpty(missing,
                 missing.Count + " UI string(s) reach a Japanese user in English. Translate them in "
                 + "Editor/Localization/ja.po:\n" + string.Join("\n", missing));
+        }
+
+        /// <summary>
+        /// The places a string literal is user-visible text: the label or tooltip of a GUIContent,
+        /// the label argument of an IMGUI field, a button's caption, a dialog's title, a
+        /// VisualElement's tooltip. Written to match a literal sitting DIRECTLY after the opening
+        /// bracket, so a call already wrapped in <c>L.Tr(</c> simply does not match.
+        ///
+        /// What it does not see: the later arguments of a dialog (its body, its button captions)
+        /// and anything built by concatenation before it reaches the call. Those are real gaps —
+        /// stated here rather than papered over, because a check that pretends to be exhaustive
+        /// is how this file came to be wrong in the first place.
+        /// </summary>
+        static readonly Regex UiLiteral = new Regex(
+            @"(?:new GUIContent\(|"
+            + @"EditorGUILayout\.(?:LabelField|HelpBox|Toggle|ToggleLeft|Slider|IntSlider|EnumPopup"
+            + @"|Popup|ObjectField|TextField|DelayedTextField|IntField|FloatField|Vector2Field"
+            + @"|Vector3Field|ColorField|CurveField|Foldout)\(|"
+            + @"EditorGUI\.(?:LabelField|Toggle|Slider|EnumPopup|Popup|ObjectField|TextField"
+            + @"|IntField|FloatField)\(|"
+            + @"GUILayout\.(?:Button|Label|Toggle)\(|"
+            + @"EditorUtility\.DisplayDialog\(|"
+            + @"\btooltip = )""(?<text>(?:[^""\\]|\\.)*)""",
+            RegexOptions.Compiled);
+
+        static readonly Regex Letters = new Regex("[A-Za-z]", RegexOptions.Compiled);
+
+        /// <summary>
+        /// Literals that are user-visible and still must not be translated: glyphs used as
+        /// buttons, acronyms DaerD shows as badges, product and brand names, and the two language
+        /// names on the settings page, which are each written in their own language on purpose.
+        /// </summary>
+        static readonly HashSet<string> NotForTranslation = new HashSet<string>
+        {
+            "DaerD", "VRChat/", "English", "日本語",
+            "AAP", "DBT", "SYNC", "C#", "Req",
+        };
+
+        [Test]
+        public void EveryUiStringGoesThroughTheCatalogue()
+        {
+            var stranded = new List<string>();
+            int scanned = 0;
+            foreach (var path in Directory.GetFiles(EditorFolder(), "*.cs", SearchOption.AllDirectories))
+            {
+                scanned++;
+                var lines = File.ReadAllLines(path, Encoding.UTF8);
+                for (int i = 0; i < lines.Length; i++)
+                    foreach (Match match in UiLiteral.Matches(lines[i]))
+                    {
+                        string text = Unescape(match.Groups["text"].Value);
+                        // One letter or none is a glyph, an arrow or a spacer, not a sentence.
+                        if (Letters.Matches(text).Count < 2) continue;
+                        if (NotForTranslation.Contains(text)) continue;
+                        stranded.Add("  " + Path.GetFileName(path) + ":" + (i + 1)
+                            + "\n    \"" + Excerpt(text) + "\"");
+                    }
+            }
+
+            Assert.Greater(scanned, 50, "found almost no sources — the scan is broken, not the code");
+            Assert.IsEmpty(stranded,
+                stranded.Count + " UI string(s) never reach the catalogue at all — wrap them in "
+                + "L.Tr(), or add them to NotForTranslation if they are a glyph or a name:\n"
+                + string.Join("\n", stranded));
         }
 
         /// <summary>

@@ -41,8 +41,8 @@ namespace Yozolab.DaerD
             // The title bar is dropped (see DaerD.uss); the name and motion show in a
             // text column between the input port (left) and output port (right). Every
             // state node uses the same fixed width.
-            Input.tooltip = "Incoming transitions";
-            Output.tooltip = "Drag from here to create a transition";
+            Input.tooltip = L.Tr("Incoming transitions");
+            Output.tooltip = L.Tr("Drag from here to create a transition");
 
             var text = new VisualElement { pickingMode = PickingMode.Ignore };
             text.AddToClassList("compact-node__text");
@@ -123,7 +123,7 @@ namespace Yozolab.DaerD
             int behaviourCount = behaviours != null ? behaviours.Length : 0;
             _badgeRow.style.display = DaerDSettings.ShowStateBadges ? DisplayStyle.Flex : DisplayStyle.None;
             _wdBadge.style.color = State.writeDefaultValues ? DaerDColors.BadgeWriteDefaultsOn : DaerDColors.BadgeOff;
-            _wdBadge.tooltip = "Write Defaults: " + (State.writeDefaultValues ? "ON" : "OFF");
+            _wdBadge.tooltip = L.Tr("Write Defaults: {0}", State.writeDefaultValues ? "ON" : "OFF");
             _behaviourBadge.style.color = behaviourCount > 0 ? DaerDColors.BadgeBehavioursOn : DaerDColors.BadgeOff;
             _behaviourBadge.tooltip = behaviourCount > 0
                 ? behaviourCount + " StateMachineBehaviour(s)"

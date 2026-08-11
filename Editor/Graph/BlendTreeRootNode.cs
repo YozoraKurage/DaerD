@@ -62,7 +62,7 @@ namespace Yozolab.DaerD
             RefreshExpandedState();
             RefreshPorts();
 
-            tooltip = "Click to ping in Project · Double-click to focus on this tree";
+            tooltip = L.Tr("Click to ping in Project · Double-click to focus on this tree");
             RegisterCallback<MouseDownEvent>(evt =>
             {
                 if (evt.button != 0) return;

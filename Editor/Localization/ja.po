@@ -2572,3 +2572,128 @@ msgstr "その他"
 
 msgid "No StateMachineBehaviour types found"
 msgstr "StateMachineBehaviour の型が見つかりません"
+
+# ---- strings that never went through the catalogue ----
+
+msgid "Click to ping in Project · Double-click to focus on this tree"
+msgstr "クリックで Project 内をピング・ダブルクリックでこのツリーへ"
+
+msgid "Drag the border to move the frame alone"
+msgstr "枠線をドラッグするとフレームだけが動きます"
+
+msgid "Drag to move the frame and the nodes inside it. Double-click or F2 to rename."
+msgstr "ドラッグでフレームと中のノードを一緒に移動します。ダブルクリックまたは F2 で名前を変更。"
+
+msgid "Lock / unlock this frame"
+msgstr "このフレームをロック／解除"
+
+msgid "Incoming transitions"
+msgstr "入ってくる遷移"
+
+msgid "Drag from here to create a transition"
+msgstr "ここからドラッグして遷移を作成"
+
+msgid "Write Defaults: {0}"
+msgstr "Write Defaults: {0}"
+
+msgid "Double-click or F2 to edit"
+msgstr "ダブルクリックまたは F2 で編集"
+
+msgid "Default state"
+msgstr "Default State への接続"
+
+msgid "Return to the state machine view"
+msgstr "ステートマシン表示に戻る"
+
+msgid "No controller loaded."
+msgstr "コントローラーが読み込まれていません。"
+
+msgid "No parameters."
+msgstr "パラメーターがありません。"
+
+msgid "Rename Failed"
+msgstr "名前の変更に失敗"
+
+msgid "'{0}' is not used anywhere"
+msgstr "'{0}' はどこにも使われていません"
+
+msgid "{0} usage(s) of '{1}'"
+msgstr "'{1}' の使用箇所 {0} 件"
+
+msgid "Duplicate"
+msgstr "複製"
+
+msgid "Paste After ('{0}')"
+msgstr "後ろに貼り付け（'{0}'）"
+
+msgid "Paste After"
+msgstr "後ろに貼り付け"
+
+msgid "Remap References To"
+msgstr "参照の付け替え先"
+
+msgid "VRChat/Add All Missing ({0})"
+msgstr "VRChat/未追加をすべて追加 ({0})"
+
+msgid "VRChat/Add All Missing"
+msgstr "VRChat/未追加をすべて追加"
+
+msgid "VRChat/Sync Expression Parameters Asset"
+msgstr "VRChat/Expression Parameters と同期"
+
+msgid "OK"
+msgstr "OK"
+
+msgid "Motions"
+msgstr "モーション"
+
+msgid "+ Add Motion"
+msgstr "+ モーションを追加"
+
+msgid "+ Add Nested Blend Tree"
+msgstr "+ ネストした Blend Tree を追加"
+
+msgid "Position (X, Y)"
+msgstr "位置 (X, Y)"
+
+msgid "Blend Type"
+msgstr "ブレンドの種類"
+
+msgid "Layer settings"
+msgstr "レイヤー設定"
+
+msgid "Layer Settings"
+msgstr "レイヤー設定"
+
+msgid "+ Add Layer"
+msgstr "+ レイヤーを追加"
+
+msgid "Weight"
+msgstr "ウェイト"
+
+msgid "Blending"
+msgstr "合成方法"
+
+msgid "Mask"
+msgstr "マスク"
+
+msgid "IK Pass"
+msgstr "IK Pass"
+
+msgid "Delete Layer"
+msgstr "レイヤーを削除"
+
+msgid "Delete layer '{0}' and all of its states?"
+msgstr "レイヤー '{0}' と、その中のすべての State を削除しますか？"
+
+msgid "Convert Parameter"
+msgstr "パラメーターの型変換"
+
+msgid "Rename Clip"
+msgstr "クリップ名の変更"
+
+msgid "Object"
+msgstr "オブジェクト"
+
+msgid "BlendShapes"
+msgstr "BlendShape"

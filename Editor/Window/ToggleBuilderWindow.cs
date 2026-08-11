@@ -245,7 +245,7 @@ namespace Yozolab.DaerD
             EditorGUILayout.BeginHorizontal();
             GUILayout.Space(12);
             row.toggleActive = GUILayout.Toggle(row.toggleActive,
-                new GUIContent("Object", L.Tr("Animate GameObject.m_IsActive")),
+                new GUIContent(L.Tr("Object"), L.Tr("Animate GameObject.m_IsActive")),
                 EditorStyles.miniButton);
             DrawChip(ref row.renderer, "Renderer", row.source.GetComponent<Renderer>() != null,
                 L.Tr("Animate the Renderer's enabled flag"));
@@ -264,7 +264,7 @@ namespace Yozolab.DaerD
                 && skinned.sharedMesh.blendShapeCount > 0;
             if (hasShapes)
                 row.shapesExpanded = GUILayout.Toggle(row.shapesExpanded,
-                    new GUIContent("BlendShapes", L.Tr("Animate blendshape weights (OFF/ON values per shape)")),
+                    new GUIContent(L.Tr("BlendShapes"), L.Tr("Animate blendshape weights (OFF/ON values per shape)")),
                     EditorStyles.miniButton);
             GUILayout.FlexibleSpace();
             EditorGUILayout.EndHorizontal();

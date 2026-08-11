@@ -461,7 +461,7 @@ namespace Yozolab.DaerD
                 _breadcrumb.Add(new ToolbarButton(() => _context.ExitBlendTree())
                 {
                     text = (originState != null ? originState.name : "Blend Tree") + " ▾",
-                    tooltip = "Return to the state machine view",
+                    tooltip = L.Tr("Return to the state machine view"),
                 });
                 for (int i = 0; i < _context.BlendTreePath.Count; i++)
                 {

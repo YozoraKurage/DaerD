@@ -27,7 +27,7 @@ namespace Yozolab.DaerD
             style.position = Position.Absolute;
             // Above frames (-10) but still behind the regular nodes and edges.
             layer = -5;
-            tooltip = "Double-click or F2 to edit";
+            tooltip = L.Tr("Double-click or F2 to edit");
 
             // Snappable lets the stock GraphView snap-to-borders pick the note up during
             // drag, the same as States / Sub-State Machines.

@@ -88,7 +88,7 @@ namespace Yozolab.DaerD
             if (IsDefaultEdge)
             {
                 capabilities &= ~Capabilities.Deletable;
-                tooltip = "Default state";
+                tooltip = L.Tr("Default state");
                 _badge.style.display = DisplayStyle.None;
                 _conditionLabel.style.display = DisplayStyle.None;
                 ApplyColor();

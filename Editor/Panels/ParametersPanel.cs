@@ -165,8 +165,8 @@ namespace Yozolab.DaerD
                 if (EditorGUI.EndChangeCheck() && newName != p.name && !string.IsNullOrEmpty(newName))
                 {
                     if (!ParameterRenamer.Rename(controller, p.name, newName))
-                        EditorUtility.DisplayDialog("Rename Failed",
-                            "A parameter named '" + newName + "' already exists.", "OK");
+                        EditorUtility.DisplayDialog(L.Tr("Rename Failed"),
+                            L.Tr("A parameter named '{0}' already exists.", newName), L.Tr("OK"));
                     else
                     {
                         _store?.Rename(p.name, newName);
@@ -219,7 +219,7 @@ namespace Yozolab.DaerD
             _reorder.End((from, to) => MoveParameter(visibleReal[from], visibleReal[to]));
 
             if (parameters.Length == 0)
-                EditorGUILayout.LabelField("No parameters.", EditorStyles.centeredGreyMiniLabel);
+                EditorGUILayout.LabelField(L.Tr("No parameters."), EditorStyles.centeredGreyMiniLabel);
         }
 
         /// <summary>The value column: what the Animator holds while something is running it,
@@ -452,11 +452,11 @@ namespace Yozolab.DaerD
             var menu = new GenericMenu();
             if (usages.Count == 0)
             {
-                menu.AddDisabledItem(new GUIContent("'" + parameterName + "' is not used anywhere"));
+                menu.AddDisabledItem(new GUIContent(L.Tr("'{0}' is not used anywhere", parameterName)));
             }
             else
             {
-                menu.AddDisabledItem(new GUIContent(usages.Count + " usage(s) of '" + parameterName + "'"));
+                menu.AddDisabledItem(new GUIContent(L.Tr("{0} usage(s) of '{1}'", usages.Count, parameterName)));
                 menu.AddSeparator(string.Empty);
                 foreach (var u in usages)
                 {
@@ -470,13 +470,13 @@ namespace Yozolab.DaerD
             }
 
             menu.AddSeparator(string.Empty);
-            menu.AddItem(new GUIContent("Duplicate"), false, () => DuplicateParameter(index));
-            menu.AddItem(new GUIContent("Copy"), false, () => CopyParameter(index));
+            menu.AddItem(new GUIContent(L.Tr("Duplicate")), false, () => DuplicateParameter(index));
+            menu.AddItem(new GUIContent(L.Tr("Copy")), false, () => CopyParameter(index));
             if (s_parameterClipboard != null)
-                menu.AddItem(new GUIContent("Paste After ('" + s_parameterClipboard.name + "')"),
+                menu.AddItem(new GUIContent(L.Tr("Paste After ('{0}')", s_parameterClipboard.name)),
                     false, () => PasteParameterAfter(index));
             else
-                menu.AddDisabledItem(new GUIContent("Paste After"));
+                menu.AddDisabledItem(new GUIContent(L.Tr("Paste After")));
 
             // Redirect every reference to another parameter (both stay in the list).
             bool anyTarget = false;
@@ -485,7 +485,7 @@ namespace Yozolab.DaerD
                 if (other.name == parameterName) continue;
                 anyTarget = true;
                 var captured = other.name;
-                menu.AddItem(new GUIContent("Remap References To/" + captured.Replace('/', '∕')),
+                menu.AddItem(new GUIContent(L.Tr("Remap References To") + "/" + captured.Replace('/', '∕')),
                     false, () =>
                     {
                         ParameterRenamer.RedirectReferences(Context.Controller, parameterName, captured);
@@ -494,9 +494,9 @@ namespace Yozolab.DaerD
                     });
             }
             if (!anyTarget)
-                menu.AddDisabledItem(new GUIContent("Remap References To"));
+                menu.AddDisabledItem(new GUIContent(L.Tr("Remap References To")));
 
-            menu.AddItem(new GUIContent("Delete and Clean"), false, () =>
+            menu.AddItem(new GUIContent(L.Tr("Delete and Clean")), false, () =>
             {
                 if (!EditorUtility.DisplayDialog(L.Tr("Delete and Clean"),
                         L.Tr("Delete '{0}' and remove every condition and driver entry that references it?", parameterName),
@@ -621,10 +621,10 @@ namespace Yozolab.DaerD
                 if (!existing.Contains(def.name)) missing++;
 
             if (missing > 0)
-                menu.AddItem(new GUIContent("VRChat/Add All Missing (" + missing + ")"), false, AddAllVrcParameters);
+                menu.AddItem(new GUIContent(L.Tr("VRChat/Add All Missing ({0})", missing)), false, AddAllVrcParameters);
             else
-                menu.AddDisabledItem(new GUIContent("VRChat/Add All Missing"));
-            var syncLabel = new GUIContent("VRChat/Sync Expression Parameters Asset");
+                menu.AddDisabledItem(new GUIContent(L.Tr("VRChat/Add All Missing")));
+            var syncLabel = new GUIContent(L.Tr("VRChat/Sync Expression Parameters Asset"));
             if (_store != null)
             {
                 var store = _store;

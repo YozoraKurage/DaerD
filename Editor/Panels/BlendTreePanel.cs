@@ -17,8 +17,8 @@ namespace Yozolab.DaerD
             var floatParams = FloatParameterNames(controller);
 
             EditorGUI.BeginChangeCheck();
-            string name = EditorGUILayout.DelayedTextField("Name", tree.name);
-            var blendType = (BlendTreeType)EditorGUILayout.EnumPopup("Blend Type", tree.blendType);
+            string name = EditorGUILayout.DelayedTextField(L.Tr("Name"), tree.name);
+            var blendType = (BlendTreeType)EditorGUILayout.EnumPopup(L.Tr("Blend Type"), tree.blendType);
 
             string blendParam = tree.blendParameter;
             string blendParamY = tree.blendParameterY;
@@ -45,7 +45,7 @@ namespace Yozolab.DaerD
             }
 
             EditorGUILayout.Space(2);
-            EditorGUILayout.LabelField("Motions", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField(L.Tr("Motions"), EditorStyles.boldLabel);
             DrawChildHeader(blendType);
 
             var children = tree.children;
@@ -85,13 +85,13 @@ namespace Yozolab.DaerD
                 list.RemoveAt(removeIndex);
                 changed = true;
             }
-            if (GUILayout.Button("+ Add Motion"))
+            if (GUILayout.Button(L.Tr("+ Add Motion")))
             {
                 list.Add(new ChildMotion { timeScale = 1f, position = Vector2.zero });
                 changed = true;
             }
             bool attachedSubAsset = false;
-            if (GUILayout.Button("+ Add Nested Blend Tree"))
+            if (GUILayout.Button(L.Tr("+ Add Nested Blend Tree")))
             {
                 var nested = new BlendTree { name = "Nested Blend Tree", hideFlags = HideFlags.HideInHierarchy };
                 var path = AssetDatabase.GetAssetPath(controller);
@@ -150,20 +150,20 @@ namespace Yozolab.DaerD
         {
             var headerStyle = EditorStyles.miniBoldLabel;
             EditorGUILayout.BeginHorizontal();
-            EditorGUILayout.LabelField("Motion", headerStyle);
+            EditorGUILayout.LabelField(L.Tr("Motion"), headerStyle);
             switch (blendType)
             {
                 case BlendTreeType.Simple1D:
-                    EditorGUILayout.LabelField("Threshold", headerStyle, GUILayout.Width(60));
+                    EditorGUILayout.LabelField(L.Tr("Threshold"), headerStyle, GUILayout.Width(60));
                     break;
                 case BlendTreeType.Direct:
-                    EditorGUILayout.LabelField("Parameter", headerStyle, GUILayout.Width(90));
+                    EditorGUILayout.LabelField(L.Tr("Parameter"), headerStyle, GUILayout.Width(90));
                     break;
                 default:
-                    EditorGUILayout.LabelField("Position (X, Y)", headerStyle, GUILayout.Width(120));
+                    EditorGUILayout.LabelField(L.Tr("Position (X, Y)"), headerStyle, GUILayout.Width(120));
                     break;
             }
-            EditorGUILayout.LabelField("Speed", headerStyle, GUILayout.Width(46));
+            EditorGUILayout.LabelField(L.Tr("Speed"), headerStyle, GUILayout.Width(46));
             // Spacer matches the per-row "X" remove button so the header line never wraps.
             GUILayout.Space(22 + 4);
             EditorGUILayout.EndHorizontal();

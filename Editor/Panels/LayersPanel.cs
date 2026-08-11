@@ -14,7 +14,7 @@ namespace Yozolab.DaerD
 
         /// <summary>The gear glyph used by the per-row settings button (lazy so the editor skin is ready).</summary>
         GUIContent SettingsIcon =>
-            _settingsIcon ??= new GUIContent(EditorGUIUtility.IconContent("_Popup")) { tooltip = "Layer settings" };
+            _settingsIcon ??= new GUIContent(EditorGUIUtility.IconContent("_Popup")) { tooltip = L.Tr("Layer settings") };
 
         public LayersPanel(DaerDContext context) : base(context, "Layers")
         {
@@ -94,7 +94,7 @@ namespace Yozolab.DaerD
             _reorder.End(MoveLayer);
 
             EditorGUILayout.Space(4);
-            if (GUILayout.Button(new GUIContent("+ Add Layer",
+            if (GUILayout.Button(new GUIContent(L.Tr("+ Add Layer"),
                     L.Tr("With templates saved (or a copied layer), this opens a menu. Use '.' in a template's asset name to nest it into submenus."))))
                 ShowAddLayerMenu();
         }
@@ -142,7 +142,7 @@ namespace Yozolab.DaerD
                 foreach (var template in templates)
                 {
                     var captured = template;
-                    menu.AddItem(new GUIContent("Delete Template/" + TemplateMenuLabel(captured)),
+                    menu.AddItem(new GUIContent(L.Tr("Delete Template") + "/" + TemplateMenuLabel(captured)),
                         false, () => DeleteTemplate(captured));
                 }
             }
@@ -242,19 +242,19 @@ namespace Yozolab.DaerD
                     return;
                 }
 
-                EditorGUILayout.LabelField("Layer Settings", EditorStyles.boldLabel);
+                EditorGUILayout.LabelField(L.Tr("Layer Settings"), EditorStyles.boldLabel);
 
                 EditorGUI.BeginChangeCheck();
-                string name = EditorGUILayout.DelayedTextField("Name", layers[_index].name);
+                string name = EditorGUILayout.DelayedTextField(L.Tr("Name"), layers[_index].name);
                 // The base layer always runs at weight 1; show the slider locked rather than hiding it.
                 float weight;
                 using (new EditorGUI.DisabledScope(_index == 0))
-                    weight = EditorGUILayout.Slider("Weight",
+                    weight = EditorGUILayout.Slider(L.Tr("Weight"),
                         _index == 0 ? 1f : layers[_index].defaultWeight, 0f, 1f);
                 if (_index == 0) weight = 1f;
-                var blending = (AnimatorLayerBlendingMode)EditorGUILayout.EnumPopup("Blending", layers[_index].blendingMode);
-                var mask = (AvatarMask)EditorGUILayout.ObjectField("Mask", layers[_index].avatarMask, typeof(AvatarMask), false);
-                bool ikPass = EditorGUILayout.Toggle("IK Pass", layers[_index].iKPass);
+                var blending = (AnimatorLayerBlendingMode)EditorGUILayout.EnumPopup(L.Tr("Blending"), layers[_index].blendingMode);
+                var mask = (AvatarMask)EditorGUILayout.ObjectField(L.Tr("Mask"), layers[_index].avatarMask, typeof(AvatarMask), false);
+                bool ikPass = EditorGUILayout.Toggle(L.Tr("IK Pass"), layers[_index].iKPass);
                 if (EditorGUI.EndChangeCheck())
                 {
                     Undo.RegisterCompleteObjectUndo(controller, "Edit Layer");
@@ -315,7 +315,7 @@ namespace Yozolab.DaerD
                     GUIUtility.ExitGUI();
                 }
                 EditorGUILayout.BeginHorizontal();
-                if (GUILayout.Button("Duplicate"))
+                if (GUILayout.Button(L.Tr("Duplicate")))
                 {
                     var panel = _panel;
                     int index = _index;
@@ -326,7 +326,7 @@ namespace Yozolab.DaerD
                 }
                 using (new EditorGUI.DisabledScope(layers.Length <= 1))
                 {
-                    if (GUILayout.Button("Delete"))
+                    if (GUILayout.Button(L.Tr("Delete")))
                     {
                         var panel = _panel;
                         int index = _index;
@@ -358,8 +358,9 @@ namespace Yozolab.DaerD
         {
             var controller = Context.Controller;
             if (controller == null || idx < 0 || idx >= controller.layers.Length) return;
-            if (!EditorUtility.DisplayDialog("Delete Layer",
-                "Delete layer '" + controller.layers[idx].name + "' and all of its states?", "Delete", "Cancel"))
+            if (!EditorUtility.DisplayDialog(L.Tr("Delete Layer"),
+                L.Tr("Delete layer '{0}' and all of its states?", controller.layers[idx].name),
+                L.Tr("Delete"), L.Tr("Cancel")))
                 return;
             int current = Context.LayerIndex;
             Undo.RegisterCompleteObjectUndo(controller, "Delete Layer");

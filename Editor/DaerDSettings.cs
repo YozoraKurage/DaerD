@@ -205,22 +205,22 @@ namespace Yozolab.DaerD
             using (new EditorGUI.DisabledScope(!DaerDSettings.ApplyTransitionDefaults))
             {
                 DaerDSettings.TransitionHasExitTime =
-                    EditorGUILayout.Toggle("Has Exit Time", DaerDSettings.TransitionHasExitTime);
+                    EditorGUILayout.Toggle(L.Tr("Has Exit Time"), DaerDSettings.TransitionHasExitTime);
                 DaerDSettings.TransitionExitTime =
-                    EditorGUILayout.FloatField("Exit Time", DaerDSettings.TransitionExitTime);
+                    EditorGUILayout.FloatField(L.Tr("Exit Time"), DaerDSettings.TransitionExitTime);
                 DaerDSettings.TransitionHasFixedDuration =
-                    EditorGUILayout.Toggle("Fixed Duration", DaerDSettings.TransitionHasFixedDuration);
+                    EditorGUILayout.Toggle(L.Tr("Fixed Duration"), DaerDSettings.TransitionHasFixedDuration);
                 DaerDSettings.TransitionDuration =
-                    EditorGUILayout.FloatField("Duration", DaerDSettings.TransitionDuration);
+                    EditorGUILayout.FloatField(L.Tr("Duration"), DaerDSettings.TransitionDuration);
                 DaerDSettings.TransitionOffset =
-                    EditorGUILayout.FloatField("Offset", DaerDSettings.TransitionOffset);
+                    EditorGUILayout.FloatField(L.Tr("Offset"), DaerDSettings.TransitionOffset);
                 DaerDSettings.TransitionInterruption =
-                    (TransitionInterruptionSource)EditorGUILayout.EnumPopup("Interruption",
+                    (TransitionInterruptionSource)EditorGUILayout.EnumPopup(L.Tr("Interruption"),
                         DaerDSettings.TransitionInterruption);
                 DaerDSettings.TransitionOrderedInterruption =
-                    EditorGUILayout.Toggle("Ordered Interruption", DaerDSettings.TransitionOrderedInterruption);
+                    EditorGUILayout.Toggle(L.Tr("Ordered Interruption"), DaerDSettings.TransitionOrderedInterruption);
                 DaerDSettings.TransitionCanTransitionToSelf =
-                    EditorGUILayout.Toggle("Can Transition To Self", DaerDSettings.TransitionCanTransitionToSelf);
+                    EditorGUILayout.Toggle(L.Tr("Can Transition To Self"), DaerDSettings.TransitionCanTransitionToSelf);
             }
             EditorGUI.indentLevel--;
 
@@ -232,9 +232,9 @@ namespace Yozolab.DaerD
             using (new EditorGUI.DisabledScope(!DaerDSettings.ApplyStateDefaults))
             {
                 DaerDSettings.StateWriteDefaults =
-                    EditorGUILayout.Toggle("Write Defaults", DaerDSettings.StateWriteDefaults);
+                    EditorGUILayout.Toggle(L.Tr("Write Defaults"), DaerDSettings.StateWriteDefaults);
                 DaerDSettings.StateSpeed =
-                    EditorGUILayout.FloatField("Speed", DaerDSettings.StateSpeed);
+                    EditorGUILayout.FloatField(L.Tr("Speed"), DaerDSettings.StateSpeed);
             }
             EditorGUI.indentLevel--;
 
