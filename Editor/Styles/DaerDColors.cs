@@ -36,6 +36,12 @@ namespace Yozolab.DaerD
         /// parameter that was asked about.</summary>
         public static readonly Color FoundByQuery = new Color(0.96f, 0.84f, 0.22f);
 
+        /// <summary>The pointer is over the row that names this edge. A hue of its own on
+        /// purpose: hover is the answer to "which line is this row talking about", and reusing
+        /// the selection blue or the query yellow would make it look like a state, not a
+        /// gesture that ends when the pointer moves away.</summary>
+        public static readonly Color Hovered = new Color(0.85f, 0.55f, 1.00f);
+
         /// <summary>The running Animator is in this state.</summary>
         public static readonly Color Playing = new Color(0.20f, 0.55f, 0.25f);
 

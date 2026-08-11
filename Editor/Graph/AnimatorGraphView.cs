@@ -364,7 +364,7 @@ namespace Yozolab.DaerD
         /// <see cref="DaerDContext.Selection"/>: the shared selection can name a transition (or an
         /// edge) that the graph itself is not highlighting.
         /// </summary>
-        List<(bool isDefault, IList<AnimatorTransitionBase> transitions)> SelectedTransitionGroups()
+        List<TransitionGroup> SelectedTransitionGroups()
         {
             var edges = GetSelectedEdges();
             if (edges.Count == 0)
@@ -373,9 +373,11 @@ namespace Yozolab.DaerD
                     ?? (_context.Selection is AnimatorTransitionBase tb ? _sync.FindEdge(tb) : null);
                 if (fallback != null) edges.Add(fallback);
             }
-            var groups = new List<(bool isDefault, IList<AnimatorTransitionBase> transitions)>(edges.Count);
+            var groups = new List<TransitionGroup>(edges.Count);
             foreach (var edge in edges)
-                groups.Add((edge.IsDefaultEdge, edge.Transitions));
+                groups.Add(new TransitionGroup(
+                    GraphNodeBase.EndOf(edge.output?.node as GraphNodeBase),
+                    edge.IsDefaultEdge, edge.Transitions));
             return groups;
         }
 

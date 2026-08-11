@@ -73,6 +73,102 @@ namespace Yozolab.DaerD
             return created;
         }
 
+        // ---- order ------------------------------------------------------------
+
+        static readonly AnimatorTransitionBase[] NoTransitions = new AnimatorTransitionBase[0];
+
+        /// <summary>
+        /// The transitions leaving <paramref name="source"/>, in the order the Animator evaluates
+        /// them — the first one whose conditions hold wins, so this order is behaviour, not
+        /// presentation. Which object owns the list depends on the end: a state owns its own,
+        /// while Any State, Entry and a sub-state machine's outgoing transitions all live on the
+        /// state machine that contains them.
+        /// </summary>
+        public static AnimatorTransitionBase[] TransitionsFrom(TransitionEnd source, AnimatorStateMachine sm)
+        {
+            switch (source.Kind)
+            {
+                case TransitionEndKind.State:
+                    return source.State != null ? source.State.transitions : NoTransitions;
+                case TransitionEndKind.AnyState:
+                    return sm != null ? sm.anyStateTransitions : NoTransitions;
+                case TransitionEndKind.Entry:
+                    return sm != null ? sm.entryTransitions : NoTransitions;
+                case TransitionEndKind.SubStateMachine:
+                    return sm != null && source.StateMachine != null
+                        ? sm.GetStateMachineTransitions(source.StateMachine)
+                        : NoTransitions;
+                default:
+                    return NoTransitions;
+            }
+        }
+
+        /// <summary>
+        /// Moves one transition of <paramref name="source"/> from index <paramref name="from"/> to
+        /// index <paramref name="to"/>, changing which one the Animator tries first. Returns false
+        /// when there is nothing to do — an out-of-range index, or a move onto its own slot.
+        /// </summary>
+        public static bool Reorder(TransitionEnd source, AnimatorStateMachine sm, int from, int to)
+        {
+            var current = TransitionsFrom(source, sm);
+            if (from == to || from < 0 || to < 0 || from >= current.Length || to >= current.Length)
+                return false;
+
+            var ordered = new List<AnimatorTransitionBase>(current);
+            var moved = ordered[from];
+            ordered.RemoveAt(from);
+            ordered.Insert(to, moved);
+
+            using (new UndoScope("Reorder Transitions"))
+                WriteOrder(source, sm, ordered);
+            return true;
+        }
+
+        /// <summary>
+        /// Writes an order back onto whichever object holds the list. The arrays are typed
+        /// (Entry and state-machine transitions are plain <see cref="AnimatorTransition"/>, the
+        /// rest are <see cref="AnimatorStateTransition"/>), so each case rebuilds its own array
+        /// rather than casting one shared one.
+        /// </summary>
+        static void WriteOrder(TransitionEnd source, AnimatorStateMachine sm,
+            List<AnimatorTransitionBase> ordered)
+        {
+            switch (source.Kind)
+            {
+                case TransitionEndKind.State:
+                    Undo.RegisterCompleteObjectUndo(source.State, "Reorder Transitions");
+                    source.State.transitions = Typed<AnimatorStateTransition>(ordered);
+                    EditorUtility.SetDirty(source.State);
+                    break;
+                case TransitionEndKind.AnyState:
+                    Undo.RegisterCompleteObjectUndo(sm, "Reorder Transitions");
+                    sm.anyStateTransitions = Typed<AnimatorStateTransition>(ordered);
+                    EditorUtility.SetDirty(sm);
+                    break;
+                case TransitionEndKind.Entry:
+                    Undo.RegisterCompleteObjectUndo(sm, "Reorder Transitions");
+                    sm.entryTransitions = Typed<AnimatorTransition>(ordered);
+                    EditorUtility.SetDirty(sm);
+                    break;
+                case TransitionEndKind.SubStateMachine:
+                    Undo.RegisterCompleteObjectUndo(sm, "Reorder Transitions");
+                    sm.SetStateMachineTransitions(source.StateMachine, Typed<AnimatorTransition>(ordered));
+                    EditorUtility.SetDirty(sm);
+                    break;
+            }
+        }
+
+        /// <summary>The list as the concrete array type its owner's property expects, dropping
+        /// anything that is not of that type (nothing is, in practice — the guard keeps a
+        /// mismatched entry from taking the whole list down with a cast exception).</summary>
+        static T[] Typed<T>(List<AnimatorTransitionBase> ordered) where T : AnimatorTransitionBase
+        {
+            var result = new List<T>(ordered.Count);
+            foreach (var t in ordered)
+                if (t is T typed) result.Add(typed);
+            return result.ToArray();
+        }
+
         public static void RemoveTransitionFrom(TransitionEnd source, AnimatorTransitionBase t, AnimatorStateMachine sm)
         {
             if (t == null) return;

@@ -79,6 +79,7 @@ namespace Yozolab.DaerD
             _nestedStateOwners.Clear();
             _nestedMachineOwners.Clear();
             _edges.Clear();
+            _hoveredEdge = null;
             _frameNodes.Clear();
             _noteNodes.Clear();
             foreach (var element in _graphView.graphElements.ToList())
@@ -362,6 +363,23 @@ namespace Yozolab.DaerD
                 pair.Value.RefreshLabels();
         }
 
+        /// <summary>
+        /// Colours the edge carrying <paramref name="transition"/> as hovered and un-colours
+        /// whichever one held that role before. Called from an inspector row's repaint, so it
+        /// has to be free when the answer has not changed — which is why the previous edge is
+        /// remembered rather than every edge asked.
+        /// </summary>
+        public void SetHoveredTransition(AnimatorTransitionBase transition)
+        {
+            var edge = transition != null ? FindEdge(transition) : null;
+            if (ReferenceEquals(edge, _hoveredEdge)) return;
+            _hoveredEdge?.SetHover(false);
+            _hoveredEdge = edge;
+            _hoveredEdge?.SetHover(true);
+        }
+
+        TransitionEdge _hoveredEdge;
+
         public TransitionEdge FindEdge(AnimatorTransitionBase transition)
         {
             if (transition == null) return null;
@@ -619,17 +637,10 @@ namespace Yozolab.DaerD
         static bool IsConnectableState(GraphNodeBase node) =>
             node is StateNode || node is SubStateMachineNode;
 
-        /// <summary>Human-readable name of a node, used for menu labels and sorting.</summary>
-        public static string NodeLabel(GraphNodeBase node)
-        {
-            switch (node)
-            {
-                case StateNode sn: return sn.State != null ? sn.State.name : "(state)";
-                case SubStateMachineNode mn: return mn.StateMachine != null ? mn.StateMachine.name : "(sub-state machine)";
-                case SpecialNode spn: return spn.Kind.ToString();
-                default: return "?";
-            }
-        }
+        /// <summary>Human-readable name of a node, used for menu labels and sorting. The node
+        /// becomes the end it stands for, so a menu entry and a transition row naming the same
+        /// state read identically.</summary>
+        public static string NodeLabel(GraphNodeBase node) => GraphNodeBase.EndOf(node).Label;
 
         // ---- node creation ---------------------------------------------------
 

@@ -30,6 +30,7 @@ namespace Yozolab.DaerD
         readonly Label _badge;
         readonly Label _conditionLabel;
         bool _highlighted;
+        bool _hovered;
         bool _allMuted;
         bool _runtimeActive;
 
@@ -59,6 +60,14 @@ namespace Yozolab.DaerD
         public void SetHighlight(bool on)
         {
             _highlighted = on;
+            ApplyColor();
+        }
+
+        /// <summary>The pointer is over the inspector row that names one of these transitions.</summary>
+        public void SetHover(bool on)
+        {
+            if (_hovered == on) return;
+            _hovered = on;
             ApplyColor();
         }
 
@@ -142,6 +151,9 @@ namespace Yozolab.DaerD
             if (selected) color = DaerDColors.Selected;
             // Above the rest: it is the one thing on screen that is only true for a few frames.
             else if (_runtimeActive) color = DaerDColors.PlayingEdge;
+            // Above everything the graph decided for itself: the pointer is asking about this
+            // one line right now, and the answer is worthless if some earlier state hides it.
+            else if (_hovered) color = DaerDColors.Hovered;
             else if (IsDefaultEdge) color = DaerDColors.DefaultEdge;
             else if (_highlighted) color = DaerDColors.FoundByQuery;
             else if (_allMuted) color = DaerDColors.Muted;

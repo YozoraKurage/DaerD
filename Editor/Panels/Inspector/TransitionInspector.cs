@@ -19,6 +19,7 @@ namespace Yozolab.DaerD
         readonly GraphSync _sync;
         readonly List<AnimatorTransitionBase> _selectedTransitions;
         readonly MultiTransitionInspector _multiTransition;
+        readonly TransitionListGui _list = new TransitionListGui();
 
         int _rangeAnchor = -1;
 
@@ -37,7 +38,8 @@ namespace Yozolab.DaerD
         public void DrawTransitionContext()
         {
             var controller = _context.Controller;
-            var pool = GatherTransitionPool();
+            var groups = _context.GetSelectedTransitionGroups();
+            var pool = GatherTransitionPool(groups);
             if (pool.Count == 0)
             {
                 if (_context.Selection is TransitionEdge edge && edge.IsDefaultEdge)
@@ -48,9 +50,10 @@ namespace Yozolab.DaerD
                 return;
             }
 
-            PruneSelection(pool);
+            var rows = BuildRows(groups, pool, out var reorderSource);
+            PruneSelection(rows, pool);
             HandleCopyPasteShortcuts();
-            DrawTransitionList(pool);
+            DrawTransitionList(rows, pool, reorderSource);
             PanelGui.HorizontalLine();
 
             if (_selectedTransitions.Count >= 2)
@@ -59,102 +62,165 @@ namespace Yozolab.DaerD
                 DrawSingleTransition(_selectedTransitions[0], controller);
         }
 
+        /// <summary>
+        /// The transition list for a source that is not an edge — the Entry and Any State nodes,
+        /// which carry transitions but are selected as a node rather than as an edge. Everything
+        /// below the list belongs to a selected transition, so it only appears once one is picked.
+        /// </summary>
+        public void DrawSourceContext(TransitionEnd source)
+        {
+            var rows = TransitionListGui.RowsOf(source, _context.CurrentStateMachine);
+            if (rows.Count == 0)
+            {
+                EditorGUILayout.HelpBox(
+                    L.Tr("{0} node. Drag from its port to create transitions.", source.Label), MessageType.Info);
+                return;
+            }
+
+            EditorGUILayout.LabelField(source.Label, EditorStyles.boldLabel);
+            _selectedTransitions.RemoveAll(t => t == null || !Contains(rows, t));
+            HandleCopyPasteShortcuts();
+            DrawTransitionList(rows, null, source);
+
+            if (_selectedTransitions.Count == 0) return;
+            PanelGui.HorizontalLine();
+            if (_selectedTransitions.Count >= 2)
+                _multiTransition.DrawMultiTransitionEditor(_context.Controller);
+            else
+                DrawSingleTransition(_selectedTransitions[0], _context.Controller);
+        }
+
         /// <summary>All transitions of every currently selected (non-default) edge. The graph
         /// answers which edges those are — including the fallback for a selection the graph is not
         /// highlighting — and hands over the transitions, never the edges themselves.</summary>
-        List<AnimatorTransitionBase> GatherTransitionPool()
+        static List<AnimatorTransitionBase> GatherTransitionPool(List<TransitionGroup> groups)
         {
             var pool = new List<AnimatorTransitionBase>();
-            foreach (var group in _context.GetSelectedTransitionGroups())
+            foreach (var group in groups)
             {
-                if (group.isDefault) continue;
-                foreach (var t in group.transitions)
+                if (group.IsDefault) continue;
+                foreach (var t in group.Transitions)
                     if (t != null && !pool.Contains(t)) pool.Add(t);
             }
             return pool;
         }
 
-        void PruneSelection(List<AnimatorTransitionBase> pool)
+        /// <summary>
+        /// What the list shows. When every selected edge leaves the same node, it is that node's
+        /// complete transition list in evaluation order — the form that can be reordered, and the
+        /// only one where the neighbours a drag would move past are all on screen. A selection
+        /// spanning several sources falls back to just the selected transitions, each still
+        /// numbered by where it really sits.
+        /// </summary>
+        List<TransitionRow> BuildRows(List<TransitionGroup> groups, List<AnimatorTransitionBase> pool,
+            out TransitionEnd? reorderSource)
         {
-            _selectedTransitions.RemoveAll(t => t == null || !pool.Contains(t));
+            var sm = _context.CurrentStateMachine;
+            reorderSource = SharedSource(groups);
+            return reorderSource.HasValue
+                ? TransitionListGui.RowsOf(reorderSource.Value, sm)
+                : TransitionListGui.RowsFor(pool, groups, sm);
+        }
+
+        /// <summary>The one node every selected edge leaves, or null when they disagree.</summary>
+        static TransitionEnd? SharedSource(List<TransitionGroup> groups)
+        {
+            TransitionEnd? shared = null;
+            foreach (var group in groups)
+            {
+                if (group.IsDefault) continue;
+                if (group.Source.Kind == TransitionEndKind.None) return null;
+                if (shared.HasValue)
+                {
+                    if (!shared.Value.SameAs(group.Source)) return null;
+                }
+                else
+                {
+                    shared = group.Source;
+                }
+            }
+            return shared;
+        }
+
+        /// <summary>
+        /// Drops rows that are gone and makes sure something is selected. The fallback is the
+        /// selected edge's own first transition, not the list's — with a whole source on screen,
+        /// row one usually belongs to a different edge than the one the user clicked.
+        /// </summary>
+        void PruneSelection(List<TransitionRow> rows, List<AnimatorTransitionBase> pool)
+        {
+            _selectedTransitions.RemoveAll(t => t == null || !Contains(rows, t));
             if (_selectedTransitions.Count == 0)
-                _selectedTransitions.Add(pool[0]);
+                _selectedTransitions.Add(pool.Count > 0 ? pool[0] : rows[0].Transition);
+        }
+
+        static bool Contains(List<TransitionRow> rows, AnimatorTransitionBase transition)
+        {
+            foreach (var row in rows)
+                if (ReferenceEquals(row.Transition, transition)) return true;
+            return false;
         }
 
         /// <summary>Unity-style vertical transition list with Solo / Mute columns and multi-select.</summary>
-        void DrawTransitionList(List<AnimatorTransitionBase> pool)
+        void DrawTransitionList(List<TransitionRow> rows, List<AnimatorTransitionBase> pool,
+            TransitionEnd? reorderSource)
         {
-            EditorGUILayout.LabelField(L.Tr("Transitions") + " (" + pool.Count + ")", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField(L.Tr("Transitions") + " (" + rows.Count + ")", EditorStyles.boldLabel);
 
-            EditorGUILayout.BeginHorizontal();
-            EditorGUILayout.LabelField(L.Tr("Solo"), EditorStyles.miniLabel, GUILayout.Width(34));
-            EditorGUILayout.LabelField(L.Tr("Mute"), EditorStyles.miniLabel, GUILayout.Width(36));
-            EditorGUILayout.LabelField(L.Tr("Transition"), EditorStyles.miniLabel);
-            EditorGUILayout.EndHorizontal();
-
-            for (int i = 0; i < pool.Count; i++)
+            Action<int, int> onMove = null;
+            if (reorderSource.HasValue && rows.Count > 1)
             {
-                var t = pool[i];
-                EditorGUILayout.BeginHorizontal();
-
-                EditorGUI.BeginChangeCheck();
-                bool solo = EditorGUILayout.Toggle(t.solo, GUILayout.Width(34));
-                bool mute = EditorGUILayout.Toggle(t.mute, GUILayout.Width(36));
-                if (EditorGUI.EndChangeCheck())
+                var source = reorderSource.Value;
+                onMove = (from, to) =>
                 {
-                    Undo.RegisterCompleteObjectUndo(t, "Edit Transition");
-                    t.solo = solo;
-                    t.mute = mute;
-                    EditorUtility.SetDirty(t);
-                    _multiTransition.RefreshEdges();
-                }
+                    if (EdgeCommands.Reorder(source, _context.CurrentStateMachine, from, to))
+                        _context.NotifyGraphStructureChanged();
+                };
+            }
 
-                bool selected = _selectedTransitions.Contains(t);
-                var prevBackground = GUI.backgroundColor;
-                if (selected) GUI.backgroundColor = DaerDColors.SelectedRow;
-                if (GUILayout.Button((i + 1) + ".  " + ParameterConverter.DescribeTransition(t), EditorStyles.miniButton))
-                    HandleRowClick(pool, i);
-                GUI.backgroundColor = prevBackground;
+            var result = _list.Draw(rows, _selectedTransitions.Contains, _multiTransition.RefreshEdges, onMove);
+            _sync.SetHoveredTransition(result.hovered);
 
-                if (GUILayout.Button("X", EditorStyles.miniButton, GUILayout.Width(DaerDLayout.GlyphButton)))
-                {
-                    DeleteTransitionRow(t, pool);
-                    GUIUtility.ExitGUI();
-                }
-
-                EditorGUILayout.EndHorizontal();
+            if (result.clicked >= 0)
+                HandleRowClick(rows, result.clicked);
+            if (result.deleted != null)
+            {
+                DeleteTransitionRow(result.deleted, rows);
+                GUIUtility.ExitGUI();
             }
 
             EditorGUILayout.BeginHorizontal();
-            if (GUILayout.Button(L.Tr("+ Add Transition")))
+            if (pool != null && GUILayout.Button(L.Tr("+ Add Transition")))
             {
                 AddTransitionToAnchorEdge(pool);
                 GUIUtility.ExitGUI();
             }
-            if (pool.Count > 1 && GUILayout.Button(L.Tr("Select All"), GUILayout.Width(80)))
+            if (rows.Count > 1 && GUILayout.Button(L.Tr("Select All"), GUILayout.Width(80)))
             {
                 _selectedTransitions.Clear();
-                _selectedTransitions.AddRange(pool);
+                foreach (var row in rows)
+                    if (row.Transition != null) _selectedTransitions.Add(row.Transition);
             }
             EditorGUILayout.EndHorizontal();
         }
 
-        void HandleRowClick(List<AnimatorTransitionBase> pool, int index)
+        void HandleRowClick(List<TransitionRow> rows, int index)
         {
-            var t = pool[index];
+            var t = rows[index].Transition;
+            if (t == null) return;
             var e = Event.current;
             bool additive = e != null && (e.control || e.command);
             bool range = e != null && e.shift;
 
             var previous = new List<AnimatorTransitionBase>(_selectedTransitions);
 
-            if (range && _rangeAnchor >= 0 && _rangeAnchor < pool.Count)
+            if (range && _rangeAnchor >= 0 && _rangeAnchor < rows.Count)
             {
                 _selectedTransitions.Clear();
                 int lo = Mathf.Min(_rangeAnchor, index);
                 int hi = Mathf.Max(_rangeAnchor, index);
                 for (int i = lo; i <= hi; i++)
-                    _selectedTransitions.Add(pool[i]);
+                    if (rows[i].Transition != null) _selectedTransitions.Add(rows[i].Transition);
             }
             else if (additive)
             {
@@ -174,6 +240,21 @@ namespace Yozolab.DaerD
             // selected transition. Without this, a value typed for transition X leaks into Y.
             if (!SameSet(previous, _selectedTransitions))
                 EndConditionInput();
+
+            // A plain click on a row belonging to some other edge has to move the graph
+            // selection too, or the highlighted edge and the form below would be about
+            // different transitions. Ctrl / Shift clicks are building a set inside this list
+            // and must not collapse it to one.
+            if (!additive && !range && _sync.FindEdge(t) != null && !InSelectedEdges(t))
+                _context.Select(t);
+        }
+
+        /// <summary>True when the transition belongs to one of the edges the graph has selected.</summary>
+        bool InSelectedEdges(AnimatorTransitionBase transition)
+        {
+            foreach (var group in _context.GetSelectedTransitionGroups())
+                if (group.Transitions.Contains(transition)) return true;
+            return false;
         }
 
         static bool SameSet(List<AnimatorTransitionBase> a, List<AnimatorTransitionBase> b)
@@ -196,7 +277,7 @@ namespace Yozolab.DaerD
             EditorGUIUtility.editingTextField = false;
         }
 
-        void DeleteTransitionRow(AnimatorTransitionBase transition, List<AnimatorTransitionBase> pool)
+        void DeleteTransitionRow(AnimatorTransitionBase transition, List<TransitionRow> rows)
         {
             // Deleting needs the edge object itself (it is where the transition's source node
             // lives), so this one stays a GraphSync command rather than a context notification.
@@ -204,8 +285,9 @@ namespace Yozolab.DaerD
             if (edge == null) return;
 
             AnimatorTransitionBase remaining = null;
-            foreach (var t in pool)
-                if (!ReferenceEquals(t, transition)) { remaining = t; break; }
+            foreach (var row in rows)
+                if (row.Transition != null && !ReferenceEquals(row.Transition, transition))
+                { remaining = row.Transition; break; }
 
             _selectedTransitions.Remove(transition);
             _sync.DeleteTransition(edge, transition);

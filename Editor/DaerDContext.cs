@@ -86,7 +86,7 @@ namespace Yozolab.DaerD
         /// same reason as <see cref="SelectedStatesProvider"/> — the transition inspector queries
         /// it live while repainting.
         /// </summary>
-        public Func<List<(bool isDefault, IList<AnimatorTransitionBase> transitions)>> SelectedTransitionGroupsProvider;
+        public Func<List<TransitionGroup>> SelectedTransitionGroupsProvider;
 
         public bool HasController => Controller != null;
 
@@ -333,9 +333,8 @@ namespace Yozolab.DaerD
 
         /// <summary>The transitions of the currently selected edges, grouped per edge; empty when
         /// no graph has registered a provider.</summary>
-        public List<(bool isDefault, IList<AnimatorTransitionBase> transitions)> GetSelectedTransitionGroups() =>
-            SelectedTransitionGroupsProvider?.Invoke()
-            ?? new List<(bool isDefault, IList<AnimatorTransitionBase> transitions)>();
+        public List<TransitionGroup> GetSelectedTransitionGroups() =>
+            SelectedTransitionGroupsProvider?.Invoke() ?? new List<TransitionGroup>();
 
         public void NotifyLayersChanged()
         {
