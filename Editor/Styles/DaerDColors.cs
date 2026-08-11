@@ -58,7 +58,8 @@ namespace Yozolab.DaerD
         /// graph meaning entirely different things.</summary>
         public static readonly Color DropTarget = new Color(0.30f, 0.80f, 0.85f);
 
-        /// <summary>Every transition on this edge is muted.</summary>
+        /// <summary>This line cannot fire: every transition on it is muted, or another
+        /// transition leaving the same node is soloed and shuts the rest out.</summary>
         public static readonly Color Muted = new Color(0.80f, 0.32f, 0.32f);
 
         /// <summary>The layer's default state, and the Entry edge that reaches it.</summary>

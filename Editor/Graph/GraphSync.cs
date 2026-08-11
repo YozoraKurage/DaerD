@@ -164,8 +164,7 @@ namespace Yozolab.DaerD
                 foreach (var t in sm.GetStateMachineTransitions(pair.Key))
                     AddTransitionEdge(pair.Value, ResolveDestination(t), t, edgeMap);
 
-            foreach (var edge in _edges)
-                edge.Refresh();
+            RefreshAllEdges();
 
             RestoreSelection(capturedSelection);
             // Deleting a node can leave the shared selection pointing at a destroyed object
@@ -361,6 +360,40 @@ namespace Yozolab.DaerD
         {
             foreach (var pair in _stateNodes)
                 pair.Value.RefreshLabels();
+        }
+
+        /// <summary>
+        /// Re-reads every edge, first working out what solo is doing to each one. A soloed
+        /// transition shuts out every other transition leaving the same node, so the answer
+        /// belongs to the source's whole list; the list is read from the model rather than
+        /// from the edges, because that is the list the Animator evaluates.
+        /// </summary>
+        public void RefreshAllEdges()
+        {
+            var sm = _context.CurrentStateMachine;
+            var soloBySource = new Dictionary<Node, bool>();
+            foreach (var edge in _edges)
+            {
+                bool sourceHasSolo = false;
+                var node = edge.output?.node;
+                if (node != null && !edge.IsDefaultEdge && !soloBySource.TryGetValue(node, out sourceHasSolo))
+                {
+                    sourceHasSolo = HasLiveSolo(
+                        EdgeCommands.TransitionsFrom(GraphNodeBase.EndOf(node as GraphNodeBase), sm));
+                    soloBySource[node] = sourceHasSolo;
+                }
+                edge.SetSoloContext(sourceHasSolo);
+                edge.Refresh();
+            }
+        }
+
+        /// <summary>True when one of these transitions is soloed and not also muted — muting
+        /// beats soloing, so a muted solo keeps nothing alive.</summary>
+        public static bool HasLiveSolo(IEnumerable<AnimatorTransitionBase> transitions)
+        {
+            foreach (var t in transitions)
+                if (t != null && t.solo && !t.mute) return true;
+            return false;
         }
 
         /// <summary>

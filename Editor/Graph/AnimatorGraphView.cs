@@ -119,8 +119,7 @@ namespace Yozolab.DaerD
                     _sync.RefreshAllStateNodes();
                     break;
                 case DaerDContext.GraphVisuals.AllEdges:
-                    foreach (var edge in _sync.Edges)
-                        edge.Refresh();
+                    _sync.RefreshAllEdges();
                     break;
             }
         }

@@ -32,6 +32,8 @@ namespace Yozolab.DaerD
         bool _highlighted;
         bool _hovered;
         bool _allMuted;
+        bool _sourceHasSolo;
+        bool _shutOutBySolo;
         bool _runtimeActive;
 
         public TransitionEdge()
@@ -62,6 +64,13 @@ namespace Yozolab.DaerD
             _highlighted = on;
             ApplyColor();
         }
+
+        /// <summary>
+        /// Tells the edge whether some transition leaving the same node is soloed. Solo is a
+        /// property of the source's whole list — one soloed transition shuts out every other
+        /// transition leaving that node — so no edge can work this out on its own.
+        /// </summary>
+        public void SetSoloContext(bool sourceHasSolo) => _sourceHasSolo = sourceHasSolo;
 
         /// <summary>The pointer is over the inspector row that names one of these transitions.</summary>
         public void SetHover(bool on)
@@ -126,9 +135,15 @@ namespace Yozolab.DaerD
                 if (t == null || !t.mute) { _allMuted = false; break; }
             }
 
-            tooltip = _allMuted
-                ? Transitions.Count + " muted transition(s)"
-                : Transitions.Count + " transition(s)";
+            // Muting beats soloing, so a soloed-but-muted transition keeps nothing alive.
+            bool carriesSolo = false;
+            foreach (var t in Transitions)
+                if (t != null && t.solo && !t.mute) { carriesSolo = true; break; }
+            _shutOutBySolo = _sourceHasSolo && !carriesSolo && !_allMuted;
+
+            tooltip = _allMuted ? L.Tr("{0} muted transition(s)", Transitions.Count)
+                : _shutOutBySolo ? L.Tr("{0} transition(s), shut out by a soloed transition on the same state", Transitions.Count)
+                : L.Tr("{0} transition(s)", Transitions.Count);
 
             if (Transitions.Count > 1)
             {
@@ -156,7 +171,9 @@ namespace Yozolab.DaerD
             else if (_hovered) color = DaerDColors.Hovered;
             else if (IsDefaultEdge) color = DaerDColors.DefaultEdge;
             else if (_highlighted) color = DaerDColors.FoundByQuery;
-            else if (_allMuted) color = DaerDColors.Muted;
+            // Same meaning as muted, arrived at from the other side: nothing on this line can
+            // fire. Solo has no colour of its own — it is only ever visible in what it disables.
+            else if (_allMuted || _shutOutBySolo) color = DaerDColors.Muted;
             else color = DaerDColors.Edge;
 
             edgeControl.inputColor = color;

@@ -52,6 +52,9 @@ msgstr "無効な条件"
 msgid "Dead Transition"
 msgstr "発火しない遷移"
 
+msgid "Soloed Transition"
+msgstr "Solo された遷移"
+
 msgid "Unreachable State"
 msgstr "到達不能 State"
 
@@ -95,6 +98,24 @@ msgstr "モード '{0}' は {1} 型パラメーター '{2}' に対して無効�
 
 msgid "Transition {0} has no conditions and no exit time; it can never fire."
 msgstr "遷移 {0} には条件も Exit Time もないため、発火することがありません。"
+
+msgid "'{0}' has a soloed transition, so its other {1} transition(s) never run."
+msgstr "'{0}' には Solo された遷移があるため、他の {1} 本は評価されません。"
+
+msgid "Clear Solo"
+msgstr "Solo を解除"
+
+msgid "Turn Solo off on every transition leaving this node"
+msgstr "このノードから出る全ての遷移の Solo を解除します"
+
+msgid "{0} transition(s)"
+msgstr "遷移 {0} 本"
+
+msgid "{0} muted transition(s)"
+msgstr "Mute された遷移 {0} 本"
+
+msgid "{0} transition(s), shut out by a soloed transition on the same state"
+msgstr "遷移 {0} 本 — 同じステートの Solo された遷移に阻まれて評価されません"
 
 msgid "State '{0}' has no incoming transition and is not a default state."
 msgstr "State '{0}' には入ってくる遷移がなく、Default State でもありません。"

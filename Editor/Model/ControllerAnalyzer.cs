@@ -16,6 +16,7 @@ namespace Yozolab.DaerD
                 case IssueKind.UnusedParameter: return L.Tr("Unused Parameter");
                 case IssueKind.InvalidCondition: return L.Tr("Invalid Condition");
                 case IssueKind.DeadTransition: return L.Tr("Dead Transition");
+                case IssueKind.SoloTransition: return L.Tr("Soloed Transition");
                 case IssueKind.UnreachableState: return L.Tr("Unreachable State");
                 case IssueKind.DuplicateName: return L.Tr("Duplicate Name");
                 case IssueKind.TerminalStates: return L.Tr("Terminal States");
@@ -85,6 +86,7 @@ namespace Yozolab.DaerD
             AddUnusedParameterIssues(controller, issues);
             AddConditionIssues(controller, issues);
             AddDeadTransitionIssues(controller, issues);
+            AddSoloTransitionIssues(controller, issues);
             AddUnreachableStateIssues(controller, issues);
             AddDuplicateNameIssues(controller, issues);
 
@@ -250,6 +252,61 @@ namespace Yozolab.DaerD
             fixTooltip = L.Tr("Delete this transition"),
             fix = fix,
         };
+
+        /// <summary>
+        /// Solo left switched on. It is a debugging aid — one soloed transition makes the
+        /// Animator ignore every other transition leaving the same node — and it survives being
+        /// saved, so a controller can ship with most of a state's transitions silently disabled
+        /// and nothing on screen saying so. Reported per source, and only when it actually
+        /// shuts something out: soloing the only transition a state has changes nothing.
+        /// </summary>
+        static void AddSoloTransitionIssues(AnimatorController controller, List<AnalyzerIssue> issues)
+        {
+            foreach (var sm in controller.AllStateMachines())
+            {
+                AddSoloIssue(sm.anyStateTransitions, "Any State", sm, issues);
+                foreach (var state in sm.states)
+                    AddSoloIssue(state.state.transitions, state.state.name, state.state, issues);
+            }
+        }
+
+        static void AddSoloIssue(AnimatorStateTransition[] transitions, string sourceName, Object owner,
+            List<AnalyzerIssue> issues)
+        {
+            if (!GraphSync.HasLiveSolo(transitions)) return;
+
+            int shutOut = 0;
+            foreach (var t in transitions)
+                if (t != null && !t.solo && !t.mute) shutOut++;
+            if (shutOut == 0) return;
+
+            issues.Add(new AnalyzerIssue
+            {
+                severity = IssueSeverity.Warning,
+                kind = IssueKind.SoloTransition,
+                message = L.Tr("'{0}' has a soloed transition, so its other {1} transition(s) never run.",
+                    sourceName, shutOut),
+                context = owner,
+                fixLabel = L.Tr("Clear Solo"),
+                fixTooltip = L.Tr("Turn Solo off on every transition leaving this node"),
+                fix = () => ClearSolo(transitions, owner),
+            });
+        }
+
+        static void ClearSolo(AnimatorStateTransition[] transitions, Object owner)
+        {
+            using (new UndoScope("Clear Solo"))
+            {
+                foreach (var t in transitions)
+                {
+                    if (t == null || !t.solo) continue;
+                    Undo.RegisterCompleteObjectUndo(t, "Clear Solo");
+                    t.solo = false;
+                    EditorUtility.SetDirty(t);
+                }
+                if (owner != null) EditorUtility.SetDirty(owner);
+            }
+        }
 
         static void RemoveOwnedTransition(AnimatorStateMachine anyStateOwner, AnimatorStateTransition transition)
         {

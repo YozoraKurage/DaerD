@@ -192,6 +192,82 @@ namespace Yozolab.DaerD.Tests
         }
 
         [Test]
+        public void ASoloedTransition_IsReportedWithWhatItShutsOut()
+        {
+            var controller = NewController(out var sm);
+            var a = sm.AddState("A");
+            var b = sm.AddState("B");
+            var c = sm.AddState("C");
+            var d = sm.AddState("D");
+            var soloed = a.AddTransition(b);
+            soloed.solo = true;
+            a.AddTransition(c);
+            a.AddTransition(d);
+
+            var issues = OfKind(controller, IssueKind.SoloTransition);
+
+            Assert.AreEqual(1, issues.Count);
+            StringAssert.Contains("'A'", issues[0].message);
+            StringAssert.Contains("2", issues[0].message, "the two transitions solo shuts out");
+
+            issues[0].fix();
+            Assert.IsFalse(soloed.solo);
+            Assert.IsEmpty(OfKind(controller, IssueKind.SoloTransition));
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void SoloOnTheOnlyTransitionThatCouldRun_ShutsNothingOut()
+        {
+            var controller = NewController(out var sm);
+            var a = sm.AddState("A");
+            var b = sm.AddState("B");
+            var c = sm.AddState("C");
+            a.AddTransition(b).solo = true;
+            a.AddTransition(c).mute = true;   // already disabled, so solo takes nothing from it
+
+            Assert.IsEmpty(OfKind(controller, IssueKind.SoloTransition));
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void ASoloThatIsAlsoMuted_KeepsNothingAlive()
+        {
+            var controller = NewController(out var sm);
+            var a = sm.AddState("A");
+            var b = sm.AddState("B");
+            var c = sm.AddState("C");
+            var soloed = a.AddTransition(b);
+            soloed.solo = true;
+            soloed.mute = true;   // muting beats soloing
+            a.AddTransition(c);
+
+            // With the solo muted, nothing is soloed any more and A→C runs as usual.
+            Assert.IsEmpty(OfKind(controller, IssueKind.SoloTransition));
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void SoloOnAnAnyStateTransition_IsReportedAgainstTheStateMachine()
+        {
+            var controller = NewController(out var sm);
+            var b = sm.AddState("B");
+            var c = sm.AddState("C");
+            sm.AddAnyStateTransition(b).solo = true;
+            sm.AddAnyStateTransition(c);
+
+            var issues = OfKind(controller, IssueKind.SoloTransition);
+
+            Assert.AreEqual(1, issues.Count);
+            Assert.AreSame(sm, issues[0].context);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
         public void DuplicateCondition_FixKeepsOneOfEach()
         {
             var controller = NewController(out var sm);
