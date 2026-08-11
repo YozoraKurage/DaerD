@@ -118,7 +118,7 @@ namespace Yozolab.DaerD
                 && Transitions.Count == 1 && Transitions[0] != null;
             if (showConditions)
             {
-                _conditionLabel.text = Summarize(Transitions[0]);
+                _conditionLabel.text = ParameterConverter.SummarizeConditions(Transitions[0]);
                 _conditionLabel.style.display = string.IsNullOrEmpty(_conditionLabel.text)
                     ? DisplayStyle.None
                     : DisplayStyle.Flex;
@@ -315,21 +315,6 @@ namespace Yozolab.DaerD
         }
 
         /// <summary>One-line human-readable summary of a transition's firing rule.</summary>
-        static string Summarize(AnimatorTransitionBase transition)
-        {
-            var conditions = transition.conditions;
-            if (conditions.Length == 0)
-            {
-                if (transition is AnimatorStateTransition st && st.hasExitTime)
-                    return "exit @ " + st.exitTime.ToString("0.##");
-                return "(no conditions)";
-            }
-            string text = ParameterConverter.DescribeCondition(conditions[0]);
-            if (conditions.Length == 2) text += "  ·  " + ParameterConverter.DescribeCondition(conditions[1]);
-            else if (conditions.Length > 2) text += "  +" + (conditions.Length - 1);
-            return text;
-        }
-
     }
 
     /// <summary>

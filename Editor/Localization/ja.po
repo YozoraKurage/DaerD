@@ -2838,3 +2838,12 @@ msgstr "ショートカットを既定に戻す"
 
 msgid "{0} is already {1}."
 msgstr "{0} は既に「{1}」に割り当てられています。"
+
+msgid "This arrow ({0})"
+msgstr "この矢印 ({0})"
+
+msgid "All from '{0}' ({1})"
+msgstr "'{0}' の全遷移 ({1})"
+
+msgid "(no conditions)"
+msgstr "(条件なし)"

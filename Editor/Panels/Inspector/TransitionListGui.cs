@@ -115,12 +115,18 @@ namespace Yozolab.DaerD
             return result;
         }
 
-        /// <summary>"3.  Idle → Wave" — the priority, then both ends. Naming the source on every
-        /// row is what keeps a list that mixes sources readable.</summary>
+        /// <summary>
+        /// "3.  Idle → Wave    Gesture = 1" — the priority, both ends, then what it is waiting
+        /// for. Naming the source on every row is what keeps a list that mixes sources readable;
+        /// naming the condition is what tells apart the rows of one arrow, which otherwise say
+        /// the same two state names as each other and differ only by number.
+        /// </summary>
         static string Label(TransitionRow row)
         {
             string number = row.Priority > 0 ? row.Priority + ".  " : string.Empty;
-            return number + row.Source.Label + " " + ParameterConverter.DescribeTransition(row.Transition);
+            string summary = ParameterConverter.SummarizeConditions(row.Transition);
+            return number + row.Source.Label + " " + ParameterConverter.DescribeTransition(row.Transition)
+                + (string.IsNullOrEmpty(summary) ? string.Empty : "    " + summary);
         }
 
         /// <summary>

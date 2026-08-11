@@ -50,6 +50,7 @@ namespace Yozolab.DaerD
                 return;
             }
 
+            // The switch is drawn from inside BuildRows, above the list it chooses.
             var rows = BuildRows(groups, pool, out var reorderSource);
             PruneSelection(rows, pool);
             HandleCopyPasteShortcuts();
@@ -106,20 +107,61 @@ namespace Yozolab.DaerD
         }
 
         /// <summary>
-        /// What the list shows. When every selected edge leaves the same node, it is that node's
-        /// complete transition list in evaluation order — the form that can be reordered, and the
-        /// only one where the neighbours a drag would move past are all on screen. A selection
-        /// spanning several sources falls back to just the selected transitions, each still
-        /// numbered by where it really sits.
+        /// Which of the two lists is on screen. Remembered for the session rather than saved: it
+        /// is a way of looking at the same thing, and one that the next click may want to change
+        /// anyway.
+        /// </summary>
+        static bool s_showWholeSource;
+
+        /// <summary>
+        /// The two questions this list can answer, which are not the same question.
+        ///
+        /// "What does this arrow do" wants the transitions the clicked edge carries and nothing
+        /// else — a handful of rows, together, all of them yours. "In what order does this state
+        /// try things" wants the source's complete list, which is the only form where reordering
+        /// means anything, because the neighbours a drag moves past have to be on screen.
+        ///
+        /// Showing the whole list always answered the second at the cost of the first: the two
+        /// or three rows belonging to the arrow you clicked end up scattered among the rest.
+        /// So the arrow's own transitions are the default and the whole list is one click away.
+        /// A selection spanning several sources has no whole list to offer and stays as it was.
         /// </summary>
         List<TransitionRow> BuildRows(List<TransitionGroup> groups, List<AnimatorTransitionBase> pool,
             out TransitionEnd? reorderSource)
         {
             var sm = _context.CurrentStateMachine;
-            reorderSource = SharedSource(groups);
-            return reorderSource.HasValue
-                ? TransitionListGui.RowsOf(reorderSource.Value, sm)
-                : TransitionListGui.RowsFor(pool, groups, sm);
+            var source = SharedSource(groups);
+            reorderSource = null;
+            if (!source.HasValue)
+                return TransitionListGui.RowsFor(pool, groups, sm);
+
+            var whole = TransitionListGui.RowsOf(source.Value, sm);
+            // Nothing is hidden by showing the arrow's own, so there is nothing to choose.
+            if (whole.Count <= pool.Count)
+            {
+                reorderSource = source;
+                return whole;
+            }
+
+            DrawListSwitch(source.Value.Label, pool.Count, whole.Count);
+            if (!s_showWholeSource)
+                return TransitionListGui.RowsFor(pool, groups, sm);
+
+            reorderSource = source;
+            return whole;
+        }
+
+        /// <summary>The two-way switch above the list. Only drawn when the two views differ.</summary>
+        void DrawListSwitch(string sourceName, int onThisEdge, int fromThisSource)
+        {
+            EditorGUILayout.BeginHorizontal();
+            if (GUILayout.Toggle(!s_showWholeSource, L.Tr("This arrow ({0})", onThisEdge),
+                    EditorStyles.miniButtonLeft))
+                s_showWholeSource = false;
+            if (GUILayout.Toggle(s_showWholeSource,
+                    L.Tr("All from '{0}' ({1})", sourceName, fromThisSource), EditorStyles.miniButtonRight))
+                s_showWholeSource = true;
+            EditorGUILayout.EndHorizontal();
         }
 
         /// <summary>The one node every selected edge leaves, or null when they disagree.</summary>

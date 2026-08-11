@@ -261,6 +261,28 @@ namespace Yozolab.DaerD
         }
 
         /// <summary>
+        /// What a transition is waiting for, in one line: its conditions, or its exit time when
+        /// that is all it has. Drawn on an edge in the graph and on the row that names the
+        /// transition in the inspector — where an arrow carrying several is otherwise a column
+        /// of rows reading exactly the same thing.
+        /// </summary>
+        public static string SummarizeConditions(AnimatorTransitionBase transition)
+        {
+            if (transition == null) return string.Empty;
+            var conditions = transition.conditions;
+            if (conditions.Length == 0)
+            {
+                if (transition is AnimatorStateTransition st && st.hasExitTime)
+                    return "exit @ " + st.exitTime.ToString("0.##");
+                return L.Tr("(no conditions)");
+            }
+            string text = DescribeCondition(conditions[0]);
+            if (conditions.Length == 2) text += "  ·  " + DescribeCondition(conditions[1]);
+            else if (conditions.Length > 2) text += "  +" + (conditions.Length - 1);
+            return text;
+        }
+
+        /// <summary>
         /// One condition as the graph and the analyzer both spell it: "Wet > 0.5", "!Seated",
         /// "GestureLeft = Fist". Written once here because an edge label and an analyzer
         /// message naming the same condition have to be recognisably the same sentence.
