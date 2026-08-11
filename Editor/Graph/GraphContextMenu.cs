@@ -85,18 +85,13 @@ namespace Yozolab.DaerD
             {
                 var stateNode = FirstSelected<StateNode>();
                 evt.menu.AppendAction(L.Tr("Set as Default State"), _ => _sync.SetDefaultState(stateNode.State));
+            }
 
-                CountConnectedTransitions(stateNode, out int incoming, out int outgoing, out int connected);
-                evt.menu.AppendAction(MenuPath(L.Tr("Select Transitions"), L.Tr("Incoming")) + " (" + incoming + ")",
-                    _ => SelectTransitions(stateNode, incoming: true, outgoing: false),
-                    incoming > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
-                evt.menu.AppendAction(MenuPath(L.Tr("Select Transitions"), L.Tr("Outgoing")) + " (" + outgoing + ")",
-                    _ => SelectTransitions(stateNode, incoming: false, outgoing: true),
-                    outgoing > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
-                evt.menu.AppendAction(MenuPath(L.Tr("Select Transitions"), L.Tr("All Connected")) + " (" + connected + ")",
-                    _ => SelectTransitions(stateNode, incoming: true, outgoing: true),
-                    connected > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+            BuildSelectTransitionsMenu(evt);
 
+            if (stateCount == 1)
+            {
+                var stateNode = FirstSelected<StateNode>();
                 int pasted = TransitionClipboard.Count;
                 string pasteSuffix = pasted > 1 ? " (" + pasted + ")" : string.Empty;
                 evt.menu.AppendAction(
@@ -558,41 +553,32 @@ namespace Yozolab.DaerD
 
         // ---- transition bulk selection ---------------------------------------
 
-        /// <summary>Counts the non-default transition edges entering, leaving and touching the state.</summary>
-        void CountConnectedTransitions(StateNode stateNode, out int incoming, out int outgoing, out int connected)
+        /// <summary>
+        /// Select Transitions, over the whole selection rather than one state. The counts are
+        /// what the entry would select, so "Incoming (0)" is greyed out and says why. The
+        /// keyboard's I / O / P run the same code over the same set.
+        /// </summary>
+        void BuildSelectTransitionsMenu(ContextualMenuPopulateEvent evt)
         {
-            int inc = 0, outg = 0, conn = 0;
-            _view.edges.ForEach(e =>
-            {
-                if (!(e is TransitionEdge te) || te.IsDefaultEdge) return;
-                bool isIncoming = te.input?.node == stateNode;
-                bool isOutgoing = te.output?.node == stateNode;
-                if (isIncoming) inc++;
-                if (isOutgoing) outg++;
-                if (isIncoming || isOutgoing) conn++;
-            });
-            incoming = inc;
-            outgoing = outg;
-            connected = conn;
+            var endpoints = _view.SelectedTransitionEndpoints();
+            if (endpoints.Count == 0) return;
+
+            _view.CountConnectedTransitions(endpoints, out int incoming, out int outgoing, out int connected);
+            string group = L.Tr("Select Transitions");
+            evt.menu.AppendAction(MenuPath(group, L.Tr("Incoming")) + " (" + incoming + ")",
+                _ => _view.SelectTransitionsOf(endpoints, incoming: true, outgoing: false),
+                incoming > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+            evt.menu.AppendAction(MenuPath(group, L.Tr("Outgoing")) + " (" + outgoing + ")",
+                _ => _view.SelectTransitionsOf(endpoints, incoming: false, outgoing: true),
+                outgoing > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+            evt.menu.AppendAction(MenuPath(group, L.Tr("All Connected")) + " (" + connected + ")",
+                _ => _view.SelectTransitionsOf(endpoints, incoming: true, outgoing: true),
+                connected > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
         }
 
-        /// <summary>Replaces the graph selection with the transition edges connected to the state.</summary>
-        void SelectTransitions(StateNode stateNode, bool incoming, bool outgoing)
-        {
-            // Collected before anything is selected — see AnimatorGraphView.ReplaceSelection
-            // for why selecting inside the walk changes what the walk finds.
-            var wanted = new List<TransitionEdge>();
-            _view.edges.ForEach(e =>
-            {
-                if (!(e is TransitionEdge te) || te.IsDefaultEdge) return;
-                if ((incoming && te.input?.node == stateNode) ||
-                    (outgoing && te.output?.node == stateNode))
-                    wanted.Add(te);
-            });
-            _view.ClearSelection();
-            foreach (var edge in wanted)
-                _view.AddToSelection(edge);
-        }
+        /// <summary>What one node alone is connected to, for the commands that stay single-state.</summary>
+        void CountConnectedTransitions(StateNode stateNode, out int incoming, out int outgoing, out int connected) =>
+            _view.CountConnectedTransitions(new HashSet<Node> { stateNode }, out incoming, out outgoing, out connected);
 
         // ---- transition edge menu --------------------------------------------
 

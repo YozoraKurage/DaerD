@@ -520,27 +520,66 @@ namespace Yozolab.DaerD
                 AddToSelection(element);
         }
 
-        /// <summary>Selects the transitions touching any selected state node; false when no
-        /// state is selected (so the key can fall through).</summary>
-        bool SelectTransitionsOfSelection(bool incoming, bool outgoing)
+        /// <summary>
+        /// Every selected node a transition can start from or land on. Not only states: a
+        /// sub-state machine and the Entry / Any State nodes carry transitions too, and asking
+        /// for "the transitions connected to what I have selected" means those as well.
+        /// </summary>
+        public HashSet<Node> SelectedTransitionEndpoints()
         {
-            var stateNodes = new HashSet<StateNode>();
+            var endpoints = new HashSet<Node>();
             foreach (var selected in selection)
-                if (selected is StateNode stateNode)
-                    stateNodes.Add(stateNode);
-            if (stateNodes.Count == 0) return false;
+                if (selected is GraphNodeBase node) endpoints.Add(node);
+            return endpoints;
+        }
+
+        /// <summary>Counts the non-default transition edges entering, leaving and touching any
+        /// of <paramref name="endpoints"/>. An edge between two of them is incoming and outgoing
+        /// at once, and is one connection.</summary>
+        public void CountConnectedTransitions(HashSet<Node> endpoints,
+            out int incoming, out int outgoing, out int connected)
+        {
+            int inc = 0, outg = 0, conn = 0;
+            edges.ForEach(edge =>
+            {
+                if (!(edge is TransitionEdge te) || te.IsDefaultEdge) return;
+                bool into = te.input?.node != null && endpoints.Contains(te.input.node);
+                bool from = te.output?.node != null && endpoints.Contains(te.output.node);
+                if (into) inc++;
+                if (from) outg++;
+                if (into || from) conn++;
+            });
+            incoming = inc;
+            outgoing = outg;
+            connected = conn;
+        }
+
+        /// <summary>
+        /// Replaces the selection with the transitions touching <paramref name="endpoints"/>.
+        /// False when that would select nothing — the keyboard shortcut then falls through
+        /// instead of clearing what the user had.
+        /// </summary>
+        public bool SelectTransitionsOf(HashSet<Node> endpoints, bool incoming, bool outgoing)
+        {
+            if (endpoints.Count == 0) return false;
 
             var wanted = new List<GraphElement>();
             edges.ForEach(edge =>
             {
-                if (!(edge is TransitionEdge transitionEdge) || transitionEdge.IsDefaultEdge) return;
-                if ((incoming && transitionEdge.input?.node is StateNode into && stateNodes.Contains(into))
-                    || (outgoing && transitionEdge.output?.node is StateNode from && stateNodes.Contains(from)))
-                    wanted.Add(transitionEdge);
+                if (!(edge is TransitionEdge te) || te.IsDefaultEdge) return;
+                if ((incoming && te.input?.node != null && endpoints.Contains(te.input.node))
+                    || (outgoing && te.output?.node != null && endpoints.Contains(te.output.node)))
+                    wanted.Add(te);
             });
+            if (wanted.Count == 0) return false;
+
             ReplaceSelection(wanted);
             return true;
         }
+
+        /// <summary>I / O / P: the transitions touching whatever is selected right now.</summary>
+        bool SelectTransitionsOfSelection(bool incoming, bool outgoing) =>
+            SelectTransitionsOf(SelectedTransitionEndpoints(), incoming, outgoing);
 
         /// <summary>Duplicates the selected states in place (Ctrl+D), keeping their internal transitions.</summary>
         public void DuplicateSelectedStates()
