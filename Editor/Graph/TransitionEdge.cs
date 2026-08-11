@@ -163,12 +163,14 @@ namespace Yozolab.DaerD
         void ApplyColor()
         {
             Color color;
-            if (selected) color = DaerDColors.Selected;
+            // First, above selection itself. Hover answers "which line is the row under my
+            // pointer", and the question is asked precisely when several rows are selected at
+            // once — if selection outranked it, the answer would be invisible exactly when it
+            // is needed.
+            if (_hovered) color = DaerDColors.Hovered;
+            else if (selected) color = DaerDColors.Selected;
             // Above the rest: it is the one thing on screen that is only true for a few frames.
             else if (_runtimeActive) color = DaerDColors.PlayingEdge;
-            // Above everything the graph decided for itself: the pointer is asking about this
-            // one line right now, and the answer is worthless if some earlier state hides it.
-            else if (_hovered) color = DaerDColors.Hovered;
             else if (IsDefaultEdge) color = DaerDColors.DefaultEdge;
             else if (_highlighted) color = DaerDColors.FoundByQuery;
             // Same meaning as muted, arrived at from the other side: nothing on this line can
@@ -178,6 +180,12 @@ namespace Yozolab.DaerD
 
             edgeControl.inputColor = color;
             edgeControl.outputColor = color;
+            // Thicker as well as recoloured. A hovered edge can be one of a dozen selected at
+            // once, all the same colour a moment ago; weight reads across a zoomed-out graph
+            // where a hue change on a one-pixel line does not.
+            edgeControl.edgeWidth = (int)(_hovered
+                ? TransitionEdgeControl.HoverWidth : TransitionEdgeControl.LineWidth);
+            edgeControl.MarkDirtyRepaint();
         }
 
         /// <summary>
@@ -337,7 +345,9 @@ namespace Yozolab.DaerD
     /// </summary>
     class TransitionEdgeControl : EdgeControl
     {
-        const float LineWidth = 3f;
+        public const float LineWidth = 3f;
+        /// <summary>Width while an inspector row naming this edge is under the pointer.</summary>
+        public const float HoverWidth = 6f;
         const float ArrowLength = 13f;
         const float ArrowHalfWidth = 7f;
 

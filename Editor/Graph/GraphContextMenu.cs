@@ -579,14 +579,19 @@ namespace Yozolab.DaerD
         /// <summary>Replaces the graph selection with the transition edges connected to the state.</summary>
         void SelectTransitions(StateNode stateNode, bool incoming, bool outgoing)
         {
-            _view.ClearSelection();
+            // Collected before anything is selected — see AnimatorGraphView.ReplaceSelection
+            // for why selecting inside the walk changes what the walk finds.
+            var wanted = new List<TransitionEdge>();
             _view.edges.ForEach(e =>
             {
                 if (!(e is TransitionEdge te) || te.IsDefaultEdge) return;
                 if ((incoming && te.input?.node == stateNode) ||
                     (outgoing && te.output?.node == stateNode))
-                    _view.AddToSelection(te);
+                    wanted.Add(te);
             });
+            _view.ClearSelection();
+            foreach (var edge in wanted)
+                _view.AddToSelection(edge);
         }
 
         // ---- transition edge menu --------------------------------------------

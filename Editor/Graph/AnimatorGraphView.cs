@@ -485,23 +485,39 @@ namespace Yozolab.DaerD
         /// <summary>Ctrl+A: every node (states, sub-state machines, special nodes).</summary>
         void SelectAllNodes()
         {
-            ClearSelection();
+            var wanted = new List<GraphElement>();
             nodes.ForEach(node =>
             {
                 if (node is StateNode || node is SubStateMachineNode || node is SpecialNode)
-                    AddToSelection(node);
+                    wanted.Add(node);
             });
+            ReplaceSelection(wanted);
         }
 
         /// <summary>Ctrl+Shift+A: every transition edge (the default-state link is not one).</summary>
         void SelectAllTransitions()
         {
-            ClearSelection();
+            var wanted = new List<GraphElement>();
             edges.ForEach(edge =>
             {
                 if (edge is TransitionEdge transitionEdge && !transitionEdge.IsDefaultEdge)
-                    AddToSelection(transitionEdge);
+                    wanted.Add(transitionEdge);
             });
+            ReplaceSelection(wanted);
+        }
+
+        /// <summary>
+        /// Selects exactly <paramref name="elements"/>, which must already have been collected.
+        /// Selecting a node brings it to the front of its parent, and reordering the visual tree
+        /// while a UQuery is still walking it makes the walk skip elements and revisit others —
+        /// the same key press then selects a different set every time. Gathering first and
+        /// selecting afterwards is what makes the answer the same twice running.
+        /// </summary>
+        void ReplaceSelection(List<GraphElement> elements)
+        {
+            ClearSelection();
+            foreach (var element in elements)
+                AddToSelection(element);
         }
 
         /// <summary>Selects the transitions touching any selected state node; false when no
@@ -514,14 +530,15 @@ namespace Yozolab.DaerD
                     stateNodes.Add(stateNode);
             if (stateNodes.Count == 0) return false;
 
-            ClearSelection();
+            var wanted = new List<GraphElement>();
             edges.ForEach(edge =>
             {
                 if (!(edge is TransitionEdge transitionEdge) || transitionEdge.IsDefaultEdge) return;
                 if ((incoming && transitionEdge.input?.node is StateNode into && stateNodes.Contains(into))
                     || (outgoing && transitionEdge.output?.node is StateNode from && stateNodes.Contains(from)))
-                    AddToSelection(transitionEdge);
+                    wanted.Add(transitionEdge);
             });
+            ReplaceSelection(wanted);
             return true;
         }
 
