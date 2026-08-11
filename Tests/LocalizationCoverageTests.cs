@@ -116,6 +116,49 @@ namespace Yozolab.DaerD.Tests
                 + string.Join("\n", stranded));
         }
 
+        static readonly Regex Placeholder = new Regex(@"\{(\d+)[^}]*\}", RegexOptions.Compiled);
+
+        /// <summary>
+        /// A translation that uses a placeholder the English string does not have throws when it
+        /// is formatted — <c>string.Format</c> is handed fewer arguments than the text asks for.
+        /// It throws in Japanese only, so nothing catches it until a Japanese user reaches that
+        /// message. The test run itself is pinned to English (see <c>TestLanguage</c>), which
+        /// makes every other assertion mean something and makes this one necessary: it is the
+        /// half of the risk that pinning hides.
+        /// </summary>
+        [Test]
+        public void NoTranslationAsksForAnArgumentTheEnglishDoesNot()
+        {
+            var catalog = PoCatalog.Load("ja");
+            Assert.That(catalog, Is.Not.Empty, "ja.po did not load — the rest of this test proves nothing");
+
+            var wrong = new List<string>();
+            foreach (var pair in catalog)
+            {
+                if (string.IsNullOrEmpty(pair.Value)) continue;
+                var english = Indices(pair.Key);
+                var japanese = Indices(pair.Value);
+                japanese.ExceptWith(english);
+                if (japanese.Count == 0) continue;
+                var extra = new List<string>();
+                foreach (int index in japanese) extra.Add("{" + index + "}");
+                extra.Sort();
+                wrong.Add("  " + string.Join(", ", extra) + " is not in the English:\n    \""
+                    + Excerpt(pair.Key) + "\"\n    \"" + Excerpt(pair.Value) + "\"");
+            }
+
+            Assert.IsEmpty(wrong,
+                wrong.Count + " translation(s) would throw when formatted:\n" + string.Join("\n", wrong));
+        }
+
+        static HashSet<int> Indices(string text)
+        {
+            var found = new HashSet<int>();
+            foreach (Match match in Placeholder.Matches(text))
+                if (int.TryParse(match.Groups[1].Value, out int index)) found.Add(index);
+            return found;
+        }
+
         /// <summary>
         /// Rewording an English string orphans its translation rather than updating it, and from
         /// the catalog's side that is indistinguishable from a brand new string. The old entry is
