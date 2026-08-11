@@ -29,6 +29,7 @@ namespace Yozolab.DaerD
                 case IssueKind.VrcParameters: return L.Tr("VRC Parameters");
                 case IssueKind.ClipBindings: return L.Tr("Clip Bindings");
                 case IssueKind.AapDriver: return L.Tr("AAP / Driver");
+                case IssueKind.AapLayers: return L.Tr("AAP / Layers");
             }
             return kind.ToString();
         }
@@ -96,7 +97,11 @@ namespace Yozolab.DaerD
             AddLayerIssues(controller, issues);
             AddMissingBehaviourIssues(controller, issues);
             AddDirectBlendTreeIssues(controller, issues);
-            AddAapDriverIssues(controller, issues);
+            // The clip walk behind this is the most expensive thing the analyzer does; both
+            // AAP checks read the one result.
+            var aapWrites = AapWriteScan.CollectByLayer(controller);
+            AddAapDriverIssues(controller, aapWrites, issues);
+            AddAapLayerIssues(controller, aapWrites, issues);
 
             // Parameter-store checks only run against the store the user explicitly
             // associated with this controller (never a scene guess — DaerD is also used on
@@ -262,22 +267,56 @@ namespace Yozolab.DaerD
             EditorUtility.SetDirty(owner);
         }
 
+        /// <summary>
+        /// States the layer can never enter, walked forward from Entry
+        /// (<see cref="ControllerReachability"/>) rather than asked one at a time whether
+        /// something points at them. The difference is a whole island: a handful of states
+        /// wired to each other, all with incoming transitions, and nothing outside leading
+        /// in. The message says which of the two it is, because they are undone differently —
+        /// one needs a transition drawn to it, the other needs one drawn to its island.
+        /// </summary>
         static void AddUnreachableStateIssues(AnimatorController controller, List<AnalyzerIssue> issues)
         {
-            var reachable = new HashSet<AnimatorState>();
-            foreach (var sm in controller.AllStateMachines())
-                if (sm.defaultState != null) reachable.Add(sm.defaultState);
+            var withIncoming = new HashSet<AnimatorState>();
             foreach (var t in controller.AllTransitions())
-                if (t.destinationState != null) reachable.Add(t.destinationState);
-            foreach (var s in controller.AllStates())
-                if (!reachable.Contains(s))
-                    issues.Add(new AnalyzerIssue
+                if (t.destinationState != null) withIncoming.Add(t.destinationState);
+
+            var layers = controller.layers;
+            for (int i = 0; i < layers.Length; i++)
+            {
+                // A synced layer replays the source layer's states, which the source layer's
+                // own pass already covers.
+                if (layers[i].syncedLayerIndex >= 0) continue;
+                var root = layers[i].stateMachine;
+                if (root == null) continue;
+                var reachable = ControllerReachability.ReachableStates(root);
+                foreach (var sm in root.SelfAndDescendants())
+                    foreach (var cs in sm.states)
                     {
-                        severity = IssueSeverity.Warning,
-                        kind = IssueKind.UnreachableState,
-                        message = L.Tr("State '{0}' has no incoming transition and is not a default state.", s.name),
-                        context = s,
-                    });
+                        var state = cs.state;
+                        if (state == null || reachable.Contains(state)) continue;
+                        issues.Add(new AnalyzerIssue
+                        {
+                            severity = IssueSeverity.Warning,
+                            kind = IssueKind.UnreachableState,
+                            message = withIncoming.Contains(state)
+                                ? L.Tr("State '{0}' is only reachable from states that are themselves unreachable.", state.name)
+                                : L.Tr("State '{0}' has no incoming transition and is not a default state.", state.name),
+                            context = state,
+                        });
+                    }
+            }
+        }
+
+        /// <summary>Every state the animator can end up in, across every layer.</summary>
+        static HashSet<AnimatorState> CollectReachableStates(AnimatorController controller)
+        {
+            var all = new HashSet<AnimatorState>();
+            var layers = controller.layers;
+            for (int i = 0; i < layers.Length; i++)
+                all.UnionWith(ControllerReachability.ReachableStates(
+                    ControllerReachability.PlayedMachine(controller, i)));
+            return all;
         }
 
         static void AddDuplicateNameIssues(AnimatorController controller, List<AnalyzerIssue> issues)
@@ -598,14 +637,23 @@ namespace Yozolab.DaerD
         /// blend tree on the same frame. Both directions are silent failures in game,
         /// which is exactly what an analyzer is for.
         ///
-        /// Warnings rather than errors while the scan only asks whether SOME reachable clip
-        /// animates the parameter: a clip on a weight-0 layer satisfies that without ever
-        /// running. Reachability would make these certain enough to call errors.
+        /// Both sides of the pair are held to the same standard: neither a clip nor a driver
+        /// counts unless the state carrying it can be entered. A finding is about two things
+        /// meeting at runtime, so either one being unreachable means the meeting never happens.
+        ///
+        /// Warnings rather than errors because reachability is only half of "does this run".
+        /// The other half is the layer's weight, and a weight-0 layer can be raised by a Layer
+        /// Control behaviour in a controller this scan never sees — so a clip parked there
+        /// still counts, and the finding is not certain enough to be an error.
         /// </summary>
-        static void AddAapDriverIssues(AnimatorController controller, List<AnalyzerIssue> issues)
+        static void AddAapDriverIssues(AnimatorController controller,
+            List<AapWriteScan.LayerWrites> aapWrites, List<AnalyzerIssue> issues)
         {
-            var written = AapWriteScan.CollectWrittenParameters(controller);
+            var written = new HashSet<string>();
+            foreach (var layer in aapWrites) written.UnionWith(layer.parameters);
             if (written.Count == 0) return;
+
+            var live = CollectReachableStates(controller);
 
             // Collected per parameter and direction rather than per driver: one async-sync
             // layer holds a structurally identical driver on every send state, and a row
@@ -613,11 +661,19 @@ namespace Yozolab.DaerD
             var reads = new Dictionary<string, Hit>();
             var writes = new Dictionary<string, Hit>();
             foreach (var state in controller.AllStates())
+            {
+                if (!live.Contains(state)) continue;
                 foreach (var behaviour in state.behaviours)
                     TallyAapDriver(behaviour, state, written, reads, writes);
+            }
             foreach (var sm in controller.AllStateMachines())
+            {
+                // A state machine's behaviours run on entering it, which needs a state inside
+                // it to be enterable.
+                if (!HasReachableState(sm, live)) continue;
                 foreach (var behaviour in sm.behaviours)
                     TallyAapDriver(behaviour, sm, written, reads, writes);
+            }
 
             foreach (var name in SortedKeys(reads))
                 issues.Add(new AnalyzerIssue
@@ -639,6 +695,63 @@ namespace Yozolab.DaerD
                         name, writes[name].count),
                     context = writes[name].context,
                 });
+        }
+
+        static bool HasReachableState(AnimatorStateMachine sm, HashSet<AnimatorState> live)
+        {
+            foreach (var descendant in sm.SelfAndDescendants())
+                foreach (var cs in descendant.states)
+                    if (cs.state != null && live.Contains(cs.state)) return true;
+            return false;
+        }
+
+        /// <summary>
+        /// One AAP written from more than one layer. Inside a Direct blend tree the children
+        /// add up — that is the whole idiom — but layers do not: an Override layer replaces
+        /// whatever the layers below it produced, so the lower gadget's output never leaves
+        /// its own layer, at full weight, with nothing in the inspector saying so.
+        ///
+        /// Only layers that play by default are compared. A weight-0 layer holding a second
+        /// writer is the normal way to build a deliberate override, and Additive layers do add
+        /// up, so neither is a conflict worth a row.
+        /// </summary>
+        static void AddAapLayerIssues(AnimatorController controller,
+            List<AapWriteScan.LayerWrites> aapWrites, List<AnalyzerIssue> issues)
+        {
+            var byParameter = new Dictionary<string, List<AapWriteScan.LayerWrites>>();
+            foreach (var layer in aapWrites)
+            {
+                if (layer.blendingMode != AnimatorLayerBlendingMode.Override) continue;
+                // The base layer's weight is forced to 1 at runtime whatever the field says.
+                if (layer.layerIndex > 0 && layer.defaultWeight <= 0f) continue;
+                foreach (var name in layer.parameters)
+                {
+                    if (!byParameter.TryGetValue(name, out var writers))
+                        byParameter[name] = writers = new List<AapWriteScan.LayerWrites>();
+                    writers.Add(layer);
+                }
+            }
+
+            var names = new List<string>(byParameter.Keys);
+            names.Sort(System.StringComparer.Ordinal);
+            foreach (var name in names)
+            {
+                var writers = byParameter[name];
+                if (writers.Count < 2) continue;
+                var winner = writers[writers.Count - 1];   // CollectByLayer comes back in layer order
+                var labels = new List<string>();
+                foreach (var writer in writers) labels.Add("'" + writer.layerName + "'");
+                issues.Add(new AnalyzerIssue
+                {
+                    severity = IssueSeverity.Warning,
+                    kind = IssueKind.AapLayers,
+                    message = L.Tr(
+                        "Animation writes '{0}' (AAP) on {1} layers: {2}. Layers replace one another instead of adding up, so only the last one ('{3}') reaches the parameter.",
+                        name, writers.Count, string.Join(", ", labels), winner.layerName),
+                    context = controller,
+                    layerIndex = winner.layerIndex,
+                });
+            }
         }
 
         /// <summary>How many driver entries hit one parameter, and the first place to jump to.</summary>

@@ -440,13 +440,17 @@ namespace Yozolab.DaerD.Tests
             AnimationUtility.SetEditorCurve(clip,
                 EditorCurveBinding.FloatCurve(string.Empty, typeof(Animator), "Aap"),
                 AnimationCurve.Constant(0f, 1f, 1f));
-            sm.AddState("Write").motion = clip;
+            var write = sm.AddState("Write");   // the layer's default state
+            write.motion = clip;
 
             // Two states driving the same parameter the same way collapse into one issue —
-            // an async-sync layer holds dozens of these.
+            // an async-sync layer holds dozens of these. Both are wired up: a driver on a
+            // state the layer can never enter is not a finding.
             foreach (var name in new[] { "A", "B" })
             {
-                var driver = VrcParameterDriver.AddTo(sm.AddState(name));
+                var state = sm.AddState(name);
+                write.AddTransition(state);
+                var driver = VrcParameterDriver.AddTo(state);
                 VrcParameterDriver.AddCopyEntry(driver, "Aap", "Plain");   // reads the AAP
                 VrcParameterDriver.AddSetEntry(driver, "Aap", 1f);         // writes over it
             }
@@ -460,8 +464,9 @@ namespace Yozolab.DaerD.Tests
             {
                 StringAssert.Contains("'Aap'", issue.message);
                 StringAssert.Contains("2 Parameter Driver", issue.message);
-                // Warning, not Error: a clip on a weight-0 layer counts as "animation writes
-                // it" without ever running, so the finding isn't certain enough to be one.
+                // Warning, not Error: the walk knows which states can be entered, but not
+                // whether a weight-0 layer gets raised by a Layer Control living in some other
+                // controller — so the finding is still short of certain.
                 Assert.AreEqual(IssueSeverity.Warning, issue.severity);
             }
 
@@ -480,6 +485,155 @@ namespace Yozolab.DaerD.Tests
             VrcParameterDriver.AddSetEntry(driver, "Plain", 1f);
 
             Assert.AreEqual(0, AapDriverIssues(controller).Count);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void DriverOnAStateTheLayerCanNeverEnter_IsNotFlagged()
+        {
+            if (!VrcParameterDriver.SdkAvailable)
+                Assert.Ignore("The VRChat SDK is not present in this project.");
+
+            var controller = NewController(out var sm);
+            controller.AddParameter("Aap", AnimatorControllerParameterType.Float);
+            controller.AddParameter("Plain", AnimatorControllerParameterType.Float);
+            sm.AddState("Write").motion = AapClip("Aap");   // default state, so this one runs
+
+            // Nothing transitions to Parked, so the driver on it never executes and the
+            // collision it would cause never happens.
+            var driver = VrcParameterDriver.AddTo(sm.AddState("Parked"));
+            VrcParameterDriver.AddCopyEntry(driver, "Aap", "Plain");
+            VrcParameterDriver.AddSetEntry(driver, "Aap", 1f);
+
+            Assert.AreEqual(0, AapDriverIssues(controller).Count);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        // ---- AAP written from more than one layer ------------------------------
+
+        static AnimationClip AapClip(string parameter)
+        {
+            var clip = new AnimationClip { name = parameter + " AAP" };
+            AnimationUtility.SetEditorCurve(clip,
+                EditorCurveBinding.FloatCurve(string.Empty, typeof(Animator), parameter),
+                AnimationCurve.Constant(0f, 1f, 1f));
+            return clip;
+        }
+
+        /// <summary>Adds a layer whose default state writes <paramref name="parameter"/> as an AAP.</summary>
+        static void AddAapLayer(AnimatorController controller, string name, string parameter, float weight)
+        {
+            controller.AddLayer(name);
+            var layers = controller.layers;
+            layers[layers.Length - 1].defaultWeight = weight;
+            controller.layers = layers;
+            controller.layers[controller.layers.Length - 1].stateMachine
+                .AddState("Write").motion = AapClip(parameter);
+        }
+
+        static List<AnalyzerIssue> AapLayerIssues(AnimatorController controller) =>
+            ControllerAnalyzer.Analyze(controller).FindAll(i => i.kind == IssueKind.AapLayers);
+
+        [Test]
+        public void OneAapWrittenFromTwoPlayingLayers_IsFlaggedWithTheLayerThatWins()
+        {
+            var controller = new AnimatorController();
+            controller.AddParameter("Aap", AnimatorControllerParameterType.Float);
+            AddAapLayer(controller, "Gadgets", "Aap", 1f);
+            AddAapLayer(controller, "Gadgets 2", "Aap", 1f);
+
+            var issues = AapLayerIssues(controller);
+
+            Assert.AreEqual(1, issues.Count);
+            StringAssert.Contains("'Aap'", issues[0].message);
+            StringAssert.Contains("'Gadgets'", issues[0].message);
+            StringAssert.Contains("'Gadgets 2'", issues[0].message);
+            Assert.AreEqual(IssueSeverity.Warning, issues[0].severity);
+            // Ping opens the layer that actually reaches the parameter — the last one.
+            Assert.AreEqual(1, issues[0].layerIndex);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void TwoLayersWritingDifferentAaps_AreNotAConflict()
+        {
+            var controller = new AnimatorController();
+            controller.AddParameter("A", AnimatorControllerParameterType.Float);
+            controller.AddParameter("B", AnimatorControllerParameterType.Float);
+            AddAapLayer(controller, "Gadgets", "A", 1f);
+            AddAapLayer(controller, "Gadgets 2", "B", 1f);
+
+            Assert.AreEqual(0, AapLayerIssues(controller).Count);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void ASecondWriterOnAWeightZeroLayer_IsNotAConflict()
+        {
+            var controller = new AnimatorController();
+            controller.AddParameter("Aap", AnimatorControllerParameterType.Float);
+            AddAapLayer(controller, "Gadgets", "Aap", 1f);
+            // A weight-0 layer holding an override is how you build a deliberate one.
+            AddAapLayer(controller, "Override", "Aap", 0f);
+
+            Assert.AreEqual(0, AapLayerIssues(controller).Count);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void TwoStatesOfOneLayerWritingTheSameAap_AreNotAConflict()
+        {
+            var controller = new AnimatorController();
+            controller.AddParameter("Aap", AnimatorControllerParameterType.Float);
+            AddAapLayer(controller, "Gadgets", "Aap", 1f);
+            var sm = controller.layers[0].stateMachine;
+            var second = sm.AddState("Write 2");
+            second.motion = AapClip("Aap");
+            sm.defaultState.AddTransition(second);
+
+            Assert.AreEqual(0, AapLayerIssues(controller).Count);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        // ---- unreachable states -------------------------------------------------
+
+        [Test]
+        public void AnIslandOfStates_IsReportedAsUnreachable_NotAsHavingNoIncomingTransition()
+        {
+            var controller = NewController(out var sm);
+            sm.AddState("A");           // default
+            var island = sm.AddState("Island");
+            var partner = sm.AddState("Partner");
+            island.AddTransition(partner);
+            partner.AddTransition(island);
+
+            var issues = OfKind(controller, IssueKind.UnreachableState);
+
+            Assert.AreEqual(2, issues.Count);
+            foreach (var issue in issues)
+                StringAssert.Contains("themselves unreachable", issue.message,
+                    "both have an incoming transition — the old wording would be wrong");
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void AStateNothingPointsAt_KeepsTheOlderWording()
+        {
+            var controller = NewController(out var sm);
+            sm.AddState("A");           // default
+            sm.AddState("Loose");
+
+            var issues = OfKind(controller, IssueKind.UnreachableState);
+
+            Assert.AreEqual(1, issues.Count);
+            StringAssert.Contains("no incoming transition", issues[0].message);
 
             Object.DestroyImmediate(controller);
         }

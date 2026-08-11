@@ -92,6 +92,41 @@ namespace Yozolab.DaerD.Tests
         }
 
         [Test]
+        public void AClipOnAStateTheLayerCanNeverEnter_IsNotAWrite()
+        {
+            var controller = NewController();
+            var sm = controller.layers[0].stateMachine;
+            sm.AddState("Live").motion = AapClip("Plain");   // default state
+            sm.AddState("Parked").motion = AapClip("Aap");   // nothing transitions here
+
+            var written = AapWriteScan.CollectWrittenParameters(controller);
+
+            CollectionAssert.Contains(written, "Plain");
+            CollectionAssert.DoesNotContain(written, "Aap");
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void ByLayer_KeepsTheWritersApart()
+        {
+            var controller = NewController();
+            controller.layers[0].stateMachine.AddState("Write").motion = AapClip("Aap");
+            controller.AddLayer("Second");
+            controller.layers[1].stateMachine.AddState("Write").motion = AapClip("Plain");
+
+            var byLayer = AapWriteScan.CollectByLayer(controller);
+
+            Assert.AreEqual(2, byLayer.Count);
+            Assert.AreEqual(0, byLayer[0].layerIndex);
+            CollectionAssert.AreEquivalent(new[] { "Aap" }, byLayer[0].parameters);
+            Assert.AreEqual(1, byLayer[1].layerIndex);
+            CollectionAssert.AreEquivalent(new[] { "Plain" }, byLayer[1].parameters);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
         public void NoController_IsEmpty()
         {
             Assert.AreEqual(0, AapWriteScan.CollectWrittenParameters(null).Count);

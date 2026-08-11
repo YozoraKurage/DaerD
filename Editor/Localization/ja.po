@@ -99,6 +99,9 @@ msgstr "遷移 {0} には条件も Exit Time もないため、発火するこ�
 msgid "State '{0}' has no incoming transition and is not a default state."
 msgstr "State '{0}' には入ってくる遷移がなく、Default State でもありません。"
 
+msgid "State '{0}' is only reachable from states that are themselves unreachable."
+msgstr "State '{0}' に入れるのは、それ自体が到達不能な State からだけです。"
+
 msgid "State name '{0}' is used more than once in '{1}'."
 msgstr "State 名 '{0}' が '{1}' 内で複数回使われています。"
 
@@ -1465,6 +1468,12 @@ msgstr "'{0}' はアニメーションが書き込むパラメーター（AAP）
 
 msgid "Animation writes '{0}' (AAP), and {1} Parameter Driver entr(ies) write it too. The blend tree overwrites the driver every frame, so the driver's value never sticks."
 msgstr "'{0}' はアニメーションが書き込むパラメーター（AAP）ですが、Parameter Driver の {1} 個のエントリも書き込んでいます。ブレンドツリーが毎フレーム上書きするため、Driver の書き込みは残りません。"
+
+msgid "AAP / Layers"
+msgstr "AAP / レイヤー"
+
+msgid "Animation writes '{0}' (AAP) on {1} layers: {2}. Layers replace one another instead of adding up, so only the last one ('{3}') reaches the parameter."
+msgstr "'{0}' はアニメーションが書き込むパラメーター（AAP）ですが、{1} 個のレイヤー（{2}）が書き込んでいます。レイヤーは加算されず上書きするため、パラメーターに届くのは最後の '{3}' だけです。"
 
 msgid "Clip '{0}' has {1} binding(s) whose path no longer exists under '{2}'."
 msgstr "クリップ '{0}' に、'{2}' 配下に存在しないパスのバインディングが {1} 件あります。"

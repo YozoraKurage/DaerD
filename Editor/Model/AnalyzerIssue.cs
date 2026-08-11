@@ -23,6 +23,7 @@ namespace Yozolab.DaerD
         VrcParameters,
         ClipBindings,
         AapDriver,
+        AapLayers,
     }
 
     class AnalyzerIssue
