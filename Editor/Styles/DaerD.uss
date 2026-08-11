@@ -240,6 +240,16 @@ GridBackground {
     flex-direction: row;
 }
 
+/* Play-mode readout: how far the running state is through its clip. The width is set from
+   code; only the geometry and colour live here. */
+.state-node__progress {
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    height: 2px;
+    background-color: rgb(140, 230, 160);
+}
+
 .state-node__badge {
     font-size: 8px;
     -unity-font-style: bold;

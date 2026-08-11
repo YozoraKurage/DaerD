@@ -1583,6 +1583,9 @@ msgstr "発火"
 msgid "Set this trigger on the running Animator"
 msgstr "実行中の Animator でこの Trigger を立てます"
 
+msgid "Weight on the running Animator"
+msgstr "実行中の Animator でのウェイト"
+
 msgid "Delete and Clean"
 msgstr "削除してクリーン"
 

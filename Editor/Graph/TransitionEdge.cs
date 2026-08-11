@@ -25,6 +25,7 @@ namespace Yozolab.DaerD
         public bool IsDefaultEdge;
 
         static readonly Color HighlightColor = new Color(0.96f, 0.84f, 0.22f);
+        static readonly Color RuntimeColor = new Color(0.35f, 0.85f, 0.45f);
         static readonly Color SelectedColor = new Color(0.40f, 0.70f, 1.00f);
         static readonly Color NormalColor = new Color(0.80f, 0.80f, 0.80f);
         static readonly Color MutedColor = new Color(0.80f, 0.32f, 0.32f);
@@ -37,6 +38,7 @@ namespace Yozolab.DaerD
         readonly Label _conditionLabel;
         bool _highlighted;
         bool _allMuted;
+        bool _runtimeActive;
 
         public TransitionEdge()
         {
@@ -64,6 +66,15 @@ namespace Yozolab.DaerD
         public void SetHighlight(bool on)
         {
             _highlighted = on;
+            ApplyColor();
+        }
+
+        /// <summary>The crossfade running right now travels this edge. Called every tick while
+        /// the editor plays, so it does nothing when the answer has not changed.</summary>
+        public void SetRuntimeActive(bool on)
+        {
+            if (_runtimeActive == on) return;
+            _runtimeActive = on;
             ApplyColor();
         }
 
@@ -136,6 +147,8 @@ namespace Yozolab.DaerD
         {
             Color color;
             if (selected) color = SelectedColor;
+            // Above the rest: it is the one thing on screen that is only true for a few frames.
+            else if (_runtimeActive) color = RuntimeColor;
             else if (IsDefaultEdge) color = DefaultEdgeColor;
             else if (_highlighted) color = HighlightColor;
             else if (_allMuted) color = MutedColor;

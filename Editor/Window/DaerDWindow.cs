@@ -626,23 +626,30 @@ namespace Yozolab.DaerD
             // its last values as though they were still live.
             _context?.Live.Clear();
             _parametersPanel?.Refresh();
+            _layersPanel?.Refresh();
+            _graphView?.Sync.SetRuntimePlayback(default);
             _graphView?.Sync.RequestRebuild();
         }
 
         void PollRuntime()
         {
             if (!EditorApplication.isPlaying || _context == null || _controller == null) return;
-            if (EditorApplication.timeSinceStartup - _lastRuntimePoll < 0.1) return;
-            _lastRuntimePoll = EditorApplication.timeSinceStartup;
 
-            _context.Live.Poll(_controller);
-            _parametersPanel?.Refresh();
+            // Two cadences. The panels are throttled — numbers changing more than ten times a
+            // second are unreadable anyway, and each refresh repaints an IMGUI list. The graph
+            // reads every tick, because a progress bar that steps ten times a second looks
+            // broken rather than slow.
+            if (EditorApplication.timeSinceStartup - _lastRuntimePoll >= 0.1)
+            {
+                _lastRuntimePoll = EditorApplication.timeSinceStartup;
+                _context.Live.Poll(_controller);
+                _parametersPanel?.Refresh();
+                _layersPanel?.Refresh();
+            }
 
-            var animator = _context.Live.Current;
-            if (_graphView == null || animator == null || animator.layerCount == 0) return;
-            int layer = Mathf.Clamp(_context.LayerIndex, 0, animator.layerCount - 1);
-            var info = animator.GetCurrentAnimatorStateInfo(layer);
-            _graphView.Sync.SetRuntimeStateHash(info.shortNameHash);
+            if (_graphView == null) return;
+            _graphView.Sync.SetRuntimePlayback(
+                AnimatorPlayback.Read(_context.Live.Current, _context.LayerIndex));
         }
 
         static StyleSheet LoadStyleSheet()

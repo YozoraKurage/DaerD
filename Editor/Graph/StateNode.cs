@@ -15,7 +15,6 @@ namespace Yozolab.DaerD
         readonly Label _motionLabel;
         readonly Action<AnimatorState> _onOpenBlendTree;
         static readonly Color DefaultStateColor = new Color(0.78f, 0.45f, 0.13f);
-        static readonly Color CurrentStateColor = new Color(0.20f, 0.55f, 0.25f);
         static readonly Color HighlightBorderColor = new Color(0.96f, 0.84f, 0.22f);
         static readonly Color DropTargetColor = new Color(0.42f, 0.82f, 0.46f);
         // Opaque #393939. The stock node-border / port columns are translucent, so the node body
@@ -28,11 +27,17 @@ namespace Yozolab.DaerD
 
         bool _highlighted;
         bool _dropTarget;
+        // The playback the node is currently showing; a fresh node shows none, which is what
+        // these start as.
+        bool _playing;
+        bool _next;
+        float _shownProgress = -1f;
         TextField _renameField;
         readonly VisualElement _nodeBorder;
         readonly Label _wdBadge;
         readonly Label _behaviourBadge;
         readonly VisualElement _badgeRow;
+        readonly VisualElement _progressBar;
 
         public StateNode(AnimatorState state, Action<AnimatorState> onOpenBlendTree = null)
         {
@@ -73,6 +78,13 @@ namespace Yozolab.DaerD
             _badgeRow.Add(_wdBadge);
             _badgeRow.Add(_behaviourBadge);
             Add(_badgeRow);
+
+            // Play-mode readout: a hairline across the bottom of the node, hidden until the
+            // layer is actually in this state.
+            _progressBar = new VisualElement { pickingMode = PickingMode.Ignore };
+            _progressBar.AddToClassList("state-node__progress");
+            _progressBar.style.display = DisplayStyle.None;
+            Add(_progressBar);
 
             capabilities |= Capabilities.Movable | Capabilities.Selectable | Capabilities.Deletable
                           | Capabilities.Copiable | Capabilities.Snappable;
@@ -193,10 +205,28 @@ namespace Yozolab.DaerD
                 isDefault ? DefaultStateColor : (StyleColor)StyleKeyword.Null;
         }
 
-        /// <summary>Highlights the node when it is the live state during play mode.</summary>
-        public void SetIsCurrent(bool isCurrent)
+        /// <summary>Highlights the node when the running Animator is in this state, or heading
+        /// into it, and runs the bar along the bottom edge as the clip plays.</summary>
+        public override void SetPlayback(bool playing, bool next, float progress)
         {
-            ApplyBodyColor(isCurrent ? CurrentStateColor : BodyColor);
+            // A Direct blend tree is played continuously and goes nowhere. Its normalized time
+            // is a real number that means nothing, and a bar sweeping across a gadget layer
+            // would read as progress through something.
+            bool bar = playing
+                && !(State.motion is BlendTree tree && tree.blendType == BlendTreeType.Direct);
+            float shown = bar ? Mathf.Clamp01(progress) : -1f;
+
+            // Called for every node on every editor tick while playing. Only the one node that
+            // moved may touch its style; the rest would repaint the whole graph for nothing.
+            if (playing == _playing && next == _next && Mathf.Approximately(shown, _shownProgress))
+                return;
+            _playing = playing;
+            _next = next;
+            _shownProgress = shown;
+
+            ApplyBodyColor(playing ? PlayingColor : next ? PlayingNextColor : BodyColor);
+            _progressBar.style.display = bar ? DisplayStyle.Flex : DisplayStyle.None;
+            if (bar) _progressBar.style.width = new Length(shown * 100f, LengthUnit.Percent);
         }
 
         /// <summary>Outlines the node when a find-usages query matches it.</summary>
