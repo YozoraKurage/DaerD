@@ -2718,3 +2718,27 @@ msgstr "オブジェクト"
 
 msgid "BlendShapes"
 msgstr "BlendShape"
+
+msgid "(missing)"
+msgstr "(存在しません)"
+
+msgid "(no parameter)"
+msgstr "(パラメーター未設定)"
+
+msgid "A fraction of the source state's length: 1 is its end, 0.5 is halfway, 2 is after two loops."
+msgstr "遷移元ステートの長さに対する割合です。1 で末尾、0.5 で中間、2 なら 2 周した後になります。"
+
+msgid "Where the destination state starts, as a fraction of its own length."
+msgstr "遷移先ステートの再生開始位置を、そのステートの長さに対する割合で指定します。"
+
+msgid "Duration (s)"
+msgstr "Duration（秒）"
+
+msgid "Duration (%)"
+msgstr "Duration（割合）"
+
+msgid "Crossfade length in seconds."
+msgstr "クロスフェードの長さを秒で指定します。"
+
+msgid "Crossfade length as a fraction of the source state's length — 0.25 is a quarter of it."
+msgstr "クロスフェードの長さを、遷移元ステートの長さに対する割合で指定します（0.25 でその 1/4）。"

@@ -357,10 +357,15 @@ namespace Yozolab.DaerD
             bool hasExitTime = EditorGUILayout.Toggle(L.Tr("Has Exit Time"), stateTransition.hasExitTime);
             float exitTime;
             using (new EditorGUI.DisabledScope(!hasExitTime))
-                exitTime = EditorGUILayout.FloatField(L.Tr("Exit Time"), stateTransition.exitTime);
+                exitTime = EditorGUILayout.FloatField(new GUIContent(L.Tr("Exit Time"),
+                        L.Tr("A fraction of the source state's length: 1 is its end, 0.5 is halfway, "
+                             + "2 is after two loops.")),
+                    stateTransition.exitTime);
             bool fixedDuration = EditorGUILayout.Toggle(L.Tr("Fixed Duration"), stateTransition.hasFixedDuration);
-            float duration = EditorGUILayout.FloatField(L.Tr("Duration"), stateTransition.duration);
-            float offset = EditorGUILayout.FloatField(L.Tr("Offset"), stateTransition.offset);
+            float duration = EditorGUILayout.FloatField(DurationLabel(fixedDuration), stateTransition.duration);
+            float offset = EditorGUILayout.FloatField(new GUIContent(L.Tr("Offset"),
+                    L.Tr("Where the destination state starts, as a fraction of its own length.")),
+                stateTransition.offset);
             var interruption = (TransitionInterruptionSource)EditorGUILayout.EnumPopup(L.Tr("Interruption"), stateTransition.interruptionSource);
             bool ordered = EditorGUILayout.Toggle(L.Tr("Ordered Interruption"), stateTransition.orderedInterruption);
             bool toSelf = EditorGUILayout.Toggle(L.Tr("Can Transition To Self"), stateTransition.canTransitionToSelf);
@@ -378,6 +383,18 @@ namespace Yozolab.DaerD
                 EditorUtility.SetDirty(stateTransition);
             }
         }
+
+        /// <summary>
+        /// The duration field changes unit with the Fixed Duration toggle above it, and the
+        /// label never said which one was in force — the same 0.25 means a quarter of a second
+        /// or a quarter of the source clip. Named the way Unity's own inspector names them, so
+        /// the two editors agree; the tooltip carries what "(%)" actually means, since the
+        /// field holds a fraction rather than a number out of a hundred.
+        /// </summary>
+        static GUIContent DurationLabel(bool fixedDuration) => fixedDuration
+            ? new GUIContent(L.Tr("Duration (s)"), L.Tr("Crossfade length in seconds."))
+            : new GUIContent(L.Tr("Duration (%)"),
+                L.Tr("Crossfade length as a fraction of the source state's length — 0.25 is a quarter of it."));
 
         void DrawConditions(AnimatorTransitionBase transition, AnimatorController controller)
         {
@@ -401,9 +418,7 @@ namespace Yozolab.DaerD
                 var condition = working[i];
                 EditorGUILayout.BeginHorizontal();
 
-                int paramIndex = Mathf.Max(0, Array.IndexOf(paramNames, condition.parameter));
-                paramIndex = EditorGUILayout.Popup(paramIndex, paramNames);
-                condition.parameter = paramNames[paramIndex];
+                DrawParameterPicker(condition, paramNames);
 
                 var type = typeByName.TryGetValue(condition.parameter, out var t) ? t : AnimatorControllerParameterType.Float;
                 ConditionGui.DrawConditionValue(condition, type);
@@ -423,8 +438,7 @@ namespace Yozolab.DaerD
             }
             if (GUILayout.Button(L.Tr("+ Add Condition")))
             {
-                var type = typeByName.TryGetValue(paramNames[0], out var t) ? t : AnimatorControllerParameterType.Float;
-                working.Add(new TransitionClipboard.ConditionData { parameter = paramNames[0], mode = PanelGui.ModesFor(type)[0] });
+                working.Add(NextCondition(working, paramNames, typeByName));
                 changed = true;
             }
 
@@ -443,5 +457,75 @@ namespace Yozolab.DaerD
                 _context.NotifyParametersChanged();
             }
         }
+        /// <summary>
+        /// The parameter dropdown for one condition row. A condition naming a parameter the
+        /// controller no longer declares keeps that name — as an extra, red entry at the end of
+        /// the list — instead of reading as the first parameter. It used to silently become the
+        /// first one: nothing was written while the row was merely drawn, but editing any other
+        /// row on the same transition saved the whole working list, so the broken condition
+        /// quietly turned into a working one pointing somewhere else, and the analyzer's
+        /// complaint about it disappeared with it.
+        /// </summary>
+        static void DrawParameterPicker(TransitionClipboard.ConditionData condition, string[] paramNames)
+        {
+            int index = Array.IndexOf(paramNames, condition.parameter);
+            bool missing = index < 0;
+
+            var options = paramNames;
+            if (missing)
+            {
+                options = new string[paramNames.Length + 1];
+                Array.Copy(paramNames, options, paramNames.Length);
+                options[paramNames.Length] = MissingLabel(condition.parameter);
+                index = paramNames.Length;
+            }
+
+            var previous = GUI.color;
+            if (missing) GUI.color = DaerDColors.Warning;
+            int picked = EditorGUILayout.Popup(index, options);
+            GUI.color = previous;
+
+            // Picking the missing entry itself is a no-op; picking a real one is the repair.
+            if (picked < paramNames.Length) condition.parameter = paramNames[picked];
+        }
+
+        static string MissingLabel(string parameter) =>
+            (string.IsNullOrEmpty(parameter) ? L.Tr("(no parameter)") : parameter) + "  " + L.Tr("(missing)");
+
+        /// <summary>
+        /// What "+ Add Condition" starts from. A second condition on a numeric parameter is
+        /// almost always the other half of a range, so it inherits the last row's parameter and
+        /// takes the opposite comparison — Greater then Less. Bool and Trigger have no range to
+        /// build, and a second condition on the same one only ever contradicts the first, so
+        /// they fall back to the first parameter in the list.
+        /// </summary>
+        public static TransitionClipboard.ConditionData NextCondition(List<TransitionClipboard.ConditionData> working,
+            string[] paramNames, Dictionary<string, AnimatorControllerParameterType> typeByName)
+        {
+            string parameter = paramNames[0];
+            AnimatorConditionMode? opposite = null;
+
+            if (working.Count > 0)
+            {
+                var last = working[working.Count - 1];
+                if (Array.IndexOf(paramNames, last.parameter) >= 0
+                    && typeByName.TryGetValue(last.parameter, out var lastType)
+                    && (lastType == AnimatorControllerParameterType.Float
+                        || lastType == AnimatorControllerParameterType.Int))
+                {
+                    parameter = last.parameter;
+                    if (last.mode == AnimatorConditionMode.Greater) opposite = AnimatorConditionMode.Less;
+                    else if (last.mode == AnimatorConditionMode.Less) opposite = AnimatorConditionMode.Greater;
+                }
+            }
+
+            var type = typeByName.TryGetValue(parameter, out var t) ? t : AnimatorControllerParameterType.Float;
+            return new TransitionClipboard.ConditionData
+            {
+                parameter = parameter,
+                mode = opposite ?? PanelGui.ModesFor(type)[0],
+            };
+        }
+
     }
 }
