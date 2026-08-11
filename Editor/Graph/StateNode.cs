@@ -14,16 +14,6 @@ namespace Yozolab.DaerD
         readonly Label _nameLabel;
         readonly Label _motionLabel;
         readonly Action<AnimatorState> _onOpenBlendTree;
-        static readonly Color DefaultStateColor = new Color(0.78f, 0.45f, 0.13f);
-        static readonly Color HighlightBorderColor = new Color(0.96f, 0.84f, 0.22f);
-        static readonly Color DropTargetColor = new Color(0.42f, 0.82f, 0.46f);
-        // Opaque #393939. The stock node-border / port columns are translucent, so the node body
-        // showed the graph background through it and overlapping states bled through. Painting the
-        // rounded node-border (not the square root) plus the port columns opaque fixes both.
-        static readonly Color BodyColor = new Color(0.224f, 0.224f, 0.224f);
-        static readonly Color BadgeWdOnColor = new Color(0.47f, 0.78f, 0.51f);
-        static readonly Color BadgeBOnColor = new Color(0.55f, 0.67f, 0.94f);
-        static readonly Color BadgeOffColor = new Color(0.42f, 0.42f, 0.42f);
 
         bool _highlighted;
         bool _dropTarget;
@@ -101,7 +91,7 @@ namespace Yozolab.DaerD
             });
 
             _nodeBorder = this.Q("node-border");
-            ApplyBodyColor(BodyColor);
+            ApplyBodyColor(DaerDColors.StateBody);
 
             RefreshLabels();
             RefreshExpandedState();
@@ -132,9 +122,9 @@ namespace Yozolab.DaerD
             var behaviours = State.behaviours;
             int behaviourCount = behaviours != null ? behaviours.Length : 0;
             _badgeRow.style.display = DaerDSettings.ShowStateBadges ? DisplayStyle.Flex : DisplayStyle.None;
-            _wdBadge.style.color = State.writeDefaultValues ? BadgeWdOnColor : BadgeOffColor;
+            _wdBadge.style.color = State.writeDefaultValues ? DaerDColors.BadgeWriteDefaultsOn : DaerDColors.BadgeOff;
             _wdBadge.tooltip = "Write Defaults: " + (State.writeDefaultValues ? "ON" : "OFF");
-            _behaviourBadge.style.color = behaviourCount > 0 ? BadgeBOnColor : BadgeOffColor;
+            _behaviourBadge.style.color = behaviourCount > 0 ? DaerDColors.BadgeBehavioursOn : DaerDColors.BadgeOff;
             _behaviourBadge.tooltip = behaviourCount > 0
                 ? behaviourCount + " StateMachineBehaviour(s)"
                 : "No StateMachineBehaviours";
@@ -202,7 +192,7 @@ namespace Yozolab.DaerD
         public void SetIsDefault(bool isDefault)
         {
             _nameLabel.style.backgroundColor =
-                isDefault ? DefaultStateColor : (StyleColor)StyleKeyword.Null;
+                isDefault ? DaerDColors.DefaultState : (StyleColor)StyleKeyword.Null;
         }
 
         /// <summary>Highlights the node when the running Animator is in this state, or heading
@@ -224,7 +214,7 @@ namespace Yozolab.DaerD
             _next = next;
             _shownProgress = shown;
 
-            ApplyBodyColor(playing ? PlayingColor : next ? PlayingNextColor : BodyColor);
+            ApplyBodyColor(playing ? DaerDColors.Playing : next ? DaerDColors.PlayingNext : DaerDColors.StateBody);
             _progressBar.style.display = bar ? DisplayStyle.Flex : DisplayStyle.None;
             if (bar) _progressBar.style.width = new Length(shown * 100f, LengthUnit.Percent);
         }
@@ -249,12 +239,12 @@ namespace Yozolab.DaerD
             StyleFloat width;
             if (_dropTarget)
             {
-                color = DropTargetColor;
+                color = DaerDColors.DropTarget;
                 width = 2.5f;
             }
             else if (_highlighted)
             {
-                color = HighlightBorderColor;
+                color = DaerDColors.FoundByQuery;
                 width = 2f;
             }
             else

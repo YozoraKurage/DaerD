@@ -194,7 +194,7 @@ namespace Yozolab.DaerD
                 var control = controls[i];
                 EditorGUILayout.BeginHorizontal();
                 var prev = GUI.backgroundColor;
-                if (i == _selected) GUI.backgroundColor = new Color(0.40f, 0.60f, 0.90f);
+                if (i == _selected) GUI.backgroundColor = DaerDColors.SelectedRow;
                 string label = control.name + "  (" + TypeLabel(control.type) + ")";
                 if (GUILayout.Button(label, EditorStyles.miniButtonLeft))
                     _selected = i;

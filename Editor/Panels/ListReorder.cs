@@ -29,11 +29,6 @@ namespace Yozolab.DaerD
     {
         public const float HandleWidth = 18f;
 
-        static readonly Color GripColor = new Color(0.50f, 0.50f, 0.50f);
-        static readonly Color GripHoverColor = new Color(0.80f, 0.80f, 0.80f);
-        static readonly Color DragRowColor = new Color(0.40f, 0.60f, 0.90f, 0.22f);
-        static readonly Color InsertLineColor = new Color(0.40f, 0.70f, 1.00f);
-
         readonly List<Rect> _rows = new List<Rect>();
         int _controlId;
         int _dragIndex = -1;   // row being dragged, -1 when idle
@@ -162,12 +157,12 @@ namespace Yozolab.DaerD
             if (_rows.Count == 0) return;
 
             if (_dragIndex >= 0 && _dragIndex < _rows.Count)
-                EditorGUI.DrawRect(_rows[_dragIndex], DragRowColor);
+                EditorGUI.DrawRect(_rows[_dragIndex], DaerDColors.DragRow);
 
             int gap = InsertGap();
             float y = gap < _rows.Count ? _rows[gap].y : _rows[_rows.Count - 1].yMax;
             var bounds = _rows[0];
-            EditorGUI.DrawRect(new Rect(bounds.x, y - 1f, bounds.width, 2f), InsertLineColor);
+            EditorGUI.DrawRect(new Rect(bounds.x, y - 1f, bounds.width, 2f), DaerDColors.Selected);
         }
 
         static void DrawGrip(Rect rect, bool active)
@@ -175,8 +170,8 @@ namespace Yozolab.DaerD
             var e = Event.current;
             if (e.type != EventType.Repaint) return;
 
-            var color = active ? InsertLineColor
-                : rect.Contains(e.mousePosition) ? GripHoverColor : GripColor;
+            var color = active ? DaerDColors.Selected
+                : rect.Contains(e.mousePosition) ? DaerDColors.GripHover : DaerDColors.Grip;
             const float barW = 9f, barH = 1.5f, gap = 3f;
             float x = rect.x + (rect.width - barW) * 0.5f;
             float y = rect.center.y - (barH * 3f + gap * 2f) * 0.5f;

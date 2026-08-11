@@ -12,8 +12,6 @@ namespace Yozolab.DaerD
         public BlendTree Parent { get; }
         public override object Model => Child.motion;
 
-        static readonly Color HeaderColor = new Color(0.36f, 0.50f, 0.32f);
-        static readonly Color EmptyHeaderColor = new Color(0.45f, 0.32f, 0.32f);
 
         public BlendTreeChildNode(BlendTree parent, ChildMotion child, System.Action onClick, System.Action onDoubleClick)
         {
@@ -28,7 +26,7 @@ namespace Yozolab.DaerD
 
             var motion = child.motion;
             title = motion != null ? motion.name : "(empty)";
-            titleContainer.style.backgroundColor = motion != null ? HeaderColor : EmptyHeaderColor;
+            titleContainer.style.backgroundColor = motion != null ? DaerDColors.BlendTreeChildHeader : DaerDColors.BlendTreeEmptyHeader;
 
             var body = new VisualElement();
             body.style.paddingLeft = 8;

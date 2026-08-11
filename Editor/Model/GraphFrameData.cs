@@ -17,7 +17,7 @@ namespace Yozolab.DaerD
         public class Frame
         {
             public string title = "Frame";
-            public Color color = new Color(0.32f, 0.45f, 0.60f, 1f);
+            public Color color = DaerDColors.DefaultFrame;
             public Rect bounds;
             public bool moveNodesWithFrame = true;
             /// A locked frame cannot be moved, resized, renamed or deleted from the graph.
@@ -30,7 +30,7 @@ namespace Yozolab.DaerD
         public class Note
         {
             public string text = "Memo";
-            public Color color = new Color(0.93f, 0.86f, 0.51f, 1f);
+            public Color color = DaerDColors.DefaultNote;
             public Rect bounds;
             public int fontSize = 12;
             public AnimatorStateMachine stateMachine;

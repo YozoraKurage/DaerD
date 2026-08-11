@@ -48,7 +48,7 @@ namespace Yozolab.DaerD
 
                 bool isCurrent = i == Context.LayerIndex;
                 var prev = GUI.backgroundColor;
-                if (isCurrent) GUI.backgroundColor = PanelGui.SelectionTint;
+                if (isCurrent) GUI.backgroundColor = DaerDColors.SelectedRow;
                 if (GUILayout.Button(layers[i].name, EditorStyles.miniButton))
                     Context.SetLayer(i);
                 GUI.backgroundColor = prev;
@@ -107,7 +107,7 @@ namespace Yozolab.DaerD
         void DrawHomeRow()
         {
             var prev = GUI.backgroundColor;
-            if (Context.IsHomeSelected) GUI.backgroundColor = PanelGui.SelectionTint;
+            if (Context.IsHomeSelected) GUI.backgroundColor = DaerDColors.SelectedRow;
             if (GUILayout.Button(L.Tr("Home"), EditorStyles.miniButton))
                 Context.SelectHome();
             GUI.backgroundColor = prev;

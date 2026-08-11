@@ -612,16 +612,10 @@ namespace Yozolab.DaerD
             var flagged = Violations(request, columns);
             var intervals = AsyncSyncBuilder.RefreshIntervals(request);
             float rowHeight = Manual ? ManualRowHeight : TimelineRowHeight;
-            var mark = EditorGUIUtility.isProSkin
-                ? new Color(0.35f, 0.65f, 0.95f)
-                : new Color(0.20f, 0.45f, 0.80f);
-            var clash = EditorGUIUtility.isProSkin
-                ? new Color(0.85f, 0.35f, 0.30f)
-                : new Color(0.75f, 0.20f, 0.15f);
-            var flag = new Color(clash.r, clash.g, clash.b, 0.22f);
-            var track = EditorGUIUtility.isProSkin
-                ? new Color(1f, 1f, 1f, 0.06f)
-                : new Color(0f, 0f, 0f, 0.06f);
+            var mark = DaerDColors.SyncMark;
+            var clash = DaerDColors.SyncClash;
+            var flag = DaerDColors.Fade(clash, 0.22f);
+            var track = DaerDColors.SyncTrack;
 
             // Any press or release outside a lane ends the stroke — the row that owns the
             // press claims it again below. Rows only see the events that land on them, so a

@@ -111,7 +111,7 @@ namespace Yozolab.DaerD
 
                 bool selected = _selectedTransitions.Contains(t);
                 var prevBackground = GUI.backgroundColor;
-                if (selected) GUI.backgroundColor = PanelGui.SelectionTint;
+                if (selected) GUI.backgroundColor = DaerDColors.SelectedRow;
                 if (GUILayout.Button((i + 1) + ".  " + ParameterConverter.DescribeTransition(t), EditorStyles.miniButton))
                     HandleRowClick(pool, i);
                 GUI.backgroundColor = prevBackground;

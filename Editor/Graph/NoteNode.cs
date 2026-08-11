@@ -72,7 +72,7 @@ namespace Yozolab.DaerD
         {
             var c = Note.color;
             var borderColor = selected
-                ? new Color(0.40f, 0.70f, 1.00f)
+                ? DaerDColors.Selected
                 : new Color(c.r * 0.55f, c.g * 0.55f, c.b * 0.55f, Mathf.Clamp01(c.a + 0.25f));
             float width = selected ? 2f : 1f;
             style.borderTopColor = borderColor;

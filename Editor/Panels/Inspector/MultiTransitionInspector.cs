@@ -102,7 +102,7 @@ namespace Yozolab.DaerD
                 EditorGUILayout.BeginHorizontal();
 
                 var prevColor = GUI.color;
-                if (!sharedByAll) GUI.color = new Color(1f, 0.85f, 0.4f);   // amber marks partial coverage
+                if (!sharedByAll) GUI.color = DaerDColors.Partial;   // amber marks partial coverage
                 EditorGUILayout.LabelField(entry.count + "/" + total, EditorStyles.miniLabel, GUILayout.Width(32));
                 GUI.color = prevColor;
 

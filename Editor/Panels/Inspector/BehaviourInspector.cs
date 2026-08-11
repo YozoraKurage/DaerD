@@ -118,13 +118,13 @@ namespace Yozolab.DaerD
             bool selected = _selectedBehaviours.Contains(behaviour);
 
             var boxBackground = GUI.backgroundColor;
-            if (selected) GUI.backgroundColor = PanelGui.SelectionTint;
+            if (selected) GUI.backgroundColor = DaerDColors.SelectedRow;
             EditorGUILayout.BeginVertical(EditorStyles.helpBox);
             GUI.backgroundColor = boxBackground;
 
             EditorGUILayout.BeginHorizontal();
             var titleBackground = GUI.backgroundColor;
-            if (selected) GUI.backgroundColor = PanelGui.SelectionTint;
+            if (selected) GUI.backgroundColor = DaerDColors.SelectedRow;
             if (GUILayout.Button(BehaviourTitle(behaviour), BehaviourTitleStyle))
                 HandleBehaviourRowClick(rows, index);
             GUI.backgroundColor = titleBackground;

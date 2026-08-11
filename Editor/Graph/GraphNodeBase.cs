@@ -1,6 +1,5 @@
 using System;
 using UnityEditor.Experimental.GraphView;
-using UnityEngine;
 using UnityEngine.UIElements;
 
 namespace Yozolab.DaerD
@@ -13,14 +12,6 @@ namespace Yozolab.DaerD
 
         /// <summary>The underlying animator object (AnimatorState, AnimatorStateMachine, ...).</summary>
         public abstract object Model { get; }
-
-        /// <summary>Play-mode colours, shared so that a state and the sub-state machine standing
-        /// in for one of its states light up the same way.</summary>
-        protected static readonly Color PlayingColor = new Color(0.20f, 0.55f, 0.25f);
-
-        /// <summary>Where a running transition is headed — the same green, held back, so the two
-        /// ends of a crossfade read as one thing happening rather than two states at once.</summary>
-        protected static readonly Color PlayingNextColor = new Color(0.16f, 0.36f, 0.20f);
 
         /// <summary>What this node is doing in the running Animator. Nodes that have nothing to
         /// show for it (Entry, Exit, Any State) keep the default no-op.</summary>

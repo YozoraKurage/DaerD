@@ -146,7 +146,7 @@ namespace Yozolab.DaerD
                 visibleReal.Add(i);
 
                 var prevColor = GUI.color;
-                if (unused.Contains(p.name)) GUI.color = new Color(1f, 0.6f, 0.6f);
+                if (unused.Contains(p.name)) GUI.color = DaerDColors.Warning;
                 EditorGUI.BeginChangeCheck();
                 string newName = EditorGUILayout.DelayedTextField(p.name, GUILayout.MinWidth(90));
                 if (EditorGUI.EndChangeCheck() && newName != p.name && !string.IsNullOrEmpty(newName))
@@ -315,7 +315,7 @@ namespace Yozolab.DaerD
 
             EditorGUILayout.BeginHorizontal();
             var prev = GUI.color;
-            if (capacity >= 0 && used > capacity) GUI.color = new Color(1f, 0.5f, 0.5f);
+            if (capacity >= 0 && used > capacity) GUI.color = DaerDColors.Warning;
             string label = capacity >= 0
                 ? L.Tr("{0}: {1} / {2} bit", _store.Kind, used, capacity)
                 : L.Tr("{0}: {1} bit", _store.Kind, used);

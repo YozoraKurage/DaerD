@@ -11,8 +11,6 @@ namespace Yozolab.DaerD
         public AnimatorStateMachine StateMachine { get; }
         public override object Model => StateMachine;
 
-        static readonly Color HeaderColor = new Color(0.20f, 0.34f, 0.46f);
-
         bool _playing;
         bool _next;
 
@@ -25,7 +23,7 @@ namespace Yozolab.DaerD
 
             capabilities |= Capabilities.Movable | Capabilities.Selectable | Capabilities.Deletable
                           | Capabilities.Copiable | Capabilities.Snappable;
-            titleContainer.style.backgroundColor = HeaderColor;
+            titleContainer.style.backgroundColor = DaerDColors.SubStateMachineHeader;
 
             RegisterCallback<MouseDownEvent>(evt =>
             {
@@ -54,7 +52,7 @@ namespace Yozolab.DaerD
             _playing = playing;
             _next = next;
             titleContainer.style.backgroundColor =
-                playing ? PlayingColor : next ? PlayingNextColor : HeaderColor;
+                playing ? DaerDColors.Playing : next ? DaerDColors.PlayingNext : DaerDColors.SubStateMachineHeader;
         }
 
         public void RefreshLabels() => title = StateMachine.name + "  ▸";

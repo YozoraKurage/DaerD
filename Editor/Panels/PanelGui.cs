@@ -11,9 +11,6 @@ namespace Yozolab.DaerD
     /// from.</summary>
     static class PanelGui
     {
-        /// <summary>Background tint of a selected row, wherever a panel draws one.</summary>
-        public static readonly Color SelectionTint = new Color(0.40f, 0.60f, 0.90f);
-
         static readonly AnimatorConditionMode[] IntModes =
         {
             AnimatorConditionMode.Greater, AnimatorConditionMode.Less,
@@ -25,7 +22,7 @@ namespace Yozolab.DaerD
         {
             EditorGUILayout.Space(5);
             var rect = EditorGUILayout.GetControlRect(false, 1);
-            EditorGUI.DrawRect(rect, new Color(0f, 0f, 0f, 0.35f));
+            EditorGUI.DrawRect(rect, DaerDColors.Separator);
             EditorGUILayout.Space(5);
         }
 
