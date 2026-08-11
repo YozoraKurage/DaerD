@@ -378,22 +378,13 @@ namespace Yozolab.DaerD
                 var node = edge.output?.node;
                 if (node != null && !edge.IsDefaultEdge && !soloBySource.TryGetValue(node, out sourceHasSolo))
                 {
-                    sourceHasSolo = HasLiveSolo(
+                    sourceHasSolo = EdgeCommands.HasLiveSolo(
                         EdgeCommands.TransitionsFrom(GraphNodeBase.EndOf(node as GraphNodeBase), sm));
                     soloBySource[node] = sourceHasSolo;
                 }
                 edge.SetSoloContext(sourceHasSolo);
                 edge.Refresh();
             }
-        }
-
-        /// <summary>True when one of these transitions is soloed and not also muted — muting
-        /// beats soloing, so a muted solo keeps nothing alive.</summary>
-        public static bool HasLiveSolo(IEnumerable<AnimatorTransitionBase> transitions)
-        {
-            foreach (var t in transitions)
-                if (t != null && t.solo && !t.mute) return true;
-            return false;
         }
 
         /// <summary>

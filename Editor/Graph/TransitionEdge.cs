@@ -321,37 +321,12 @@ namespace Yozolab.DaerD
                     return "exit @ " + st.exitTime.ToString("0.##");
                 return "(no conditions)";
             }
-            string text = Describe(conditions[0]);
-            if (conditions.Length == 2) text += "  ·  " + Describe(conditions[1]);
+            string text = ParameterConverter.DescribeCondition(conditions[0]);
+            if (conditions.Length == 2) text += "  ·  " + ParameterConverter.DescribeCondition(conditions[1]);
             else if (conditions.Length > 2) text += "  +" + (conditions.Length - 1);
             return text;
         }
 
-        static string Describe(AnimatorCondition condition)
-        {
-            switch (condition.mode)
-            {
-                case AnimatorConditionMode.If: return condition.parameter;
-                case AnimatorConditionMode.IfNot: return "!" + condition.parameter;
-                case AnimatorConditionMode.Greater: return condition.parameter + " > " + DescribeThreshold(condition);
-                case AnimatorConditionMode.Less: return condition.parameter + " < " + DescribeThreshold(condition);
-                case AnimatorConditionMode.Equals: return condition.parameter + " = " + DescribeThreshold(condition);
-                case AnimatorConditionMode.NotEqual: return condition.parameter + " ≠ " + DescribeThreshold(condition);
-                default: return condition.parameter;
-            }
-        }
-
-        /// <summary>GestureLeft / GestureRight values read as gesture names ("Fist"), other
-        /// thresholds as plain numbers.</summary>
-        static string DescribeThreshold(AnimatorCondition condition)
-        {
-            if (VrcParameters.IsGestureParameter(condition.parameter))
-            {
-                var gesture = VrcParameters.GestureLabel(condition.threshold);
-                if (gesture != null) return gesture;
-            }
-            return condition.threshold.ToString("0.##");
-        }
     }
 
     /// <summary>

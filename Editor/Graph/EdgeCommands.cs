@@ -103,6 +103,16 @@ namespace Yozolab.DaerD
             }
         }
 
+        /// <summary>True when one of these transitions is soloed and not also muted — muting
+        /// beats soloing, so a muted solo keeps nothing alive. Lives here rather than with the
+        /// graph because the analyzer asks it of a controller nobody has opened.</summary>
+        public static bool HasLiveSolo(IEnumerable<AnimatorTransitionBase> transitions)
+        {
+            foreach (var t in transitions)
+                if (t != null && t.solo && !t.mute) return true;
+            return false;
+        }
+
         /// <summary>
         /// Moves one transition of <paramref name="source"/> from index <paramref name="from"/> to
         /// index <paramref name="to"/>, changing which one the Animator tries first. Returns false

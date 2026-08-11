@@ -2745,3 +2745,18 @@ msgstr "クロスフェードの長さを、遷移元ステートの長さに対
 
 msgid "Fit the whole graph in view (A). F fits the selection."
 msgstr "グラフ全体が収まるように表示します（A キー）。F キーで選択範囲に合わせます。"
+
+msgid "Any State Retrigger"
+msgstr "Any State の自己割り込み"
+
+msgid "Transition {0} asks for {1} at the same time; it can never fire."
+msgstr "遷移 {0} は {1} を同時に要求しているため、発火することがありません。"
+
+msgid "{0} Any State transition(s) can interrupt themselves; while the condition still holds, the destination state restarts instead of playing on."
+msgstr "Any State からの遷移 {0} 本が自分自身に割り込めます。条件が成立し続けている間、遷移先ステートは先へ進まずに頭から再生し直されます。"
+
+msgid "Turn Off"
+msgstr "オフにする"
+
+msgid "Clear Can Transition To Self on these transitions"
+msgstr "これらの遷移の Can Transition To Self を解除します"

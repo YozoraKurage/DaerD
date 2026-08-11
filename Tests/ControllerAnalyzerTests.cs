@@ -268,6 +268,111 @@ namespace Yozolab.DaerD.Tests
         }
 
         [Test]
+        public void ATransitionThatAsksForTwoIncompatibleThings_CanNeverFire()
+        {
+            var controller = NewController(out var sm);
+            controller.AddParameter("Wet", AnimatorControllerParameterType.Float);
+            var a = sm.AddState("A");
+            var b = sm.AddState("B");
+            var t = a.AddTransition(b);
+            t.AddCondition(AnimatorConditionMode.Greater, 0.8f, "Wet");
+            t.AddCondition(AnimatorConditionMode.Less, 0.2f, "Wet");   // window never opens
+
+            var issues = OfKind(controller, IssueKind.DeadTransition);
+
+            Assert.AreEqual(1, issues.Count);
+            StringAssert.Contains("Wet > 0.8", issues[0].message);
+            StringAssert.Contains("Wet < 0.2", issues[0].message);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void ARangeThatDoesOpen_IsLeftAlone()
+        {
+            var controller = NewController(out var sm);
+            controller.AddParameter("Wet", AnimatorControllerParameterType.Float);
+            var a = sm.AddState("A");
+            var b = sm.AddState("B");
+            var t = a.AddTransition(b);
+            t.AddCondition(AnimatorConditionMode.Greater, 0.2f, "Wet");
+            t.AddCondition(AnimatorConditionMode.Less, 0.8f, "Wet");
+
+            Assert.IsEmpty(OfKind(controller, IssueKind.DeadTransition));
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void ContradictionsAreOnlyReadWithinOneParameter()
+        {
+            var wet = new AnimatorCondition { parameter = "Wet", mode = AnimatorConditionMode.Greater, threshold = 1f };
+            var dry = new AnimatorCondition { parameter = "Dry", mode = AnimatorConditionMode.Less, threshold = 0f };
+            Assert.IsFalse(ControllerAnalyzer.Contradict(wet, dry));
+
+            var on = new AnimatorCondition { parameter = "On", mode = AnimatorConditionMode.If };
+            var off = new AnimatorCondition { parameter = "On", mode = AnimatorConditionMode.IfNot };
+            Assert.IsTrue(ControllerAnalyzer.Contradict(on, off));
+            Assert.IsTrue(ControllerAnalyzer.Contradict(off, on), "and the other way round");
+
+            var isTwo = new AnimatorCondition { parameter = "N", mode = AnimatorConditionMode.Equals, threshold = 2f };
+            var isThree = new AnimatorCondition { parameter = "N", mode = AnimatorConditionMode.Equals, threshold = 3f };
+            var notTwo = new AnimatorCondition { parameter = "N", mode = AnimatorConditionMode.NotEqual, threshold = 2f };
+            Assert.IsTrue(ControllerAnalyzer.Contradict(isTwo, isThree));
+            Assert.IsTrue(ControllerAnalyzer.Contradict(isTwo, notTwo));
+            Assert.IsFalse(ControllerAnalyzer.Contradict(isTwo, isTwo), "the same twice over is a duplicate, not a contradiction");
+
+            // Reported for neither type: impossible for an Int, ordinary for a Float, and the
+            // check deliberately does not know which one this is.
+            var over = new AnimatorCondition { parameter = "N", mode = AnimatorConditionMode.Greater, threshold = 0f };
+            var under = new AnimatorCondition { parameter = "N", mode = AnimatorConditionMode.Less, threshold = 1f };
+            Assert.IsFalse(ControllerAnalyzer.Contradict(over, under));
+        }
+
+        [Test]
+        public void AnyStateTransitionsThatCanInterruptThemselves_AreReportedTogether()
+        {
+            var controller = NewController(out var sm);
+            controller.AddParameter("On", AnimatorControllerParameterType.Bool);
+            var b = sm.AddState("B");
+            var c = sm.AddState("C");
+            foreach (var target in new[] { b, c })
+            {
+                var t = sm.AddAnyStateTransition(target);
+                t.canTransitionToSelf = true;
+                t.AddCondition(AnimatorConditionMode.If, 0f, "On");
+            }
+
+            var issues = OfKind(controller, IssueKind.AnyStateRetrigger);
+
+            Assert.AreEqual(1, issues.Count, "one row per state machine, not per transition");
+            StringAssert.Contains("2", issues[0].message);
+
+            issues[0].fix();
+            Assert.IsEmpty(OfKind(controller, IssueKind.AnyStateRetrigger));
+            foreach (var t in sm.anyStateTransitions)
+                Assert.IsFalse(t.canTransitionToSelf);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void AnyStateOnATrigger_IsLeftAlone()
+        {
+            var controller = NewController(out var sm);
+            controller.AddParameter("Fire", AnimatorControllerParameterType.Trigger);
+            var b = sm.AddState("B");
+            var t = sm.AddAnyStateTransition(b);
+            t.canTransitionToSelf = true;
+            t.AddCondition(AnimatorConditionMode.If, 0f, "Fire");
+
+            // A Trigger is consumed when it is read, so the condition stops holding by itself.
+            Assert.IsEmpty(OfKind(controller, IssueKind.AnyStateRetrigger));
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
         public void DuplicateCondition_FixKeepsOneOfEach()
         {
             var controller = NewController(out var sm);

@@ -11,6 +11,7 @@ namespace Yozolab.DaerD
         InvalidCondition,
         DeadTransition,
         SoloTransition,
+        AnyStateRetrigger,
         UnreachableState,
         DuplicateName,
         TerminalStates,
