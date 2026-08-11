@@ -2742,3 +2742,6 @@ msgstr "クロスフェードの長さを秒で指定します。"
 
 msgid "Crossfade length as a fraction of the source state's length — 0.25 is a quarter of it."
 msgstr "クロスフェードの長さを、遷移元ステートの長さに対する割合で指定します（0.25 でその 1/4）。"
+
+msgid "Fit the whole graph in view (A). F fits the selection."
+msgstr "グラフ全体が収まるように表示します（A キー）。F キーで選択範囲に合わせます。"

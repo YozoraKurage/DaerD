@@ -39,7 +39,8 @@
     text-overflow: ellipsis;
 }
 
-.dd-search-result:hover {
+.dd-search-result:hover,
+.dd-search-result--active {
     background-color: rgba(90, 140, 210, 0.55);
 }
 

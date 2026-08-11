@@ -306,6 +306,12 @@ namespace Yozolab.DaerD
         }
 
         public void NotifyGraphStructureChanged() => GraphStructureChanged?.Invoke();
+
+        /// <summary>The user asked for the toolbar's search box (Ctrl+F). Raised by whatever
+        /// had the keyboard; the search field itself is what knows how to take focus.</summary>
+        public event Action SearchRequested;
+
+        public void RequestSearch() => SearchRequested?.Invoke();
         public void NotifyGraphRebuilt() => GraphRebuilt?.Invoke();
         public void NotifyParametersChanged() => ParametersChanged?.Invoke();
 

@@ -393,6 +393,7 @@ namespace Yozolab.DaerD
                      "running this controller to be selected — Unity's preview can't run " +
                      "without a target.");
             _frameAllButton.text = L.Tr("Frame All");
+            _frameAllButton.tooltip = L.Tr("Fit the whole graph in view (A). F fits the selection.");
             _analyzeButton.text = L.Tr("Analyze");
             _settingsButton.text = L.Tr("Settings");
             _searchField.RefreshTooltip();

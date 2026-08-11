@@ -435,9 +435,30 @@ namespace Yozolab.DaerD
                     evt.StopPropagation();
                 else if (evt.keyCode == KeyCode.P && SelectTransitionsOfSelection(incoming: true, outgoing: true))
                     evt.StopPropagation();
+                // F frames the selection and A frames everything, the way every other graph
+                // view in the editor does it. F with nothing selected has nothing to aim at,
+                // so it falls through to framing everything rather than doing nothing.
+                else if (evt.keyCode == KeyCode.F)
+                {
+                    if (selection.Count > 0) FrameSelection();
+                    else FrameAll();
+                    evt.StopPropagation();
+                }
+                else if (evt.keyCode == KeyCode.A)
+                {
+                    FrameAll();
+                    evt.StopPropagation();
+                }
                 return;
             }
-            if (evt.keyCode == KeyCode.C)
+            if (evt.keyCode == KeyCode.F)
+            {
+                // The search box lives in the toolbar, which the graph cannot reach; the
+                // context carries the request to whoever owns the box.
+                _context.RequestSearch();
+                evt.StopPropagation();
+            }
+            else if (evt.keyCode == KeyCode.C)
             {
                 CopySelection();
                 evt.StopPropagation();
