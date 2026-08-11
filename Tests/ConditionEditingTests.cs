@@ -88,5 +88,50 @@ namespace Yozolab.DaerD.Tests
             Assert.AreEqual("Alpha", added.parameter);
             Assert.AreEqual(AnimatorConditionMode.Greater, added.mode);
         }
+
+        // ---- wheel over a condition row ---------------------------------------
+
+        [Test]
+        public void AWheelNotchOnAnIntThreshold_MovesItByOne()
+        {
+            Assert.AreEqual(4f, ConditionGui.Stepped(3f, 1, AnimatorControllerParameterType.Int, fine: false));
+            Assert.AreEqual(2f, ConditionGui.Stepped(3f, -1, AnimatorControllerParameterType.Int, fine: false));
+
+            // A threshold no Int can sit on is snapped rather than carried along, and Ctrl does
+            // not offer a finer step for a value that has to stay whole.
+            Assert.AreEqual(3f, ConditionGui.Stepped(2.5f, 1, AnimatorControllerParameterType.Int, fine: false));
+            Assert.AreEqual(4f, ConditionGui.Stepped(3f, 1, AnimatorControllerParameterType.Int, fine: true));
+        }
+
+        [Test]
+        public void AWheelNotchOnAFloatThreshold_MovesItByATenth()
+        {
+            Assert.AreEqual(0.6f, ConditionGui.Stepped(0.5f, 1, AnimatorControllerParameterType.Float, fine: false), 1e-5f);
+            Assert.AreEqual(0.51f, ConditionGui.Stepped(0.5f, 1, AnimatorControllerParameterType.Float, fine: true), 1e-5f);
+        }
+
+        [Test]
+        public void TenNotchesOfATenth_LandOnOne()
+        {
+            float value = 0f;
+            for (int i = 0; i < 10; i++)
+                value = ConditionGui.Stepped(value, 1, AnimatorControllerParameterType.Float, fine: false);
+
+            // Without the rounding this is 0.99999994, and the field shows it.
+            Assert.AreEqual(1f, value);
+        }
+
+        [Test]
+        public void TheModeWrapsRatherThanStoppingAtTheEnds()
+        {
+            // Two entries (true / false, or Greater / Less) — a notch either way is the flip.
+            Assert.AreEqual(1, ConditionGui.Wrap(0 + 1, 2));
+            Assert.AreEqual(0, ConditionGui.Wrap(1 + 1, 2));
+            Assert.AreEqual(1, ConditionGui.Wrap(0 - 1, 2));
+
+            // Four (an Int's comparisons) cycles instead.
+            Assert.AreEqual(3, ConditionGui.Wrap(0 - 1, 4));
+            Assert.AreEqual(0, ConditionGui.Wrap(4, 4));
+        }
     }
 }

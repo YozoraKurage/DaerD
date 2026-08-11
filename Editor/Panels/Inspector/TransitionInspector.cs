@@ -410,6 +410,7 @@ namespace Yozolab.DaerD
 
             var working = ConditionGui.ToDataList(transition);
             bool changed = false;
+            bool wheeled = false;
             int removeIndex = -1;
             EditorGUI.BeginChangeCheck();
 
@@ -421,7 +422,7 @@ namespace Yozolab.DaerD
                 DrawParameterPicker(condition, paramNames);
 
                 var type = typeByName.TryGetValue(condition.parameter, out var t) ? t : AnimatorControllerParameterType.Float;
-                ConditionGui.DrawConditionValue(condition, type);
+                if (ConditionGui.DrawConditionValue(condition, type)) wheeled = true;
 
                 if (GUILayout.Button("X", EditorStyles.miniButton, GUILayout.Width(DaerDLayout.GlyphButton)))
                     removeIndex = i;
@@ -429,7 +430,8 @@ namespace Yozolab.DaerD
                 EditorGUILayout.EndHorizontal();
             }
 
-            if (EditorGUI.EndChangeCheck())
+            // EndChangeCheck has to run whatever the wheel did, or the next check inherits it.
+            if (EditorGUI.EndChangeCheck() || wheeled)
                 changed = true;
             if (removeIndex >= 0)
             {

@@ -152,6 +152,8 @@ GraphView ベースの AnimatorController エディタ。パラメーターの�
   Hierarchy の変更を追従する自動リパス（クリップ一覧の「リパス」から）
 - QoL — 雛形付き一括トランジション生成（Seeded）、I / O / P・F / A（選択 / 全体をフレーム）・
   Ctrl+F（検索欄へ）・Ctrl+A・Ctrl+Shift+A ショートカット、検索候補の ↑↓ 選択、
+  遷移条件のマウスホイール操作（比較 / true・false のポップアップ上で反転、しきい値の上で
+  増減。Float は 0.1 刻み・Ctrl 併用で 0.01 刻み、Int は 1 刻み）、
   クリップの Loop Time 一括切り替え、等間隔整列、パラメーターの複製 / コピー / 参照リマップ /
   クリーン削除、AAP バッジ表示
 - 日本語 / English 表示切り替え（Preferences > Yozolab > daerD、既定はシステム言語に追従）。
