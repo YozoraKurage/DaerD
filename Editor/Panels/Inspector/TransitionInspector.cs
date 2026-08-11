@@ -351,6 +351,10 @@ namespace Yozolab.DaerD
                 Undo.RegisterCompleteObjectUndo(transition, "Edit Conditions");
                 TransitionClipboard.SetConditions(transition, working);
                 EditorUtility.SetDirty(transition);
+                // Nothing was told before this. The edge in the graph draws a summary of these
+                // conditions and the parameter list marks the ones nothing reads — both were
+                // left showing the conditions as they were until some unrelated edit came along.
+                _context.NotifyGraphStructureChanged();
             }
         }
     }

@@ -562,16 +562,65 @@ namespace Yozolab.DaerD
             EditorUtility.SetDirty(data);
         }
 
+        // ---- finding the holder ----------------------------------------------
+        //
+        // Everything DaerD stores against a controller — async sync setups, gadget configs,
+        // the recipe-owned layers, the Empty clip, the parameter store — is reached through
+        // Find, and several panels ask during their repaint. The lookup underneath loads EVERY
+        // sub-asset of the .controller, and on a DaerD-built one that is every clip, tree,
+        // state, transition and behaviour in it. Moving the mouse across the layer list used
+        // to do that twice a frame.
+        //
+        // So the answer is remembered. What can change it is narrow: DaerD creating the holder
+        // (written through below), or the asset itself changing on disk (the postprocessor at
+        // the bottom of this file drops everything). A domain reload clears the table outright.
+
+        static readonly Dictionary<AnimatorController, GraphFrameData> s_holders =
+            new Dictionary<AnimatorController, GraphFrameData>(ControllerIdentity.Instance);
+
         /// <summary>The frame holder already stored on the controller, or null when none exists.</summary>
         public static GraphFrameData Find(AnimatorController controller)
         {
             if (controller == null) return null;
+            if (s_holders.TryGetValue(controller, out var cached))
+            {
+                if (cached != null) return cached;
+                // A real null is an answer ("this controller has none"). A reference that is
+                // non-null but fails Unity's check is a holder that has since been destroyed,
+                // and that one has to be looked up again.
+                if (ReferenceEquals(cached, null)) return null;
+            }
+            var found = Scan(controller);
+            s_holders[controller] = found;
+            return found;
+        }
+
+        static GraphFrameData Scan(AnimatorController controller)
+        {
             var path = AssetDatabase.GetAssetPath(controller);
             if (string.IsNullOrEmpty(path)) return null;
             foreach (var asset in AssetDatabase.LoadAllAssetsAtPath(path))
                 if (asset is GraphFrameData data)
                     return data;
             return null;
+        }
+
+        /// <summary>Drops what Find remembered. Called for you when assets change; exposed for
+        /// tests, which build and delete controllers faster than the importer reports.</summary>
+        public static void ForgetHolders() => s_holders.Clear();
+
+        /// <summary>
+        /// Reference identity rather than Unity's equality, which reports a destroyed Object as
+        /// equal to null — and so to any other destroyed one. Nothing about a lookup table
+        /// should rest on that conflation: the question here is which object, not whether it is
+        /// still alive, and aliveness is asked separately where it matters.
+        /// </summary>
+        sealed class ControllerIdentity : IEqualityComparer<AnimatorController>
+        {
+            public static readonly ControllerIdentity Instance = new ControllerIdentity();
+            public bool Equals(AnimatorController a, AnimatorController b) => ReferenceEquals(a, b);
+            public int GetHashCode(AnimatorController controller) =>
+                System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(controller);
         }
 
         /// <summary>Finds or creates the frame holder. In-memory controllers get a non-persisted instance.</summary>
@@ -588,7 +637,13 @@ namespace Yozolab.DaerD
             {
                 AssetDatabase.AddObjectToAsset(data, controller);
                 EditorUtility.SetDirty(controller);
+                // Written through, so the cached "this controller has none" does not outlive
+                // the holder that has just been added to it.
+                s_holders[controller] = data;
             }
+            // An in-memory controller keeps none of this: it has no asset to hang the holder
+            // on, so every call builds a fresh one and nothing written to it is ever read back.
+            // That is why anything testing saved configs needs a controller on disk.
             return data;
         }
 
@@ -647,5 +702,18 @@ namespace Yozolab.DaerD
             notes.Remove(note);
             EditorUtility.SetDirty(this);
         }
+    }
+
+    /// <summary>
+    /// The one thing <see cref="GraphFrameData.Find"/>'s table cannot see coming: a controller
+    /// changing on disk. Pulling a branch can add a holder to a controller DaerD has already
+    /// decided has none, and no code of ours runs in between. Clearing the whole table costs
+    /// nothing — it is refilled by the next lookup — so there is no need to work out which
+    /// entry the import touched.
+    /// </summary>
+    class GraphFrameDataImportWatcher : AssetPostprocessor
+    {
+        static void OnPostprocessAllAssets(string[] imported, string[] deleted,
+            string[] moved, string[] movedFrom) => GraphFrameData.ForgetHolders();
     }
 }

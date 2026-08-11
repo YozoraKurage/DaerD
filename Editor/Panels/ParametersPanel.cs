@@ -21,10 +21,14 @@ namespace Yozolab.DaerD
         bool _storeLoaded;
         Dictionary<string, VrcExpressionParameters.Entry> _exprEntries;
 
-        // Parameters written by AAP clips (one-key Animator-binding curves). Scanning every
-        // clip is too costly per repaint, so the set is cached and dropped on structure edits.
+        // Two whole-controller scans the rows need. Both walk far more than the parameter list
+        // — the AAP set reads every clip, the unused set every transition condition, blend
+        // tree, state parameter and driver entry — and DrawContent runs for every repaint the
+        // pointer causes. So they are computed once and dropped when something that could
+        // change them happens.
         HashSet<string> _aapParams;
-        AnimatorController _aapCacheController;
+        HashSet<string> _unusedParams;
+        AnimatorController _scanCacheController;
 
         /// <summary>Session clipboard for one parameter definition; survives controller
         /// switches so parameters can be copied across open tabs.</summary>
@@ -47,8 +51,17 @@ namespace Yozolab.DaerD
             // The store slot is also editable from the home screen, which announces the change
             // as a parameter change — the cached wrapper here would otherwise stay stale.
             context.ParametersChanged += InvalidateStore;
-            context.GraphStructureChanged += () => _aapParams = null;
-            context.ParametersChanged += () => _aapParams = null;
+            context.GraphStructureChanged += DropScans;
+            context.ParametersChanged += DropScans;
+            // A blend tree edit moves which parameter drives it, which is exactly what the
+            // unused set is counting.
+            context.BlendTreeChanged += DropScans;
+        }
+
+        void DropScans()
+        {
+            _aapParams = null;
+            _unusedParams = null;
         }
 
         void InvalidateStore()
@@ -113,7 +126,7 @@ namespace Yozolab.DaerD
             var controller = Context.Controller;
             var parameters = controller.parameters;
 
-            var unused = new HashSet<string>(ControllerAnalyzer.FindUnusedParameters(controller));
+            var unused = UnusedParams(controller);
 
             if (!_storeLoaded)
             {
@@ -500,9 +513,9 @@ namespace Yozolab.DaerD
         /// structure edits.</summary>
         HashSet<string> AapParams(AnimatorController controller)
         {
-            if (_aapParams != null && _aapCacheController == controller) return _aapParams;
+            if (_aapParams != null && _scanCacheController == controller) return _aapParams;
             _aapParams = new HashSet<string>();
-            _aapCacheController = controller;
+            _scanCacheController = controller;
             foreach (var entry in ControllerCleanup.CollectClipUsages(controller))
             {
                 if (entry.clip == null) continue;
@@ -511,6 +524,15 @@ namespace Yozolab.DaerD
                         _aapParams.Add(binding.propertyName);
             }
             return _aapParams;
+        }
+
+        /// <summary>Parameters nothing in the controller reads. The scan behind this walks the
+        /// whole graph, so it is held the same way the AAP set beside it is.</summary>
+        HashSet<string> UnusedParams(AnimatorController controller)
+        {
+            if (_unusedParams != null && _scanCacheController == controller) return _unusedParams;
+            _scanCacheController = controller;
+            return _unusedParams = new HashSet<string>(ControllerAnalyzer.FindUnusedParameters(controller));
         }
 
         void DuplicateParameter(int index)
