@@ -54,6 +54,10 @@ namespace Yozolab.DaerD
         VisualElement _breadcrumb;
         double _lastRuntimePoll;
 
+        /// <summary>Runs a shortcut Unity resolved for this window; the graph is what carries
+        /// them out. Ignored while the centre pane is showing something else.</summary>
+        internal void RunShortcut(DaerDCommand command) => _graphView?.RunShortcut(command);
+
         public static DaerDWindow Open(AnimatorController controller)
         {
             var window = GetWindow<DaerDWindow>();

@@ -51,26 +51,42 @@ namespace Yozolab.DaerD.Tests
         [Test]
         public void ModifiersAreMatchedExactly()
         {
-            Assert.AreEqual(DaerDCommand.FrameAll,
-                DaerDShortcuts.Resolve(ShortcutScope.Graph, KeyCode.A, ctrl: false, shift: false));
-            Assert.AreEqual(DaerDCommand.SelectAllNodes,
-                DaerDShortcuts.Resolve(ShortcutScope.Graph, KeyCode.A, ctrl: true, shift: false));
-            Assert.AreEqual(DaerDCommand.SelectAllTransitions,
-                DaerDShortcuts.Resolve(ShortcutScope.Graph, KeyCode.A, ctrl: true, shift: true));
+            Assert.AreEqual(DaerDCommand.Paste,
+                DaerDShortcuts.Resolve(ShortcutScope.Graph, KeyCode.V, ctrl: true, shift: false));
+            Assert.AreEqual(DaerDCommand.PasteAsNew,
+                DaerDShortcuts.Resolve(ShortcutScope.Graph, KeyCode.V, ctrl: true, shift: true));
 
-            // Shift alone is nobody's binding, and must not fall back to the unmodified one.
+            // Neither must fall back to the other, or to the unmodified key.
             Assert.AreEqual(DaerDCommand.None,
-                DaerDShortcuts.Resolve(ShortcutScope.Graph, KeyCode.A, ctrl: false, shift: true));
+                DaerDShortcuts.Resolve(ShortcutScope.Graph, KeyCode.V, ctrl: false, shift: false));
+            Assert.AreEqual(DaerDCommand.None,
+                DaerDShortcuts.Resolve(ShortcutScope.Graph, KeyCode.V, ctrl: false, shift: true));
         }
 
         [Test]
-        public void AScopeOnlyAnswersForItself()
+        public void ARegisteredCommandIsNotAnsweredHereAsWell()
         {
-            // T wires the graph; in the inspector it is free for a text field to use.
-            Assert.AreEqual(DaerDCommand.Connect,
+            // These arrive through Unity's shortcut manager, at whatever key the user bound
+            // them to. Answering for their defaults too would run them twice on a stock
+            // install, and on the old key after a rebind.
+            Assert.AreEqual(DaerDCommand.None,
                 DaerDShortcuts.Resolve(ShortcutScope.Graph, KeyCode.T, ctrl: false, shift: false));
             Assert.AreEqual(DaerDCommand.None,
-                DaerDShortcuts.Resolve(ShortcutScope.Inspector, KeyCode.T, ctrl: false, shift: false));
+                DaerDShortcuts.Resolve(ShortcutScope.Graph, KeyCode.A, ctrl: true, shift: false));
+        }
+
+        [Test]
+        public void OnlyTheKeysThatDependOnFocusAreHandledLocally()
+        {
+            // The copy / paste family is the whole of it: those three mean one thing in the
+            // graph and another in the inspector, so which pane has focus has to decide.
+            var local = new List<DaerDCommand>();
+            foreach (var shortcut in DaerDShortcuts.All)
+                if (!shortcut.Rebindable && !local.Contains(shortcut.Command)) local.Add(shortcut.Command);
+            local.Sort();
+
+            CollectionAssert.AreEquivalent(
+                new[] { DaerDCommand.Copy, DaerDCommand.Paste, DaerDCommand.PasteAsNew }, local);
         }
 
         [Test]
