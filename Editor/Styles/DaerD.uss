@@ -379,3 +379,16 @@ GridBackground {
     -unity-font-style: bold;
     font-size: 11px;
 }
+
+/* One line of graph status, bottom left. Quiet on purpose: it answers a question the user
+   already asked (what did M mark?) rather than announcing itself. */
+.dd-graph-hint {
+    position: absolute;
+    left: 8px;
+    bottom: 8px;
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 11px;
+    color: rgb(190, 190, 190);
+    background-color: rgba(0, 0, 0, 0.55);
+}

@@ -15,6 +15,7 @@ namespace Yozolab.DaerD
         readonly NodeSearchProvider _searchProvider;
         readonly GraphContextMenu _menu;
 
+        readonly Label _hint;
         bool _syncingSelection;
         Vector2 _lastMouseGraphPosition;
         Vector2 _lastMouseWorld;
@@ -44,6 +45,13 @@ namespace Yozolab.DaerD
             Insert(0, grid);
             grid.StretchToParentSize();
 
+            // Added to the hierarchy rather than through Add: the content container is what
+            // pans and zooms, and a line of status text has to stay in the corner.
+            _hint = new Label { pickingMode = PickingMode.Ignore };
+            _hint.AddToClassList("dd-graph-hint");
+            _hint.style.display = DisplayStyle.None;
+            hierarchy.Add(_hint);
+
             _searchProvider = ScriptableObject.CreateInstance<NodeSearchProvider>();
             _searchProvider.Init(OnSearchSelect);
 
@@ -70,6 +78,8 @@ namespace Yozolab.DaerD
             // point at a state of another layer or controller.
             context.ControllerChanged += GraphContextMenu.ClearMarkedSources;
             context.LayerChanged += GraphContextMenu.ClearMarkedSources;
+            context.ControllerChanged += RefreshHint;
+            context.LayerChanged += RefreshHint;
             context.StateMachinePathChanged += _sync.RequestRebuild;
             context.LayersChanged += _sync.RequestRebuild;
             context.GraphStructureChanged += _sync.RequestRebuild;
@@ -81,6 +91,24 @@ namespace Yozolab.DaerD
             // selection — see the provider fields on DaerDContext for why a push would go stale.
             context.SelectedStatesProvider = GetSelectedStates;
             context.SelectedTransitionGroupsProvider = SelectedTransitionGroups;
+        }
+
+        /// <summary>
+        /// The one line of status the graph shows, bottom left: what is marked and what to press
+        /// next. It stays put while the marks do — a mark survives changing the selection, which
+        /// is the whole point of it, and a message that fades cannot answer "what is marked" a
+        /// minute later when the question is actually asked.
+        /// </summary>
+        public void RefreshHint()
+        {
+            int marked = GraphContextMenu.MarkedSourceCount;
+            if (marked == 0)
+            {
+                _hint.style.display = DisplayStyle.None;
+                return;
+            }
+            _hint.text = L.Tr("{0} marked as sources — select the destinations and press T", marked);
+            _hint.style.display = DisplayStyle.Flex;
         }
 
         /// <summary>
@@ -403,113 +431,94 @@ namespace Yozolab.DaerD
         {
             // While an inline rename (or any text field) has focus, leave the keyboard to it.
             if (IsEditingText()) return;
-
-            if (evt.keyCode == KeyCode.F2)
-            {
-                // F2 renames the selected state (Ctrl/Cmd+F2: its clip), retitles the selected
-                // frame, or edits the selected note — whichever single element is selected.
-                if (selection.Count == 1 && selection[0] is FrameNode frameNode)
-                {
-                    frameNode.BeginRename();
-                    evt.StopPropagation();
-                    return;
-                }
-                if (selection.Count == 1 && selection[0] is NoteNode noteNode)
-                {
-                    noteNode.BeginEdit();
-                    evt.StopPropagation();
-                    return;
-                }
-                if (BeginRenameSelectedState(clip: evt.ctrlKey || evt.commandKey))
-                    evt.StopPropagation();
-                return;
-            }
-
-            if (!(evt.ctrlKey || evt.commandKey))
-            {
-                // I / O / P select the incoming / outgoing / all transitions of the selected
-                // state nodes — quick keyboard access to the context-menu selections.
-                if (evt.keyCode == KeyCode.I && SelectTransitionsOfSelection(incoming: true, outgoing: false))
-                    evt.StopPropagation();
-                else if (evt.keyCode == KeyCode.O && SelectTransitionsOfSelection(incoming: false, outgoing: true))
-                    evt.StopPropagation();
-                else if (evt.keyCode == KeyCode.P && SelectTransitionsOfSelection(incoming: true, outgoing: true))
-                    evt.StopPropagation();
-                // F frames the selection and A frames everything, the way every other graph
-                // view in the editor does it. F with nothing selected has nothing to aim at,
-                // so it falls through to framing everything rather than doing nothing.
-                else if (evt.keyCode == KeyCode.F)
-                {
-                    if (selection.Count > 0) FrameSelection();
-                    else FrameAll();
-                    evt.StopPropagation();
-                }
-                else if (evt.keyCode == KeyCode.A)
-                {
-                    FrameAll();
-                    evt.StopPropagation();
-                }
-                // M marks, T wires. Both are the keyboard face of the Connect States menu,
-                // which otherwise takes two trips through a submenu to join two states.
-                else if (evt.keyCode == KeyCode.M && _menu.MarkSelectedAsSources())
-                {
-                    Owner?.Window?.ShowNotification(new GUIContent(
-                        L.Tr("{0} marked as sources. Select the destinations and press T.",
-                            GraphContextMenu.MarkedSourceCount)));
-                    evt.StopPropagation();
-                }
-                else if (evt.keyCode == KeyCode.T && _menu.ConnectSelection())
-                {
-                    evt.StopPropagation();
-                }
-                else if (MoveSelectionKey(evt.keyCode, out var direction) && MoveSelection(direction))
-                {
-                    evt.StopPropagation();
-                }
-                return;
-            }
-            if (evt.keyCode == KeyCode.F)
-            {
-                // The search box lives in the toolbar, which the graph cannot reach; the
-                // context carries the request to whoever owns the box.
-                _context.RequestSearch();
+            if (Run(DaerDShortcuts.Resolve(ShortcutScope.Graph, evt)))
                 evt.StopPropagation();
-            }
-            else if (evt.keyCode == KeyCode.C)
-            {
-                CopySelection();
-                evt.StopPropagation();
-            }
-            else if (evt.keyCode == KeyCode.V)
-            {
-                if (evt.shiftKey) PasteTransitionsAsNew();
-                else PasteSelection();
-                evt.StopPropagation();
-            }
-            else if (evt.keyCode == KeyCode.D)
-            {
-                DuplicateSelectedStates();
-                evt.StopPropagation();
-            }
-            else if (evt.keyCode == KeyCode.A)
-            {
-                if (evt.shiftKey) SelectAllTransitions();
-                else SelectAllNodes();
-                evt.StopPropagation();
-            }
         }
 
-        /// <summary>The graph direction an arrow key means; false for any other key. Y grows
-        /// downwards here, so "up" is negative.</summary>
-        static bool MoveSelectionKey(KeyCode key, out Vector2 direction)
+        /// <summary>
+        /// Carries out one command. False means "nothing happened", which is how a key falls
+        /// through to whatever else might want it — an arrow with nothing in that direction, or
+        /// T with only one node selected.
+        /// </summary>
+        bool Run(DaerDCommand command)
         {
-            switch (key)
+            switch (command)
             {
-                case KeyCode.UpArrow: direction = new Vector2(0f, -1f); return true;
-                case KeyCode.DownArrow: direction = new Vector2(0f, 1f); return true;
-                case KeyCode.LeftArrow: direction = new Vector2(-1f, 0f); return true;
-                case KeyCode.RightArrow: direction = new Vector2(1f, 0f); return true;
-                default: direction = Vector2.zero; return false;
+                // F2 retitles the selected frame, edits the selected note, or renames the
+                // selected state — whichever single element is selected.
+                case DaerDCommand.Rename:
+                    if (selection.Count == 1 && selection[0] is FrameNode frameNode)
+                    {
+                        frameNode.BeginRename();
+                        return true;
+                    }
+                    if (selection.Count == 1 && selection[0] is NoteNode noteNode)
+                    {
+                        noteNode.BeginEdit();
+                        return true;
+                    }
+                    return BeginRenameSelectedState(clip: false);
+                case DaerDCommand.RenameClip:
+                    return BeginRenameSelectedState(clip: true);
+
+                case DaerDCommand.SelectIncoming:
+                    return SelectTransitionsOfSelection(incoming: true, outgoing: false);
+                case DaerDCommand.SelectOutgoing:
+                    return SelectTransitionsOfSelection(incoming: false, outgoing: true);
+                case DaerDCommand.SelectConnected:
+                    return SelectTransitionsOfSelection(incoming: true, outgoing: true);
+
+                // F with nothing selected has nothing to aim at, so it falls through to
+                // framing everything rather than doing nothing.
+                case DaerDCommand.FrameSelection:
+                    if (selection.Count > 0) FrameSelection();
+                    else FrameAll();
+                    return true;
+                case DaerDCommand.FrameAll:
+                    FrameAll();
+                    return true;
+
+                case DaerDCommand.MarkSources:
+                    if (!_menu.MarkSelectedAsSources()) return false;
+                    RefreshHint();
+                    return true;
+                case DaerDCommand.Connect:
+                    if (!_menu.ConnectSelection()) return false;
+                    RefreshHint();
+                    return true;
+
+                case DaerDCommand.MoveUp: return MoveSelection(new Vector2(0f, -1f));
+                case DaerDCommand.MoveDown: return MoveSelection(new Vector2(0f, 1f));
+                case DaerDCommand.MoveLeft: return MoveSelection(new Vector2(-1f, 0f));
+                case DaerDCommand.MoveRight: return MoveSelection(new Vector2(1f, 0f));
+
+                // The search box lives in the toolbar, which the graph cannot reach; the
+                // context carries the request to whoever owns the box.
+                case DaerDCommand.FocusSearch:
+                    _context.RequestSearch();
+                    return true;
+
+                case DaerDCommand.Copy:
+                    CopySelection();
+                    return true;
+                case DaerDCommand.Paste:
+                    PasteSelection();
+                    return true;
+                case DaerDCommand.PasteAsNew:
+                    PasteTransitionsAsNew();
+                    return true;
+                case DaerDCommand.Duplicate:
+                    DuplicateSelectedStates();
+                    return true;
+                case DaerDCommand.SelectAllNodes:
+                    SelectAllNodes();
+                    return true;
+                case DaerDCommand.SelectAllTransitions:
+                    SelectAllTransitions();
+                    return true;
+
+                default:
+                    return false;
             }
         }
 

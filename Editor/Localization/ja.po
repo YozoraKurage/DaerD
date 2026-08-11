@@ -2737,5 +2737,88 @@ msgstr "オフにする"
 msgid "Clear Can Transition To Self on these transitions"
 msgstr "これらの遷移の Can Transition To Self を解除します"
 
-msgid "{0} marked as sources. Select the destinations and press T."
-msgstr "{0} 個を遷移元としてマークしました。遷移先を選んで T キーを押してください。"
+msgid "{0} marked as sources — select the destinations and press T"
+msgstr "{0} 個を遷移元としてマーク中 — 遷移先を選んで T キー"
+
+# ---- keyboard shortcuts ----
+
+msgid "Keyboard Shortcuts"
+msgstr "キーボードショートカット"
+
+msgid "Graph"
+msgstr "グラフ"
+
+msgid "Inspector"
+msgstr "インスペクター"
+
+msgid "Shift + wheel switches layer, anywhere in the window."
+msgstr "Shift + ホイールでレイヤーを切り替えます（ウィンドウ内のどこでも）。"
+
+msgid "Rename the selected state, frame or note"
+msgstr "選択中のステート / フレーム / ノートの名前を変更"
+
+msgid "Rename the selected state's clip"
+msgstr "選択中のステートのクリップ名を変更"
+
+msgid "Select the incoming transitions"
+msgstr "入ってくる遷移を選択"
+
+msgid "Select the outgoing transitions"
+msgstr "出ていく遷移を選択"
+
+msgid "Select every connected transition"
+msgstr "繋がっている遷移をすべて選択"
+
+msgid "Fit the selection in view"
+msgstr "選択範囲が収まるように表示"
+
+msgid "Fit the whole graph in view"
+msgstr "グラフ全体が収まるように表示"
+
+msgid "Mark the selection as transition sources"
+msgstr "選択中のノードを遷移元としてマーク"
+
+msgid "Connect: marked sources to the selection, or the selection in click order"
+msgstr "接続 — マーク済みの遷移元から選択中へ。マークが無ければ選択をクリック順に連結"
+
+msgid "Move the selection to the node above"
+msgstr "選択を上のノードへ移動"
+
+msgid "Move the selection to the node below"
+msgstr "選択を下のノードへ移動"
+
+msgid "Move the selection to the node on the left"
+msgstr "選択を左のノードへ移動"
+
+msgid "Move the selection to the node on the right"
+msgstr "選択を右のノードへ移動"
+
+msgid "Copy the selected states"
+msgstr "選択中のステートをコピー"
+
+msgid "Paste states"
+msgstr "ステートを貼り付け"
+
+msgid "Paste the copied transition as a new one"
+msgstr "コピーした遷移を新しい遷移として貼り付け"
+
+msgid "Duplicate the selected states"
+msgstr "選択中のステートを複製"
+
+msgid "Select every node"
+msgstr "すべてのノードを選択"
+
+msgid "Select every transition"
+msgstr "すべての遷移を選択"
+
+msgid "Jump to the search box"
+msgstr "検索欄へ移動"
+
+msgid "Copy the selected transitions or behaviours"
+msgstr "選択中の遷移 / Behaviour をコピー"
+
+msgid "Paste onto the selected transitions or behaviours"
+msgstr "選択中の遷移 / Behaviour に貼り付け"
+
+msgid "Paste as new transitions alongside the selected ones"
+msgstr "選択中の遷移の隣に、新しい遷移として貼り付け"

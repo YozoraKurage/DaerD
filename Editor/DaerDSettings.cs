@@ -263,6 +263,37 @@ namespace Yozolab.DaerD
             EditorGUILayout.Space(10);
             if (GUILayout.Button(L.Tr("Reset To Defaults"), GUILayout.Width(160)))
                 DaerDSettings.ResetAll();
+
+            DrawShortcuts();
+        }
+
+        static bool s_showShortcuts;
+
+        /// <summary>
+        /// The keys, read straight off the table the handlers dispatch from — so this page
+        /// cannot drift from what the keys actually do, which is the usual fate of a written
+        /// shortcut list.
+        /// </summary>
+        static void DrawShortcuts()
+        {
+            EditorGUILayout.Space(10);
+            s_showShortcuts = EditorGUILayout.Foldout(s_showShortcuts, L.Tr("Keyboard Shortcuts"), true);
+            if (!s_showShortcuts) return;
+
+            EditorGUI.indentLevel++;
+            DrawShortcutScope(L.Tr("Graph"), ShortcutScope.Graph);
+            DrawShortcutScope(L.Tr("Inspector"), ShortcutScope.Inspector);
+            EditorGUILayout.LabelField(" ", L.Tr("Shift + wheel switches layer, anywhere in the window."),
+                EditorStyles.miniLabel);
+            EditorGUI.indentLevel--;
+        }
+
+        static void DrawShortcutScope(string title, ShortcutScope scope)
+        {
+            EditorGUILayout.Space(4);
+            EditorGUILayout.LabelField(title, EditorStyles.miniBoldLabel);
+            foreach (var shortcut in DaerDShortcuts.In(scope))
+                EditorGUILayout.LabelField(shortcut.Keys, L.Tr(shortcut.Description));
         }
     }
 }

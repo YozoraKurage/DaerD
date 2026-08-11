@@ -116,6 +116,29 @@ namespace Yozolab.DaerD.Tests
                 + string.Join("\n", stranded));
         }
 
+        /// <summary>
+        /// The shortcut table states its descriptions as plain English fields and translates them
+        /// where they are drawn, so the scan for <c>L.Tr("literal")</c> cannot see them: from its
+        /// side there is nothing to check, and a Japanese user would simply get English. Asked of
+        /// the table directly instead.
+        /// </summary>
+        [Test]
+        public void EveryShortcutDescriptionHasAJapaneseTranslation()
+        {
+            var catalog = PoCatalog.Load("ja");
+            Assert.That(catalog, Is.Not.Empty, "ja.po did not load — the rest of this test proves nothing");
+
+            var missing = new List<string>();
+            foreach (var shortcut in DaerDShortcuts.All)
+                if (!catalog.TryGetValue(shortcut.Description, out var translated)
+                    || string.IsNullOrEmpty(translated))
+                    missing.Add("  " + shortcut.Keys + "  \"" + shortcut.Description + "\"");
+
+            Assert.IsEmpty(missing,
+                missing.Count + " shortcut description(s) reach a Japanese user in English:\n"
+                + string.Join("\n", missing));
+        }
+
         static readonly Regex Placeholder = new Regex(@"\{(\d+)[^}]*\}", RegexOptions.Compiled);
 
         /// <summary>

@@ -314,21 +314,22 @@ namespace Yozolab.DaerD
         void HandleCopyPasteShortcuts()
         {
             var e = Event.current;
-            if (e == null || e.type != EventType.KeyDown || !(e.control || e.command))
-                return;
+            var command = DaerDShortcuts.Resolve(ShortcutScope.Inspector, e);
+            if (command == DaerDCommand.None || _selectedTransitions.Count == 0) return;
 
-            if (e.keyCode == KeyCode.C && _selectedTransitions.Count >= 1)
+            if (command == DaerDCommand.Copy)
             {
                 TransitionClipboard.Copy(_selectedTransitions);
                 e.Use();
+                return;
             }
-            else if (e.keyCode == KeyCode.V && TransitionClipboard.HasData && _selectedTransitions.Count >= 1)
-            {
-                if (e.shift) _multiTransition.PasteSelectedAsNew();
-                else _multiTransition.PasteOntoSelected();
-                e.Use();
-                GUIUtility.ExitGUI();
-            }
+
+            if (!TransitionClipboard.HasData) return;
+            if (command == DaerDCommand.Paste) _multiTransition.PasteOntoSelected();
+            else if (command == DaerDCommand.PasteAsNew) _multiTransition.PasteSelectedAsNew();
+            else return;
+            e.Use();
+            GUIUtility.ExitGUI();
         }
 
         // ---- single transition ----------------------------------------------

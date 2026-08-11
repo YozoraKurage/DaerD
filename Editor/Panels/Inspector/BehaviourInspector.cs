@@ -202,19 +202,18 @@ namespace Yozolab.DaerD
         void HandleBehaviourShortcuts(AnimatorState state, StateMachineBehaviour[] behaviours)
         {
             var e = Event.current;
-            if (e == null || e.type != EventType.KeyDown || !(e.control || e.command))
-                return;
-            if (_selectedBehaviours.Count == 0) return;
+            var command = DaerDShortcuts.Resolve(ShortcutScope.Inspector, e);
+            if (command == DaerDCommand.None || _selectedBehaviours.Count == 0) return;
             // A behaviour field being typed in (driver parameter name, instance name) owns the
             // keys — Ctrl+C there means "copy the text", not "copy the behaviour".
             if (EditorGUIUtility.editingTextField) return;
 
-            if (e.keyCode == KeyCode.C)
+            if (command == DaerDCommand.Copy)
             {
                 CopyBehaviours(behaviours);
                 e.Use();
             }
-            else if (e.keyCode == KeyCode.V && VrcBehaviours.ClipboardCount > 0)
+            else if (command == DaerDCommand.Paste && VrcBehaviours.ClipboardCount > 0)
             {
                 PasteBehaviours(state);
                 e.Use();

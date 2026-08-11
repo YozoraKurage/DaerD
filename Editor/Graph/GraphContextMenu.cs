@@ -326,6 +326,7 @@ namespace Yozolab.DaerD
                     {
                         _sync.CrossProductNodes(ResolveMarkedSources(), _view.GetSelectedConnectables(), seeded: true);
                         s_markedSources = null;
+                        _view.RefreshHint();
                     });
         }
 
@@ -376,7 +377,11 @@ namespace Yozolab.DaerD
             // change the selection, then connect. Without the numbers nobody guesses the order.
             evt.menu.AppendAction(
                 MenuPath(group, L.Tr("Step 1: mark the selected {0} as sources", selected.Count) + "  (M)"),
-                _ => s_markedSources = ToModels(_view.GetSelectedConnectables()),
+                _ =>
+                {
+                    s_markedSources = ToModels(_view.GetSelectedConnectables());
+                    _view.RefreshHint();
+                },
                 selected.Count > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
             evt.menu.AppendAction(
                 MenuPath(group, L.Tr("Step 2: marked ({0}) → selected ({1})", marked, selected.Count) + "  (T)"),
@@ -384,13 +389,18 @@ namespace Yozolab.DaerD
                 {
                     _sync.CrossProductNodes(ResolveMarkedSources(), _view.GetSelectedConnectables());
                     s_markedSources = null;
+                    _view.RefreshHint();
                 },
                 marked > 0 && selected.Count > 0
                     ? DropdownMenuAction.Status.Normal
                     : DropdownMenuAction.Status.Disabled);
             if (marked > 0)
                 evt.menu.AppendAction(MenuPath(group, L.Tr("Clear the source marks ({0})", marked)),
-                    _ => s_markedSources = null);
+                    _ =>
+                    {
+                        s_markedSources = null;
+                        _view.RefreshHint();
+                    });
         }
 
         static List<object> ToModels(IList<GraphNodeBase> nodes)
