@@ -179,7 +179,7 @@ namespace Yozolab.DaerD
             }
 
             var result = _list.Draw(rows, _selectedTransitions.Contains, _multiTransition.RefreshEdges, onMove);
-            _sync.SetHoveredTransition(result.hovered);
+            if (result.hoverKnown) _sync.SetHoveredTransition(result.hovered);
 
             if (result.clicked >= 0)
                 HandleRowClick(rows, result.clicked);

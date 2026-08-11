@@ -40,8 +40,13 @@ namespace Yozolab.DaerD
 
         public struct Result
         {
-            /// <summary>The transition the pointer is over, or null. Used to highlight its edge.</summary>
+            /// <summary>The transition the pointer is over, or null. Only ever answered on the
+            /// repaint pass, where the row rectangles are real; a caller pushing it to the graph
+            /// should ask on that pass too, or it will clear the highlight and set it again on
+            /// every event the panel receives.</summary>
             public AnimatorTransitionBase hovered;
+            /// <summary>True on the pass that could see the pointer at all.</summary>
+            public bool hoverKnown;
             /// <summary>Index of the row that was clicked this event, or -1.</summary>
             public int clicked;
             /// <summary>The transition whose delete button was pressed, or null.</summary>
@@ -55,7 +60,7 @@ namespace Yozolab.DaerD
         public Result Draw(IList<TransitionRow> rows, Func<AnimatorTransitionBase, bool> isSelected,
             Action onSoloMuteChanged, Action<int, int> onMove)
         {
-            var result = new Result { clicked = -1 };
+            var result = new Result { clicked = -1, hoverKnown = Event.current.type == EventType.Repaint };
 
             EditorGUILayout.BeginHorizontal();
             if (onMove != null) GUILayout.Space(ListReorder.HandleWidth);

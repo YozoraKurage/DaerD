@@ -104,7 +104,7 @@ namespace Yozolab.DaerD
                 : (Action<int, int>)null;
 
             var result = _list.Draw(rows, null, () => _context.NotifyGraphVisualsChanged(DaerDContext.GraphVisuals.AllEdges), onMove);
-            _sync.SetHoveredTransition(result.hovered);
+            if (result.hoverKnown) _sync.SetHoveredTransition(result.hovered);
 
             if (result.clicked >= 0)
             {
