@@ -1,5 +1,5 @@
 using System.Collections.Generic;
-using UnityEditor.ShortcutManagement;
+using UnityEditor;
 using UnityEngine;
 using UnityEngine.UIElements;
 
@@ -18,7 +18,6 @@ namespace Yozolab.DaerD
     {
         None = 0,
 
-        // graph
         Rename,
         RenameClip,
         SelectIncoming,
@@ -41,61 +40,32 @@ namespace Yozolab.DaerD
         FocusSearch,
     }
 
-    readonly struct DaerDShortcut
+    /// <summary>One keystroke, or the absence of one.</summary>
+    readonly struct ShortcutBinding
     {
-        public readonly ShortcutScope Scope;
-        public readonly DaerDCommand Command;
         public readonly KeyCode Key;
         public readonly bool Ctrl;
         public readonly bool Shift;
-        /// <summary>English source text, translated where it is shown.</summary>
-        public readonly string Description;
-        /// <summary>
-        /// The id this command is registered under with Unity's shortcut manager, or null when
-        /// it is handled here instead. Registered means the user can rebind it in Edit &gt;
-        /// Shortcuts, and that the keys below are only the default.
-        /// </summary>
-        public readonly string Id;
+        /// <summary>False means the command has been switched off and no key reaches it.</summary>
+        public readonly bool Enabled;
 
-        public bool Rebindable => Id != null;
-
-        public DaerDShortcut(ShortcutScope scope, DaerDCommand command, KeyCode key, bool ctrl, bool shift,
-            string description, string id = null)
+        public ShortcutBinding(KeyCode key, bool ctrl = false, bool shift = false, bool enabled = true)
         {
-            Scope = scope;
-            Command = command;
             Key = key;
             Ctrl = ctrl;
             Shift = shift;
-            Description = description;
-            Id = id;
+            Enabled = enabled;
         }
 
-        /// <summary>
-        /// What is bound right now: the user's binding for a registered command, the default for
-        /// the rest. Asked of the shortcut manager rather than remembered, because the answer is
-        /// theirs to change and a remembered copy would be a second, wrong one.
-        /// </summary>
-        public string CurrentKeys
-        {
-            get
-            {
-                if (!Rebindable) return Keys;
-                try
-                {
-                    string bound = ShortcutManager.instance.GetShortcutBinding(Id).ToString();
-                    return string.IsNullOrEmpty(bound) ? L.Tr("(unbound)") : bound;
-                }
-                catch (System.Exception)
-                {
-                    // The id is only known once the assembly has been scanned for it; before
-                    // that (and in a batch-mode run) fall back to what it was declared with.
-                    return Keys;
-                }
-            }
-        }
+        public ShortcutBinding Switched(bool enabled) => new ShortcutBinding(Key, Ctrl, Shift, enabled);
 
-        /// <summary>"Ctrl+Shift+V" — Cmd rather than Ctrl on a Mac, where that is the key used.</summary>
+        public bool Matches(KeyCode key, bool ctrl, bool shift) =>
+            Enabled && Key == key && Ctrl == ctrl && Shift == shift;
+
+        public bool SameKeys(ShortcutBinding other) =>
+            Key == other.Key && Ctrl == other.Ctrl && Shift == other.Shift;
+
+        /// <summary>"Ctrl+Shift+A" — Cmd rather than Ctrl on a Mac, where that is the key used.</summary>
         public string Keys
         {
             get
@@ -118,13 +88,64 @@ namespace Yozolab.DaerD
                 default: return key.ToString();
             }
         }
+
+        /// <summary>
+        /// How the binding is stored. Readable rather than packed — a preference somebody may
+        /// have to look at, or clear by hand, is worth being able to read.
+        /// </summary>
+        public string Serialize()
+        {
+            string modifiers = (Ctrl ? "C" : string.Empty) + (Shift ? "S" : string.Empty);
+            return (Enabled ? string.Empty : "-") + Key + ":" + modifiers;
+        }
+
+        public static bool TryParse(string text, out ShortcutBinding binding)
+        {
+            binding = default;
+            if (string.IsNullOrEmpty(text)) return false;
+
+            bool enabled = true;
+            if (text[0] == '-')
+            {
+                enabled = false;
+                text = text.Substring(1);
+            }
+
+            int split = text.IndexOf(':');
+            if (split < 0) return false;
+            if (!System.Enum.TryParse(text.Substring(0, split), out KeyCode key)) return false;
+
+            string modifiers = text.Substring(split + 1);
+            binding = new ShortcutBinding(key, modifiers.Contains("C"), modifiers.Contains("S"), enabled);
+            return true;
+        }
+    }
+
+    readonly struct DaerDShortcut
+    {
+        public readonly ShortcutScope Scope;
+        public readonly DaerDCommand Command;
+        public readonly ShortcutBinding Binding;
+        /// <summary>English source text, translated where it is shown.</summary>
+        public readonly string Description;
+
+        public DaerDShortcut(ShortcutScope scope, DaerDCommand command, ShortcutBinding binding,
+            string description)
+        {
+            Scope = scope;
+            Command = command;
+            Binding = binding;
+            Description = description;
+        }
+
+        public DaerDShortcut Rebound(ShortcutBinding binding) =>
+            new DaerDShortcut(Scope, Command, binding, Description);
     }
 
     /// <summary>
-    /// The one list of what every key does. Handlers ask this what a keystroke means and switch
-    /// on the answer, so a binding is stated once instead of being spelled out at the place that
-    /// happens to implement it — which is also what lets the settings page list them all and a
-    /// test refuse two commands on the same keystroke.
+    /// The one list of what every key does, and the only thing that changes it. Handlers ask what
+    /// a keystroke means and switch on the answer, so a key code appears once — which is also
+    /// what lets the settings page edit them all and a test refuse two commands on one keystroke.
     ///
     /// Not here: keys that belong to a control rather than to a command. Escape and Return while
     /// renaming a node, or the arrows inside the search box, are part of how that widget works
@@ -133,52 +154,33 @@ namespace Yozolab.DaerD
     /// </summary>
     static class DaerDShortcuts
     {
-        public static readonly DaerDShortcut[] All =
-        {
-            Graph(DaerDCommand.Rename, KeyCode.F2, "Rename the selected state, frame or note",
-                id: Ids.Rename),
-            Graph(DaerDCommand.RenameClip, KeyCode.F2, "Rename the selected state's clip",
-                ctrl: true, id: Ids.RenameClip),
-            Graph(DaerDCommand.SelectIncoming, KeyCode.I, "Select the incoming transitions",
-                id: Ids.SelectIncoming),
-            Graph(DaerDCommand.SelectOutgoing, KeyCode.O, "Select the outgoing transitions",
-                id: Ids.SelectOutgoing),
-            Graph(DaerDCommand.SelectConnected, KeyCode.P, "Select every connected transition",
-                id: Ids.SelectConnected),
-            Graph(DaerDCommand.FrameSelection, KeyCode.F, "Fit the selection in view",
-                id: Ids.FrameSelection),
-            Graph(DaerDCommand.FrameAll, KeyCode.A, "Fit the whole graph in view", id: Ids.FrameAll),
-            Graph(DaerDCommand.MarkSources, KeyCode.M, "Mark the selection as transition sources",
-                id: Ids.MarkSources),
-            Graph(DaerDCommand.Connect, KeyCode.T,
-                "Connect: marked sources to the selection, or the selection in click order",
-                id: Ids.Connect),
-            Graph(DaerDCommand.MoveUp, KeyCode.UpArrow, "Move the selection to the node above",
-                id: Ids.MoveUp),
-            Graph(DaerDCommand.MoveDown, KeyCode.DownArrow, "Move the selection to the node below",
-                id: Ids.MoveDown),
-            Graph(DaerDCommand.MoveLeft, KeyCode.LeftArrow, "Move the selection to the node on the left",
-                id: Ids.MoveLeft),
-            Graph(DaerDCommand.MoveRight, KeyCode.RightArrow, "Move the selection to the node on the right",
-                id: Ids.MoveRight),
-            Graph(DaerDCommand.Duplicate, KeyCode.D, "Duplicate the selected states",
-                ctrl: true, id: Ids.Duplicate),
-            Graph(DaerDCommand.SelectAllNodes, KeyCode.A, "Select every node",
-                ctrl: true, id: Ids.SelectAllNodes),
-            Graph(DaerDCommand.SelectAllTransitions, KeyCode.A, "Select every transition",
-                ctrl: true, shift: true, id: Ids.SelectAllTransitions),
-            Graph(DaerDCommand.FocusSearch, KeyCode.F, "Jump to the search box",
-                ctrl: true, id: Ids.FocusSearch),
+        const string PrefPrefix = "Yozolab.DaerD.Shortcut.";
 
-            // The copy / paste family is deliberately NOT registered. A registered shortcut
-            // belongs to the whole window, and these three are the keys whose meaning depends on
-            // which pane is focused: Ctrl+C copies states in the graph and the selected
-            // transitions or behaviours in the inspector. Handing them to the window would pick
-            // one of those and silence the other.
+        public static readonly DaerDShortcut[] Defaults =
+        {
+            Graph(DaerDCommand.Rename, KeyCode.F2, "Rename the selected state, frame or note"),
+            Graph(DaerDCommand.RenameClip, KeyCode.F2, "Rename the selected state's clip", ctrl: true),
+            Graph(DaerDCommand.SelectIncoming, KeyCode.I, "Select the incoming transitions"),
+            Graph(DaerDCommand.SelectOutgoing, KeyCode.O, "Select the outgoing transitions"),
+            Graph(DaerDCommand.SelectConnected, KeyCode.P, "Select every connected transition"),
+            Graph(DaerDCommand.FrameSelection, KeyCode.F, "Fit the selection in view"),
+            Graph(DaerDCommand.FrameAll, KeyCode.A, "Fit the whole graph in view"),
+            Graph(DaerDCommand.MarkSources, KeyCode.M, "Mark the selection as transition sources"),
+            Graph(DaerDCommand.Connect, KeyCode.T,
+                "Connect: marked sources to the selection, or the selection in click order"),
+            Graph(DaerDCommand.MoveUp, KeyCode.UpArrow, "Move the selection to the node above"),
+            Graph(DaerDCommand.MoveDown, KeyCode.DownArrow, "Move the selection to the node below"),
+            Graph(DaerDCommand.MoveLeft, KeyCode.LeftArrow, "Move the selection to the node on the left"),
+            Graph(DaerDCommand.MoveRight, KeyCode.RightArrow, "Move the selection to the node on the right"),
             Graph(DaerDCommand.Copy, KeyCode.C, "Copy the selected states", ctrl: true),
             Graph(DaerDCommand.Paste, KeyCode.V, "Paste states", ctrl: true),
             Graph(DaerDCommand.PasteAsNew, KeyCode.V, "Paste the copied transition as a new one",
                 ctrl: true, shift: true),
+            Graph(DaerDCommand.Duplicate, KeyCode.D, "Duplicate the selected states", ctrl: true),
+            Graph(DaerDCommand.SelectAllNodes, KeyCode.A, "Select every node", ctrl: true),
+            Graph(DaerDCommand.SelectAllTransitions, KeyCode.A, "Select every transition",
+                ctrl: true, shift: true),
+            Graph(DaerDCommand.FocusSearch, KeyCode.F, "Jump to the search box", ctrl: true),
 
             Inspector(DaerDCommand.Copy, KeyCode.C, "Copy the selected transitions or behaviours", ctrl: true),
             Inspector(DaerDCommand.Paste, KeyCode.V, "Paste onto the selected transitions or behaviours",
@@ -187,60 +189,97 @@ namespace Yozolab.DaerD
                 ctrl: true, shift: true),
         };
 
-        /// <summary>
-        /// The ids Unity stores the user's bindings under. Spelled out as constants because a
-        /// binding is remembered by id: renaming one silently throws away everybody's
-        /// customisation of it, so they are worth being deliberate about.
-        /// </summary>
-        public static class Ids
-        {
-            const string Prefix = "DaerD/";
-            public const string Rename = Prefix + "Rename";
-            public const string RenameClip = Prefix + "Rename Clip";
-            public const string SelectIncoming = Prefix + "Select Incoming Transitions";
-            public const string SelectOutgoing = Prefix + "Select Outgoing Transitions";
-            public const string SelectConnected = Prefix + "Select Connected Transitions";
-            public const string FrameSelection = Prefix + "Frame Selection";
-            public const string FrameAll = Prefix + "Frame All";
-            public const string MarkSources = Prefix + "Mark Transition Sources";
-            public const string Connect = Prefix + "Connect";
-            public const string MoveUp = Prefix + "Move Selection Up";
-            public const string MoveDown = Prefix + "Move Selection Down";
-            public const string MoveLeft = Prefix + "Move Selection Left";
-            public const string MoveRight = Prefix + "Move Selection Right";
-            public const string Duplicate = Prefix + "Duplicate States";
-            public const string SelectAllNodes = Prefix + "Select All Nodes";
-            public const string SelectAllTransitions = Prefix + "Select All Transitions";
-            public const string FocusSearch = Prefix + "Focus Search";
-        }
-
         static DaerDShortcut Graph(DaerDCommand command, KeyCode key, string description,
-            bool ctrl = false, bool shift = false, string id = null) =>
-            new DaerDShortcut(ShortcutScope.Graph, command, key, ctrl, shift, description, id);
+            bool ctrl = false, bool shift = false) =>
+            new DaerDShortcut(ShortcutScope.Graph, command, new ShortcutBinding(key, ctrl, shift), description);
 
         static DaerDShortcut Inspector(DaerDCommand command, KeyCode key, string description,
             bool ctrl = false, bool shift = false) =>
-            new DaerDShortcut(ShortcutScope.Inspector, command, key, ctrl, shift, description);
+            new DaerDShortcut(ShortcutScope.Inspector, command, new ShortcutBinding(key, ctrl, shift), description);
+
+        // Rebuilt from the preferences on first use and after every change; a key event asks this
+        // many times a second and EditorPrefs is not free.
+        static DaerDShortcut[] s_current;
+
+        /// <summary>Every shortcut as it stands now: the defaults with the user's changes applied.</summary>
+        public static DaerDShortcut[] Current
+        {
+            get
+            {
+                if (s_current != null) return s_current;
+                s_current = new DaerDShortcut[Defaults.Length];
+                for (int i = 0; i < Defaults.Length; i++)
+                {
+                    var stored = EditorPrefs.GetString(PrefKey(Defaults[i]), string.Empty);
+                    s_current[i] = ShortcutBinding.TryParse(stored, out var binding)
+                        ? Defaults[i].Rebound(binding)
+                        : Defaults[i];
+                }
+                return s_current;
+            }
+        }
+
+        static string PrefKey(DaerDShortcut shortcut) =>
+            PrefPrefix + shortcut.Scope + "." + shortcut.Command;
+
+        /// <summary>Changes one binding. The caller has already decided what to do about any
+        /// clash; see <see cref="Conflict"/>.</summary>
+        public static void Rebind(ShortcutScope scope, DaerDCommand command, ShortcutBinding binding)
+        {
+            foreach (var shortcut in Defaults)
+            {
+                if (shortcut.Scope != scope || shortcut.Command != command) continue;
+                if (binding.SameKeys(shortcut.Binding) && binding.Enabled == shortcut.Binding.Enabled)
+                    EditorPrefs.DeleteKey(PrefKey(shortcut));   // back to the default: store nothing
+                else
+                    EditorPrefs.SetString(PrefKey(shortcut), binding.Serialize());
+                s_current = null;
+                return;
+            }
+        }
+
+        public static void ResetAll()
+        {
+            foreach (var shortcut in Defaults)
+                EditorPrefs.DeleteKey(PrefKey(shortcut));
+            s_current = null;
+        }
+
+        /// <summary>
+        /// The command already bound to <paramref name="binding"/> in the same scope, or None.
+        /// Disabled commands hold no keys, so they never clash.
+        /// </summary>
+        public static DaerDCommand Conflict(IList<DaerDShortcut> table, ShortcutScope scope,
+            DaerDCommand command, ShortcutBinding binding)
+        {
+            if (!binding.Enabled) return DaerDCommand.None;
+            foreach (var shortcut in table)
+            {
+                if (shortcut.Scope != scope || shortcut.Command == command) continue;
+                if (shortcut.Binding.Enabled && shortcut.Binding.SameKeys(binding)) return shortcut.Command;
+            }
+            return DaerDCommand.None;
+        }
+
+        public static DaerDCommand Conflict(ShortcutScope scope, DaerDCommand command, ShortcutBinding binding) =>
+            Conflict(Current, scope, command, binding);
 
         /// <summary>
         /// What a keystroke means in <paramref name="scope"/>, or None. <paramref name="ctrl"/> is
         /// the caller's own reading of Control-or-Command: the two are one key to a user, and
         /// which one it physically was is the caller's business, not this table's.
         /// </summary>
-        public static DaerDCommand Resolve(ShortcutScope scope, KeyCode key, bool ctrl, bool shift)
+        public static DaerDCommand Resolve(IList<DaerDShortcut> table, ShortcutScope scope,
+            KeyCode key, bool ctrl, bool shift)
         {
-            foreach (var shortcut in All)
-            {
-                // A registered command arrives through Unity's shortcut manager, at whatever key
-                // the user has bound it to. Answering for its default here as well would run it
-                // twice on a stock install, and on the old key after a rebind.
-                if (shortcut.Rebindable) continue;
-                if (shortcut.Scope == scope && shortcut.Key == key
-                    && shortcut.Ctrl == ctrl && shortcut.Shift == shift)
+            foreach (var shortcut in table)
+                if (shortcut.Scope == scope && shortcut.Binding.Matches(key, ctrl, shift))
                     return shortcut.Command;
-            }
             return DaerDCommand.None;
         }
+
+        public static DaerDCommand Resolve(ShortcutScope scope, KeyCode key, bool ctrl, bool shift) =>
+            Resolve(Current, scope, key, ctrl, shift);
 
         public static DaerDCommand Resolve(ShortcutScope scope, KeyDownEvent evt) =>
             Resolve(scope, evt.keyCode, evt.ctrlKey || evt.commandKey, evt.shiftKey);
@@ -257,7 +296,7 @@ namespace Yozolab.DaerD
         /// <summary>The shortcuts of one scope, in table order, for showing to the user.</summary>
         public static IEnumerable<DaerDShortcut> In(ShortcutScope scope)
         {
-            foreach (var shortcut in All)
+            foreach (var shortcut in Current)
                 if (shortcut.Scope == scope) yield return shortcut;
         }
     }

@@ -129,10 +129,10 @@ namespace Yozolab.DaerD.Tests
             Assert.That(catalog, Is.Not.Empty, "ja.po did not load — the rest of this test proves nothing");
 
             var missing = new List<string>();
-            foreach (var shortcut in DaerDShortcuts.All)
+            foreach (var shortcut in DaerDShortcuts.Defaults)
                 if (!catalog.TryGetValue(shortcut.Description, out var translated)
                     || string.IsNullOrEmpty(translated))
-                    missing.Add("  " + shortcut.Keys + "  \"" + shortcut.Description + "\"");
+                    missing.Add("  " + shortcut.Binding.Keys + "  \"" + shortcut.Description + "\"");
 
             Assert.IsEmpty(missing,
                 missing.Count + " shortcut description(s) reach a Japanese user in English:\n"

@@ -6,9 +6,9 @@ namespace Yozolab.DaerD.Tests
 {
     /// <summary>
     /// The shortcut table is the only statement of what a key does — the handlers switch on the
-    /// command it resolves to, and the settings page reads it to list them. These are the two
-    /// ways such a table goes wrong: two commands on one keystroke, and a command in the enum
-    /// that nothing can reach.
+    /// command it resolves to, and the settings page edits it. Everything here is asked of
+    /// <see cref="DaerDShortcuts.Defaults"/> or of a hand-built list, never of the live table:
+    /// that one reads the preferences of whoever is running the tests.
     /// </summary>
     public class ShortcutTableTests
     {
@@ -16,9 +16,9 @@ namespace Yozolab.DaerD.Tests
         public void NoKeystrokeMeansTwoThingsInOneScope()
         {
             var seen = new Dictionary<string, DaerDCommand>();
-            foreach (var shortcut in DaerDShortcuts.All)
+            foreach (var shortcut in DaerDShortcuts.Defaults)
             {
-                string key = shortcut.Scope + " " + shortcut.Keys;
+                string key = shortcut.Scope + " " + shortcut.Binding.Keys;
                 Assert.IsFalse(seen.ContainsKey(key),
                     key + " is both " + (seen.ContainsKey(key) ? seen[key].ToString() : "?")
                         + " and " + shortcut.Command);
@@ -30,7 +30,7 @@ namespace Yozolab.DaerD.Tests
         public void EveryCommandIsReachable()
         {
             var bound = new HashSet<DaerDCommand>();
-            foreach (var shortcut in DaerDShortcuts.All) bound.Add(shortcut.Command);
+            foreach (var shortcut in DaerDShortcuts.Defaults) bound.Add(shortcut.Command);
 
             var unreachable = new List<string>();
             foreach (DaerDCommand command in System.Enum.GetValues(typeof(DaerDCommand)))
@@ -44,49 +44,31 @@ namespace Yozolab.DaerD.Tests
         [Test]
         public void EveryShortcutSaysWhatItDoes()
         {
-            foreach (var shortcut in DaerDShortcuts.All)
+            foreach (var shortcut in DaerDShortcuts.Defaults)
                 Assert.IsNotEmpty(shortcut.Description, shortcut.Command + " has no description");
         }
+
+        static DaerDCommand Resolve(KeyCode key, bool ctrl = false, bool shift = false,
+            ShortcutScope scope = ShortcutScope.Graph) =>
+            DaerDShortcuts.Resolve(DaerDShortcuts.Defaults, scope, key, ctrl, shift);
 
         [Test]
         public void ModifiersAreMatchedExactly()
         {
-            Assert.AreEqual(DaerDCommand.Paste,
-                DaerDShortcuts.Resolve(ShortcutScope.Graph, KeyCode.V, ctrl: true, shift: false));
-            Assert.AreEqual(DaerDCommand.PasteAsNew,
-                DaerDShortcuts.Resolve(ShortcutScope.Graph, KeyCode.V, ctrl: true, shift: true));
+            Assert.AreEqual(DaerDCommand.FrameAll, Resolve(KeyCode.A));
+            Assert.AreEqual(DaerDCommand.SelectAllNodes, Resolve(KeyCode.A, ctrl: true));
+            Assert.AreEqual(DaerDCommand.SelectAllTransitions, Resolve(KeyCode.A, ctrl: true, shift: true));
 
-            // Neither must fall back to the other, or to the unmodified key.
-            Assert.AreEqual(DaerDCommand.None,
-                DaerDShortcuts.Resolve(ShortcutScope.Graph, KeyCode.V, ctrl: false, shift: false));
-            Assert.AreEqual(DaerDCommand.None,
-                DaerDShortcuts.Resolve(ShortcutScope.Graph, KeyCode.V, ctrl: false, shift: true));
+            // Shift alone is nobody's binding, and must not fall back to the unmodified one.
+            Assert.AreEqual(DaerDCommand.None, Resolve(KeyCode.A, shift: true));
         }
 
         [Test]
-        public void ARegisteredCommandIsNotAnsweredHereAsWell()
+        public void AScopeOnlyAnswersForItself()
         {
-            // These arrive through Unity's shortcut manager, at whatever key the user bound
-            // them to. Answering for their defaults too would run them twice on a stock
-            // install, and on the old key after a rebind.
-            Assert.AreEqual(DaerDCommand.None,
-                DaerDShortcuts.Resolve(ShortcutScope.Graph, KeyCode.T, ctrl: false, shift: false));
-            Assert.AreEqual(DaerDCommand.None,
-                DaerDShortcuts.Resolve(ShortcutScope.Graph, KeyCode.A, ctrl: true, shift: false));
-        }
-
-        [Test]
-        public void OnlyTheKeysThatDependOnFocusAreHandledLocally()
-        {
-            // The copy / paste family is the whole of it: those three mean one thing in the
-            // graph and another in the inspector, so which pane has focus has to decide.
-            var local = new List<DaerDCommand>();
-            foreach (var shortcut in DaerDShortcuts.All)
-                if (!shortcut.Rebindable && !local.Contains(shortcut.Command)) local.Add(shortcut.Command);
-            local.Sort();
-
-            CollectionAssert.AreEquivalent(
-                new[] { DaerDCommand.Copy, DaerDCommand.Paste, DaerDCommand.PasteAsNew }, local);
+            // T wires the graph; in the inspector it is free for a text field to use.
+            Assert.AreEqual(DaerDCommand.Connect, Resolve(KeyCode.T));
+            Assert.AreEqual(DaerDCommand.None, Resolve(KeyCode.T, scope: ShortcutScope.Inspector));
         }
 
         [Test]
@@ -95,6 +77,76 @@ namespace Yozolab.DaerD.Tests
             // The IMGUI handlers ask before checking anything else, including whether there is
             // an event at all.
             Assert.AreEqual(DaerDCommand.None, DaerDShortcuts.Resolve(ShortcutScope.Inspector, (Event)null));
+        }
+
+        // ---- rebinding ----------------------------------------------------------
+
+        static List<DaerDShortcut> Table(params DaerDShortcut[] shortcuts) =>
+            new List<DaerDShortcut>(shortcuts);
+
+        static DaerDShortcut Entry(DaerDCommand command, KeyCode key, bool ctrl = false,
+            bool shift = false, bool enabled = true) =>
+            new DaerDShortcut(ShortcutScope.Graph, command,
+                new ShortcutBinding(key, ctrl, shift, enabled), command.ToString());
+
+        [Test]
+        public void ASwitchedOffCommandHoldsNoKey()
+        {
+            var table = Table(Entry(DaerDCommand.FrameAll, KeyCode.A, enabled: false));
+
+            Assert.AreEqual(DaerDCommand.None,
+                DaerDShortcuts.Resolve(table, ShortcutScope.Graph, KeyCode.A, false, false));
+        }
+
+        [Test]
+        public void ASwitchedOffCommandDoesNotStandInTheWayOfAnother()
+        {
+            var table = Table(Entry(DaerDCommand.FrameAll, KeyCode.A, enabled: false));
+
+            Assert.AreEqual(DaerDCommand.None, DaerDShortcuts.Conflict(table, ShortcutScope.Graph,
+                DaerDCommand.Connect, new ShortcutBinding(KeyCode.A)));
+        }
+
+        [Test]
+        public void AKeyAnotherCommandHolds_IsAConflict()
+        {
+            var table = Table(Entry(DaerDCommand.FrameAll, KeyCode.A));
+
+            Assert.AreEqual(DaerDCommand.FrameAll, DaerDShortcuts.Conflict(table, ShortcutScope.Graph,
+                DaerDCommand.Connect, new ShortcutBinding(KeyCode.A)));
+            // Rebinding a command to the key it already has is not a clash with itself.
+            Assert.AreEqual(DaerDCommand.None, DaerDShortcuts.Conflict(table, ShortcutScope.Graph,
+                DaerDCommand.FrameAll, new ShortcutBinding(KeyCode.A)));
+            // Nor is the same key in the other scope, where it means something else on purpose.
+            Assert.AreEqual(DaerDCommand.None, DaerDShortcuts.Conflict(table, ShortcutScope.Inspector,
+                DaerDCommand.Connect, new ShortcutBinding(KeyCode.A)));
+        }
+
+        [Test]
+        public void ABindingSurvivesBeingWrittenDownAndReadBack()
+        {
+            foreach (var original in new[]
+            {
+                new ShortcutBinding(KeyCode.A),
+                new ShortcutBinding(KeyCode.V, ctrl: true, shift: true),
+                new ShortcutBinding(KeyCode.UpArrow, enabled: false),
+                new ShortcutBinding(KeyCode.F2, ctrl: true, shift: false, enabled: false),
+            })
+            {
+                Assert.IsTrue(ShortcutBinding.TryParse(original.Serialize(), out var read),
+                    "could not read back " + original.Serialize());
+                Assert.IsTrue(original.SameKeys(read), original.Keys + " came back as " + read.Keys);
+                Assert.AreEqual(original.Enabled, read.Enabled, original.Serialize());
+            }
+        }
+
+        [Test]
+        public void RubbishInThePreferenceIsIgnoredRatherThanCrashing()
+        {
+            // A hand-edited or older preference must fall back to the default, not throw.
+            Assert.IsFalse(ShortcutBinding.TryParse(string.Empty, out _));
+            Assert.IsFalse(ShortcutBinding.TryParse("A", out _), "no separator");
+            Assert.IsFalse(ShortcutBinding.TryParse("NotAKey:C", out _));
         }
     }
 }

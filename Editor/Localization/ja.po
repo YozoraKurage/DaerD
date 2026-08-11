@@ -2823,14 +2823,18 @@ msgstr "選択中の遷移 / Behaviour に貼り付け"
 msgid "Paste as new transitions alongside the selected ones"
 msgstr "選択中の遷移の隣に、新しい遷移として貼り付け"
 
-msgid "Open Unity's Shortcut Settings"
-msgstr "Unity のショートカット設定を開く"
-
 msgid "(unbound)"
 msgstr "(未割り当て)"
 
-msgid "Greyed rows are fixed: the same keys mean different things in the graph and in the inspector, so which pane has focus decides, and one window-wide binding could not."
-msgstr "グレーの行は変更できません。グラフとインスペクターで同じキーが別の意味を持つため、どちらにフォーカスがあるかで動作を決めており、ウィンドウ全体に 1 つの割り当てを置くことができないからです。"
 
-msgid "Could not open the shortcut settings. It is under Edit > Shortcuts (Unity > Settings > Shortcuts on macOS)."
-msgstr "ショートカット設定を開けませんでした。Edit > Shortcuts（macOS では Unity > Settings > Shortcuts）にあります。"
+msgid "Click a key to change it, or switch a command off to leave the key alone."
+msgstr "キーをクリックすると変更できます。オフにするとそのキーは何もしなくなります。"
+
+msgid "Press a key…"
+msgstr "キーを押してください…"
+
+msgid "Reset Shortcuts"
+msgstr "ショートカットを既定に戻す"
+
+msgid "{0} is already {1}."
+msgstr "{0} は既に「{1}」に割り当てられています。"

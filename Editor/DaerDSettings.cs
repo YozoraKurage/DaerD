@@ -264,62 +264,8 @@ namespace Yozolab.DaerD
             if (GUILayout.Button(L.Tr("Reset To Defaults"), GUILayout.Width(160)))
                 DaerDSettings.ResetAll();
 
-            DrawShortcuts();
+            DaerDShortcutsGui.Draw();
         }
 
-        static bool s_showShortcuts;
-
-        /// <summary>
-        /// What the keys currently are, and a way to Unity's own editor for them. Read-only on
-        /// purpose: the graph commands are registered with Unity's shortcut manager, so the
-        /// place to change one is the window that also knows about conflicts with every other
-        /// package. A second editor here could only disagree with it.
-        /// </summary>
-        static void DrawShortcuts()
-        {
-            EditorGUILayout.Space(10);
-            s_showShortcuts = EditorGUILayout.Foldout(s_showShortcuts, L.Tr("Keyboard Shortcuts"), true);
-            if (!s_showShortcuts) return;
-
-            EditorGUI.indentLevel++;
-            if (GUILayout.Button(L.Tr("Open Unity's Shortcut Settings"), GUILayout.Width(220)))
-                OpenShortcutWindow();
-
-            DrawShortcutScope(L.Tr("Graph"), ShortcutScope.Graph);
-            DrawShortcutScope(L.Tr("Inspector"), ShortcutScope.Inspector);
-
-            EditorGUILayout.Space(4);
-            EditorGUILayout.LabelField(" ",
-                L.Tr("Greyed rows are fixed: the same keys mean different things in the graph and "
-                     + "in the inspector, so which pane has focus decides, and one window-wide "
-                     + "binding could not."),
-                EditorStyles.wordWrappedMiniLabel);
-            EditorGUILayout.LabelField(" ", L.Tr("Shift + wheel switches layer, anywhere in the window."),
-                EditorStyles.miniLabel);
-            EditorGUI.indentLevel--;
-        }
-
-        static void DrawShortcutScope(string title, ShortcutScope scope)
-        {
-            EditorGUILayout.Space(4);
-            EditorGUILayout.LabelField(title, EditorStyles.miniBoldLabel);
-            foreach (var shortcut in DaerDShortcuts.In(scope))
-            {
-                using (new EditorGUI.DisabledScope(!shortcut.Rebindable))
-                    EditorGUILayout.LabelField(shortcut.CurrentKeys, L.Tr(shortcut.Description));
-            }
-        }
-
-        /// <summary>
-        /// Unity's shortcut window has no API to open it, only a menu item — and the menu it
-        /// lives in is not the same one on macOS.
-        /// </summary>
-        static void OpenShortcutWindow()
-        {
-            if (EditorApplication.ExecuteMenuItem("Edit/Shortcuts...")) return;
-            if (EditorApplication.ExecuteMenuItem("Unity/Shortcuts...")) return;
-            Debug.LogWarning(L.Tr("Could not open the shortcut settings. It is under Edit > Shortcuts "
-                + "(Unity > Settings > Shortcuts on macOS)."));
-        }
     }
 }

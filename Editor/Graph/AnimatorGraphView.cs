@@ -431,22 +431,8 @@ namespace Yozolab.DaerD
         {
             // While an inline rename (or any text field) has focus, leave the keyboard to it.
             if (IsEditingText()) return;
-            // Only what is not registered with Unity's shortcut manager arrives here; the rest
-            // comes in through RunShortcut, at whatever key the user has bound it to.
             if (Run(DaerDShortcuts.Resolve(ShortcutScope.Graph, evt)))
                 evt.StopPropagation();
-        }
-
-        /// <summary>
-        /// A command from Unity's shortcut manager. It fires while the window has focus rather
-        /// than the graph, so it is refused when the graph is not the thing on screen — the
-        /// async-sync settings and the home screen take its place, and neither has states to
-        /// frame or wire.
-        /// </summary>
-        public void RunShortcut(DaerDCommand command)
-        {
-            if (panel == null || IsEditingText()) return;
-            Run(command);
         }
 
         /// <summary>
