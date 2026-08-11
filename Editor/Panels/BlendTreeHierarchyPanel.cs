@@ -107,9 +107,9 @@ namespace Yozolab.DaerD
             bool isFocused = isTree && ReferenceEquals(target, Context.CurrentBlendTree);
 
             if (isSelected)
-                EditorGUI.DrawRect(rect, new Color(0.24f, 0.48f, 0.90f, 0.35f));
+                EditorGUI.DrawRect(rect, DaerDColors.SelectedRowFill);
             else if (isFocused)
-                EditorGUI.DrawRect(rect, new Color(0.30f, 0.30f, 0.35f, 0.40f));
+                EditorGUI.DrawRect(rect, DaerDColors.FocusedRowFill);
 
             float leftPad = rect.x + 4 + depth * indentPerLevel;
             var arrowRect = new Rect(leftPad, rect.y + 2, arrowWidth, rect.height - 2);

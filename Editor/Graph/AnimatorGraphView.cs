@@ -95,6 +95,9 @@ namespace Yozolab.DaerD
                 case AnimatorState state:
                     _sync.RefreshStateNode(state);
                     break;
+                case AnimatorTransitionBase transition:
+                    _sync.FindEdge(transition)?.Refresh();
+                    break;
                 case GraphFrameData.Frame frame:
                     _sync.RefreshFrameVisuals(frame);
                     break;

@@ -397,25 +397,6 @@ namespace Yozolab.DaerD
             _sync.CreateFrameAroundNodes(nodes);
         }
 
-        static readonly (string name, Color color)[] FramePalette =
-        {
-            ("Blue", new Color(0.32f, 0.45f, 0.60f)),
-            ("Green", new Color(0.34f, 0.55f, 0.36f)),
-            ("Orange", new Color(0.74f, 0.51f, 0.20f)),
-            ("Purple", new Color(0.52f, 0.40f, 0.65f)),
-            ("Red", new Color(0.65f, 0.32f, 0.32f)),
-            ("Gray", new Color(0.45f, 0.45f, 0.45f)),
-        };
-
-        static readonly (string name, Color color)[] NotePalette =
-        {
-            ("Yellow", new Color(0.93f, 0.86f, 0.51f)),
-            ("Green", new Color(0.72f, 0.86f, 0.55f)),
-            ("Blue", new Color(0.62f, 0.78f, 0.92f)),
-            ("Pink", new Color(0.93f, 0.68f, 0.77f)),
-            ("Gray", new Color(0.78f, 0.78f, 0.78f)),
-        };
-
         static readonly (string name, int size)[] NoteFontSizes =
         {
             ("Small", 10),
@@ -471,7 +452,7 @@ namespace Yozolab.DaerD
             evt.menu.AppendAction(L.Tr("Fit To Contents"), _ => _sync.FitFrameToContents(frame),
                 !frame.locked && contents > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
 
-            foreach (var preset in FramePalette)
+            foreach (var preset in DaerDColors.FramePalette)
             {
                 var captured = preset.color;
                 evt.menu.AppendAction(MenuPath(L.Tr("Frame Color"), L.Tr(preset.name)), _ => _sync.SetFrameColor(frame, captured));
@@ -492,17 +473,17 @@ namespace Yozolab.DaerD
             evt.menu.AppendAction(PasteFramesAndNotesLabel(), _ => _sync.PasteFramesAndNotes(graphPosition),
                 FrameNoteClipboard.HasData ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
 
-            foreach (var preset in NotePalette)
+            foreach (var preset in DaerDColors.NotePalette)
             {
                 var captured = preset.color;
                 evt.menu.AppendAction(MenuPath(L.Tr("Note Color"), L.Tr(preset.name)), _ =>
-                    _sync.SetNoteColor(note, new Color(captured.r, captured.g, captured.b, note.color.a)));
+                    _sync.SetNoteColor(note, DaerDColors.Fade(captured, note.color.a)));
             }
             foreach (var percent in new[] { 100, 80, 60, 40 })
             {
                 float alpha = percent / 100f;
                 evt.menu.AppendAction(MenuPath(L.Tr("Opacity"), percent + "%"), _ =>
-                    _sync.SetNoteColor(note, new Color(note.color.r, note.color.g, note.color.b, alpha)),
+                    _sync.SetNoteColor(note, DaerDColors.Fade(note.color, alpha)),
                     Mathf.Abs(note.color.a - alpha) < 0.01f
                         ? DropdownMenuAction.Status.Checked
                         : DropdownMenuAction.Status.Normal);

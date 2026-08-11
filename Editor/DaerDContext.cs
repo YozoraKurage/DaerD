@@ -35,6 +35,11 @@ namespace Yozolab.DaerD
         /// </summary>
         public bool IsHomeSelected { get; private set; }
 
+        /// <summary>The running Animator this controller can be read from while the editor
+        /// plays. Shared state rather than the panels' own, because whoever polls it is not
+        /// whoever displays it.</summary>
+        public readonly LiveAnimator Live = new LiveAnimator();
+
         public event Action ControllerChanged;
         public event Action LayerChanged;
         public event Action StateMachinePathChanged;

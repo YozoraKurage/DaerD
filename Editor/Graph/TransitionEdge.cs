@@ -24,12 +24,6 @@ namespace Yozolab.DaerD
         public readonly List<AnimatorTransitionBase> Transitions = new List<AnimatorTransitionBase>();
         public bool IsDefaultEdge;
 
-        static readonly Color HighlightColor = new Color(0.96f, 0.84f, 0.22f);
-        static readonly Color SelectedColor = new Color(0.40f, 0.70f, 1.00f);
-        static readonly Color NormalColor = new Color(0.80f, 0.80f, 0.80f);
-        static readonly Color MutedColor = new Color(0.80f, 0.32f, 0.32f);
-        static readonly Color DefaultEdgeColor = new Color(0.93f, 0.63f, 0.26f);
-
         /// <summary>How far a bidirectional pair (A→B and B→A) is nudged apart, in graph units.</summary>
         const float ParallelOffset = 7f;
 
@@ -37,6 +31,7 @@ namespace Yozolab.DaerD
         readonly Label _conditionLabel;
         bool _highlighted;
         bool _allMuted;
+        bool _runtimeActive;
 
         public TransitionEdge()
         {
@@ -67,6 +62,15 @@ namespace Yozolab.DaerD
             ApplyColor();
         }
 
+        /// <summary>The crossfade running right now travels this edge. Called every tick while
+        /// the editor plays, so it does nothing when the answer has not changed.</summary>
+        public void SetRuntimeActive(bool on)
+        {
+            if (_runtimeActive == on) return;
+            _runtimeActive = on;
+            ApplyColor();
+        }
+
         public override void OnSelected()
         {
             base.OnSelected();
@@ -84,7 +88,7 @@ namespace Yozolab.DaerD
             if (IsDefaultEdge)
             {
                 capabilities &= ~Capabilities.Deletable;
-                tooltip = "Default state";
+                tooltip = L.Tr("Default state");
                 _badge.style.display = DisplayStyle.None;
                 _conditionLabel.style.display = DisplayStyle.None;
                 ApplyColor();
@@ -135,11 +139,13 @@ namespace Yozolab.DaerD
         void ApplyColor()
         {
             Color color;
-            if (selected) color = SelectedColor;
-            else if (IsDefaultEdge) color = DefaultEdgeColor;
-            else if (_highlighted) color = HighlightColor;
-            else if (_allMuted) color = MutedColor;
-            else color = NormalColor;
+            if (selected) color = DaerDColors.Selected;
+            // Above the rest: it is the one thing on screen that is only true for a few frames.
+            else if (_runtimeActive) color = DaerDColors.PlayingEdge;
+            else if (IsDefaultEdge) color = DaerDColors.DefaultEdge;
+            else if (_highlighted) color = DaerDColors.FoundByQuery;
+            else if (_allMuted) color = DaerDColors.Muted;
+            else color = DaerDColors.Edge;
 
             edgeControl.inputColor = color;
             edgeControl.outputColor = color;

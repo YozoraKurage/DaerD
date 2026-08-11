@@ -54,6 +54,18 @@ namespace Yozolab.DaerD
             Lut1D,
             Atan2,
             Buffer,
+            // Appended, and to be appended to: a saved gadget records its kind as this enum's
+            // number, so inserting one anywhere else would rename every gadget after it in
+            // every controller already built.
+            MultiplySigned,
+            DivideSigned,
+            ReciprocalRanged,
+            DivideRanged,
+            Sqrt,
+            InverseSqrt,
+            Log2,
+            Exp2,
+            Power,
         }
 
         // Must stay in AapGadgets.Kind order.
@@ -63,17 +75,49 @@ namespace Yozolab.DaerD
             "And", "Or", "Not", "Float As Bool", "Remap",
             "Reciprocal", "Divide", "Frame Time", "Smooth (Linear)", "Separate Digits",
             "Sine", "Cosine", "Tangent", "LUT (Curve)", "Atan2", "Buffer (Delay)",
+            "Multiply (Signed)", "Divide (Signed)",
+            "Reciprocal (Ranged)", "Divide (Ranged)",
+            "Square Root", "Inverse Square Root", "Log2", "Exp2", "Power",
         };
+
+        /// <summary>Kinds that are a fixed function sampled into a table, and so take the window
+        /// they are sampled over and the number of samples to spend on it.</summary>
+        public static bool IsFunctionTable(Kind kind) =>
+            kind == Kind.Sqrt || kind == Kind.InverseSqrt
+            || kind == Kind.Log2 || kind == Kind.Exp2;
+
+        /// <summary>Kinds that read <see cref="Request.lutSamples"/>.</summary>
+        public static bool UsesSamples(Kind kind) =>
+            kind == Kind.Lut1D || IsFunctionTable(kind) || kind == Kind.Power;
+
+        /// <summary>Function tables whose window has to stay above zero, because the function
+        /// does — and because their samples are spaced geometrically, which needs a ratio.</summary>
+        public static bool NeedsPositiveWindow(Kind kind) =>
+            kind == Kind.ReciprocalRanged || kind == Kind.DivideRanged
+            || kind == Kind.Sqrt || kind == Kind.InverseSqrt || kind == Kind.Log2
+            || kind == Kind.Power;
 
         public static bool IsBinary(Kind kind) =>
             kind == Kind.Add || kind == Kind.AddRanged || kind == Kind.Sub
             || kind == Kind.SubRanged || kind == Kind.Multiply
             || kind == Kind.And || kind == Kind.Or || kind == Kind.Divide
-            || kind == Kind.Atan2;
+            || kind == Kind.Atan2
+            || kind == Kind.MultiplySigned || kind == Kind.DivideSigned
+            || kind == Kind.DivideRanged || kind == Kind.Power;
+
+        /// <summary>Kinds that take an *input* range as well as (or instead of) an output one.
+        /// Remap maps from it; the ranged reciprocal and divide use it to say where the divisor
+        /// lives, which is what lets them skip the lookup ladder altogether.</summary>
+        public static bool UsesInputRange(Kind kind) =>
+            kind == Kind.Remap || kind == Kind.ReciprocalRanged || kind == Kind.DivideRanged
+            || IsFunctionTable(kind) || kind == Kind.Power;
 
         public static bool UsesRange(Kind kind) =>
             kind == Kind.Smooth || kind == Kind.AddRanged || kind == Kind.SubRanged
-            || kind == Kind.Remap || kind == Kind.SmoothLinear || kind == Kind.Buffer;
+            || kind == Kind.Remap || kind == Kind.SmoothLinear || kind == Kind.Buffer
+            || kind == Kind.MultiplySigned || kind == Kind.DivideSigned
+            // The exponent's range, which is what the intermediate product is sized from.
+            || kind == Kind.Power;
 
         /// <summary>Kinds that take a second, shareable Float setting how fast they follow.</summary>
         public static bool UsesSmoothing(Kind kind) => kind == Kind.Smooth || kind == Kind.SmoothLinear;
@@ -135,6 +179,11 @@ namespace Yozolab.DaerD
             /// during validation, and everything it built is swept just before this one is —
             /// so regenerating lands in the same place instead of beside itself.</summary>
             public GraphFrameData.AapGadgetConfig replaces;
+            /// <summary>Output names that already exist because the caller created them up
+            /// front, and are therefore not collisions. A chain that feeds back needs this: the
+            /// gadget reading the loop runs before the one writing it, so the parameter has to
+            /// be there first, and it belongs to the writer all the same.</summary>
+            public string[] preCreated;
         }
 
         /// <summary>
@@ -163,6 +212,68 @@ namespace Yozolab.DaerD
 
         /// <summary>Intermediate parameter of a buffer chain: "output/1", "output/2", …</summary>
         public static string BufferStage(string output, int stage) => output + "/" + stage;
+
+        /// <summary>
+        /// How many frames pass between an input of this gadget changing and its output holding
+        /// the answer. Fixed per kind, and the same whatever the values going in — which is not
+        /// a coincidence but a thing each gadget is built to guarantee, because a cost that
+        /// depended on the data would be a cost nothing could be lined up against.
+        ///
+        /// A gadget reading its inputs and writing AAP clips costs one frame: Mecanim evaluates
+        /// from the values the frame started with and applies the writes at the end. Every frame
+        /// beyond that is an intermediate parameter the gadget keeps for itself, because the
+        /// stage reading one sees what the previous evaluation wrote.
+        ///
+        /// Latencies add along a chain, which is what makes them worth stating: two branches off
+        /// one input that arrive at different totals are reading different frames of it, and the
+        /// difference is the number of frames a <see cref="Kind.Buffer"/> on the shallower branch
+        /// has to make up. <c>GadgetRecipeBuilder</c> does that arithmetic for a recipe.
+        ///
+        /// The two smoothings are filters rather than stages: their output is not their input
+        /// delayed but a running function of it, and the number here is only how long the first
+        /// response takes. Settling is a matter of the smoothing amount, not of the graph.
+        /// </summary>
+        public static int Latency(Request r)
+        {
+            switch (r.kind)
+            {
+                // The one whose cost is an argument rather than a consequence.
+                case Kind.Buffer:
+                    return Mathf.Clamp(r.bufferFrames, MinBufferFrames, MaxBufferFrames);
+                // The shift the exact core computes, and the delayed copy the ladder reads to
+                // stay level with it.
+                case Kind.Reciprocal:
+                    return 2;
+                // The four half-copies, then the four products of them.
+                case Kind.MultiplySigned:
+                    return 2;
+                // The lift into the core's half, the shift, and the core.
+                case Kind.ReciprocalRanged:
+                    return 3;
+                // The reciprocal's two, and the multiply that reads it.
+                case Kind.Divide:
+                    return 3;
+                // The ranged reciprocal's three, and the multiply.
+                case Kind.DivideRanged:
+                    return 4;
+                // A log table, a signed multiply, and an exp table.
+                case Kind.Power:
+                    return 4;
+                // The magnitude, its reciprocal's two, and the stage that puts the sign back.
+                case Kind.DivideSigned:
+                    return 4;
+                // The clamped copy, the offsets, the subnormal products, the read-back, and the
+                // differences that are the digits.
+                case Kind.SeparateDigits:
+                    return 5;
+                // The step reads a difference this gadget wrote last frame, so the constant-speed
+                // smoothing takes one frame longer than the exponential one to answer at all.
+                case Kind.SmoothLinear:
+                    return 2;
+                default:
+                    return 1;
+            }
+        }
 
         /// <summary>
         /// The layers this request has to claim, under the exact names the builders give them.
@@ -198,11 +309,6 @@ namespace Yozolab.DaerD
             var controller = r.controller;
             if (controller == null) return L.Tr("No controller.");
 
-            // Smoothing has its own parameter rules (feedback output, shared smoothing
-            // amount); the whole request is delegated to AapSmoothing.
-            if (r.kind == Kind.Smooth)
-                return AapSmoothing.Validate(ToSmoothingRequest(r));
-
             if (NeedsInput(r.kind) && !IsFloat(controller, r.inputA))
                 return L.Tr("The source must be an existing Float parameter.");
             if (IsBinary(r.kind))
@@ -226,20 +332,30 @@ namespace Yozolab.DaerD
                     return L.Tr("Parameter '{0}' exists but is not a Float.", r.smoothing);
             }
 
-            if ((r.kind == Kind.AddRanged || r.kind == Kind.SubRanged || r.kind == Kind.SmoothLinear
-                || r.kind == Kind.Buffer)
+            // Every kind whose range is a window values travel inside. Remap is the one kind
+            // that uses the range without being in this list: its range is a destination, and
+            // reversing it is how a recipe asks for an inverted slope.
+            if ((r.kind == Kind.Smooth || r.kind == Kind.AddRanged || r.kind == Kind.SubRanged
+                || r.kind == Kind.SmoothLinear || r.kind == Kind.Buffer
+                || r.kind == Kind.MultiplySigned || r.kind == Kind.DivideSigned
+                || r.kind == Kind.Power)
                 && !(r.rangeMin < r.rangeMax))
                 return L.Tr("Range Min must be smaller than Range Max.");
-            if (r.kind == Kind.Remap && !(r.inMin < r.inMax))
+            if (UsesInputRange(r.kind) && !(r.inMin < r.inMax))
                 return L.Tr("Input Min must be smaller than Input Max.");
+            // The lift divides by the window's lower end, and the geometrically sampled tables
+            // take a ratio across it — both of which need the whole window above zero, which is
+            // also where 1/x, 1/√x and log x are defined at all.
+            if (NeedsPositiveWindow(r.kind) && !(r.inMin > 0f))
+                return L.Tr("The input range must start above zero for this gadget.");
+            if (UsesSamples(r.kind) && (r.lutSamples < MinLutSamples || r.lutSamples > MaxLutSamples))
+                return L.Tr("Samples must be between 2 and 128.");
             if (r.kind == Kind.Lut1D)
             {
                 if (r.curve == null || r.curve.length < 2)
                     return L.Tr("The LUT needs a curve with at least two keys.");
                 if (!(r.curve.keys[r.curve.length - 1].time > r.curve.keys[0].time))
                     return L.Tr("The curve's keys must span a time range.");
-                if (r.lutSamples < MinLutSamples || r.lutSamples > MaxLutSamples)
-                    return L.Tr("Samples must be between 2 and 128.");
             }
             if (r.kind == Kind.Atan2
                 && (r.atan2Directions < MinAtan2Directions || r.atan2Directions > MaxAtan2Directions))
@@ -248,28 +364,16 @@ namespace Yozolab.DaerD
                 && (r.bufferFrames < MinBufferFrames || r.bufferFrames > MaxBufferFrames))
                 return L.Tr("Frames must be between 1 and 8.");
 
-            return AapSmoothing.ValidateLayerChoice(controller, r.layerIndex, r.newLayerName);
+            return DbtBuilder.ValidateLayerChoice(controller, r.layerIndex, r.newLayerName);
         }
 
         /// <summary>Whether the name is one the gadget being regenerated already owns. Those
         /// parameters exist because the previous run of this very request created them, and
         /// they are swept before the new ones are built — reading them as a collision would
         /// make a gadget impossible to regenerate under its own name.</summary>
-        static bool Reclaims(Request r, string name) => r.replaces != null && r.replaces.Owns(name);
-
-        static AapSmoothing.Request ToSmoothingRequest(Request r) => new AapSmoothing.Request
-        {
-            replaces = r.replaces,
-            controller = r.controller,
-            source = r.inputA,
-            output = r.output,
-            smoothing = r.smoothing,
-            smoothingDefault = r.smoothingDefault,
-            rangeMin = r.rangeMin,
-            rangeMax = r.rangeMax,
-            layerIndex = r.layerIndex,
-            newLayerName = r.newLayerName,
-        };
+        static bool Reclaims(Request r, string name) =>
+            (r.replaces != null && r.replaces.Owns(name))
+            || (r.preCreated != null && System.Array.IndexOf(r.preCreated, name) >= 0);
 
         /// <summary>Runs the (pre-validated) request; returns false when validation fails.
         /// Turning <paramref name="commitSubAssets"/> off leaves the flush to the caller: a
@@ -277,8 +381,6 @@ namespace Yozolab.DaerD
         /// of one per gadget.</summary>
         public static bool Apply(Request r, bool commitSubAssets = true)
         {
-            if (r.kind == Kind.Smooth) return ApplySmooth(r, commitSubAssets);
-
             if (Validate(r) != null) return false;
             var controller = r.controller;
 
@@ -298,11 +400,9 @@ namespace Yozolab.DaerD
                 if (r.replaces != null) RemoveGadget(controller, r.replaces);
 
                 foreach (var name in OutputParameters(r))
-                    DbtBuilder.EnsureFloatParameter(controller, name, 0f);
-                // A step size below zero would drive the output away from the input; the
-                // wizard offers no such value, but a recipe could ask for one.
-                if (r.kind == Kind.SmoothLinear)
-                    DbtBuilder.EnsureFloatParameter(controller, r.smoothing, Mathf.Max(0f, r.smoothingDefault));
+                    DbtBuilder.EnsureFloatParameter(controller, name, OutputDefault(r, controller));
+                if (UsesSmoothing(r.kind))
+                    DbtBuilder.EnsureFloatParameter(controller, r.smoothing, SmoothingDefault(r));
 
                 var child = Build(r, controller, one);
                 DbtBuilder.AddDirectChild(root, child, one);
@@ -314,35 +414,33 @@ namespace Yozolab.DaerD
             return true;
         }
 
-        /// <summary>The <see cref="Kind.Smooth"/> branch of <see cref="Apply"/>. Smoothing has
-        /// parameter rules of its own and builds its own tree, so the request is handed over
-        /// whole — but the record of what was built belongs here, with every other kind's.</summary>
-        static bool ApplySmooth(Request r, bool commitSubAssets)
+        /// <summary>
+        /// What the gadget's output parameter rests at before anything drives it. Zero for a
+        /// chain, whose output is written from its inputs every frame and so is only ever seen
+        /// at its default on the frame the controller loads.
+        ///
+        /// <see cref="Kind.Smooth"/> is the exception, because its output is also one of its
+        /// inputs: the feedback branch reads the value the gadget wrote last frame. Seeding it
+        /// with the input's own resting value starts the loop settled — from zero it would
+        /// instead be seen easing up to the input on load, which is a real movement and not a
+        /// rounding artefact.
+        /// </summary>
+        static float OutputDefault(Request r, AnimatorController controller)
         {
-            var smoothing = ToSmoothingRequest(r);
-            // Validated up front rather than left to AapSmoothing.Apply's own check: the sweep
-            // must not run for a request that was going to be refused anyway.
-            if (AapSmoothing.Validate(smoothing) != null) return false;
-
-            BlendTree child = null;
-            bool applied;
-            using (new UndoScope("DBT Gadget"))
-            {
-                if (r.replaces != null)
-                {
-                    // The target layer is an index, and the sweep can drop layers before it.
-                    // Hold it by its machine over the removal and look the index up again.
-                    var target = LayerMachineAt(r.controller, smoothing.layerIndex);
-                    RemoveGadget(r.controller, r.replaces);
-                    if (target != null) smoothing.layerIndex = LayerIndexOf(r.controller, target);
-                }
-                applied = AapSmoothing.Apply(smoothing, commitSubAssets: false, out child);
-                if (applied)
-                    SaveConfig(r, DbtBuilder.HostingMachine(r.controller, child), child);
-            }
-            if (applied && commitSubAssets) DbtBuilder.CommitSubAssets(r.controller);
-            return applied;
+            if (r.kind != Kind.Smooth) return 0f;
+            var source = DbtBuilder.FindParameter(controller, r.inputA);
+            return source != null ? source.defaultFloat : 0f;
         }
+
+        /// <summary>
+        /// The follow-speed parameter's default. The two smoothing kinds read it on different
+        /// scales — a 0..1 blend for the exponential one, parameter units per frame for the
+        /// linear one — so all they share is that the value must not run backwards. A step
+        /// below zero would drive the output away from its input; the wizard offers no such
+        /// value, but a recipe could ask for one.
+        /// </summary>
+        static float SmoothingDefault(Request r) =>
+            r.kind == Kind.Smooth ? Mathf.Clamp01(r.smoothingDefault) : Mathf.Max(0f, r.smoothingDefault);
 
         // ---- removing a gadget --------------------------------------------------
 
@@ -528,10 +626,6 @@ namespace Yozolab.DaerD
         static AnimationCurve CopyCurve(AnimationCurve curve) =>
             curve == null ? null : new AnimationCurve(curve.keys);
 
-        static AnimatorStateMachine LayerMachineAt(AnimatorController controller, int index) =>
-            controller != null && index >= 0 && index < controller.layers.Length
-                ? controller.layers[index].stateMachine : null;
-
         static int LayerIndexOf(AnimatorController controller, AnimatorStateMachine machine)
         {
             if (controller == null || machine == null) return -1;
@@ -546,18 +640,28 @@ namespace Yozolab.DaerD
             string a = r.inputA, b = r.inputB, output = r.output;
             switch (r.kind)
             {
+                case Kind.Smooth:
+                    return Smooth(c, a, output, r.smoothing, r.rangeMin, r.rangeMax);
                 case Kind.Add: return Add(c, a, b, output);
                 case Kind.AddRanged: return AddRanged(c, a, b, output, one, r.rangeMin, r.rangeMax);
                 case Kind.Sub: return Sub(c, a, b, output);
                 case Kind.SubRanged: return SubRanged(c, a, b, output, one, r.rangeMin, r.rangeMax);
                 case Kind.Multiply: return Multiply(c, a, b, output);
+                case Kind.MultiplySigned:
+                    return MultiplySigned(c, a, b, output, one, r.rangeMin, r.rangeMax);
+                case Kind.DivideSigned:
+                    return DivideSigned(c, a, b, output, one, r.rangeMin, r.rangeMax);
                 case Kind.And: return And(c, a, b, output);
                 case Kind.Or: return Or(c, a, b, output);
                 case Kind.Not: return Not(c, a, output);
                 case Kind.FloatAsBool: return FloatAsBool(c, a, output, r.threshold);
                 case Kind.Remap: return Remap(c, a, output, r.rangeMin, r.rangeMax, r.inMin, r.inMax);
                 case Kind.Reciprocal: return Reciprocal(c, a, output, one);
+                case Kind.ReciprocalRanged:
+                    return ReciprocalRanged(c, a, output, one, r.inMin, r.inMax);
                 case Kind.Divide: return Divide(c, a, b, output, one);
+                case Kind.DivideRanged:
+                    return DivideRanged(c, a, b, output, one, r.inMin, r.inMax);
                 case Kind.FrameTime: return FrameTime(c, output);
                 case Kind.SmoothLinear:
                     return SmoothLinear(c, a, output, one, r.smoothing, r.rangeMin, r.rangeMax);
@@ -566,6 +670,14 @@ namespace Yozolab.DaerD
                 case Kind.Cosine:
                 case Kind.Tangent: return Trigonometry(c, r.kind, a, output);
                 case Kind.Lut1D: return Lut1D(c, a, output, r.curve, r.lutSamples);
+                case Kind.Sqrt: return Sqrt(c, a, output, r.inMin, r.inMax, r.lutSamples);
+                case Kind.InverseSqrt:
+                    return InverseSqrt(c, a, output, r.inMin, r.inMax, r.lutSamples);
+                case Kind.Log2: return Log2(c, a, output, r.inMin, r.inMax, r.lutSamples);
+                case Kind.Exp2: return Exp2(c, a, output, r.inMin, r.inMax, r.lutSamples);
+                case Kind.Power:
+                    return Power(c, a, b, output, one, r.inMin, r.inMax,
+                        r.rangeMin, r.rangeMax, r.lutSamples);
                 // Input A is the numerator of atan2 and input B the denominator, so the
                 // wizard's A/B pair reads in the order the function's arguments do.
                 case Kind.Atan2: return Atan2(c, a, b, output, r.atan2Directions);
@@ -652,6 +764,174 @@ namespace Yozolab.DaerD
             DbtBuilder.AddDirectChild(inner, one, b);
             var tree = DbtBuilder.DirectTree(c, Name("Mul", a, b));
             DbtBuilder.AddDirectChild(tree, inner, a);
+            return tree;
+        }
+
+        // ---- signed multiplication and division ---------------------------------
+
+        /// <summary>
+        /// The symmetric span a signed gadget works in. Its copies are 1D remaps, and a remap
+        /// can only reach values inside the range it was given — so negating over an asymmetric
+        /// min..max would land outside it and clamp. Taking the wider end of the range and
+        /// working in ±that keeps every input's negation representable, at the cost of a table
+        /// slightly wider than asked for, which costs nothing: a 1D tree's accuracy does not
+        /// depend on how far apart its two thresholds are.
+        /// </summary>
+        static float SignedSpan(float min, float max) => Mathf.Max(Mathf.Abs(min), Mathf.Abs(max));
+
+        /// <summary>
+        /// Splits one signed input into a copy and a negated copy, both one frame late. Weighing
+        /// a Direct child by the copy gives max(x, 0) and by the negated copy max(−x, 0), because
+        /// a weight below zero is clamped away — so between them the two carry the whole signed
+        /// value as a pair of non-negative weights.
+        ///
+        /// Both are made, not just the negation: the pair has to be the same age as each other
+        /// and as the other input's pair, and a stage reading the live input beside a copy of it
+        /// would be reading two different frames.
+        /// </summary>
+        static void SignedCopies(AnimatorController c, BlendTree parent, string input,
+            string positive, string negative, string one, float span)
+        {
+            DbtBuilder.EnsureFloatParameter(c, positive, 0f);
+            DbtBuilder.EnsureFloatParameter(c, negative, 0f);
+            DbtBuilder.AddDirectChild(parent, Remap(c, input, positive, -span, span, -span, span), one);
+            DbtBuilder.AddDirectChild(parent, Remap(c, input, negative, span, -span, -span, span), one);
+        }
+
+        /// <summary>
+        /// Nested Direct trees, one per weight, with an "output = sign" clip at the bottom: the
+        /// whole thing contributes sign × the product of every weight, since weights multiply on
+        /// the way down. Each weight clamps at zero, which is what makes one of these a single
+        /// quadrant of a signed product rather than the product itself.
+        /// </summary>
+        static BlendTree WeightedProduct(AnimatorController c, string output, float sign,
+            params string[] weights)
+        {
+            Motion inner = DbtBuilder.ParameterClip(c, output, sign);
+            BlendTree tree = null;
+            for (int i = weights.Length - 1; i >= 0; i--)
+            {
+                tree = DbtBuilder.DirectTree(c, "× " + DbtBuilder.Sanitize(weights[i]));
+                DbtBuilder.AddDirectChild(tree, inner, weights[i]);
+                inner = tree;
+            }
+            return tree;
+        }
+
+        /// <summary>
+        /// output = A × B for signed inputs, in two frames.
+        ///
+        /// <see cref="Multiply"/> cannot: a Direct weight stops at zero, so a negative operand
+        /// is not multiplied by but dropped, and the product reads 0. That clamp is also the way
+        /// out, because weighing by x and by −x picks out x's two halves:
+        ///
+        ///     A·B = A⁺B⁺ + A⁻B⁻ − A⁺B⁻ − A⁻B⁺
+        ///
+        /// Four nested pairs, two of them writing a −1 clip instead of a +1, summed by the tree
+        /// they hang off. The first frame makes the four half-copies; the second reads them, so
+        /// the answer is A and B as they were two frames ago — the same two frames whichever
+        /// quadrant they are in, which is the point.
+        ///
+        /// The range bounds the *inputs*: outside ±<see cref="SignedSpan"/> the copies clamp.
+        /// The result does not need a range of its own — the clips only ever hold ±1 and the
+        /// weights carry the magnitude, so a product of two values at the end of the range comes
+        /// out exact rather than clipped to it.
+        /// </summary>
+        public static BlendTree MultiplySigned(AnimatorController c, string a, string b,
+            string output, string one, float min, float max)
+        {
+            float span = SignedSpan(min, max);
+            string aPos = output + "/A", aNeg = output + "/NegA";
+            string bPos = output + "/B", bNeg = output + "/NegB";
+
+            var tree = DbtBuilder.DirectTree(c, Name("Mul", a, b) + " (Signed)");
+            SignedCopies(c, tree, a, aPos, aNeg, one, span);
+            SignedCopies(c, tree, b, bPos, bNeg, one, span);
+
+            DbtBuilder.AddDirectChild(tree, WeightedProduct(c, output, 1f, aPos, bPos), one);
+            DbtBuilder.AddDirectChild(tree, WeightedProduct(c, output, 1f, aNeg, bNeg), one);
+            DbtBuilder.AddDirectChild(tree, WeightedProduct(c, output, -1f, aPos, bNeg), one);
+            DbtBuilder.AddDirectChild(tree, WeightedProduct(c, output, -1f, aNeg, bPos), one);
+            return tree;
+        }
+
+        /// <summary>How far from zero a divisor has to be before it counts as having a sign, as
+        /// a fraction of the span. Inside it the two indicators cross and the quotient fades
+        /// through zero rather than jumping between ±240.</summary>
+        const float SignDeadZone = 1e-3f;
+
+        /// <summary>
+        /// output = A / B for signed inputs, in four frames.
+        ///
+        ///     A / B = (A⁺ − A⁻) × (1 / |B|) × (sign⁺ − sign⁻)
+        ///
+        /// The magnitude is free: a 1D tree with a corner at zero *is* the absolute value, one
+        /// frame like any other table. Its reciprocal is <see cref="Reciprocal"/>'s two on top of
+        /// that, so it lands at three — and the numerator's halves and the divisor's sign are
+        /// walked through two identity remaps each so that they land at three as well. The last
+        /// stage weighs four nested products and is therefore the fourth frame, reading one
+        /// moment of A and B rather than three different ones.
+        ///
+        /// What <see cref="SignDeadZone"/> buys near zero is continuity, not accuracy. The two
+        /// indicators cross inside it, so their difference runs from −1 through 0 to +1 instead
+        /// of stepping: at a divisor of exactly 0 the answer is exactly 0, and either side of it
+        /// the answer keeps the divisor's sign and changes sign by passing through zero rather
+        /// than jumping the width of the cap. It does not stay *near* zero — a hair off, the
+        /// difference is still small but the reciprocal is already pinned at its ceiling, and the
+        /// product climbs quickly. |A| × 240 bounds it, because the ladder floors at 1/240.
+        /// </summary>
+        public static BlendTree DivideSigned(AnimatorController c, string a, string b,
+            string output, string one, float min, float max)
+        {
+            float span = SignedSpan(min, max), edge = span * SignDeadZone;
+            string magnitude = output + "/Abs", inverse = InverseParameter(output);
+            string aWait = output + "/A/1", aHeld = output + "/A/2";
+            string bWait = output + "/B/1", bHeld = output + "/B/2";
+            string aPos = output + "/A", aNeg = output + "/NegA";
+            string signPos = output + "/Sign", signNeg = output + "/NegSign";
+
+            foreach (var name in new[] { magnitude, aWait, aHeld, bWait, bHeld, signPos, signNeg })
+                DbtBuilder.EnsureFloatParameter(c, name, 0f);
+
+            var tree = DbtBuilder.DirectTree(c, Name("Div", a, b) + " (Signed)");
+
+            // |B|, and its reciprocal two frames after that.
+            var abs = DbtBuilder.Tree1D(c, Name("Abs", b, null), b);
+            abs.AddChild(DbtBuilder.ParameterClip(c, magnitude, span), -span);
+            abs.AddChild(DbtBuilder.ParameterClip(c, magnitude, 0f), 0f);
+            abs.AddChild(DbtBuilder.ParameterClip(c, magnitude, span), span);
+            DbtBuilder.AddDirectChild(tree, abs, one);
+            DbtBuilder.AddDirectChild(tree, Reciprocal(c, magnitude, inverse, one), one);
+
+            // Both inputs wait out those three frames before they are split.
+            DbtBuilder.AddDirectChild(tree, Remap(c, a, aWait, -span, span, -span, span), one);
+            DbtBuilder.AddDirectChild(tree, Remap(c, aWait, aHeld, -span, span, -span, span), one);
+            SignedCopies(c, tree, aHeld, aPos, aNeg, one, span);
+
+            DbtBuilder.AddDirectChild(tree, Remap(c, b, bWait, -span, span, -span, span), one);
+            DbtBuilder.AddDirectChild(tree, Remap(c, bWait, bHeld, -span, span, -span, span), one);
+            DbtBuilder.AddDirectChild(tree, SignIndicator(c, bHeld, signPos, span, edge, false), one);
+            DbtBuilder.AddDirectChild(tree, SignIndicator(c, bHeld, signNeg, span, edge, true), one);
+
+            DbtBuilder.AddDirectChild(tree, WeightedProduct(c, output, 1f, aPos, inverse, signPos), one);
+            DbtBuilder.AddDirectChild(tree, WeightedProduct(c, output, 1f, aNeg, inverse, signNeg), one);
+            DbtBuilder.AddDirectChild(tree, WeightedProduct(c, output, -1f, aPos, inverse, signNeg), one);
+            DbtBuilder.AddDirectChild(tree, WeightedProduct(c, output, -1f, aNeg, inverse, signPos), one);
+            return tree;
+        }
+
+        /// <summary>1 on one side of zero and 0 on the other, with the changeover squeezed into
+        /// the dead zone either side of it. A 1D tree cannot step, so the pair of thresholds at
+        /// ±edge is what stands in for one.</summary>
+        static BlendTree SignIndicator(AnimatorController c, string input, string output,
+            float span, float edge, bool negative)
+        {
+            float low = negative ? 1f : 0f, high = negative ? 0f : 1f;
+            var tree = DbtBuilder.Tree1D(c, Name("Sign", input, null), input);
+            tree.AddChild(DbtBuilder.ParameterClip(c, output, low), -span);
+            tree.AddChild(DbtBuilder.ParameterClip(c, output, low), -edge);
+            tree.AddChild(DbtBuilder.ParameterClip(c, output, high), edge);
+            tree.AddChild(DbtBuilder.ParameterClip(c, output, high), span);
             return tree;
         }
 
@@ -748,9 +1028,11 @@ namespace Yozolab.DaerD
         /// </summary>
         public static BlendTree Reciprocal(AnimatorController c, string input, string output, string one)
         {
-            string shift = output + "/Shift", name = Name("Reciprocal", input, null);
+            string shift = output + "/Shift", delayed = output + "/Delayed";
+            string name = Name("Reciprocal", input, null);
             DbtBuilder.EnsureFloatParameter(c, output, 0f);
             DbtBuilder.EnsureFloatParameter(c, shift, 0f);
+            DbtBuilder.EnsureFloatParameter(c, delayed, 0f);
 
             var core = DbtBuilder.DirectTree(c, name + " (Core)");
             DbtBuilder.SetNormalizedBlendValues(core, true);
@@ -759,8 +1041,33 @@ namespace Yozolab.DaerD
 
             var tree = DbtBuilder.DirectTree(c, name);
             DbtBuilder.AddDirectChild(tree, Sub(c, input, one, shift), one);   // shift = input - 1
+            // The table reads a copy rather than the input, so that both halves are describing
+            // the same frame: the core is a frame behind by construction (it reads the shift a
+            // sibling computed), and a table reading the live input would be a frame ahead of
+            // it. Same age is what makes the sum a reciprocal at all times instead of only at
+            // rest — it is what closes the wrong frame at the crossing — and it is what makes
+            // this gadget cost two frames for every input rather than two above 1 and one below.
+            DbtBuilder.AddDirectChild(tree, Copy(c, input, delayed), one);
             DbtBuilder.AddDirectChild(tree, core, one);
-            DbtBuilder.AddDirectChild(tree, ReciprocalBelowOne(c, input, output, name), one);
+            DbtBuilder.AddDirectChild(tree, ReciprocalBelowOne(c, delayed, output, name), one);
+            return tree;
+        }
+
+        /// <summary>
+        /// output = input, one frame later, for a non-negative input — a Direct child weighing
+        /// an "output = 1" clip by the source, so the weight carries the value and the clip
+        /// carries nothing but the unit.
+        ///
+        /// Where <see cref="Buffer"/> would do the same job with a 1D remap, this needs no range
+        /// to interpolate over and so cannot clamp: the callers here are delaying values whose
+        /// magnitude is whatever the arithmetic before them produced, and there would be no
+        /// honest range to name. The cost is that a negative input arrives as zero, which is
+        /// the same bargain every positive-only gadget makes.
+        /// </summary>
+        static BlendTree Copy(AnimatorController c, string input, string output)
+        {
+            var tree = DbtBuilder.DirectTree(c, Name("Copy", input, null));
+            DbtBuilder.AddDirectChild(tree, DbtBuilder.ParameterClip(c, output, 1f), input);
             return tree;
         }
 
@@ -794,22 +1101,97 @@ namespace Yozolab.DaerD
             return tree;
         }
 
+        /// <summary>
+        /// output = 1 / input for a divisor that stays inside [min, max], both positive — with
+        /// no lookup ladder in it, and so no ceiling of its own.
+        ///
+        /// <see cref="Reciprocal"/> stops at 240 because of the table that covers inputs below
+        /// 1, and that table is only there because the exact core needs a weight that would have
+        /// to go negative down there. The core itself has no ceiling: it divides by a shift a
+        /// sibling wrote, which is a float and not a table. So a divisor whose range is known
+        /// can be lifted into the core's half and never meet the ladder at all:
+        ///
+        ///     1 / x = (1 / min) · 1 / (x / min),   and x / min is 1 or more by construction.
+        ///
+        /// The scaling back is free — the core's own clip carries 1/min instead of 1, so the
+        /// division and the rescale are the same write. Three frames: the lift, the shift, the
+        /// core. Accuracy is the float's rather than a sampled table's, which also makes this
+        /// the reciprocal to iterate against when a recipe wants more digits than the ladder's
+        /// ~8e-4.
+        ///
+        /// Outside the window the lift clamps, and the answer is the reciprocal of the clamped
+        /// divisor — 1/min below it and 1/max above — which is the honest reading of "the
+        /// divisor was supposed to be in here".
+        /// </summary>
+        public static BlendTree ReciprocalRanged(AnimatorController c, string input, string output,
+            string one, float min, float max)
+        {
+            string lifted = output + "/Lifted", shift = output + "/Shift";
+            string name = Name("Reciprocal", input, null) + " (Ranged)";
+            DbtBuilder.EnsureFloatParameter(c, output, 0f);
+            DbtBuilder.EnsureFloatParameter(c, lifted, 0f);
+            DbtBuilder.EnsureFloatParameter(c, shift, 0f);
+
+            var core = DbtBuilder.DirectTree(c, name + " (Core)");
+            DbtBuilder.SetNormalizedBlendValues(core, true);
+            DbtBuilder.AddDirectChild(core, DbtBuilder.EmptyClip(c, "Weight Only"), shift);
+            DbtBuilder.AddDirectChild(core, DbtBuilder.ParameterClip(c, output, 1f / min), one);
+
+            var tree = DbtBuilder.DirectTree(c, name);
+            DbtBuilder.AddDirectChild(tree, Remap(c, input, lifted, 1f, max / min, min, max), one);
+            DbtBuilder.AddDirectChild(tree, Sub(c, lifted, one, shift), one);
+            DbtBuilder.AddDirectChild(tree, core, one);
+            return tree;
+        }
+
+        /// <summary>output = A / B for a divisor inside [min, max], both positive:
+        /// <see cref="ReciprocalRanged"/>'s three frames and one for the multiply, with the
+        /// numerator held back the same three so the quotient is of one moment. Four frames, and
+        /// none of <see cref="Divide"/>'s ceiling.</summary>
+        public static BlendTree DivideRanged(AnimatorController c, string a, string b,
+            string output, string one, float min, float max)
+        {
+            string inverse = InverseParameter(output);
+            string first = output + "/Num/1", second = output + "/Num/2", numerator = output + "/Num";
+            DbtBuilder.EnsureFloatParameter(c, output, 0f);
+            foreach (var name in new[] { first, second, numerator })
+                DbtBuilder.EnsureFloatParameter(c, name, 0f);
+
+            var tree = DbtBuilder.DirectTree(c, Name("Div", a, b) + " (Ranged)");
+            DbtBuilder.AddDirectChild(tree, ReciprocalRanged(c, b, inverse, one, min, max), one);
+            DbtBuilder.AddDirectChild(tree, Copy(c, a, first), one);
+            DbtBuilder.AddDirectChild(tree, Copy(c, first, second), one);
+            DbtBuilder.AddDirectChild(tree, Copy(c, second, numerator), one);
+            DbtBuilder.AddDirectChild(tree, Multiply(c, numerator, inverse, output), one);
+            return tree;
+        }
+
         /// <summary>The layer <see cref="Reciprocal"/> used to be half of. Kept for reclaiming
         /// one from a controller an older version built — see <see cref="SupportingLayerNames"/>.
         /// </summary>
         static string ReciprocalLayerName(string output) => output + " 1/x";
 
         /// <summary>output = A / B, for positive inputs: B's reciprocal into a parameter of its
-        /// own, then A × that. Inherits one more frame of lag on top of <see cref="Reciprocal"/>'s
-        /// two — the multiply reads last frame's reciprocal.</summary>
+        /// own, then A × that — three frames, on top of <see cref="Reciprocal"/>'s two.
+        ///
+        /// The numerator is held back by the same two frames the reciprocal takes. Without that
+        /// the multiply would pair this frame's A with a reciprocal of B from two frames ago,
+        /// which is a quotient of no particular moment: right once the inputs stop moving, and
+        /// wrong every frame they are moving. Delayed, the answer is A / B as they both were
+        /// three frames ago.</summary>
         public static BlendTree Divide(AnimatorController c, string a, string b, string output, string one)
         {
             string inverse = InverseParameter(output);
+            string stage = output + "/Num/1", numerator = output + "/Num";
             DbtBuilder.EnsureFloatParameter(c, output, 0f);
+            DbtBuilder.EnsureFloatParameter(c, stage, 0f);
+            DbtBuilder.EnsureFloatParameter(c, numerator, 0f);
 
             var tree = DbtBuilder.DirectTree(c, Name("Div", a, b));
             DbtBuilder.AddDirectChild(tree, Reciprocal(c, b, inverse, one), one);
-            DbtBuilder.AddDirectChild(tree, Multiply(c, a, inverse, output), one);
+            DbtBuilder.AddDirectChild(tree, Copy(c, a, stage), one);
+            DbtBuilder.AddDirectChild(tree, Copy(c, stage, numerator), one);
+            DbtBuilder.AddDirectChild(tree, Multiply(c, numerator, inverse, output), one);
             return tree;
         }
 
@@ -866,7 +1248,43 @@ namespace Yozolab.DaerD
             AddSupportingState(stateMachine, "Clock", new Vector3(300f, 60f, 0f), clip);
         }
 
-        // ---- linear smoothing ---------------------------------------------------
+        // ---- smoothing ----------------------------------------------------------
+
+        /// <summary>
+        /// Every frame, <c>output = lerp(input, output, smoothing)</c>: a 1D tree over the
+        /// smoothing amount cross-fades between a tree that follows the input (at 0) and one
+        /// driven by the output itself (at 1). Both leaves are the same pair of AAP clips —
+        /// one-key clips animating the output parameter on the Animator — so whichever branch
+        /// carries the weight writes the same parameter, and the blend between them is the
+        /// smoothing.
+        ///
+        /// The one gadget whose tree is a loop rather than a chain: the output is both what it
+        /// writes and what one of its branches reads. That is also why
+        /// <see cref="OutputDefault"/> seeds the output with the input's resting value — read
+        /// on the frame it is written, an output starting at 0 would have the gadget ease up
+        /// from 0 on load rather than begin settled.
+        /// Reference: https://vrc.school/docs/Other/Advanced-BlendTrees
+        /// </summary>
+        public static BlendTree Smooth(AnimatorController c, string input, string output,
+            string smoothing, float min, float max)
+        {
+            // The two AAP leaves, shared by the input and the feedback tree.
+            var clipMin = DbtBuilder.ParameterClip(c, output, min);
+            var clipMax = DbtBuilder.ParameterClip(c, output, max);
+
+            var inputTree = DbtBuilder.Tree1D(c, DbtBuilder.Sanitize(input) + " (Input)", input);
+            inputTree.AddChild(clipMin, min);
+            inputTree.AddChild(clipMax, max);
+
+            var feedbackTree = DbtBuilder.Tree1D(c, DbtBuilder.Sanitize(output) + " (Feedback)", output);
+            feedbackTree.AddChild(clipMin, min);
+            feedbackTree.AddChild(clipMax, max);
+
+            var smoothTree = DbtBuilder.Tree1D(c, "Smooth " + DbtBuilder.Sanitize(input), smoothing);
+            smoothTree.AddChild(inputTree, 0f);
+            smoothTree.AddChild(feedbackTree, 1f);
+            return smoothTree;
+        }
 
         /// <summary>Where the step ramp saturates, in parameter units. The convention this
         /// technique is written against; see <see cref="SmoothLinear"/>.</summary>
@@ -874,7 +1292,7 @@ namespace Yozolab.DaerD
 
         /// <summary>
         /// Moves the output toward the input at a constant speed — stepSize per frame — where
-        /// <see cref="AapSmoothing"/> eases in and never quite arrives. Four Direct children:
+        /// <see cref="Smooth"/> eases in and never quite arrives. Four Direct children:
         /// three remaps write the difference into "output/Delta" (the input added, the output
         /// subtracted) and hold the output at its current value, and a 1D tree over Delta adds
         /// ±1 × stepSize, ramping through 0 inside the last ±<see cref="StepRamp"/> so the
@@ -1019,6 +1437,10 @@ namespace Yozolab.DaerD
         /// value everywhere, comfortably inside the 1/127 a synced float can carry anyway — and
         /// it is divisible by four, which is what lets <see cref="TrigValue"/> put a sample
         /// exactly on tan's poles instead of near them.
+        ///
+        /// The table is one period and a 1D tree clamps past its outermost child, so this does
+        /// not wrap: 1.25 turns reads as 1 turn and −3 reads as 0. An angle that accumulates has
+        /// to be brought back into 0..1 before it arrives.
         /// Reference: https://vrc.school/docs/Other/Advanced-BlendTrees
         /// </summary>
         public static BlendTree Trigonometry(AnimatorController c, Kind kind, string input, string output)
@@ -1098,6 +1520,126 @@ namespace Yozolab.DaerD
                     clips[value] = clip = DbtBuilder.ParameterClip(c, output, value);
                 tree.AddChild(clip, t);
             }
+            return tree;
+        }
+
+        // ---- functions of one input ----------------------------------------------
+
+        /// <summary>
+        /// A fixed function over a declared window, sampled into a 1D tree — the same trick
+        /// <see cref="Lut1D"/> and the trigonometric kinds use, with the curve known in advance
+        /// so nobody has to draw it. One frame, like any other table.
+        ///
+        /// Where the samples go matters more than how many there are. Spaced evenly, a table of
+        /// √x or log x spends most of its samples where the function is nearly straight and none
+        /// where it turns hardest — √x over 0..4 in 33 even steps is out by 0.09 near zero, which
+        /// is not a rounding error. Spaced geometrically, the error of interpolating a power or a
+        /// logarithm depends only on the *ratio* between neighbouring samples, so it is the same
+        /// on every rung of the ladder, which is the same reasoning
+        /// <see cref="ReciprocalBelowOne"/> is built on. Exponentials are the other way round —
+        /// their relative error is flat under even spacing — so each kind says which it wants.
+        ///
+        /// Outside the window a 1D tree clamps, so the answer there is the function's value at
+        /// the nearer end. The window is the promise about the input.
+        /// </summary>
+        static BlendTree FunctionTable(AnimatorController c, string input, string output,
+            string label, System.Func<float, float> f, float min, float max, int samples,
+            bool geometric)
+        {
+            samples = Mathf.Clamp(samples, MinLutSamples, MaxLutSamples);
+            var tree = DbtBuilder.Tree1D(c, Name(label, input, null), input);
+            // Flat stretches would otherwise mint one identical clip per sample.
+            var clips = new Dictionary<float, AnimationClip>();
+            for (int i = 0; i < samples; i++)
+            {
+                float t = (float)i / (samples - 1);
+                float x = geometric ? min * Mathf.Pow(max / min, t) : Mathf.Lerp(min, max, t);
+                float value = f(x);
+                if (!clips.TryGetValue(value, out var clip))
+                    clips[value] = clip = DbtBuilder.ParameterClip(c, output, value);
+                tree.AddChild(clip, x);
+            }
+            return tree;
+        }
+
+        /// <summary>output = √input over min..max. Geometrically sampled, because √ turns hardest
+        /// at the bottom of its range and an even table would spend nothing there.</summary>
+        public static BlendTree Sqrt(AnimatorController c, string input, string output,
+            float min, float max, int samples) =>
+            FunctionTable(c, input, output, "Sqrt", Mathf.Sqrt, min, max, samples, true);
+
+        /// <summary>output = 1/√input over min..max — the one a normalisation wants, and cheaper
+        /// than a square root and a reciprocal in a row (one frame against three).</summary>
+        public static BlendTree InverseSqrt(AnimatorController c, string input, string output,
+            float min, float max, int samples) =>
+            FunctionTable(c, input, output, "InvSqrt", x => 1f / Mathf.Sqrt(x),
+                min, max, samples, true);
+
+        /// <summary>output = log₂(input) over min..max, both above zero. Base two because it is
+        /// the one <see cref="Exp2"/> undoes, and the pair is what <see cref="Power"/> is made
+        /// of; any other base is this times a constant, which a remap does for free.</summary>
+        public static BlendTree Log2(AnimatorController c, string input, string output,
+            float min, float max, int samples) =>
+            FunctionTable(c, input, output, "Log2", x => Mathf.Log(x, 2f),
+                min, max, samples, true);
+
+        /// <summary>output = 2^input over min..max. Evenly sampled: the relative error of
+        /// interpolating an exponential is the same everywhere under even spacing, which is the
+        /// opposite of what the power functions above want.</summary>
+        public static BlendTree Exp2(AnimatorController c, string input, string output,
+            float min, float max, int samples) =>
+            FunctionTable(c, input, output, "Exp2", x => Mathf.Pow(2f, x),
+                min, max, samples, false);
+
+        /// <summary>
+        /// output = base^exponent, with both of them parameters — which is the reason this is a
+        /// gadget and not a table. A table can hold any function of one input; a power of two
+        /// runtime values is a surface, and no 1D tree holds a surface.
+        ///
+        ///     x^y = 2^(y · log₂ x)
+        ///
+        /// so it is the two tables above with a signed multiply between them: log₂ of the base
+        /// (1 frame), times the exponent (2), back through exp₂ (1). Four frames.
+        ///
+        /// Three windows have to line up and this works them out from two. The base's window is
+        /// declared; the exponent's range is declared; the product's range is then the four
+        /// corners of the two, and that is what the exp₂ table is sampled over. Getting that
+        /// last one wrong would clamp the result rather than compute it, which is exactly the
+        /// arithmetic a caller should not have to do by hand.
+        /// </summary>
+        public static BlendTree Power(AnimatorController c, string b, string e, string output,
+            string one, float min, float max, float expMin, float expMax, int samples)
+        {
+            string log = output + "/Log", held = output + "/Exponent", product = output + "/Exp";
+            DbtBuilder.EnsureFloatParameter(c, log, 0f);
+            DbtBuilder.EnsureFloatParameter(c, held, 0f);
+            DbtBuilder.EnsureFloatParameter(c, product, 0f);
+
+            float lowLog = Mathf.Log(min, 2f), highLog = Mathf.Log(max, 2f);
+            float lowProduct = Mathf.Min(
+                Mathf.Min(lowLog * expMin, lowLog * expMax),
+                Mathf.Min(highLog * expMin, highLog * expMax));
+            float highProduct = Mathf.Max(
+                Mathf.Max(lowLog * expMin, lowLog * expMax),
+                Mathf.Max(highLog * expMin, highLog * expMax));
+            // The signed multiply reads both operands through tables spanning ±this, and its
+            // own result needs no range at all.
+            float span = Mathf.Max(Mathf.Max(Mathf.Abs(lowLog), Mathf.Abs(highLog)),
+                Mathf.Max(Mathf.Abs(expMin), Mathf.Abs(expMax)));
+
+            var tree = DbtBuilder.DirectTree(c, Name("Pow", b, e));
+            DbtBuilder.AddDirectChild(tree, Log2(c, b, log, min, max, samples), one);
+            // The exponent waits out the log table's frame. Without it the multiply would pair a
+            // logarithm of the base as it was last frame with an exponent as it is now, and the
+            // gadget would cost four frames when the base moved and three when the exponent did
+            // — a latency that is a property of which input you touched, which is exactly what
+            // nothing downstream can line up against.
+            DbtBuilder.AddDirectChild(tree,
+                Remap(c, e, held, expMin, expMax, expMin, expMax), one);
+            DbtBuilder.AddDirectChild(tree,
+                MultiplySigned(c, log, held, product, one, -span, span), one);
+            DbtBuilder.AddDirectChild(tree,
+                Exp2(c, product, output, lowProduct, highProduct, samples), one);
             return tree;
         }
 

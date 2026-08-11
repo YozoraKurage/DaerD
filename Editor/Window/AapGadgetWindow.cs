@@ -123,14 +123,18 @@ namespace Yozolab.DaerD
                 case AapGadgets.Kind.AddRanged: _output = a + "+" + b; break;
                 case AapGadgets.Kind.Sub:
                 case AapGadgets.Kind.SubRanged: _output = a + "-" + b; break;
-                case AapGadgets.Kind.Multiply: _output = a + "*" + b; break;
+                case AapGadgets.Kind.Multiply:
+                case AapGadgets.Kind.MultiplySigned: _output = a + "*" + b; break;
                 case AapGadgets.Kind.And: _output = a + "&" + b; break;
                 case AapGadgets.Kind.Or: _output = a + "|" + b; break;
                 case AapGadgets.Kind.Not: _output = a + "/Not"; break;
                 case AapGadgets.Kind.FloatAsBool: _output = a + "/Bool"; break;
                 case AapGadgets.Kind.Remap: _output = a + "/Remapped"; break;
-                case AapGadgets.Kind.Reciprocal: _output = a + "/Inv"; break;
-                case AapGadgets.Kind.Divide: _output = a + "÷" + b; break;
+                case AapGadgets.Kind.Reciprocal:
+                case AapGadgets.Kind.ReciprocalRanged: _output = a + "/Inv"; break;
+                case AapGadgets.Kind.DivideRanged: _output = a + "÷" + b; break;
+                case AapGadgets.Kind.Divide:
+                case AapGadgets.Kind.DivideSigned: _output = a + "÷" + b; break;
                 // No input to name it after — and one per controller is the idea anyway.
                 case AapGadgets.Kind.FrameTime: _output = "FrameTime"; break;
                 case AapGadgets.Kind.SmoothLinear: _output = a + "/Smoothed"; break;
@@ -141,6 +145,11 @@ namespace Yozolab.DaerD
                 case AapGadgets.Kind.Lut1D: _output = a + "/Lut"; break;
                 case AapGadgets.Kind.Atan2: _output = a + "/Angle"; break;
                 case AapGadgets.Kind.Buffer: _output = a + "/Buffered"; break;
+                case AapGadgets.Kind.Sqrt: _output = a + "/Sqrt"; break;
+                case AapGadgets.Kind.InverseSqrt: _output = a + "/InvSqrt"; break;
+                case AapGadgets.Kind.Log2: _output = a + "/Log2"; break;
+                case AapGadgets.Kind.Exp2: _output = a + "/Exp2"; break;
+                case AapGadgets.Kind.Power: _output = a + "^" + b; break;
             }
         }
 
@@ -159,7 +168,9 @@ namespace Yozolab.DaerD
                 case AapGadgets.Kind.SubRanged:
                     return L.Tr("output = A - B over the given range; use a symmetric range (Min = -Max).");
                 case AapGadgets.Kind.Multiply:
-                    return L.Tr("output = A × B via nested Direct trees. Positive values only.");
+                    return L.Tr("output = A × B via nested Direct trees. Positive values only; use Multiply (Signed) for negative ones. One frame.");
+                case AapGadgets.Kind.MultiplySigned:
+                    return L.Tr("output = A × B for signed values: each input is split into its positive and negative halves and the four products are summed. The range bounds the inputs, not the result. Two frames.");
                 case AapGadgets.Kind.And:
                     return L.Tr("output = A AND B, for 0/1 inputs.");
                 case AapGadgets.Kind.Or:
@@ -171,9 +182,15 @@ namespace Yozolab.DaerD
                 case AapGadgets.Kind.Remap:
                     return L.Tr("Linearly remaps the input range to the output range (reversed output ranges invert the slope).");
                 case AapGadgets.Kind.Reciprocal:
-                    return L.Tr("output = 1 / input, for positive inputs: exact from 1 up, a lookup table below it (capped at 240). The result trails the input by two frames.");
+                    return L.Tr("output = 1 / input, for positive inputs: exact from 1 up, a lookup table below it (capped at 240). Two frames. If you know the range the divisor stays in, Reciprocal (Ranged) has no cap and no table.");
+                case AapGadgets.Kind.ReciprocalRanged:
+                    return L.Tr("output = 1 / input for a divisor inside Divisor Min…Max, both above zero. Lifts the divisor above 1 so the exact half answers on its own — no 240 cap, no lookup table. Three frames. Outside the range the answer is the reciprocal of the clamped divisor.");
+                case AapGadgets.Kind.DivideRanged:
+                    return L.Tr("output = A / B for a divisor inside Divisor Min…Max, both above zero. No cap and no lookup table; four frames. Prefer this over Divide whenever B's range is known.");
                 case AapGadgets.Kind.Divide:
                     return L.Tr("output = A / B, for positive inputs. Builds B's reciprocal first, so the result trails by three frames.");
+                case AapGadgets.Kind.DivideSigned:
+                    return L.Tr("output = A / B for signed values: |B|'s reciprocal, then A times it with B's sign. Four frames. A divisor near zero has no sign to read, and the quotient fades to 0 there.");
                 case AapGadgets.Kind.FrameTime:
                     return L.Tr("output = the seconds since the previous frame. Add only one per controller — the clock it runs is shared machinery.");
                 case AapGadgets.Kind.SmoothLinear:
@@ -190,6 +207,16 @@ namespace Yozolab.DaerD
                     return L.Tr("Bakes the curve into a 1D blend tree lookup table: the curve's time axis is the input, its value the output, linearly interpolated between evenly spaced sample points. Lives entirely inside the blend tree layer.");
                 case AapGadgets.Kind.Atan2:
                     return L.Tr("output = atan2(Y, X) in turns: 0..1 counter-clockwise from +X, ready to feed the Sine / Cosine gadgets. Values near the origin collapse toward 0 — gate by magnitude. The 0/1 seam sits in a narrow band at +X.");
+                case AapGadgets.Kind.Sqrt:
+                    return L.Tr("output = the square root of the input, over the window Input Min…Max (above zero). A lookup table sampled where a square root turns hardest, so one frame and no iteration. Outside the window the answer is the root of the nearer end.");
+                case AapGadgets.Kind.InverseSqrt:
+                    return L.Tr("output = 1 / the square root of the input, over Input Min…Max (above zero). One frame — what a normalisation wants, without paying for a root and a reciprocal in a row.");
+                case AapGadgets.Kind.Log2:
+                    return L.Tr("output = log2(input) over Input Min…Max (above zero). One frame. Another base is this times a constant, which a Remap does for free.");
+                case AapGadgets.Kind.Exp2:
+                    return L.Tr("output = 2 to the power of the input, over Input Min…Max. One frame.");
+                case AapGadgets.Kind.Power:
+                    return L.Tr("output = A to the power of B, with both of them parameters: log2 of the base, times the exponent, back through exp2. Four frames. Input Min…Max is the base's window (above zero) and Range Min…Max bounds the exponent; the intermediate range follows from those.");
                 case AapGadgets.Kind.Buffer:
                     return L.Tr("output = the input, delayed by exactly N frames. Every blend tree stage costs one frame, so branches of different depth see different frames of the same parameter — insert a buffer on the shallower branch to line the two up again.");
             }
@@ -319,15 +346,25 @@ namespace Yozolab.DaerD
                     _kind == AapGadgets.Kind.Remap ? L.Tr("Output Max") : L.Tr("Range Max"), _rangeMax);
                 EditorGUILayout.EndHorizontal();
             }
-            if (_kind == AapGadgets.Kind.Remap)
+            if (AapGadgets.UsesInputRange(_kind))
             {
+                bool divisor = _kind != AapGadgets.Kind.Remap;
                 EditorGUILayout.BeginHorizontal();
-                _inMin = EditorGUILayout.FloatField(L.Tr("Input Min"), _inMin);
-                _inMax = EditorGUILayout.FloatField(L.Tr("Input Max"), _inMax);
+                _inMin = EditorGUILayout.FloatField(
+                    divisor ? L.Tr("Divisor Min") : L.Tr("Input Min"), _inMin);
+                _inMax = EditorGUILayout.FloatField(
+                    divisor ? L.Tr("Divisor Max") : L.Tr("Input Max"), _inMax);
                 EditorGUILayout.EndHorizontal();
             }
             if (_kind == AapGadgets.Kind.FloatAsBool)
                 _threshold = EditorGUILayout.FloatField(L.Tr("Threshold"), _threshold);
+            // Lut1D draws its own beside the curve field; the rest of the sampled kinds have
+            // no curve to draw, so the sample count is all there is to say about their table.
+            if (AapGadgets.UsesSamples(_kind) && _kind != AapGadgets.Kind.Lut1D)
+                _lutSamples = EditorGUILayout.IntSlider(
+                    new GUIContent(L.Tr("Samples"),
+                        L.Tr("How many points the function is sampled at. The tree interpolates linearly between them.")),
+                    _lutSamples, AapGadgets.MinLutSamples, AapGadgets.MaxLutSamples);
 
             if (AapGadgets.UsesDbtLayer(_kind))
                 DrawLayerChoice();
@@ -339,12 +376,12 @@ namespace Yozolab.DaerD
             EditorGUILayout.Space(8);
             EditorGUILayout.BeginHorizontal();
             GUILayout.FlexibleSpace();
-            if (GUILayout.Button(L.Tr("Cancel"), GUILayout.Width(100)))
+            if (GUILayout.Button(L.Tr("Cancel"), GUILayout.Width(DaerDLayout.DialogButton)))
                 Close();
-            if (_gadgetChoice > 0 && GUILayout.Button(L.Tr("Delete"), GUILayout.Width(100)))
+            if (_gadgetChoice > 0 && GUILayout.Button(L.Tr("Delete"), GUILayout.Width(DaerDLayout.DialogButton)))
                 TryDelete();
             if (GUILayout.Button(_gadgetChoice > 0 ? L.Tr("Regenerate") : L.Tr("Create"),
-                GUILayout.Width(100)))
+                GUILayout.Width(DaerDLayout.DialogButton)))
                 TryApply();
             EditorGUILayout.EndHorizontal();
         }

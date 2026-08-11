@@ -4,7 +4,8 @@
     "references": [
         "UnityEngine.TestRunner",
         "UnityEditor.TestRunner",
-        "Yozolab.DaerD.Editor"
+        "Yozolab.DaerD.Editor",
+        "Yozolab.DaerD.Tests.Stubs"
     ],
     "includePlatforms": [
         "Editor"

@@ -206,6 +206,10 @@ namespace Yozolab.DaerD
             public float offset;
             public TransitionInterruptionSource interruptionSource;
             public bool orderedInterruption = true;
+            /// <summary>Only an Any State transition does anything with this, and there a
+            /// recipe that says nothing means "do not re-trigger" — deliberately not Unity's
+            /// own default. On every other transition the flag is inert, which is why neither
+            /// the exporter nor the diff looks at it outside Any State.</summary>
             public bool canTransitionToSelf;
             public bool solo;
             public bool mute;

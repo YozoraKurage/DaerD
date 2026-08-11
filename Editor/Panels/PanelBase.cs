@@ -34,7 +34,7 @@ namespace Yozolab.DaerD
             if (Context == null || !Context.HasController)
             {
                 EditorGUILayout.Space(8);
-                EditorGUILayout.LabelField("No controller loaded.", EditorStyles.centeredGreyMiniLabel);
+                EditorGUILayout.LabelField(L.Tr("No controller loaded."), EditorStyles.centeredGreyMiniLabel);
                 return;
             }
             DrawPinnedHeader();

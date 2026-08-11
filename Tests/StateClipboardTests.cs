@@ -5,11 +5,6 @@ using UnityEngine;
 
 namespace Yozolab.DaerD.Tests
 {
-    class StateClipboardTestBehaviour : StateMachineBehaviour
-    {
-        public string payload;
-    }
-
     public class StateClipboardTests
     {
         AnimatorController _controller;

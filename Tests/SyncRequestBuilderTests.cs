@@ -83,14 +83,17 @@ namespace Yozolab.DaerD.Tests
                 new List<string> { "B" }));
 
             // The driver on the state: DaerD-managed name, localOnly, one Set per flag.
-            var driver = SyncRequestBuilder.FindDriver(state, "Async") as VRCAvatarParameterDriver;
-            Assert.IsNotNull(driver);
-            Assert.AreEqual("Sync Request (Async)", driver.name);
+            var behaviour = SyncRequestBuilder.FindDriver(state, "Async");
+            Assert.IsNotNull(behaviour);
+            Assert.AreEqual("Sync Request (Async)", behaviour.name);
+            // Read as data, not cast: with the real SDK installed it is the SDK's driver
+            // class on the state, since the builder finds the class by name.
+            var driver = VrcParameterDriver.ReadSpec(behaviour);
             Assert.IsTrue(driver.localOnly);
-            Assert.AreEqual(1, driver.parameters.Count);
-            Assert.AreEqual("Async/Req/B", driver.parameters[0].name);
-            Assert.AreEqual(0, driver.parameters[0].type);
-            Assert.AreEqual(1f, driver.parameters[0].value);
+            Assert.AreEqual(1, driver.entries.Count);
+            Assert.AreEqual("Async/Req/B", driver.entries[0].name);
+            Assert.AreEqual(0, driver.entries[0].kind);
+            Assert.AreEqual(1f, driver.entries[0].value);
 
             // "B" was not requestable yet, so the sync layer was regenerated to listen:
             // flag parameter plus redirect routes ahead of the ring.
@@ -121,11 +124,11 @@ namespace Yozolab.DaerD.Tests
                     drivers++;
             Assert.AreEqual(1, drivers, "editing rewrites the managed driver, never stacks");
 
-            var driver = SyncRequestBuilder.FindDriver(state, "Async") as VRCAvatarParameterDriver;
-            Assert.AreEqual(2, driver.parameters.Count);
+            var driver = VrcParameterDriver.ReadSpec(SyncRequestBuilder.FindDriver(state, "Async"));
+            Assert.AreEqual(2, driver.entries.Count);
             // Stored and driven in the setup's cycle order, not tick order.
-            Assert.AreEqual("Async/Req/F", driver.parameters[0].name);
-            Assert.AreEqual("Async/Req/I", driver.parameters[1].name);
+            Assert.AreEqual("Async/Req/F", driver.entries[0].name);
+            Assert.AreEqual("Async/Req/I", driver.entries[1].name);
         }
 
         [Test]

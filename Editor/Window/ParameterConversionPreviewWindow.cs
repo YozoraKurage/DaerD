@@ -15,7 +15,7 @@ namespace Yozolab.DaerD
         public static void Open(ParameterConverter.Plan plan, Action onApplied)
         {
             var window = CreateInstance<ParameterConversionPreviewWindow>();
-            window.titleContent = new GUIContent("Convert Parameter");
+            window.titleContent = new GUIContent(L.Tr("Convert Parameter"));
             window._plan = plan;
             window._onApplied = onApplied;
             window.minSize = new Vector2(520, 340);
@@ -64,9 +64,9 @@ namespace Yozolab.DaerD
             EditorGUILayout.Space(4);
             EditorGUILayout.BeginHorizontal();
             GUILayout.FlexibleSpace();
-            if (GUILayout.Button("Cancel", GUILayout.Width(100)))
+            if (GUILayout.Button(L.Tr("Cancel"), GUILayout.Width(DaerDLayout.DialogButton)))
                 Close();
-            if (GUILayout.Button("Apply", GUILayout.Width(100)))
+            if (GUILayout.Button(L.Tr("Apply"), GUILayout.Width(DaerDLayout.DialogButton)))
             {
                 ParameterConverter.Apply(_plan);
                 _onApplied?.Invoke();

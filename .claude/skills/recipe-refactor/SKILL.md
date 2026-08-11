@@ -32,11 +32,42 @@ protected override void Build(ControllerBuilder c) => BuildGenerated(c);
 フィールドと `Build`）。その場合はそのファイルを直接整理するか、先に DaerD から
 再エクスポートして 2 分割へ移行する（移行時は旧ファイルが `.cs.bak` に退避される）。
 
+## API の定義場所
+
+Recipe が書けるものはすべて `Editor/Authoring/` にある。名前空間は
+`Yozolab.DaerD.Authoring` で、**このフォルダの public 型だけが Recipe から見える API**
+（`Editor/Model/` 以下は内部実装で、Recipe から触れない）。シグネチャや引数の意味を
+確かめたいときは、生成 cs 冒頭のチートシートではなくこちらを読む — チートシートは
+要約なので、既定値・オーバーロード・XML コメントの注意書きは載っていない。
+
+| ファイル | 何が定義されているか |
+|---|---|
+| `ControllerBuilder.cs` | `Build(ControllerBuilder c)` の `c`。パラメーター宣言、`Layer` / `SyncedLayer` / `NewBlendTree` / `Raw` / `AsyncSync` / `Gadgets` の入口 |
+| `MachineScope.cs` | レイヤー根とサブマシンの共通面: `NewState` / `NewSubStateMachine` / `AnyTransitionsTo` / `EntryTransitionsTo` / `BehaviourJson` / ノード座標 |
+| `LayerBuilder.cs` / `MachineBuilder.cs` | 上の派生。レイヤー設定（重み・加算・IK・マスク）と、サブマシン自身からの遷移 |
+| `StateBuilder.cs` | ステートの設定（速度・モーションタイム・ミラー・WD・タグ…）、そこからの遷移、**ドライバー**、ステートの Behaviour |
+| `TransitionBuilder.cs` | 条件（`When`/`And`）と遷移の時間・割り込み・Solo/Mute |
+| `TreeBuilder.cs` / `TreeChildBuilder.cs` | ブレンドツリーの種類と子（閾値・座標・時間スケール等） |
+| `SyncedLayerBuilder.cs` | 同期レイヤーと `Override` / `OverrideBehaviourJson` |
+| `GadgetRecipeBuilder.cs` | DBT ガジェット。**利用できるガジェットの全一覧はここ** |
+| `AsyncSyncRecipeBuilder.cs` | 巡回同期の設定一式 |
+| `ParamHandle.cs` / `FloatParam.cs` / `IntParam.cs` / `BoolParam.cs` / `TriggerParam.cs` / `Condition.cs` | パラメーターハンドルと、型ごとに作れる条件（`IsTrue` / `IsGreaterThan` / `IsEqualTo` …） |
+| `ControllerRecipe.cs` | `Build` / `BuildGenerated` の契約と、`Generate` / `Verify` / `Compare`、`targetController`・`exclusive` |
+
+Compare が何を見ているかを知りたいときは `Editor/Model/ControllerIR.cs`（IR が持つ項目
+＝比較され得るものの全体）と `Editor/Model/ControllerIRDiff.cs`（実際の比較と、意図的に
+比較していない箇所）を読む。
+
+動く用例としては `Tests/AuthoringTests.cs` と `Tests/ComplexControllerTests.cs`。
+後者は API のほぼ全面を 1 つの宣言で使っているので、書き方に迷ったらここが早い。
+
 ## 進め方
 
 1. `<Name>.Generated.cs` を通しで読み、レイヤー構成と各レイヤーの役割を把握する
    （ステート名・パラメーター名・遷移条件から推測する。分からない役割は推測をコメントに
-   書かず、構造の整理だけに留める）。冒頭に API チートシートがある。
+   書かず、構造の整理だけに留める）。冒頭に API チートシートがあるが、これは
+   コメントで書かれた**例文**であって呼び出しコードではない。「この API は無い」「この
+   引数は要らない」の判断は、上表の定義ファイルで確かめてから下すこと。
 2. リファクタ後の骨格を決める: `Build` はレイヤーごとのメソッド呼び出しだけにする。
    複数レイヤーから使うパラメーターハンドルは `Params` クラスに集める。
 3. 下の不変条件を守りながら、手編集側 `<Name>.cs` に書く。
@@ -55,19 +86,48 @@ protected override void Build(ControllerBuilder c) => BuildGenerated(c);
   - 1 ステート内のビヘイビアの順、1 遷移内の `When`/`And` 条件の順。
     ステートマシンに付いた Behaviour（`main.BehaviourJson(...)` / `sub.BehaviourJson(...)`）は
     **どのマシンに付いているか**を取り違えないこと。ステートの Behaviour とは別物
+  - **ドライバーのエントリ順 = 実行順**。`Drives` / `DrivingIncreases` / `DrivingDecreases` /
+    `DrivingRandomizes` / `DrivingCopies` は呼んだ順に 1 つのドライバーへ積まれ、その順に
+    走る（Set の後の Copy は書き換わった後の値を読む）。並べ替えは挙動が変わる。
+    `NewDriver(...)` は**そこから別のドライバー実体**を始める区切りで、`DrivingLocally()` は
+    その時点のドライバーに効く。テーブル化するときはこの 3 つを崩さないこと
   - テーブル化するときは行の並び = 元の生成順。並びが不規則でも「元データどおり」と
     コメントして保存する
 - **`[SerializeField]` フィールドは Generated 側にある**。手編集側で再宣言しない
   （二重定義になる）。同じ partial class なので名前でそのまま参照できる。名前の変更も
   不可（Recipe アセット側の参照キー）。手編集側で足す独自フィールドは自由。
 - **`BehaviourJson` の JSON 文字列は 1 文字も変えない**（`m_ObjectHideFlags` 以外は
-  厳密比較される）。ヘルパー関数化するときも連結結果が元の文字列と一致すること。
+  厳密比較される）。これは `EditorJsonUtility` のスナップショット、つまり
+  `{"MonoBehaviour":{...}}` という型ラッパー付きの形式で、素のフィールド列
+  （`{"payload":"x"}`）に「整理」すると**黙って何も適用されない**。ヘルパー関数化する
+  ときも連結結果が元の文字列と一致すること。
+- **ブレンドツリーの変数 1 つ = ツリー 1 つ**。`var move = c.NewBlendTree("Move")...` を
+  2 つのステートに `WithAnimation(move)` すれば共有された 1 つのツリーになる。読みやすさの
+  ために 2 回 `NewBlendTree` へ分けると別々のツリー 2 つになり、コントローラーが変わる
+  （逆に、元が別々なら共有へまとめない）。
+- **同期レイヤー（`c.SyncedLayer(name, sourceLayer)`）は元レイヤーを「名前」で指す**。
+  解決は bake 時なので宣言順は自由だが、リファクタで元レイヤー名を変えると
+  「source layer '...' is not declared」のノートが出て同期が外れる。
+  `Override("Sub/State", clip)` / `OverrideBehaviourJson(...)` のキーは**元レイヤー側の
+  ステートパス**なので、ステート名やサブマシン名を変えると静かに外れる。
 - **後段ステップ（`c.Gadgets(...)` / `c.AsyncSync(...)` / `c.Raw(...)`）は呼び出しの
   順序と引数をそのまま保つ**。これらは IR に載らないので Compare も Verify も見逃す。
-  特にガジェットは宣言順に適用され、後のガジェットが前の出力を入力にできる（並べ替えると
-  「入力が存在しない」で落ちる）。レイヤー名がそのガジェットレイヤーの同一性そのもの。
+  中でも順序が意味を持つのは:
+  - **ガジェットは宣言順に適用**され、後のガジェットが前の出力を入力にできる
+    （並べ替えると「入力が存在しない」で落ちる）
+  - `c.AsyncSync(...)` の `Sends(...)` は**呼ぶたびに 1 ステップ積む**ので、呼ぶ順が
+    そのまま巡回の順。`Targets` / `Requestable` / `Split` も積み上げ式。
+    一方 `Rate` / `Step` / `AllowRepeats` / `FloatChannels` / `Encoding*` / `LayerName` は
+    ただのセッターで、`Schedule` は「置き換え」。ここは並べ替えても結果は変わらないが、
+    エクスポート出力の形と揃えておくほうが差分を追いやすい
+  - **ガジェットレイヤーの名前がそのレイヤーの同一性そのもの**。`c.Gadgets("DBT")` を
+    別名に変えると、元のレイヤーは持ち主を失って残り、新しい名前のレイヤーが作られる。
+    逆に、人間が手で置いた同名レイヤーがあると次の Generate がそれを置き換える
+    （初回だけ警告が出る）
 - 数値はそのまま保つ。`0.125f` を「約 0.1」に丸めるなどは不可。定数化は値が同一なら可。
 - `.Default()`・`WithTransitionToSelf()`・`DrivingLocally()` などの有無を落とさない。
+  `WithTransitionToSelf()` は現在 **Any State 遷移にしか出力されない**（そこでしか効かない
+  ため）。古いエクスポートを整形していて通常の遷移に付いていたら、そのまま残す。
 - パラメーターの既定値付き宣言 `c.FloatParameter("X", 1)` と無し宣言は区別を保つ
   （無しは「参照のみ」で、Generate 時に既定値を上書きしない）。
 
@@ -95,9 +155,15 @@ protected override void Build(ControllerBuilder c) => BuildGenerated(c);
    ここが「一致」なら、整形は意味を変えていない（読み方ではなく出来上がる物の比較なので、
    ループやテーブルへの書き換えでも通る）。
 2. **Generate**（対象は複製したコントローラーが安全）→ **Verify** で実物との乖離ゼロを確認。
-3. 後段ステップ（Raw / 巡回同期 / DBT ガジェット）は Compare にも Verify にも出ない。
-   そこだけは生成側と手編集側を目視で突き合わせる。
+3. **Compare が見ない範囲**は目視で突き合わせる:
+   - 後段ステップ（Raw / 巡回同期 / DBT ガジェット）。Compare は「後段ステップは比較対象に
+     なりません」と明言して素通りする
+   - Any State 以外の遷移の `WithTransitionToSelf()`。その位置では Unity 側が何もしない
+     フラグなので比較から外してあり、落としても報告されない
 4. 乖離が出たら報告内容（レイヤー/ステート/フィールド名）から順序・値の取り違えを探す。
+   モーションは**参照**で比べるので、同名の別クリップは
+   `motion 'Idle' ≠ another asset of the same name` と出る。名前が合っていても
+   別アセットを指している、という意味。
 
 元ファイルのコピーを取る必要は無い — `<Name>.Generated.cs` が常に手つかずの基準として
 残る（旧レイアウトの 1 ファイル Recipe を直接整理する場合のみ、事前にコピーを残すこと）。

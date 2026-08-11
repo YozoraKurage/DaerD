@@ -60,9 +60,9 @@ namespace Yozolab.DaerD
         {
             EditorGUILayout.BeginHorizontal();
             var prev = GUI.backgroundColor;
-            GUI.backgroundColor = value ? new Color(0.55f, 0.85f, 0.55f) : prev;
+            GUI.backgroundColor = value ? DaerDColors.ToggleOn : prev;
             if (GUILayout.Button(whenTrue, EditorStyles.miniButtonLeft) && !value) value = true;
-            GUI.backgroundColor = !value ? new Color(0.55f, 0.85f, 0.55f) : prev;
+            GUI.backgroundColor = !value ? DaerDColors.ToggleOn : prev;
             if (GUILayout.Button(whenFalse, EditorStyles.miniButtonRight) && value) value = false;
             GUI.backgroundColor = prev;
             EditorGUILayout.EndHorizontal();
@@ -387,7 +387,7 @@ namespace Yozolab.DaerD
             // Highlight the active entry with a coloured background so it stands out like the
             // native inspector's blue rows. GUI.backgroundColor tints EditorStyles.helpBox.
             var savedBg = GUI.backgroundColor;
-            if (isSelected) GUI.backgroundColor = new Color(0.35f, 0.55f, 0.85f);
+            if (isSelected) GUI.backgroundColor = DaerDColors.SelectedRow;
             EditorGUILayout.BeginVertical(EditorStyles.helpBox);
             GUI.backgroundColor = savedBg;
 

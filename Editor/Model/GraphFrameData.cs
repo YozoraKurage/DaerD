@@ -17,7 +17,7 @@ namespace Yozolab.DaerD
         public class Frame
         {
             public string title = "Frame";
-            public Color color = new Color(0.32f, 0.45f, 0.60f, 1f);
+            public Color color = DaerDColors.DefaultFrame;
             public Rect bounds;
             public bool moveNodesWithFrame = true;
             /// A locked frame cannot be moved, resized, renamed or deleted from the graph.
@@ -30,7 +30,7 @@ namespace Yozolab.DaerD
         public class Note
         {
             public string text = "Memo";
-            public Color color = new Color(0.93f, 0.86f, 0.51f, 1f);
+            public Color color = DaerDColors.DefaultNote;
             public Rect bounds;
             public int fontSize = 12;
             public AnimatorStateMachine stateMachine;
@@ -74,6 +74,9 @@ namespace Yozolab.DaerD
             /// <summary>Synced Float channels. 0 in data saved before the field existed —
             /// read it through <see cref="FloatChannelsOrDefault"/>.</summary>
             public int floatChannels = 1;
+            /// <summary>Synced Bool channels. 0 in data saved before the field existed —
+            /// read it through <see cref="BoolChannelsOrDefault"/>.</summary>
+            public int boolChannels = 1;
             public List<string> targets = new List<string>();
             /// <summary>Legacy boolean priority marks (data saved before rates existed);
             /// superseded by <see cref="rates"/>, kept so old setups still load.</summary>
@@ -83,6 +86,26 @@ namespace Yozolab.DaerD
             /// <summary>Targets that accept an on-demand sync request (a "base/Req/target"
             /// Bool plus redirect transitions in the generated layer).</summary>
             public List<string> requests = new List<string>();
+            /// <summary>Explicit cycle, as target names, one entry per step — empty when the
+            /// pass is derived from the rates. Absent in data saved before the field existed,
+            /// which reads as empty and so as "rates", the behaviour those setups already had.</summary>
+            public List<string> schedule = new List<string>();
+            /// <summary>Targets that start a slot of their own rather than sharing channels
+            /// with the target before them. Empty in data saved before the field existed,
+            /// which is the greedy batching those setups already had.</summary>
+            public List<string> slotBreaks = new List<string>();
+
+            /// <summary>The pass written out as sets, one entry per step — empty when the
+            /// slots are batched automatically, which is what data saved before the field
+            /// existed deserializes to and so the behaviour those setups already had. Takes
+            /// precedence over <see cref="schedule"/>, <see cref="rates"/> and
+            /// <see cref="slotBreaks"/>, all of which it answers on its own.</summary>
+            public List<StepSpec> steps = new List<StepSpec>();
+
+            /// <summary>Whether the pass may put one slot in adjacent steps, paid for with a
+            /// clock phase in the index. False in data saved before the field existed, which
+            /// is the pass those setups already had.</summary>
+            public bool allowRepeatSteps;
 
             [Serializable]
             public class SyncRate
@@ -91,7 +114,24 @@ namespace Yozolab.DaerD
                 public int rate = 1;
             }
 
+            /// <summary>
+            /// One step of a cycle written out as sets: the targets that step sends. A class
+            /// rather than a bare list because Unity does not serialize a list of lists — and
+            /// it lives here, beside the other saved shapes, for the reason
+            /// <see cref="AsyncSyncConfig.encoding"/> is an int: saved data has no business
+            /// depending on the model, so the model reads this rather than the other way round.
+            /// </summary>
+            [Serializable]
+            public class StepSpec
+            {
+                /// <summary>Names in any order — the slots normalize them against the target
+                /// list, so a step is a set and two steps naming the same targets are one slot.</summary>
+                public List<string> targets = new List<string>();
+            }
+
             public int FloatChannelsOrDefault => floatChannels < 1 ? 1 : floatChannels;
+
+            public int BoolChannelsOrDefault => boolChannels < 1 ? 1 : boolChannels;
 
             /// <summary>Rates as a lookup. Old configs carry boolean priority marks
             /// instead; those map to ×2 — the closest match to what they used to do.</summary>
@@ -522,16 +562,65 @@ namespace Yozolab.DaerD
             EditorUtility.SetDirty(data);
         }
 
+        // ---- finding the holder ----------------------------------------------
+        //
+        // Everything DaerD stores against a controller — async sync setups, gadget configs,
+        // the recipe-owned layers, the Empty clip, the parameter store — is reached through
+        // Find, and several panels ask during their repaint. The lookup underneath loads EVERY
+        // sub-asset of the .controller, and on a DaerD-built one that is every clip, tree,
+        // state, transition and behaviour in it. Moving the mouse across the layer list used
+        // to do that twice a frame.
+        //
+        // So the answer is remembered. What can change it is narrow: DaerD creating the holder
+        // (written through below), or the asset itself changing on disk (the postprocessor at
+        // the bottom of this file drops everything). A domain reload clears the table outright.
+
+        static readonly Dictionary<AnimatorController, GraphFrameData> s_holders =
+            new Dictionary<AnimatorController, GraphFrameData>(ControllerIdentity.Instance);
+
         /// <summary>The frame holder already stored on the controller, or null when none exists.</summary>
         public static GraphFrameData Find(AnimatorController controller)
         {
             if (controller == null) return null;
+            if (s_holders.TryGetValue(controller, out var cached))
+            {
+                if (cached != null) return cached;
+                // A real null is an answer ("this controller has none"). A reference that is
+                // non-null but fails Unity's check is a holder that has since been destroyed,
+                // and that one has to be looked up again.
+                if (ReferenceEquals(cached, null)) return null;
+            }
+            var found = Scan(controller);
+            s_holders[controller] = found;
+            return found;
+        }
+
+        static GraphFrameData Scan(AnimatorController controller)
+        {
             var path = AssetDatabase.GetAssetPath(controller);
             if (string.IsNullOrEmpty(path)) return null;
             foreach (var asset in AssetDatabase.LoadAllAssetsAtPath(path))
                 if (asset is GraphFrameData data)
                     return data;
             return null;
+        }
+
+        /// <summary>Drops what Find remembered. Called for you when assets change; exposed for
+        /// tests, which build and delete controllers faster than the importer reports.</summary>
+        public static void ForgetHolders() => s_holders.Clear();
+
+        /// <summary>
+        /// Reference identity rather than Unity's equality, which reports a destroyed Object as
+        /// equal to null — and so to any other destroyed one. Nothing about a lookup table
+        /// should rest on that conflation: the question here is which object, not whether it is
+        /// still alive, and aliveness is asked separately where it matters.
+        /// </summary>
+        sealed class ControllerIdentity : IEqualityComparer<AnimatorController>
+        {
+            public static readonly ControllerIdentity Instance = new ControllerIdentity();
+            public bool Equals(AnimatorController a, AnimatorController b) => ReferenceEquals(a, b);
+            public int GetHashCode(AnimatorController controller) =>
+                System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(controller);
         }
 
         /// <summary>Finds or creates the frame holder. In-memory controllers get a non-persisted instance.</summary>
@@ -548,7 +637,13 @@ namespace Yozolab.DaerD
             {
                 AssetDatabase.AddObjectToAsset(data, controller);
                 EditorUtility.SetDirty(controller);
+                // Written through, so the cached "this controller has none" does not outlive
+                // the holder that has just been added to it.
+                s_holders[controller] = data;
             }
+            // An in-memory controller keeps none of this: it has no asset to hang the holder
+            // on, so every call builds a fresh one and nothing written to it is ever read back.
+            // That is why anything testing saved configs needs a controller on disk.
             return data;
         }
 
@@ -607,5 +702,18 @@ namespace Yozolab.DaerD
             notes.Remove(note);
             EditorUtility.SetDirty(this);
         }
+    }
+
+    /// <summary>
+    /// The one thing <see cref="GraphFrameData.Find"/>'s table cannot see coming: a controller
+    /// changing on disk. Pulling a branch can add a holder to a controller DaerD has already
+    /// decided has none, and no code of ours runs in between. Clearing the whole table costs
+    /// nothing — it is refilled by the next lookup — so there is no need to work out which
+    /// entry the import touched.
+    /// </summary>
+    class GraphFrameDataImportWatcher : AssetPostprocessor
+    {
+        static void OnPostprocessAllAssets(string[] imported, string[] deleted,
+            string[] moved, string[] movedFrom) => GraphFrameData.ForgetHolders();
     }
 }

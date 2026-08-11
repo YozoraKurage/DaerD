@@ -71,13 +71,17 @@ namespace Yozolab.DaerD.Authoring
             }
 
             var gadgets = PlanGadgets(controller, layerNames, result.warnings);
+            // The multiplexed targets need no help reaching ReferencedParameters above: the
+            // send ring names them in its Parameter Drivers, and CollectParameterNames reads
+            // those, so a partial export of the sync layer alone still declares them.
+            var asyncSyncs = PlanAsyncSyncs(controller, layerNames, result.warnings);
             var script = new RecipeScript();
             var builder = new ControllerBuilder { Script = script };
             script.RegisterRoot(builder);
             result.replayed = builder;
 
-            RegisterAssets(ir, script, result, gadgets);
-            new RecipeDriver(builder, ir, result.warnings, gadgets).Run();
+            RegisterAssets(ir, script, result, gadgets, asyncSyncs);
+            new RecipeDriver(builder, ir, result.warnings, gadgets, asyncSyncs).Run();
             result.warnings.AddRange(builder.Bake());
 
             result.code = ComposeGenerated(script, className, namespaceName, controller, result);
@@ -179,7 +183,8 @@ namespace Yozolab.DaerD.Authoring
 
             // Gadgets are a post step: their layers are rebuilt at the end of the controller.
             // The order survives that only while nothing but other gadget layers follows them.
-            if (plan.layers.Count > 0 && FollowedByOrdinaryLayers(layers, layerNames, plan))
+            if (plan.layers.Count > 0
+                && FollowedByOrdinaryLayers(layers, layerNames, plan.layers.Keys, plan.supporting))
                 warnings.Add(L.Tr("Gadget layers are regenerated at the end of the controller; the layer order will differ from the original."));
             return plan;
         }
@@ -206,18 +211,127 @@ namespace Yozolab.DaerD.Authoring
             return null;
         }
 
+        /// <summary>True when an ordinary layer sits after one that a post step rebuilds —
+        /// the post step appends its layer at the end, so the original order is not kept.
+        /// Shared by both post steps; <paramref name="brought"/> is null for the one that
+        /// brings no extra layers along.</summary>
         static bool FollowedByOrdinaryLayers(AnimatorControllerLayer[] layers,
-            ICollection<string> layerNames, GadgetPlan plan)
+            ICollection<string> layerNames, ICollection<string> rebuilt, ICollection<string> brought)
         {
-            bool seenGadget = false;
+            bool seenRebuilt = false;
             foreach (var layer in layers)
             {
                 if (layerNames != null && !layerNames.Contains(layer.name)) continue;
-                if (plan.layers.ContainsKey(layer.name) || plan.supporting.Contains(layer.name))
-                    seenGadget = true;
-                else if (seenGadget) return true;
+                if (rebuilt.Contains(layer.name) || (brought != null && brought.Contains(layer.name)))
+                    seenRebuilt = true;
+                else if (seenRebuilt) return true;
             }
             return false;
+        }
+
+        // ---- async sync layers --------------------------------------------------
+
+        /// <summary>
+        /// The layers a controller can have written back as a <c>c.AsyncSync(…)</c> call
+        /// instead of as the send ring and decoder they expanded into. Same shape as
+        /// <see cref="GadgetPlan"/>, because it answers the same two questions: which layers
+        /// stop being states, and which parameters stop being declarations.
+        /// </summary>
+        internal class AsyncSyncPlan
+        {
+            /// <summary>Layer name → the setup that layer is, rebuilt from its saved config.</summary>
+            public readonly Dictionary<string, AsyncSyncBuilder.Request> layers =
+                new Dictionary<string, AsyncSyncBuilder.Request>();
+
+            /// <summary>
+            /// Whether a planned setup generated this parameter — the index, the value
+            /// channels, the request flags, all of which live under its base name. The call
+            /// recreates them, so declaring them up top only restates what the next Generate
+            /// rebuilds. IsLocal is deliberately not owned: it is shared machinery other
+            /// layers read, exactly like the gadgets' constant One.
+            /// </summary>
+            public bool Owns(string parameter)
+            {
+                if (string.IsNullOrEmpty(parameter)) return false;
+                foreach (var pair in layers)
+                {
+                    string prefix = pair.Value.baseName + "/";
+                    if (!string.IsNullOrEmpty(pair.Value.baseName)
+                        && parameter.StartsWith(prefix, System.StringComparison.Ordinal))
+                        return true;
+                }
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Works out which layers qualify. Like <see cref="PlanGadgets"/> this runs on the live
+        /// controller rather than on the IR, because the saved configs point at the real state
+        /// machines and a reference match is only meaningful against those.
+        ///
+        /// A layer qualifies only when it still holds exactly the states the saved setup would
+        /// build. Anything added, removed or renamed by hand has no call to stand for it, and
+        /// rewriting the layer as one call would drop it without a word.
+        /// </summary>
+        static AsyncSyncPlan PlanAsyncSyncs(AnimatorController controller,
+            ICollection<string> layerNames, List<string> warnings)
+        {
+            var plan = new AsyncSyncPlan();
+            var configs = GraphFrameData.GetAsyncSyncs(controller);
+            if (configs.Count == 0) return plan;
+
+            foreach (var layer in controller.layers)
+            {
+                if (layerNames != null && !layerNames.Contains(layer.name)) continue;
+                if (layer.stateMachine == null) continue;
+                var config = FindAsyncSync(configs, layer.stateMachine);
+                if (config == null) continue;
+
+                var request = AsyncSyncBuilder.FromConfig(controller, config);
+                if (!MatchesGeneratedShape(layer.stateMachine, request))
+                {
+                    warnings.Add(L.Tr("Layer '{0}' no longer holds the states its saved async-sync setup would build; exported as raw states instead of an AsyncSync call.",
+                        layer.name));
+                    continue;
+                }
+                plan.layers[layer.name] = request;
+            }
+
+            // Same post-step caveat the gadget layers carry: this one is rebuilt at the end of
+            // the controller, so anything ordinary after it changes place.
+            if (plan.layers.Count > 0
+                && FollowedByOrdinaryLayers(controller.layers, layerNames, plan.layers.Keys, null))
+                warnings.Add(L.Tr("Async sync layers are regenerated at the end of the controller; the layer order will differ from the original."));
+            return plan;
+        }
+
+        static GraphFrameData.AsyncSyncConfig FindAsyncSync(
+            List<GraphFrameData.AsyncSyncConfig> configs, AnimatorStateMachine machine)
+        {
+            foreach (var config in configs)
+                if (config.layer == machine)
+                    return config;
+            return null;
+        }
+
+        /// <summary>Every state the setup would build, and nothing else. Names carry the slot
+        /// and the visit, so this catches a renamed state as well as an added one.</summary>
+        static bool MatchesGeneratedShape(AnimatorStateMachine machine,
+            AsyncSyncBuilder.Request request)
+        {
+            if (machine.stateMachines.Length > 0) return false;
+            var expected = AsyncSyncApplier.ExpectedStateNames(request);
+            if (expected.Count == 0 || machine.states.Length != expected.Count) return false;
+
+            var remaining = new List<string>(expected);
+            foreach (var child in machine.states)
+            {
+                if (child.state == null) return false;
+                int at = remaining.IndexOf(child.state.name);
+                if (at < 0) return false;
+                remaining.RemoveAt(at);
+            }
+            return remaining.Count == 0;
         }
 
         // ---- asset fields ------------------------------------------------------
@@ -225,7 +339,7 @@ namespace Yozolab.DaerD.Authoring
         /// <summary>Walks the IR in emission order so field declarations come out in a
         /// stable, readable order.</summary>
         static void RegisterAssets(ControllerIR ir, RecipeScript script, Result result,
-            GadgetPlan gadgets)
+            GadgetPlan gadgets, AsyncSyncPlan asyncSyncs)
         {
             void Register(Object asset)
             {
@@ -268,6 +382,9 @@ namespace Yozolab.DaerD.Authoring
                 // minted by those calls, and a field for one would refer to nothing.
                 if (gadgets.layers.ContainsKey(layer.name) || gadgets.supporting.Contains(layer.name))
                     continue;
+                // Same for a sync layer: its states play the controller's Empty clip, which the
+                // call resolves (or creates) at Generate time rather than through a field.
+                if (asyncSyncs.layers.ContainsKey(layer.name)) continue;
                 Register(layer.mask);
                 Machine(layer.machine);
                 foreach (var entry in layer.syncedMotions)
@@ -311,7 +428,9 @@ namespace Yozolab.DaerD.Authoring
 //                    .Smooth(x, ""X/Smoothed"", ""X/Smoothing"").Buffer(x, ""X/Late"", 2);
 //                (the per-frame float math from the Add menu; its layer is rebuilt each time)
 //   Async sync   c.AsyncSync().Targets(""Hue"", ""Outfit"").Rate(""Hue"", 2).Requestable(""Hue"")
-//                    .Schedule(""Hue"", ""Outfit"", ""Hue"");   // explicit cycle, wizard has none
+//                    .Schedule(""Hue"", ""Outfit"", ""Hue"");            // the cycle, step by step
+//                    .Sends(""Hue"", ""Outfit"").Sends(""Hue"");   // or what each step carries
+//                    .AllowRepeats();       // and then a step may send what the one before did
 //   Fallbacks    s.BehaviourJson(typeName, json);   c.Raw(controller => { /* full API */ });
 // Assets are the [SerializeField] fields below — assign them on the recipe asset.
 // A build body is ordinary C#: loops, helpers and interpolation all work in your half.";

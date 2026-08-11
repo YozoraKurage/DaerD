@@ -168,9 +168,14 @@ namespace Yozolab.DaerD
                     if (entry != null)
                         SyncRequestBuilder.Remove(controller, state, config.baseName);
                 }
-                else
+                else if (!SyncRequestBuilder.Apply(controller, config, state, selected))
                 {
-                    SyncRequestBuilder.Apply(controller, config, state, selected);
+                    // Enabling a request rebuilds the sync layer, so anything that now stops
+                    // that setup from being applied stops this too. Saying nothing would look
+                    // like the tick simply didn't take.
+                    EditorUtility.DisplayDialog(L.Tr("Sync Request"),
+                        L.Tr("'{0}' could not be rebuilt, so the request was not added. Open its sync layer and apply it there to see what is wrong.",
+                            config.baseName), "OK");
                 }
                 _context.NotifyGraphVisualsChanged(state);
             }

@@ -85,10 +85,10 @@ namespace Yozolab.DaerD
                 }
 
                 using (new EditorGUI.DisabledScope(i == 0))
-                    if (GUILayout.Button("↑", EditorStyles.miniButton, GUILayout.Width(22)))
+                    if (GUILayout.Button("↑", EditorStyles.miniButton, GUILayout.Width(DaerDLayout.GlyphButton)))
                     { VrcBehaviours.Move(state, i, -1); GUIUtility.ExitGUI(); }
                 using (new EditorGUI.DisabledScope(i == behaviours.Length - 1))
-                    if (GUILayout.Button("↓", EditorStyles.miniButton, GUILayout.Width(22)))
+                    if (GUILayout.Button("↓", EditorStyles.miniButton, GUILayout.Width(DaerDLayout.GlyphButton)))
                     { VrcBehaviours.Move(state, i, +1); GUIUtility.ExitGUI(); }
                 if (GUILayout.Button(L.Tr("Remove"), EditorStyles.miniButton, GUILayout.Width(60)))
                 {
@@ -118,13 +118,13 @@ namespace Yozolab.DaerD
             bool selected = _selectedBehaviours.Contains(behaviour);
 
             var boxBackground = GUI.backgroundColor;
-            if (selected) GUI.backgroundColor = PanelGui.SelectionTint;
+            if (selected) GUI.backgroundColor = DaerDColors.SelectedRow;
             EditorGUILayout.BeginVertical(EditorStyles.helpBox);
             GUI.backgroundColor = boxBackground;
 
             EditorGUILayout.BeginHorizontal();
             var titleBackground = GUI.backgroundColor;
-            if (selected) GUI.backgroundColor = PanelGui.SelectionTint;
+            if (selected) GUI.backgroundColor = DaerDColors.SelectedRow;
             if (GUILayout.Button(BehaviourTitle(behaviour), BehaviourTitleStyle))
                 HandleBehaviourRowClick(rows, index);
             GUI.backgroundColor = titleBackground;

@@ -30,7 +30,12 @@ namespace Yozolab.DaerD
 
         SpecialNode _entryNode, _exitNode, _anyStateNode;
         bool _rebuildScheduled;
-        int _runtimeStateHash;
+
+        // Full path hash -> the node that stands for that state on this screen. A state nested
+        // inside a child sub-state machine has no node of its own here, so it maps to the box
+        // that contains it — the same node its transitions already draw to.
+        readonly Dictionary<int, GraphNodeBase> _runtimeNodes = new Dictionary<int, GraphNodeBase>();
+        AnimatorPlayback.LayerPlayback _playback;
 
         readonly NodeCommands _nodes;
         readonly FrameCommands _frames;
@@ -167,6 +172,7 @@ namespace Yozolab.DaerD
             // so the inspector falls back to the overview instead of touching a dead reference.
             if (_context.Selection is Object destroyed && destroyed == null)
                 _context.Select(null);
+            MapRuntimeNodes();
             RefreshRuntimeHighlight();
             _context.NotifyGraphRebuilt();
         }
@@ -1063,17 +1069,71 @@ namespace Yozolab.DaerD
             }
         }
 
-        public void SetRuntimeStateHash(int hash)
+        public void SetRuntimePlayback(AnimatorPlayback.LayerPlayback playback)
         {
-            _runtimeStateHash = hash;
+            _playback = playback;
             RefreshRuntimeHighlight();
+        }
+
+        /// <summary>
+        /// Indexes every state reachable from this screen by the hash Unity identifies it with.
+        /// Built once per rebuild so the per-tick refresh is a dictionary lookup.
+        /// </summary>
+        void MapRuntimeNodes()
+        {
+            _runtimeNodes.Clear();
+            var path = new List<AnimatorStateMachine>(_context.StateMachinePath);
+            if (path.Count == 0) return;
+
+            foreach (var pair in _stateNodes)
+                _runtimeNodes[AnimatorPlayback.FullPathHash(path, pair.Key.name)] = pair.Value;
+            foreach (var pair in _ssmNodes)
+                MapNestedRuntimeNodes(path, pair.Key, pair.Value);
+        }
+
+        void MapNestedRuntimeNodes(List<AnimatorStateMachine> path, AnimatorStateMachine machine,
+            GraphNodeBase node)
+        {
+            path.Add(machine);
+            foreach (var cs in machine.states)
+                if (cs.state != null)
+                    _runtimeNodes[AnimatorPlayback.FullPathHash(path, cs.state.name)] = node;
+            foreach (var child in machine.stateMachines)
+                if (child.stateMachine != null)
+                    MapNestedRuntimeNodes(path, child.stateMachine, node);
+            path.RemoveAt(path.Count - 1);
         }
 
         void RefreshRuntimeHighlight()
         {
-            bool playing = EditorApplication.isPlaying;
+            bool playing = EditorApplication.isPlaying && _playback.valid;
+            GraphNodeBase current = null, next = null;
+            if (playing)
+            {
+                _runtimeNodes.TryGetValue(_playback.stateHash, out current);
+                if (_playback.inTransition)
+                    _runtimeNodes.TryGetValue(_playback.nextStateHash, out next);
+            }
+
             foreach (var pair in _stateNodes)
-                pair.Value.SetIsCurrent(playing && pair.Key.nameHash == _runtimeStateHash);
+                pair.Value.SetPlayback(pair.Value == current, pair.Value == next, _playback.progress);
+            foreach (var pair in _ssmNodes)
+                pair.Value.SetPlayback(pair.Value == current, pair.Value == next, 0f);
+
+            // An Any State transition leaves the Any State node, not the state it interrupted.
+            var running = playing && _playback.inTransition
+                ? FindRuntimeEdge(_playback.fromAnyState ? _anyStateNode : current, next)
+                : null;
+            foreach (var edge in _edges)
+                edge.SetRuntimeActive(edge == running);
+        }
+
+        TransitionEdge FindRuntimeEdge(GraphNodeBase from, GraphNodeBase to)
+        {
+            if (from == null || to == null) return null;
+            foreach (var edge in _edges)
+                if (edge.output?.node == from && edge.input?.node == to) return edge;
+            return null;
         }
     }
 }

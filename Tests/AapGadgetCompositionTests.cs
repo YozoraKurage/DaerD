@@ -1,0 +1,706 @@
+using System;
+using System.Collections.Generic;
+using NUnit.Framework;
+using UnityEditor.Animations;
+using UnityEngine;
+
+namespace Yozolab.DaerD.Tests
+{
+    /// <summary>
+    /// Gadgets wired into each other, not one at a time.
+    ///
+    /// Every gadget on its own is a small enough claim that reading the tree nearly settles it.
+    /// Composition is where the claims stop being independent: a gadget reads a parameter
+    /// another one writes, so the second sees the first's *previous* frame, and a value that
+    /// took four hops to arrive is four frames older than one that took one. Nothing in the
+    /// asset records that — depth is a property of the graph, and skew is a property of the
+    /// graph plus time. These tests hold the whole rack against arithmetic worked out
+    /// beforehand, and one of them holds a moving input against it, where the skew is real.
+    /// </summary>
+    [Category("Runtime")]
+    public class AapGadgetCompositionTests
+    {
+        /// <summary>
+        /// A controller collecting gadgets into one shared DBT layer, the way the wizard does
+        /// when you keep picking the same target layer. Gadgets go in dependency order, since a
+        /// request is refused unless the parameters it reads already exist.
+        /// </summary>
+        sealed class Rack
+        {
+            public readonly AnimatorController Controller = new AnimatorController();
+            public readonly HashSet<AapGadgets.Kind> Kinds = new HashSet<AapGadgets.Kind>();
+            int _layerIndex = -1;
+
+            public Rack(params string[] floatParams)
+            {
+                Controller.AddLayer("Base");
+                foreach (var name in floatParams)
+                    Controller.AddParameter(name, AnimatorControllerParameterType.Float);
+            }
+
+            public Rack Gadget(AapGadgets.Kind kind, string output, string a, string b = null,
+                Action<AapGadgets.Request> configure = null)
+            {
+                var request = new AapGadgets.Request
+                {
+                    controller = Controller,
+                    kind = kind,
+                    inputA = a,
+                    inputB = b,
+                    output = output,
+                    layerIndex = _layerIndex,
+                    newLayerName = "DBT",
+                };
+                configure?.Invoke(request);
+
+                string label = kind + " → '" + output + "'";
+                string refusal = AapGadgets.Validate(request);
+                Assert.IsNull(refusal, label + " was refused: " + refusal);
+                Assert.IsTrue(AapGadgets.Apply(request), label + " failed to apply");
+
+                // The first gadget builds the layer; everything after it joins that one. A
+                // supporting layer (FrameTime's clock) is appended at the end, so index 1 stays
+                // the rack.
+                if (_layerIndex < 0) _layerIndex = 1;
+                Kinds.Add(kind);
+                return this;
+            }
+
+            /// <summary>
+            /// Creates a parameter the rack will both read and write before any gadget runs.
+            ///
+            /// A loop always has one gadget that reads it before the gadget that writes it has
+            /// run, whichever order the rack is written in, and a gadget is refused for reading
+            /// a parameter that does not exist. Zero is also where the loop starts.
+            /// <c>GadgetRecipeBuilder</c> does this for a recipe; a rack assembled by hand says
+            /// it here, and hands the name to the writing gadget as <c>preCreated</c> so that it
+            /// is not read as a collision.
+            /// </summary>
+            public Rack Loop(string name)
+            {
+                DbtBuilder.EnsureFloatParameter(Controller, name, 0f);
+                return this;
+            }
+
+            public AnimatorRig Run() => new AnimatorRig(Controller);
+        }
+
+        // ---- signed multiplication, which no single gadget can do -------------------
+
+        /// <summary>
+        /// The Multiply gadget is positive-only: Direct weights stop at zero, so a negative
+        /// input is not multiplied but dropped. Signed multiplication has to be *built*, and
+        /// the algebra is what the rack is for — shift both operands into 0..1, multiply there,
+        /// and undo the shift with the ranged adders:
+        ///
+        ///     u = (x+1)/2,  v = (y+1)/2
+        ///     x·y = (2u-1)(2v-1) = 4uv - 2u - 2v + 1
+        ///
+        /// Eight gadgets, six deep, and every constant in it (the 4, the two 2s, the 1) is
+        /// carried by a remap's output range or by the Direct trees' own constant One. The
+        /// structural tests can confirm each of the eight; only running it says the algebra
+        /// came out.
+        /// </summary>
+        [TestCase(0.5f, -0.8f, -0.4f)]
+        [TestCase(-0.6f, -0.5f, 0.3f)]
+        [TestCase(1f, 1f, 1f)]
+        [TestCase(-1f, 1f, -1f)]
+        [TestCase(0f, 0.7f, 0f)]
+        [TestCase(0.25f, 0.25f, 0.0625f)]
+        public void SignedMultiply_BuiltFromEightGadgets(float x, float y, float expected)
+        {
+            var rack = new Rack("X", "Y");
+            // Into 0..1, where the positive-only multiply is exact.
+            rack.Gadget(AapGadgets.Kind.Remap, "U", "X",
+                configure: r => { r.inMin = -1f; r.inMax = 1f; r.rangeMin = 0f; r.rangeMax = 1f; });
+            rack.Gadget(AapGadgets.Kind.Remap, "V", "Y",
+                configure: r => { r.inMin = -1f; r.inMax = 1f; r.rangeMin = 0f; r.rangeMax = 1f; });
+            rack.Gadget(AapGadgets.Kind.Multiply, "P", "U", "V");
+
+            // The three scaled terms. A remap's output range is where the constants live.
+            rack.Gadget(AapGadgets.Kind.Remap, "Q", "P",
+                configure: r => { r.inMin = 0f; r.inMax = 1f; r.rangeMin = 0f; r.rangeMax = 4f; });
+            rack.Gadget(AapGadgets.Kind.Remap, "TwoU", "U",
+                configure: r => { r.inMin = 0f; r.inMax = 1f; r.rangeMin = 0f; r.rangeMax = 2f; });
+            rack.Gadget(AapGadgets.Kind.Remap, "TwoV", "V",
+                configure: r => { r.inMin = 0f; r.inMax = 1f; r.rangeMin = 0f; r.rangeMax = 2f; });
+
+            // 4uv - 2u - 2v + 1, the last term taken from the constant the Direct trees already
+            // keep at 1 for their own weights.
+            rack.Gadget(AapGadgets.Kind.SubRanged, "S1", "Q", "TwoU",
+                configure: r => { r.rangeMin = -4f; r.rangeMax = 4f; });
+            rack.Gadget(AapGadgets.Kind.SubRanged, "S2", "S1", "TwoV",
+                configure: r => { r.rangeMin = -8f; r.rangeMax = 8f; });
+            rack.Gadget(AapGadgets.Kind.AddRanged, "Product", "S2", "One",
+                configure: r => { r.rangeMin = -8f; r.rangeMax = 8f; });
+
+            using (var rig = rack.Run())
+                Assert.AreEqual(expected, rig.Evaluate("Product", 30, ("X", x), ("Y", y)), 3e-3f);
+        }
+
+        /// <summary>
+        /// The reciprocal's ceiling is a property of its lookup ladder, not of the gadget — and
+        /// the ladder is only there for inputs below 1.
+        ///
+        /// Above 1 the exact half carries the answer on its own: it divides by a shift a sibling
+        /// computed, which is a float and has no range to clamp against, so 1/x holds for any x
+        /// however large. The ladder exists because that trick needs a weight that would have to
+        /// go negative below 1, and a ladder is a finite table, and a finite table ends — at
+        /// 1/240, which is why the output stops at 240.
+        ///
+        /// So the way past the ceiling is to not use the ladder: scale the divisor above 1 first,
+        /// take the reciprocal in the exact region, and scale the answer back by the same factor.
+        ///     1/x = (1/m) · 1/(x/m)
+        /// Four frames and two remaps, with nothing added to the gadgets themselves.
+        /// </summary>
+        [Test]
+        public void Reciprocal_ScaledAboveOne_GoesPastTheLaddersCeiling()
+        {
+            const float floor = 0.001f;    // the smallest divisor this rack is built for
+
+            var rack = new Rack("X");
+            // X over 0.001..1 becomes U over 1..1000, which is entirely in the exact half.
+            rack.Gadget(AapGadgets.Kind.Remap, "U", "X",
+                configure: r => { r.inMin = floor; r.inMax = 1f; r.rangeMin = 1f; r.rangeMax = 1f / floor; });
+            rack.Gadget(AapGadgets.Kind.Reciprocal, "InvU", "U");
+            // 1/U is 0..1, and scaling it by 1/floor undoes the scaling of the input.
+            rack.Gadget(AapGadgets.Kind.Remap, "Inv", "InvU",
+                configure: r => { r.inMin = 0f; r.inMax = 1f; r.rangeMin = 0f; r.rangeMax = 1f / floor; });
+
+            // The same divisors through the gadget on its own, for the comparison.
+            var plain = new Rack("X");
+            plain.Gadget(AapGadgets.Kind.Reciprocal, "Inv", "X");
+
+            using (var scaled = rack.Run())
+            using (var direct = plain.Run())
+            {
+                // Where the ladder still reaches, both agree.
+                Assert.AreEqual(10f, scaled.Evaluate("Inv", 12, ("X", 0.1f)), 0.05f, "1 / 0.1");
+                Assert.AreEqual(10f, direct.Evaluate("Inv", 12, ("X", 0.1f)), 0.05f);
+
+                // Past its floor, only the scaled one is still dividing.
+                Assert.AreEqual(240f, direct.Evaluate("Inv", 12, ("X", 0.001f)), 1f,
+                    "the ladder ends at 1/240 and holds there");
+                Assert.AreEqual(1000f, scaled.Evaluate("Inv", 12, ("X", 0.001f)), 5f,
+                    "while the exact half has no ceiling of its own");
+                Assert.AreEqual(500f, scaled.Evaluate("Inv", 12, ("X", 0.002f)), 3f);
+                Assert.AreEqual(1f, scaled.Evaluate("Inv", 12, ("X", 1f)), 0.01f,
+                    "and the top of the window still reads 1");
+            }
+        }
+
+        // ---- iteration --------------------------------------------------------------
+
+        /// <summary>
+        /// The gadgets have no square root. This builds one out of the ones they do have, by
+        /// running Newton's method in the animator itself:
+        ///
+        ///     x ← (x + a / x) / 2
+        ///
+        /// which is the Newton step for x² − a, and converges on √a. Four gadgets in a ring —
+        /// divide, buffer, add, halve — with the ring's output fed back as its own input.
+        ///
+        /// Two things make this work that would not have a few commits ago. The divide is the
+        /// ranged one, so there is no lookup ladder in the loop and no 240 to bump into, and the
+        /// answer is limited by the float rather than by a sampled table — an iteration cannot
+        /// converge past the accuracy of the arithmetic it is built from. And the ring is a
+        /// loop, which a gadget chain could not express at all: the parameter it turns on has to
+        /// exist before the gadget that writes it runs.
+        ///
+        /// The buffer is the other half of it. The divide takes four frames, so the sum would
+        /// otherwise be adding this frame's x to a quotient computed from x four frames ago —
+        /// two different x's, which is not a Newton step. Holding x back by the divide's own
+        /// four frames makes both halves of the sum the same estimate.
+        /// </summary>
+        static Rack SquareRootRack(bool laddered)
+        {
+            // x is the estimate and the loop: read by the divide and the buffer, written by the
+            // halving at the end.
+            var rack = new Rack("A").Loop("X");
+
+            // q = a / x. The window is where the estimate lives: it starts at 0, which clamps to
+            // the bottom of the window and makes the first step a large one, and from there
+            // Newton comes down on the root from above.
+            if (laddered)
+                rack.Gadget(AapGadgets.Kind.Divide, "Q", "A", "X");
+            else
+                rack.Gadget(AapGadgets.Kind.DivideRanged, "Q", "A", "X",
+                    r => { r.inMin = 0.25f; r.inMax = 8f; });
+
+            // x, held back to the age q comes out at, so the sum below is one estimate's worth.
+            int depth = laddered ? 3 : 4;
+            rack.Gadget(AapGadgets.Kind.Buffer, "X/Held", "X",
+                configure: r => { r.bufferFrames = depth; r.rangeMin = 0f; r.rangeMax = 8f; });
+
+            // (x + a/x), then halved back into x — the write that closes the ring.
+            rack.Gadget(AapGadgets.Kind.Add, "Sum", "X/Held", "Q");
+            rack.Gadget(AapGadgets.Kind.Remap, "X", "Sum",
+                configure: r =>
+                {
+                    r.inMin = 0f; r.inMax = 16f;
+                    r.rangeMin = 0f; r.rangeMax = 8f;
+                    r.preCreated = new[] { "X" };
+                });
+            return rack;
+        }
+
+        [TestCase(0.25f, 0.5f)]
+        [TestCase(1f, 1f)]
+        [TestCase(2f, 1.41421356f)]
+        [TestCase(3f, 1.73205081f)]
+        [TestCase(4f, 2f)]
+        public void NewtonsMethod_FindsASquareRootTheGadgetsCannot(float a, float expected)
+        {
+            using (var rig = SquareRootRack(laddered: false).Run())
+            {
+                rig.Set("A", a).Step(240);
+                float actual = rig.Get("X");
+                Assert.AreEqual(expected, actual, expected * 1e-4f,
+                    "√" + a + " came out " + actual.ToString("R"));
+            }
+        }
+
+        /// <summary>
+        /// The iteration is delayed — a lap of the ring is six frames, so what it feeds back is
+        /// an estimate from six frames ago. Delay is not free in a feedback loop: one extra
+        /// frame is exactly what stops the constant-speed smoothing from settling, because there
+        /// the loop's gain at the target is 1 and the recurrence turns into a rotation.
+        ///
+        /// Newton is the opposite case, and for the same reason it converges quadratically: at
+        /// the root the derivative of the step is zero, so the delayed recurrence has no gain to
+        /// rotate. The delay costs frames and nothing else. This watches the error lap by lap —
+        /// it should fall, keep falling, and then stop dead rather than ring.
+        /// </summary>
+        [Test]
+        public void NewtonsMethod_ConvergesDespiteTheLoopBeingSixFramesLong()
+        {
+            const float a = 2f, root = 1.41421356f;
+            using (var rig = SquareRootRack(laddered: false).Run())
+            {
+                rig.Set("A", a);
+
+                var errors = new List<float>();
+                for (int lap = 0; lap < 10; lap++)
+                {
+                    rig.Step(6);
+                    errors.Add(Mathf.Abs(rig.Get("X") - root));
+                }
+                string trace = string.Join(", ", errors.ConvertAll(e => e.ToString("0.######")));
+
+                // The first laps are the ring filling and the estimate coming down from the
+                // clamp; from there the error only goes one way.
+                for (int lap = 3; lap < errors.Count; lap++)
+                    Assert.LessOrEqual(errors[lap], errors[lap - 1] + 1e-6f,
+                        "the error grew at lap " + lap + " — " + trace);
+                Assert.Less(errors[errors.Count - 1], 1e-4f, "it should have arrived — " + trace);
+
+                // And stays. A delayed loop that was going to ring would do it here.
+                float settled = rig.Get("X");
+                rig.Step(300);
+                Assert.AreEqual(settled, rig.Get("X"), 1e-6f, "it rang after settling");
+            }
+        }
+
+        /// <summary>
+        /// Why the loop wants the ranged divide. An iteration converges on the fixed point of
+        /// the arithmetic it is actually made of, not of the arithmetic it stands for — so a
+        /// Newton step built on a division that is good to about 8e-4 relative lands about that
+        /// far from the root and then stops, however many laps it is given. Taking the ladder
+        /// out of the loop is what lets the same iteration reach the float.
+        ///
+        /// Measured at √0.25, where the estimate sits below 1 and so inside the ladder's half.
+        /// </summary>
+        [Test]
+        public void NewtonsMethod_ReachesFurtherWithoutALookupLadderInTheLoop()
+        {
+            const float a = 0.25f, root = 0.5f;
+            using (var exact = SquareRootRack(laddered: false).Run())
+            using (var sampled = SquareRootRack(laddered: true).Run())
+            {
+                exact.Set("A", a).Step(300);
+                sampled.Set("A", a).Step(300);
+
+                float exactError = Mathf.Abs(exact.Get("X") - root);
+                float sampledError = Mathf.Abs(sampled.Get("X") - root);
+                string measured = "exact " + exact.Get("X").ToString("R")
+                    + ", laddered " + sampled.Get("X").ToString("R");
+
+                Assert.Less(exactError, 1e-5f, "the ladder-free loop reaches the float — " + measured);
+                Assert.Greater(sampledError, exactError,
+                    "and the laddered one stops short of it — " + measured);
+            }
+        }
+
+        // ---- depth, and the buffer that cancels it ---------------------------------
+
+        /// <summary>
+        /// The claim the Buffer gadget exists for, stated as an experiment.
+        ///
+        /// Two branches leave the same input. One goes through two gadgets (Not twice, which is
+        /// the identity by way of two hops); the other through a two-frame buffer. They are the
+        /// same value at the same age, so their difference must be zero on *every* frame — even
+        /// while the input is moving. The control is the same comparison against the raw input,
+        /// which is two frames younger: that one has to break, or the buffer was never needed
+        /// and this test proves nothing.
+        ///
+        /// A settled rack cannot tell these apart. Only a moving one can.
+        /// </summary>
+        [Test]
+        public void Buffer_AlignsBranchesOfDifferentDepthWhileTheInputMoves()
+        {
+            var rack = new Rack("A");
+            rack.Gadget(AapGadgets.Kind.Not, "N1", "A");
+            rack.Gadget(AapGadgets.Kind.Not, "Deep", "N1");
+            rack.Gadget(AapGadgets.Kind.Buffer, "Aligned", "A",
+                configure: r => { r.bufferFrames = 2; r.rangeMin = 0f; r.rangeMax = 1f; });
+            rack.Gadget(AapGadgets.Kind.SubRanged, "Matched", "Deep", "Aligned",
+                configure: r => { r.rangeMin = -1f; r.rangeMax = 1f; });
+            rack.Gadget(AapGadgets.Kind.SubRanged, "Skewed", "Deep", "A",
+                configure: r => { r.rangeMin = -1f; r.rangeMax = 1f; });
+
+            using (var rig = rack.Run())
+            {
+                rig.Set("A", 0f).Step(20);
+                Assert.AreEqual(0f, rig.Get("Matched"), 1e-4f, "at rest the two branches agree");
+                Assert.AreEqual(0f, rig.Get("Skewed"), 1e-4f, "and so does the unbuffered one");
+
+                // Walk the input up in steps big enough that a two-frame lag is unmistakable.
+                float worstMatched = 0f, worstSkewed = 0f;
+                for (int i = 1; i <= 10; i++)
+                {
+                    rig.Set("A", i / 10f).Step();
+                    worstMatched = Mathf.Max(worstMatched, Mathf.Abs(rig.Get("Matched")));
+                    worstSkewed = Mathf.Max(worstSkewed, Mathf.Abs(rig.Get("Skewed")));
+                }
+
+                Assert.Less(worstMatched, 1e-3f,
+                    "the buffered branch should stay aligned through the whole ramp");
+                Assert.Greater(worstSkewed, 0.1f,
+                    "the unbuffered comparison should have drifted — otherwise the buffer is "
+                    + "cancelling a skew that was never there and this test is vacuous");
+            }
+        }
+
+        // ---- the clock, and what it buys -------------------------------------------
+
+        /// <summary>
+        /// "Driving stepSize from a FrameTime gadget makes the speed independent of the frame
+        /// rate" — the one sentence in the gadget documentation that is purely about time, and
+        /// therefore the one no structural test can reach at all.
+        ///
+        /// The same rack is run for half a second twice, at 60 and at 120 frames per second, and
+        /// asked how far it travelled. Beside it runs the naive version, whose step is a
+        /// constant per frame: that one has to travel about twice as far at twice the frame
+        /// rate, or "independent of the frame rate" is not saying anything.
+        /// </summary>
+        [Test]
+        public void FrameTime_MakesSmoothLinearTravelByTheClockAndNotByTheFrame()
+        {
+            // Rate is in units per second, and the multiply turns it into units per frame.
+            Rack Timed()
+            {
+                var rack = new Rack("Target", "Rate");
+                rack.Gadget(AapGadgets.Kind.FrameTime, "Dt", null);
+                rack.Gadget(AapGadgets.Kind.Multiply, "Step", "Dt", "Rate");
+                rack.Gadget(AapGadgets.Kind.SmoothLinear, "Tracked", "Target",
+                    configure: r => { r.smoothing = "Step"; r.rangeMin = -2f; r.rangeMax = 2f; });
+                return rack;
+            }
+
+            // The same gadget with a step that knows nothing about time.
+            Rack Naive()
+            {
+                var rack = new Rack("Target", "Step");
+                rack.Gadget(AapGadgets.Kind.SmoothLinear, "Tracked", "Target",
+                    configure: r => { r.smoothing = "Step"; r.rangeMin = -2f; r.rangeMax = 2f; });
+                return rack;
+            }
+
+            float TravelTimed(int frames, float dt)
+            {
+                using (var rig = Timed().Run())
+                {
+                    // Target far enough away that the whole run stays in the constant-speed
+                    // stretch, short of the ramp the gadget lands with.
+                    rig.Set("Target", 2f).Set("Rate", 1f).Step(frames, dt);
+                    return rig.Get("Tracked");
+                }
+            }
+
+            float TravelNaive(int frames, float dt)
+            {
+                using (var rig = Naive().Run())
+                {
+                    rig.Set("Target", 2f).Set("Step", 1f / 60f).Step(frames, dt);
+                    return rig.Get("Tracked");
+                }
+            }
+
+            float timed60 = TravelTimed(30, 1f / 60f);      // half a second
+            float timed120 = TravelTimed(60, 1f / 120f);    // the same half second
+            float naive60 = TravelNaive(30, 1f / 60f);
+            float naive120 = TravelNaive(60, 1f / 120f);
+
+            // Both runs lose their first few frames to the pipeline filling (the clock needs a
+            // frame to report, the multiply another), and those frames are worth less time at
+            // 120 fps — so the two are close, not equal.
+            Assert.AreEqual(0.5f, timed60, 0.1f, "half a second at 60 fps");
+            Assert.AreEqual(timed60, timed120, 0.08f,
+                "the clock-driven step should cover the same ground in the same time");
+
+            Assert.Greater(naive120, naive60 * 1.7f,
+                "the naive step should travel with the frame count — otherwise the comparison "
+                + "above is not measuring anything");
+        }
+
+        // ---- all of them, at once ----------------------------------------------------
+
+        /// <summary>
+        /// Every gadget kind there is, in one layer, wired into each other wherever one's output
+        /// can be another's input: a joystick becomes an angle, the angle becomes three
+        /// trigonometric readings, a throttle goes through a baked curve and then through the
+        /// arithmetic, the logic gadgets gate on it, division and reciprocal read the sum, and
+        /// the three time-shaped gadgets (both smoothings and the buffer) trail behind it.
+        ///
+        /// Twenty-three gadgets, twenty-two kinds, one Direct root summing all of them, and the
+        /// deepest result seven hops from its input. Every value below was worked out on paper
+        /// first; the point of the test is that the rack agrees.
+        ///
+        /// The count assertion at the end is a tripwire: add a gadget kind to DaerD and this
+        /// test fails until the new kind is wired into the rack too.
+        /// </summary>
+        [Test]
+        public void EveryKind_InOneRack_ComputesWhatThePaperSays()
+        {
+            var rack = new Rack("X", "Y", "Throttle", "Enable", "Rate", "Ease");
+
+            // The clock first, so the layer it brings lands behind the rack and not inside it.
+            rack.Gadget(AapGadgets.Kind.FrameTime, "Dt", null);
+            rack.Gadget(AapGadgets.Kind.Multiply, "Step", "Dt", "Rate");
+
+            // Direction: a vector becomes a turn, and the turn becomes its three readings.
+            rack.Gadget(AapGadgets.Kind.Atan2, "Turn", "Y", "X", r => r.atan2Directions = 16);
+            rack.Gadget(AapGadgets.Kind.Sine, "Wave", "Turn");
+            rack.Gadget(AapGadgets.Kind.Cosine, "Quad", "Turn");
+            rack.Gadget(AapGadgets.Kind.Tangent, "Slope", "Turn");
+
+            // Throttle through a baked response curve: 0 → 0, 1 → 0.8, sampled on quarters.
+            var response = AnimationCurve.Linear(0f, 0f, 1f, 0.8f);
+            rack.Gadget(AapGadgets.Kind.Lut1D, "Curve", "Throttle",
+                configure: r => { r.curve = response; r.lutSamples = 5; });
+
+            // Logic, gating on the throttle being past half.
+            rack.Gadget(AapGadgets.Kind.FloatAsBool, "Hot", "Throttle", configure: r => r.threshold = 0.5f);
+            rack.Gadget(AapGadgets.Kind.And, "Armed", "Hot", "Enable");
+            rack.Gadget(AapGadgets.Kind.Or, "Any", "Hot", "Enable");
+            rack.Gadget(AapGadgets.Kind.Not, "Cold", "Hot");
+
+            // Arithmetic over the curve and the throttle.
+            rack.Gadget(AapGadgets.Kind.Add, "Sum", "Throttle", "Curve");
+            rack.Gadget(AapGadgets.Kind.Sub, "Gap", "Sum", "Throttle");
+            rack.Gadget(AapGadgets.Kind.Multiply, "Scale", "Curve", "Throttle");
+
+            // The signed pair, over two readings that can both go negative.
+            rack.Gadget(AapGadgets.Kind.AddRanged, "Blend", "Wave", "Quad",
+                configure: r => { r.rangeMin = -2f; r.rangeMax = 2f; });
+            rack.Gadget(AapGadgets.Kind.SubRanged, "Swing", "Wave", "Quad",
+                configure: r => { r.rangeMin = -2f; r.rangeMax = 2f; });
+
+            // The signed pair the plain Multiply and Divide cannot do: both readings here can
+            // go negative, and the positive-only gadgets would drop them rather than use them.
+            rack.Gadget(AapGadgets.Kind.MultiplySigned, "Signed", "Wave", "Quad",
+                configure: r => { r.rangeMin = -1f; r.rangeMax = 1f; });
+            rack.Gadget(AapGadgets.Kind.DivideSigned, "Quotient", "Blend", "Wave",
+                configure: r => { r.rangeMin = -2f; r.rangeMax = 2f; });
+
+            // The sampled functions, all over the window Sum lives in, and the power that is
+            // assembled from two of them rather than sampled.
+            rack.Gadget(AapGadgets.Kind.Sqrt, "Root", "Sum",
+                configure: r => { r.inMin = 0.1f; r.inMax = 4f; r.lutSamples = 65; });
+            rack.Gadget(AapGadgets.Kind.InverseSqrt, "InvRoot", "Sum",
+                configure: r => { r.inMin = 0.1f; r.inMax = 4f; r.lutSamples = 65; });
+            rack.Gadget(AapGadgets.Kind.Log2, "Lg", "Sum",
+                configure: r => { r.inMin = 0.1f; r.inMax = 4f; r.lutSamples = 65; });
+            rack.Gadget(AapGadgets.Kind.Exp2, "Back", "Lg",
+                configure: r =>
+                {
+                    r.inMin = Mathf.Log(0.1f, 2f); r.inMax = 2f; r.lutSamples = 65;
+                });
+            rack.Gadget(AapGadgets.Kind.Power, "Powered", "Sum", "Throttle",
+                r =>
+                {
+                    r.inMin = 0.1f; r.inMax = 4f;
+                    r.rangeMin = 0f; r.rangeMax = 2f;
+                    r.lutSamples = 97;
+                });
+
+            // The tangent's ±100 band folded into 0..1.
+            rack.Gadget(AapGadgets.Kind.Remap, "Norm", "Slope",
+                configure: r => { r.inMin = -100f; r.inMax = 100f; r.rangeMin = 0f; r.rangeMax = 1f; });
+
+            // Division, every way round: the laddered pair, and the pair that skips the ladder
+            // because the divisor's window is declared.
+            rack.Gadget(AapGadgets.Kind.Reciprocal, "Inv", "Sum");
+            rack.Gadget(AapGadgets.Kind.Divide, "Ratio", "Scale", "Sum");
+            rack.Gadget(AapGadgets.Kind.ReciprocalRanged, "InvExact", "Sum",
+                configure: r => { r.inMin = 0.25f; r.inMax = 4f; });
+            rack.Gadget(AapGadgets.Kind.DivideRanged, "RatioExact", "Scale", "Sum",
+                configure: r => { r.inMin = 0.25f; r.inMax = 4f; });
+
+            // The three that are about time rather than value.
+            rack.Gadget(AapGadgets.Kind.SmoothLinear, "Tracked", "Throttle",
+                configure: r => { r.smoothing = "Step"; r.rangeMin = -1f; r.rangeMax = 1f; });
+            rack.Gadget(AapGadgets.Kind.Smooth, "Eased", "Throttle",
+                configure: r => { r.smoothing = "Ease"; r.rangeMin = -1f; r.rangeMax = 1f; });
+            rack.Gadget(AapGadgets.Kind.Buffer, "Late", "Curve",
+                configure: r => { r.bufferFrames = 3; r.rangeMin = 0f; r.rangeMax = 1f; });
+
+            // And the readout.
+            rack.Gadget(AapGadgets.Kind.SeparateDigits, "Digits", "Curve");
+
+            Assert.AreEqual(Enum.GetValues(typeof(AapGadgets.Kind)).Length, rack.Kinds.Count,
+                "every gadget kind should be in the rack — a new kind belongs here too");
+            Assert.AreEqual(3, rack.Controller.layers.Length,
+                "one base layer, one rack, and the clock's own layer behind it");
+
+            using (var rig = rack.Run())
+            {
+                // An eighth of a turn: the direction ring samples it exactly, and so do all
+                // three trigonometric tables, so these are table reads and not interpolations.
+                const float diagonal = 0.70710678f;
+                rig.Set("X", diagonal).Set("Y", diagonal)
+                   .Set("Throttle", 0.5f).Set("Enable", 1f)
+                   // 1.5 units a second is 0.025 a frame here — comfortably under the ramp width
+                   // the constant-speed smoothing needs to stay below to settle at all. See
+                   // AapGadgetRuntimeTests.SmoothLinear_SettlesBelowTheRampWidthButSwingsAtIt.
+                   .Set("Rate", 1.5f).Set("Ease", 0.5f);
+                // Long enough for the deepest chain to fill and for both smoothings to arrive.
+                rig.Step(300);
+
+                Assert.AreEqual(1f / 60f, rig.Get("Dt"), 1e-4f, "Dt");
+                Assert.AreEqual(0.025f, rig.Get("Step"), 1e-3f, "Step = Dt × 1.5");
+
+                Assert.AreEqual(0.125f, rig.Get("Turn"), 5e-3f, "Turn = atan2(y, x)");
+                Assert.AreEqual(diagonal, rig.Get("Wave"), 1e-3f, "Wave = sin(Turn)");
+                Assert.AreEqual(diagonal, rig.Get("Quad"), 1e-3f, "Quad = cos(Turn)");
+                Assert.AreEqual(1f, rig.Get("Slope"), 1e-3f, "Slope = tan(Turn)");
+
+                Assert.AreEqual(0.4f, rig.Get("Curve"), 1e-3f, "Curve = response(0.5)");
+
+                Assert.AreEqual(1f, rig.Get("Hot"), 1e-4f, "Hot");
+                Assert.AreEqual(1f, rig.Get("Armed"), 1e-4f, "Armed = Hot AND Enable");
+                Assert.AreEqual(1f, rig.Get("Any"), 1e-4f, "Any = Hot OR Enable");
+                Assert.AreEqual(0f, rig.Get("Cold"), 1e-4f, "Cold = NOT Hot");
+
+                Assert.AreEqual(0.9f, rig.Get("Sum"), 1e-3f, "Sum = Throttle + Curve");
+                Assert.AreEqual(0.4f, rig.Get("Gap"), 1e-3f, "Gap = Sum - Throttle");
+                Assert.AreEqual(0.2f, rig.Get("Scale"), 1e-3f, "Scale = Curve × Throttle");
+
+                Assert.AreEqual(2f * diagonal, rig.Get("Blend"), 2e-3f, "Blend = Wave + Quad");
+                Assert.AreEqual(0f, rig.Get("Swing"), 2e-3f, "Swing = Wave - Quad");
+
+                Assert.AreEqual(0.5f, rig.Get("Signed"), 2e-3f, "Signed = Wave × Quad");
+                Assert.AreEqual(2f, rig.Get("Quotient"), 1.5e-2f, "Quotient = Blend / Wave");
+
+                Assert.AreEqual(0.505f, rig.Get("Norm"), 1e-3f, "Norm = Slope folded into 0..1");
+
+                Assert.AreEqual(1f / 0.9f, rig.Get("Inv"), 4e-3f, "Inv = 1 / Sum");
+                Assert.AreEqual(0.2f / 0.9f, rig.Get("Ratio"), 2e-3f, "Ratio = Scale / Sum");
+                // The same two numbers with no lookup ladder in them, so the tolerance is the
+                // float's rather than the table's.
+                Assert.AreEqual(1f / 0.9f, rig.Get("InvExact"), 1e-4f, "InvExact = 1 / Sum");
+                Assert.AreEqual(0.2f / 0.9f, rig.Get("RatioExact"), 1e-4f, "RatioExact = Scale / Sum");
+
+                Assert.AreEqual(Mathf.Sqrt(0.9f), rig.Get("Root"), 3e-3f, "Root = √Sum");
+                Assert.AreEqual(1f / Mathf.Sqrt(0.9f), rig.Get("InvRoot"), 3e-3f, "InvRoot = 1/√Sum");
+                Assert.AreEqual(Mathf.Log(0.9f, 2f), rig.Get("Lg"), 5e-3f, "Lg = log₂ Sum");
+                Assert.AreEqual(0.9f, rig.Get("Back"), 1e-2f, "Back = 2^Lg, which is Sum again");
+                // 0.9 to the power of the throttle's 0.5 — the same number the square root
+                // above found, by a different four gadgets.
+                Assert.AreEqual(Mathf.Sqrt(0.9f), rig.Get("Powered"), 1e-2f, "Powered = Sum^0.5");
+
+                Assert.AreEqual(0.5f, rig.Get("Tracked"), 5e-3f, "Tracked caught up to Throttle");
+                Assert.AreEqual(0.5f, rig.Get("Eased"), 5e-3f, "Eased caught up to Throttle");
+                Assert.AreEqual(0.4f, rig.Get("Late"), 1e-3f, "Late = Curve, three frames behind");
+
+                Assert.AreEqual(0.4f, rig.Get("Digits/Tenths"), 5e-4f, "the tenths of Curve");
+                Assert.AreEqual(0f, rig.Get("Digits/Hundredths"), 5e-4f, "the hundredths of Curve");
+                Assert.AreEqual(0f, rig.Get("Digits/Thousandths"), 5e-4f, "the thousandths of Curve");
+            }
+        }
+
+        /// <summary>
+        /// The same rack, driven somewhere else. One set of inputs can be passed by a gadget
+        /// that ignores its input entirely (a stuck output that happens to sit on the expected
+        /// value), so the rack is worth asking twice — here with the throttle low enough to shut
+        /// the logic gate, the joystick on an axis rather than a diagonal, and a curve reading
+        /// with three digits in it.
+        /// </summary>
+        [Test]
+        public void EveryKind_InOneRack_MovesWhenTheInputsDo()
+        {
+            var rack = new Rack("X", "Y", "Throttle", "Enable", "Rate", "Ease");
+            rack.Gadget(AapGadgets.Kind.FrameTime, "Dt", null);
+            rack.Gadget(AapGadgets.Kind.Multiply, "Step", "Dt", "Rate");
+            rack.Gadget(AapGadgets.Kind.Atan2, "Turn", "Y", "X", r => r.atan2Directions = 16);
+            rack.Gadget(AapGadgets.Kind.Sine, "Wave", "Turn");
+            rack.Gadget(AapGadgets.Kind.Cosine, "Quad", "Turn");
+            // A curve whose quarter samples are 0, 0.123, 0.246, 0.369, 0.492 — the reading at
+            // 0.25 has all three decimals the digit splitter is supposed to find.
+            var response = AnimationCurve.Linear(0f, 0f, 1f, 0.492f);
+            rack.Gadget(AapGadgets.Kind.Lut1D, "Curve", "Throttle",
+                configure: r => { r.curve = response; r.lutSamples = 5; });
+            rack.Gadget(AapGadgets.Kind.FloatAsBool, "Hot", "Throttle", configure: r => r.threshold = 0.5f);
+            rack.Gadget(AapGadgets.Kind.And, "Armed", "Hot", "Enable");
+            rack.Gadget(AapGadgets.Kind.Or, "Any", "Hot", "Enable");
+            rack.Gadget(AapGadgets.Kind.Not, "Cold", "Hot");
+            rack.Gadget(AapGadgets.Kind.Add, "Sum", "Throttle", "Curve");
+            rack.Gadget(AapGadgets.Kind.Sub, "Gap", "Sum", "Throttle");
+            rack.Gadget(AapGadgets.Kind.Multiply, "Scale", "Curve", "Throttle");
+            rack.Gadget(AapGadgets.Kind.AddRanged, "Blend", "Wave", "Quad",
+                configure: r => { r.rangeMin = -2f; r.rangeMax = 2f; });
+            rack.Gadget(AapGadgets.Kind.SubRanged, "Swing", "Wave", "Quad",
+                configure: r => { r.rangeMin = -2f; r.rangeMax = 2f; });
+            rack.Gadget(AapGadgets.Kind.Reciprocal, "Inv", "Sum");
+            rack.Gadget(AapGadgets.Kind.Divide, "Ratio", "Scale", "Sum");
+            rack.Gadget(AapGadgets.Kind.Smooth, "Eased", "Throttle",
+                configure: r => { r.smoothing = "Ease"; r.rangeMin = -1f; r.rangeMax = 1f; });
+            rack.Gadget(AapGadgets.Kind.Buffer, "Late", "Curve",
+                configure: r => { r.bufferFrames = 3; r.rangeMin = 0f; r.rangeMax = 1f; });
+            rack.Gadget(AapGadgets.Kind.SeparateDigits, "Digits", "Curve");
+
+            using (var rig = rack.Run())
+            {
+                // Straight up: a quarter turn, which the ring also samples exactly.
+                rig.Set("X", 0f).Set("Y", 1f)
+                   .Set("Throttle", 0.25f).Set("Enable", 0f).Set("Ease", 0.5f);
+                rig.Step(200);
+
+                Assert.AreEqual(0.25f, rig.Get("Turn"), 5e-3f, "Turn = atan2(1, 0)");
+                Assert.AreEqual(1f, rig.Get("Wave"), 1e-3f, "Wave = sin(quarter turn)");
+                Assert.AreEqual(0f, rig.Get("Quad"), 1e-3f, "Quad = cos(quarter turn)");
+                Assert.AreEqual(1f, rig.Get("Blend"), 2e-3f, "Blend = 1 + 0");
+                Assert.AreEqual(1f, rig.Get("Swing"), 2e-3f, "Swing = 1 - 0");
+
+                Assert.AreEqual(0.123f, rig.Get("Curve"), 1e-3f, "Curve = response(0.25)");
+                Assert.AreEqual(0f, rig.Get("Hot"), 1e-4f, "the throttle is below the threshold");
+                Assert.AreEqual(0f, rig.Get("Armed"), 1e-4f, "0 AND 0");
+                Assert.AreEqual(0f, rig.Get("Any"), 1e-4f, "0 OR 0");
+                Assert.AreEqual(1f, rig.Get("Cold"), 1e-4f, "NOT 0");
+
+                Assert.AreEqual(0.373f, rig.Get("Sum"), 1e-3f, "Sum = 0.25 + 0.123");
+                Assert.AreEqual(0.123f, rig.Get("Gap"), 1e-3f, "Gap = Sum - Throttle");
+                Assert.AreEqual(0.03075f, rig.Get("Scale"), 1e-3f, "Scale = 0.123 × 0.25");
+                Assert.AreEqual(1f / 0.373f, rig.Get("Inv"), 0.02f, "Inv = 1 / Sum");
+                Assert.AreEqual(0.03075f / 0.373f, rig.Get("Ratio"), 2e-3f, "Ratio = Scale / Sum");
+
+                Assert.AreEqual(0.25f, rig.Get("Eased"), 5e-3f, "Eased caught up to Throttle");
+                Assert.AreEqual(0.123f, rig.Get("Late"), 1e-3f, "Late = Curve, three frames behind");
+
+                Assert.AreEqual(0.1f, rig.Get("Digits/Tenths"), 5e-4f, "the 1 of 0.123");
+                Assert.AreEqual(0.02f, rig.Get("Digits/Hundredths"), 5e-4f, "the 2 of 0.123");
+                Assert.AreEqual(0.003f, rig.Get("Digits/Thousandths"), 5e-4f, "the 3 of 0.123");
+            }
+        }
+    }
+}

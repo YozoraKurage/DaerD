@@ -33,7 +33,7 @@ namespace Yozolab.DaerD
             }
             else if (AssetImporter.GetAtPath(path) is ModelImporter)
             {
-                EditorUtility.DisplayDialog("Rename Clip",
+                EditorUtility.DisplayDialog(L.Tr("Rename Clip"),
                     "This clip is imported from a model (e.g. an FBX) and cannot be renamed here. " +
                     "Rename it from the model's Import Settings (Animation tab).",
                     "OK");

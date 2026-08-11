@@ -183,7 +183,7 @@ namespace Yozolab.DaerD
             controller.AddLayer(layer);
             int index = controller.layers.Length - 1;
             if (existing >= 0)
-                index = MoveLayer(controller, index, existing);
+                index = controller.MoveLayer(index, existing);
 
             // The rebuilt machine inherits the records of the one it replaced (same name):
             // async-sync setups keep their SYNC badge and wizard entry, frames and notes
@@ -202,22 +202,6 @@ namespace Yozolab.DaerD
             for (int i = 0; i < layers.Length; i++)
                 if (layers[i].name == name) return i;
             return -1;
-        }
-
-        /// <summary>Moves the layer at <paramref name="from"/> to <paramref name="to"/>,
-        /// shifting the ones between; returns the final index.</summary>
-        static int MoveLayer(AnimatorController controller, int from, int to)
-        {
-            var layers = controller.layers;
-            if (from == to || from < 0 || to < 0 || from >= layers.Length || to >= layers.Length)
-                return from;
-            var moved = layers[from];
-            int step = from < to ? 1 : -1;
-            for (int i = from; i != to; i += step)
-                layers[i] = layers[i + step];
-            layers[to] = moved;
-            controller.layers = layers;
-            return to;
         }
 
         // ---- machines ----------------------------------------------------------
