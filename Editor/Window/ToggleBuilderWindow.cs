@@ -145,9 +145,9 @@ namespace Yozolab.DaerD
             EditorGUILayout.Space(8);
             EditorGUILayout.BeginHorizontal();
             GUILayout.FlexibleSpace();
-            if (GUILayout.Button(L.Tr("Cancel"), GUILayout.Width(100)))
+            if (GUILayout.Button(L.Tr("Cancel"), GUILayout.Width(DaerDLayout.DialogButton)))
                 Close();
-            if (GUILayout.Button(L.Tr("Create"), GUILayout.Width(100)))
+            if (GUILayout.Button(L.Tr("Create"), GUILayout.Width(DaerDLayout.DialogButton)))
                 TryApply();
             EditorGUILayout.EndHorizontal();
         }
@@ -207,7 +207,7 @@ namespace Yozolab.DaerD
             if (dropped != null)
                 AddTarget(dropped);
             if (GUILayout.Button(new GUIContent(L.Tr("Add Selection"),
-                    L.Tr("Add every GameObject selected in the Hierarchy.")), GUILayout.Width(100)))
+                    L.Tr("Add every GameObject selected in the Hierarchy.")), GUILayout.Width(DaerDLayout.DialogButton)))
                 foreach (var picked in Selection.gameObjects)
                     AddTarget(picked);
             EditorGUILayout.EndHorizontal();
@@ -236,7 +236,7 @@ namespace Yozolab.DaerD
                 new GUIContent(L.Tr("Active"),
                     L.Tr("Checked: the object is active while the toggle is ON. Unchecked inverts it.")),
                 GUILayout.Width(60));
-            bool removed = GUILayout.Button("−", EditorStyles.miniButton, GUILayout.Width(22));
+            bool removed = GUILayout.Button("−", EditorStyles.miniButton, GUILayout.Width(DaerDLayout.GlyphButton));
             EditorGUILayout.EndHorizontal();
             if (removed) return false;
 
@@ -245,7 +245,7 @@ namespace Yozolab.DaerD
             EditorGUILayout.BeginHorizontal();
             GUILayout.Space(12);
             row.toggleActive = GUILayout.Toggle(row.toggleActive,
-                new GUIContent("Object", L.Tr("Animate GameObject.m_IsActive")),
+                new GUIContent(L.Tr("Object"), L.Tr("Animate GameObject.m_IsActive")),
                 EditorStyles.miniButton);
             DrawChip(ref row.renderer, "Renderer", row.source.GetComponent<Renderer>() != null,
                 L.Tr("Animate the Renderer's enabled flag"));
@@ -264,7 +264,7 @@ namespace Yozolab.DaerD
                 && skinned.sharedMesh.blendShapeCount > 0;
             if (hasShapes)
                 row.shapesExpanded = GUILayout.Toggle(row.shapesExpanded,
-                    new GUIContent("BlendShapes", L.Tr("Animate blendshape weights (OFF/ON values per shape)")),
+                    new GUIContent(L.Tr("BlendShapes"), L.Tr("Animate blendshape weights (OFF/ON values per shape)")),
                     EditorStyles.miniButton);
             GUILayout.FlexibleSpace();
             EditorGUILayout.EndHorizontal();
@@ -298,7 +298,7 @@ namespace Yozolab.DaerD
                 shape.off = EditorGUILayout.FloatField(L.Tr("Off"), shape.off, GUILayout.Width(70));
                 shape.on = EditorGUILayout.FloatField(L.Tr("On"), shape.on, GUILayout.Width(70));
                 EditorGUIUtility.labelWidth = saved;
-                if (GUILayout.Button("−", EditorStyles.miniButton, GUILayout.Width(22)))
+                if (GUILayout.Button("−", EditorStyles.miniButton, GUILayout.Width(DaerDLayout.GlyphButton)))
                     removeShape = i;
                 EditorGUILayout.EndHorizontal();
             }
@@ -307,7 +307,7 @@ namespace Yozolab.DaerD
 
             EditorGUILayout.BeginHorizontal();
             GUILayout.Space(24);
-            if (GUILayout.Button("+", EditorStyles.miniButton, GUILayout.Width(22)))
+            if (GUILayout.Button("+", EditorStyles.miniButton, GUILayout.Width(DaerDLayout.GlyphButton)))
                 ShowAddShapeMenu(row, skinned);
             EditorGUILayout.EndHorizontal();
         }

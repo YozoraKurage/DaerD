@@ -128,7 +128,7 @@ namespace Yozolab.DaerD.Tests
             StringAssert.Contains("a.TransitionsTo(b).When(go.IsTrue()).WithTransitionDurationSeconds(0.1f);", code);
             StringAssert.Contains("b.Exits().When(go.IsFalse())", code);
             StringAssert.Contains("main.AnyTransitionsTo(a).When(blend.IsGreaterThan(0.9f))", code);
-            StringAssert.DoesNotContain("var t = ", code);
+            StringAssert.DoesNotContain("var t = ", Body(code));
 
             // The blend tree (a NewBlendTree variable the state references) and the
             // JSON-fallback behaviour both made it in.
@@ -234,9 +234,9 @@ namespace Yozolab.DaerD.Tests
             StringAssert.Contains("c.Layer(\"Second\")", code);
             StringAssert.DoesNotContain("c.Layer(\"Main\")", code);
             // "Second" references no parameters at all: none are exported.
-            StringAssert.DoesNotContain("c.FloatParameter(", code);
-            StringAssert.DoesNotContain("c.BoolParameter(", code);
-            StringAssert.DoesNotContain("\"Unused\"", code);
+            StringAssert.DoesNotContain("c.FloatParameter(", Body(code));
+            StringAssert.DoesNotContain("c.BoolParameter(", Body(code));
+            StringAssert.DoesNotContain("\"Unused\"", Body(code));
 
             result.replayed.Bake();
             var expected = ControllerIR.Parse(controller).FilterTo(
@@ -248,11 +248,12 @@ namespace Yozolab.DaerD.Tests
         // ---- gadget layers -----------------------------------------------------
 
         /// <summary>Runs the body against a controller that really exists on disk: the gadget
-        /// records the exporter reads live in a hidden sub-asset of the .controller, and an
-        /// in-memory controller has nowhere to keep one.</summary>
+        /// and async-sync records the exporter reads live in a hidden sub-asset of the
+        /// .controller, and an in-memory controller has nowhere to keep one — a test that
+        /// forgot this would pass on an empty plan without exporting anything.</summary>
         static void WithSavedController(System.Action<AnimatorController> body)
         {
-            const string path = "Assets/DaerDRecipeGadgetExportTest.controller";
+            const string path = "Assets/DaerDRecipeExportTest.controller";
             AssetDatabase.CreateAsset(new AnimatorController(), path);
             try
             {
@@ -310,6 +311,110 @@ namespace Yozolab.DaerD.Tests
             int start = code.IndexOf("BuildGenerated(ControllerBuilder c)");
             Assert.Greater(start, 0, "the generated half has no build body");
             return code.Substring(start);
+        }
+
+        /// <summary>The sampled functions come back as their own calls with the window they were
+        /// sampled over. Written back as a bare Lut1D they would need the curve spelled out, and
+        /// as anything else they would be a different table.</summary>
+        [Test]
+        public void Export_FunctionGadgets_CarryTheirWindow()
+        {
+            WithSavedController(controller =>
+            {
+                ApplyGadget(controller, AapGadgets.Kind.Sqrt, r =>
+                {
+                    r.output = "A/Sqrt";
+                    r.inMin = 0.01f;
+                    r.inMax = 16f;
+                });
+                ApplyGadget(controller, AapGadgets.Kind.Log2, r =>
+                {
+                    r.output = "A/Log";
+                    r.inMin = 0.5f;
+                    r.inMax = 8f;
+                    r.lutSamples = 65;
+                });
+                ApplyGadget(controller, AapGadgets.Kind.Power, r =>
+                {
+                    r.output = "A^B";
+                    r.inMin = 0.1f;
+                    r.inMax = 4f;
+                    r.rangeMin = -2f;
+                    r.rangeMax = 2f;
+                });
+
+                var result = RecipeExporter.Export(controller, null, "GadgetRecipe", null);
+                Assert.IsEmpty(result.warnings, string.Join("\n", result.warnings));
+
+                // The default sample count stays out of the call; a chosen one does not.
+                StringAssert.Contains(".Sqrt(\"A\", \"A/Sqrt\", 0.01f, 16)", result.code);
+                StringAssert.Contains(".Log2(\"A\", \"A/Log\", 0.5f, 8, 65)", result.code);
+                StringAssert.Contains(".Power(\"A\", \"B\", \"A^B\", 0.1f, 4, -2, 2)", result.code);
+                StringAssert.DoesNotContain("NewBlendTree(", Body(result.code));
+            });
+        }
+
+        /// <summary>The ranged division pair carries the divisor window it was built with;
+        /// written back without it, the reciprocal would be the laddered one and the controller
+        /// would cap at 240 where the original did not.</summary>
+        [Test]
+        public void Export_RangedDivisionGadgets_CarryTheirDivisorWindow()
+        {
+            WithSavedController(controller =>
+            {
+                ApplyGadget(controller, AapGadgets.Kind.ReciprocalRanged, r =>
+                {
+                    r.output = "A/Inv";
+                    r.inMin = 0.001f;
+                    r.inMax = 1f;
+                });
+                ApplyGadget(controller, AapGadgets.Kind.DivideRanged, r =>
+                {
+                    r.output = "A÷B";
+                    r.inMin = 0.5f;
+                    r.inMax = 8f;
+                });
+
+                var result = RecipeExporter.Export(controller, null, "GadgetRecipe", null);
+                Assert.IsEmpty(result.warnings, string.Join("\n", result.warnings));
+
+                StringAssert.Contains(".ReciprocalRanged(\"A\", \"A/Inv\", 0.001f, 1)", result.code);
+                StringAssert.Contains(".DivideRanged(\"A\", \"B\", \"A÷B\", 0.5f, 8)", result.code);
+                StringAssert.DoesNotContain(".Reciprocal(\"A\"", result.code);
+                StringAssert.DoesNotContain("NewBlendTree(", Body(result.code));
+            });
+        }
+
+        /// <summary>The signed pair export as their own calls, ranges and all — a signed
+        /// multiply written back as the plain one would come out positive-only, which is a
+        /// different controller.</summary>
+        [Test]
+        public void Export_SignedArithmeticGadgets_ComeBackAsTheSignedCalls()
+        {
+            WithSavedController(controller =>
+            {
+                ApplyGadget(controller, AapGadgets.Kind.MultiplySigned, r =>
+                {
+                    r.output = "A*B";
+                    r.rangeMin = -1f;
+                    r.rangeMax = 1f;
+                });
+                ApplyGadget(controller, AapGadgets.Kind.DivideSigned, r =>
+                {
+                    r.output = "A/B";
+                    r.rangeMin = -4f;
+                    r.rangeMax = 4f;
+                });
+
+                var result = RecipeExporter.Export(controller, null, "GadgetRecipe", null);
+                Assert.IsEmpty(result.warnings, string.Join("\n", result.warnings));
+
+                // The range matches the method's own defaults on the first, so it stays out.
+                StringAssert.Contains(".MultiplySigned(\"A\", \"B\", \"A*B\")", result.code);
+                StringAssert.Contains(".DivideSigned(\"A\", \"B\", \"A/B\", -4, 4)", result.code);
+                StringAssert.DoesNotContain(".Multiply(\"A\"", result.code);
+                StringAssert.DoesNotContain("NewBlendTree(", Body(result.code));
+            });
         }
 
         /// <summary>A layer whose every child has a saved config comes back as the gadget calls
@@ -521,6 +626,167 @@ namespace Yozolab.DaerD.Tests
             Assert.IsNull(RecipeExportQueue.NormalizeProjectFolder("/Users/me/MyAssetsPile/Foo"),
                 "'Assets' inside a folder name is not the Assets folder");
             Assert.IsNull(RecipeExportQueue.NormalizeProjectFolder("AssetsExtra/Foo"));
+        }
+
+        // ---- async sync layers -------------------------------------------------
+
+        /// <summary>Builds the "Zip" sync layer on the saved controller. Drivers are skipped:
+        /// the VRChat SDK is not a test dependency, and nothing the exporter reads lives in
+        /// them — the setup comes from the saved config and the shape check from state names.
+        /// </summary>
+        static void ApplySync(AnimatorController controller,
+            System.Action<AsyncSyncBuilder.Request> tweak = null)
+        {
+            controller.AddParameter("T", AnimatorControllerParameterType.Bool);
+            controller.AddParameter("N", AnimatorControllerParameterType.Int);
+            var request = new AsyncSyncBuilder.Request
+            {
+                controller = controller,
+                baseName = "Zip",
+                encoding = AsyncSyncBuilder.IndexEncoding.Int,
+                skipDrivers = true,
+            };
+            request.targets.AddRange(new[] { "A", "B", "T", "N" });
+            tweak?.Invoke(request);
+            Assert.IsNull(AsyncSyncBuilder.Validate(request));
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+        }
+
+        [Test]
+        public void Export_AsyncSyncLayer_ComesBackAsOneCall()
+        {
+            WithSavedController(controller =>
+            {
+                ApplySync(controller, r =>
+                {
+                    r.floatChannels = 2;
+                    r.rates["A"] = 2;
+                    r.requestTargets.Add("T");
+                    r.slotBreaks.Add("B");
+                });
+
+                var result = RecipeExporter.Export(controller, null, "SyncRecipe", null);
+                string code = result.code;
+
+                StringAssert.Contains("// ---- Layer: Zip (async sync) ", code);
+                StringAssert.Contains("c.AsyncSync(\"Zip\")", code);
+                StringAssert.Contains(".Targets(\"A\", \"B\", \"T\", \"N\")", code);
+                StringAssert.Contains(".Rate(\"A\", 2)", code);
+                StringAssert.Contains(".Requestable(\"T\")", code);
+                StringAssert.Contains(".Split(\"B\")", code);
+                StringAssert.Contains(".FloatChannels(2)", code);
+                StringAssert.Contains(".EncodingInt()", code);
+
+                // Arguments that match the method's own default are not restated.
+                StringAssert.DoesNotContain(".Step(", Body(code));
+                StringAssert.DoesNotContain(".BoolChannels(", Body(code));
+                StringAssert.DoesNotContain(".EncodingAuto()", Body(code));
+                StringAssert.DoesNotContain(".LayerName(", Body(code));
+
+                // None of the send ring or decoder the call stands for.
+                StringAssert.DoesNotContain("c.Layer(\"Zip\")", code);
+                StringAssert.DoesNotContain("Send A", Body(code));
+                StringAssert.DoesNotContain("Remote Idle", Body(code));
+
+                // The multiplexed targets stay declared; the machinery the call mints does not.
+                StringAssert.Contains("FloatParameter(\"A\")", code);
+                StringAssert.DoesNotContain("\"Zip/Index\"", code);
+                StringAssert.DoesNotContain("\"Zip/Float\"", code);
+                StringAssert.DoesNotContain("\"Zip/Req/T\"", code);
+            });
+        }
+
+        [Test]
+        public void Export_AsyncSyncLayer_KeepsAnExplicitSchedule()
+        {
+            WithSavedController(controller =>
+            {
+                ApplySync(controller,
+                    r => r.scheduleOverride.AddRange(new[] { "A", "B", "A", "T", "N" }));
+
+                string code = RecipeExporter.Export(controller, null, "SyncRecipe", null).code;
+                StringAssert.Contains(".Schedule(\"A\", \"B\", \"A\", \"T\", \"N\")", code);
+            });
+        }
+
+        [Test]
+        public void Export_AsyncSyncLayer_KeepsTheClockItsRepeatRestsOn()
+        {
+            WithSavedController(controller =>
+            {
+                ApplySync(controller, r =>
+                {
+                    r.allowRepeatSteps = true;
+                    r.scheduleOverride.AddRange(new[] { "A", "A", "B", "T", "N" });
+                });
+
+                // The banner spells the async-sync API out with .Schedule(…) above
+                // .AllowRepeats(), so an order check on the whole file only ever measures
+                // the cheat sheet — and reads backwards, at that.
+                string code = Body(RecipeExporter.Export(controller, null, "SyncRecipe", null).code);
+                // Written before the cycle it makes legal — without it the next Generate would
+                // refuse the very schedule on the line below.
+                StringAssert.Contains(".AllowRepeats()", code);
+                StringAssert.Contains(".Schedule(\"A\", \"A\", \"B\", \"T\", \"N\")", code);
+                Assert.Less(code.IndexOf(".AllowRepeats()", System.StringComparison.Ordinal),
+                    code.IndexOf(".Schedule(", System.StringComparison.Ordinal));
+            });
+        }
+
+        [Test]
+        public void Export_AsyncSyncLayer_WritesAGridAsItsSteps()
+        {
+            WithSavedController(controller =>
+            {
+                ApplySync(controller, r =>
+                {
+                    r.floatChannels = 2;
+                    // Inert under a grid, which decides both batching and timing itself.
+                    r.rates["A"] = 2;
+                    r.slotBreaks.Add("B");
+                    r.scheduleOverride.AddRange(new[] { "A", "B" });
+                    foreach (var step in new[]
+                             {
+                                 new[] { "A", "B" }, new[] { "T", "N" }, new[] { "A", "T" },
+                             })
+                    {
+                        var spec = new GraphFrameData.AsyncSyncConfig.StepSpec();
+                        spec.targets.AddRange(step);
+                        r.steps.Add(spec);
+                    }
+                });
+
+                string code = RecipeExporter.Export(controller, null, "SyncRecipe", null).code;
+                StringAssert.Contains(".Sends(\"A\", \"B\")", code);
+                StringAssert.Contains(".Sends(\"T\", \"N\")", code);
+                StringAssert.Contains(".Sends(\"A\", \"T\")", code);
+
+                // The inputs the grid overrides are not restated: written out they would read
+                // as claims about batching and timing that the grid alone decides.
+                StringAssert.DoesNotContain(".Rate(", Body(code));
+                StringAssert.DoesNotContain(".Split(", Body(code));
+                StringAssert.DoesNotContain(".Schedule(", Body(code));
+            });
+        }
+
+        [Test]
+        public void Export_HandEditedSyncLayer_StaysRawAndSaysSo()
+        {
+            WithSavedController(controller =>
+            {
+                ApplySync(controller);
+                // A state the call would not rebuild. Rewriting the layer as one call would
+                // drop it silently, so the layer has to come back as the states it now is.
+                controller.layers[IndexOfLayer(controller, "Zip")].stateMachine
+                    .AddState("Hand Written", new Vector3(0f, 400f, 0f));
+
+                var result = RecipeExporter.Export(controller, null, "SyncRecipe", null);
+
+                Assert.IsTrue(result.warnings.Exists(w => w.Contains("Zip")),
+                    string.Join("\n", result.warnings));
+                StringAssert.DoesNotContain("c.AsyncSync(", Body(result.code));
+                StringAssert.Contains("c.Layer(\"Zip\")", result.code);
+            });
         }
 
         [Test]

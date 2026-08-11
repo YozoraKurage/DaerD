@@ -99,6 +99,9 @@ msgstr "遷移 {0} には条件も Exit Time もないため、発火するこ�
 msgid "State '{0}' has no incoming transition and is not a default state."
 msgstr "State '{0}' には入ってくる遷移がなく、Default State でもありません。"
 
+msgid "State '{0}' is only reachable from states that are themselves unreachable."
+msgstr "State '{0}' に入れるのは、それ自体が到達不能な State からだけです。"
+
 msgid "State name '{0}' is used more than once in '{1}'."
 msgstr "State 名 '{0}' が '{1}' 内で複数回使われています。"
 
@@ -463,9 +466,6 @@ msgstr "コントローラーがありません。"
 msgid "The source must be an existing Float parameter."
 msgstr "元パラメーターには既存の Float パラメーターを指定してください。"
 
-msgid "The output parameter needs a name different from the source."
-msgstr "出力パラメーターには元パラメーターと異なる名前が必要です。"
-
 msgid "A parameter named '{0}' already exists."
 msgstr "パラメーター '{0}' は既に存在します。"
 
@@ -541,6 +541,12 @@ msgstr "入力の最小値"
 msgid "Input Max"
 msgstr "入力の最大値"
 
+msgid "Divisor Min"
+msgstr "除数の最小値"
+
+msgid "Divisor Max"
+msgstr "除数の最大値"
+
 msgid "Threshold"
 msgstr "しきい値"
 
@@ -552,6 +558,9 @@ msgstr "出力パラメーターには入力と異なる名前が必要です。
 
 msgid "Input Min must be smaller than Input Max."
 msgstr "入力の最小値は最大値より小さくしてください。"
+
+msgid "The input range must start above zero for this gadget."
+msgstr "このガジェットでは、入力範囲を 0 より大きい値から始めてください。"
 
 msgid "output = lerp(input, output, smoothing) — exponential smoothing recalculated every frame."
 msgstr "output = lerp(入力, 出力, スムージング量)。毎フレーム再計算される指数スムージングです。"
@@ -568,8 +577,11 @@ msgstr "output = A - B。正の値専用です。負の値を扱う場合は Sub
 msgid "output = A - B over the given range; use a symmetric range (Min = -Max)."
 msgstr "指定した範囲で output = A - B を計算します。範囲は対称（最小値 = -最大値）にしてください。"
 
-msgid "output = A × B via nested Direct trees. Positive values only."
-msgstr "Direct ツリーのネストで output = A × B を計算します。正の値専用です。"
+msgid "output = A × B via nested Direct trees. Positive values only; use Multiply (Signed) for negative ones. One frame."
+msgstr "Direct ツリーのネストで output = A × B を計算します。正の値専用です。負の値を扱う場合は Multiply (Signed) を使用してください。1 フレーム。"
+
+msgid "output = A × B for signed values: each input is split into its positive and negative halves and the four products are summed. The range bounds the inputs, not the result. Two frames."
+msgstr "符号付きの output = A × B。各入力を正の半分と負の半分に分け、4 つの積を合計します。範囲が制限するのは入力であって、結果ではありません。2 フレーム。"
 
 msgid "output = A AND B, for 0/1 inputs."
 msgstr "output = A AND B（0/1 の入力用）。"
@@ -589,11 +601,20 @@ msgstr "入力範囲を出力範囲へ線形にリマップします（出力範
 msgid "output = 1 / input, for positive inputs. The result trails the input by two frames."
 msgstr "output = 1 / 入力（正の入力専用）。結果は入力より 2 フレーム遅れます。"
 
-msgid "output = 1 / input, for positive inputs: exact from 1 up, a lookup table below it (capped at 240). The result trails the input by two frames."
-msgstr "output = 1 / 入力（正の入力専用）。1 以上は厳密に、1 未満は LUT で求めます（出力の上限は 240）。結果は入力より 2 フレーム遅れます。"
+msgid "output = 1 / input, for positive inputs: exact from 1 up, a lookup table below it (capped at 240). Two frames. If you know the range the divisor stays in, Reciprocal (Ranged) has no cap and no table."
+msgstr "output = 1 / 入力（正の入力専用）。1 以上は厳密に、1 未満は LUT で求めます（出力の上限は 240）。2 フレーム。除数が収まる範囲が分かっている場合は、上限も LUT も無い Reciprocal (Ranged) を使用してください。"
+
+msgid "output = 1 / input for a divisor inside Divisor Min…Max, both above zero. Lifts the divisor above 1 so the exact half answers on its own — no 240 cap, no lookup table. Three frames. Outside the range the answer is the reciprocal of the clamped divisor."
+msgstr "除数の最小値〜最大値（ともに 0 より大きい）に収まる除数に対して output = 1 / 入力 を計算します。除数を 1 以上へ持ち上げ、厳密な側だけで答えを出すため、240 の上限も LUT もありません。3 フレーム。範囲外では、クランプされた除数の逆数が返ります。"
 
 msgid "output = A / B, for positive inputs. Builds B's reciprocal first, so the result trails by three frames."
 msgstr "output = A / B（正の入力専用）。先に B の逆数を作るため、結果は 3 フレーム遅れます。"
+
+msgid "output = A / B for a divisor inside Divisor Min…Max, both above zero. No cap and no lookup table; four frames. Prefer this over Divide whenever B's range is known."
+msgstr "除数の最小値〜最大値（ともに 0 より大きい）に収まる除数に対して output = A / B を計算します。上限も LUT もありません。4 フレーム。B の範囲が分かっているときは、Divide よりこちらを使用してください。"
+
+msgid "output = A / B for signed values: |B|'s reciprocal, then A times it with B's sign. Four frames. A divisor near zero has no sign to read, and the quotient fades to 0 there."
+msgstr "符号付きの output = A / B。|B| の逆数を求め、それに A と B の符号を掛けます。4 フレーム。0 に近い除数には読み取れる符号が無いため、その付近では商が 0 へ薄れていきます。"
 
 msgid "output = the seconds since the previous frame. Add only one per controller — the clock it runs is shared machinery."
 msgstr "output = 前フレームからの経過秒数。動かす時計は共有の仕掛けなので、1 つのコントローラーにつき 1 個だけ追加してください。"
@@ -628,6 +649,21 @@ msgstr "カーブを 1D Blend Tree の LUT にベイクします。カーブの�
 msgid "output = atan2(Y, X) in turns: 0..1 counter-clockwise from +X, ready to feed the Sine / Cosine gadgets. Values near the origin collapse toward 0 — gate by magnitude. The 0/1 seam sits in a narrow band at +X."
 msgstr "output = atan2(Y, X) を「周」単位で返します。+X 方向が 0 で、反時計回りに 0..1。そのまま Sine / Cosine ガジェットへ渡せます。原点付近では出力が 0 へ縮退するので、ベクトルの大きさでゲートしてください。0 と 1 の継ぎ目は +X 方向の細い帯に収まります。"
 
+msgid "output = the square root of the input, over the window Input Min…Max (above zero). A lookup table sampled where a square root turns hardest, so one frame and no iteration. Outside the window the answer is the root of the nearer end."
+msgstr "入力の最小値〜最大値（0 より大きい範囲）で output = 入力の平方根 を計算します。平方根が最も強く曲がるあたりへサンプルを寄せた LUT なので、反復なしの 1 フレームで求まります。範囲外では、近い側の端の平方根が返ります。"
+
+msgid "output = 1 / the square root of the input, over Input Min…Max (above zero). One frame — what a normalisation wants, without paying for a root and a reciprocal in a row."
+msgstr "入力の最小値〜最大値（0 より大きい範囲）で output = 1 / 入力の平方根 を計算します。1 フレーム。正規化で必要になる値を、平方根と逆数を続けて計算する手間なしに得られます。"
+
+msgid "output = log2(input) over Input Min…Max (above zero). One frame. Another base is this times a constant, which a Remap does for free."
+msgstr "入力の最小値〜最大値（0 より大きい範囲）で output = log2(入力) を計算します。1 フレーム。他の底にしたい場合は定数倍するだけなので、Remap で追加コストなく行えます。"
+
+msgid "output = 2 to the power of the input, over Input Min…Max. One frame."
+msgstr "入力の最小値〜最大値の範囲で output = 2 の入力乗 を計算します。1 フレーム。"
+
+msgid "output = A to the power of B, with both of them parameters: log2 of the base, times the exponent, back through exp2. Four frames. Input Min…Max is the base's window (above zero) and Range Min…Max bounds the exponent; the intermediate range follows from those."
+msgstr "A と B の両方をパラメーターとして output = A の B 乗 を計算します。底の log2 を取り、指数を掛け、exp2 で戻します。4 フレーム。入力の最小値〜最大値が底の範囲（0 より大きい範囲）、範囲の最小値〜最大値が指数の範囲で、中間の範囲はそこから決まります。"
+
 msgid "Preset"
 msgstr "プリセット"
 
@@ -660,6 +696,9 @@ msgstr "サンプル数"
 
 msgid "How many points the curve is sampled at. The tree interpolates linearly between them, so corners want a sample of their own."
 msgstr "カーブをサンプリングする点の数。点と点の間はツリーが線形補間するため、折れ曲がる箇所にはサンプル点を置いてください。"
+
+msgid "How many points the function is sampled at. The tree interpolates linearly between them."
+msgstr "関数をサンプリングする点の数。点と点の間はツリーが線形補間します。"
 
 msgid "The LUT needs a curve with at least two keys."
 msgstr "LUT には 2 つ以上のキーを持つカーブが必要です。"
@@ -860,6 +899,12 @@ msgstr "ステップ間隔（秒）"
 msgid "Dwell per slot. VRChat syncs roughly every 0.3 s — shorter steps risk remotes skipping slots."
 msgstr "1 スロットあたりの滞在時間です。VRChat の同期はおおよそ 0.3 秒間隔のため、それより短くするとリモートがスロットを取りこぼす可能性があります。"
 
+msgid "Allow Repeated Steps"
+msgstr "連続送信を許可"
+
+msgid "Let a step send what the step before it sent. A clock phase folded into the index tells the two apart, at one more decoder state per parameter set that actually repeats — and, under a Bool index, sometimes one more synced bit."
+msgstr "直前のステップと同じ内容を、次のステップでも送れるようにします。インデックスに畳み込んだクロック位相が両者を区別するため、実際に連続するパラメーターの組ごとにデコーダーの State が 1 つ増えます。Bool インデックスの場合は同期ビットが 1 増えることもあります。"
+
 msgid "Add Synced Params To Store"
 msgstr "同期パラメーターをストアに追加"
 
@@ -916,6 +961,9 @@ msgstr "'{0}' に同期リクエストが設定されていますが、ここで
 
 msgid "Accept sync requests: a state's Sync Request (or anything setting the '{0}' flag) makes the cycle send this parameter at the next step instead of waiting a full pass. Costs no synced bits."
 msgstr "同期リクエストを受け付けます。State の同期リクエスト（または '{0}' フラグを立てる任意の仕組み）で、1 周を待たずに次のステップでこのパラメーターを送信させられます。同期 bit は消費しません。"
+
+msgid "Repeated steps: {0} of {1} slot(s) need a second decoder state."
+msgstr "連続送信: {1} スロット中 {0} 個にデコーダー State がもう 1 つ必要です。"
 
 msgid "Sync requests: {0} local Bool flag(s), nothing synced."
 msgstr "同期リクエスト: ローカル Bool フラグ {0} 個（同期コストなし）"
@@ -1412,6 +1460,21 @@ msgstr "Transition をコピー"
 msgid "Clip Bindings"
 msgstr "クリップバインディング"
 
+msgid "AAP / Driver"
+msgstr "AAP / Driver"
+
+msgid "Animation writes '{0}' (AAP), and {1} Parameter Driver entr(ies) copy from it. A driver can't read an animated value — the copy carries the animator's own, usually the default."
+msgstr "'{0}' はアニメーションが書き込むパラメーター（AAP）ですが、Parameter Driver の {1} 個のエントリがこれをコピー元にしています。Driver はアニメーションの値を読めないため、コピーされるのは Animator 自身が保持する値（多くの場合は初期値）です。"
+
+msgid "Animation writes '{0}' (AAP), and {1} Parameter Driver entr(ies) write it too. The blend tree overwrites the driver every frame, so the driver's value never sticks."
+msgstr "'{0}' はアニメーションが書き込むパラメーター（AAP）ですが、Parameter Driver の {1} 個のエントリも書き込んでいます。ブレンドツリーが毎フレーム上書きするため、Driver の書き込みは残りません。"
+
+msgid "AAP / Layers"
+msgstr "AAP / レイヤー"
+
+msgid "Animation writes '{0}' (AAP) on {1} layers: {2}. Layers replace one another instead of adding up, so only the last one ('{3}') reaches the parameter."
+msgstr "'{0}' はアニメーションが書き込むパラメーター（AAP）ですが、{1} 個のレイヤー（{2}）が書き込んでいます。レイヤーは加算されず上書きするため、パラメーターに届くのは最後の '{3}' だけです。"
+
 msgid "Clip '{0}' has {1} binding(s) whose path no longer exists under '{2}'."
 msgstr "クリップ '{0}' に、'{2}' 配下に存在しないパスのバインディングが {1} 件あります。"
 
@@ -1493,6 +1556,35 @@ msgstr ""
 
 msgid "Driven by an animation clip (Animator-Animated Parameter)"
 msgstr "アニメーションクリップから書き込まれています（AAP）"
+
+# ---- live values during play mode ----
+
+msgid "Live"
+msgstr "ライブ"
+
+msgid "Show what the running Animator holds instead of the controller's defaults."
+msgstr "コントローラーの既定値ではなく、実行中の Animator が保持している値を表示します。"
+
+msgid "Runtime values. Editing one writes to the Animator, not to the controller asset."
+msgstr "実行中の値です。編集しても書き込まれるのは Animator で、コントローラーのアセットは変わりません。"
+
+msgid "Several Animators in the scene run this controller. Pick the one to read above."
+msgstr "このコントローラーを実行している Animator がシーンに複数あります。読み取る 1 つを上で指定してください。"
+
+msgid "No Animator in the scene is running this controller."
+msgstr "このコントローラーを実行している Animator がシーンにありません。"
+
+msgid "An animation clip is driving this right now"
+msgstr "いまアニメーションクリップが書き込んでいます"
+
+msgid "Fire"
+msgstr "発火"
+
+msgid "Set this trigger on the running Animator"
+msgstr "実行中の Animator でこの Trigger を立てます"
+
+msgid "Weight on the running Animator"
+msgstr "実行中の Animator でのウェイト"
 
 msgid "Delete and Clean"
 msgstr "削除してクリーン"
@@ -1881,6 +1973,12 @@ msgstr "リモート側の Float は -1..1 を 8 bit の固定小数点で扱い
 msgid "Puppet controls drive {0}. A puppet drag streams continuously, so multiplexing it makes remotes see the drag one step per pass — those are better left synced directly."
 msgstr "{0} は Expressions Menu のパペット操作で駆動されています。パペットのドラッグは連続的に送信されるため、多重化するとリモート側では 1 周につき 1 段階ずつしか動きません。直接同期のままにするのをおすすめします。"
 
+msgid "'{0}' could not be rebuilt, so the request was not added. Open its sync layer and apply it there to see what is wrong."
+msgstr "'{0}' を再生成できなかったため、リクエストは追加されませんでした。その巡回同期レイヤーを開いて適用し、原因を確認してください。"
+
+msgid "Animation writes {0} (AAP — a DBT gadget output or a hand-made AAP clip). The send cycle copies targets with a Parameter Driver, which can't read an animated value, so those never reach remotes."
+msgstr "{0} はアニメーションが書き込むパラメーター（AAP — DBT ガジェットの出力か手書きの AAP クリップ）です。送信サイクルは Parameter Driver のコピーでターゲットを写しますが、Driver はアニメーションの値を読めないため、これらはリモートに届きません。"
+
 # ---- async sync (float channels / priority) ----
 
 msgid "Generated Sync"
@@ -1892,6 +1990,15 @@ msgstr "Float チャンネル数"
 msgid "Synced Float channels. Each step carries up to this many Float parameters at once — fewer slots and a faster cycle, at 8 synced bits per extra channel."
 msgstr "同期する Float チャンネルの数です。1 ステップで最大この数の Float パラメーターを同時に運びます。スロット数が減って 1 周が速くなる代わりに、チャンネル 1 本ごとに同期 8 bit を消費します。"
 
+msgid "Bool Channels"
+msgstr "Bool チャンネル数"
+
+msgid "Channels"
+msgstr "チャンネル数"
+
+msgid "Synced Bool channels. Each step carries up to this many Bool parameters at once — fewer slots and a faster cycle, at 1 synced bit per extra channel."
+msgstr "同期する Bool チャンネルの数です。1 ステップで最大この数の Bool パラメーターを同時に運びます。スロット数が減って 1 周が速くなる代わりに、チャンネル 1 本ごとに同期 1 bit を消費します。"
+
 
 
 msgid "No parameter matches the search."
@@ -1900,6 +2007,9 @@ msgstr "検索に一致するパラメーターがありません。"
 
 msgid "Float channels must be between 1 and 8."
 msgstr "Float チャンネル数は 1〜8 の範囲で指定してください。"
+
+msgid "Bool channels must be between 1 and 8."
+msgstr "Bool チャンネル数は 1〜8 の範囲で指定してください。"
 
 msgid "'{0}' belongs to the sync machinery and can't be multiplexed."
 msgstr "'{0}' は同期の仕組み側のパラメーターのため、多重化の対象にできません。"
@@ -1918,14 +2028,91 @@ msgstr "上から下が巡回の順序です。×N を指定すると 1 周に N
 msgid "every {0:0.##} s"
 msgstr "{0:0.##} 秒ごと"
 
-msgid "Cycle:"
-msgstr "巡回:"
+
+msgid "(requestable)"
+msgstr "（リクエスト可）"
+
+msgid "Top to bottom is the cycle order. The timing itself is set by hand in the timeline below."
+msgstr "上から下が巡回の順序です。タイミングそのものは下のタイムラインで手動指定しています。"
+
+msgid "Top to bottom is only the listing order here — what each step sends is set cell by cell in the grid below."
+msgstr "ここでの上下は並び順にすぎません。各ステップが何を送るかは、下のグリッドでセル単位に指定します。"
+
+msgid "This setup carries an explicit cycle written in C#, so top to bottom is only the listing order and ×N only decides which parameters share a step. The pass itself is the timeline below."
+msgstr "このセットアップは C# で書かれた明示スケジュールを持っているため、ここでの上下は並び順にすぎず、×N はどのパラメーターが同じステップに乗るかだけを決めます。1 周そのものは下のタイムラインです。"
+
+msgid "Steps in the pass that send this parameter. Set it by clicking the timeline; go back to rates to have it worked out for you."
+msgstr "1 周のうちこのパラメーターを送るステップ数です。タイムラインをクリックして決めます。自動で決めさせたい場合はレートに戻してください。"
+
+msgid "Click a row to make that step send it. Every step sends exactly one slot, so a click moves the step rather than adding one."
+msgstr "行をクリックすると、そのステップがその行を送るようになります。1 ステップが送るスロットは常にちょうど 1 つなので、クリックはステップの追加ではなく置き換えです。"
+
+msgid "Click a cell to add or remove that parameter from the step; drag along a row to paint several. Everything in one column is sent together, in one go."
+msgstr "セルをクリックすると、そのステップの送信対象にパラメーターを追加／解除します。行に沿ってドラッグすればまとめて塗れます。同じ列にあるものは 1 回でまとめて送信されます。"
+
+msgid "That step already carries as many parameters of this type as its channels allow. Raise the channel count, or use another step."
+msgstr "このステップは、この型のチャンネル数の上限までパラメーターを積んでいます。チャンネル数を増やすか、別のステップを使ってください。"
+
+msgid "Split"
+msgstr "分離"
+
+msgid "Give this parameter a step of its own instead of sharing one with the row above. Parameters sharing a step are sent together and cannot be timed apart."
+msgstr "このパラメーターに専用のステップを与え、上の行とステップを共有しないようにします。ステップを共有するパラメーターは常に同時に送信されるため、タイミングを別々にできません。"
+
+msgid "The step this parameter rides in. Rows sharing a number share a step, are copied by one driver, and so are always sent together."
+msgstr "このパラメーターが乗るステップです。同じ番号の行は同じステップを共有し、1 つの Parameter Driver でまとめてコピーされるため、常に同時に送信されます。"
+
+msgid "Set Timing By Hand"
+msgstr "タイミングを手動指定"
+
+msgid "Write the pass out step by step instead of deriving it from the rates. It starts as the pass shown here, so nothing changes until you move something."
+msgstr "レートから 1 周を導出するのをやめ、ステップごとに書き下します。開始時点はいま表示されている 1 周と同じなので、動かすまで何も変わりません。"
+
+msgid "Steps"
+msgstr "ステップ数"
+
+msgid "Back To Rates"
+msgstr "レートに戻す"
+
+msgid "Discard the hand-written pass and let the ×N rates lay the cycle out again."
+msgstr "手動で書いた 1 周を破棄し、×N レートから巡回を組み直します。"
+
+msgid "Discard the explicit cycle this setup carries and let the ×N rates lay the pass out again."
+msgstr "このセットアップが持つ明示スケジュールを破棄し、×N レートから 1 周を組み直します。"
+
+msgid "'{0}' is never sent — no step of the pass carries it."
+msgstr "'{0}' は送信されません — 1 周のどのステップもこのパラメーターを運んでいません。"
+
+msgid "Cycle Timeline ({0} steps, {1:0.#} s)"
+msgstr "巡回タイムライン（{0} ステップ / {1:0.#} 秒）"
+
+msgid "{0:0.#} s ⟳"
+msgstr "{0:0.#} 秒 ⟳"
+
 
 msgid "Sync rates must be between 1 and {0} ('{1}')."
 msgstr "同期レートは 1〜{0} の範囲で指定してください（'{1}'）。"
 
-msgid "Everything fits into a single slot, so the index would never change and remotes would stop decoding. Lower Float Channels or add parameters."
-msgstr "すべてが 1 スロットに収まってしまうため、インデックスが変化せず、リモート側が最初の 1 回しかデコードしません。Float チャンネル数を下げるか、パラメーターを追加してください。"
+msgid "Everything fits into a single slot, so the index would never change and remotes would stop decoding. Lower the channel count, or add parameters."
+msgstr "すべてが 1 スロットに収まってしまうため、インデックスが変化せず、リモート側が最初の 1 回しかデコードしません。チャンネル数を下げるか、パラメーターを追加してください。"
+
+msgid "Everything fits into a single slot, so every step sends every target. The clock keeps remotes decoding, but this is direct sync with the index on top — lower the channel count to get a cycle back."
+msgstr "すべてが 1 スロットに収まるため、毎ステップすべての対象を送ることになります。クロックがあるのでリモートはデコードを続けますが、これはインデックスの分だけ余計にかかる直接同期です。巡回に戻すにはチャンネル数を下げてください。"
+
+msgid "Step {0} sends nothing — an empty step spends an index without carrying a value."
+msgstr "ステップ {0} は何も送信しません。空のステップはインデックスを 1 つ消費するだけで、値を運びません。"
+
+msgid "Step {0} sends {1} {2} parameters, but only {3} channel(s) of that type exist."
+msgstr "ステップ {0} は {2} パラメーターを {1} 個送ろうとしていますが、この型のチャンネルは {3} 本しかありません。"
+
+msgid "Steps {0} and {1} send the same parameters, so the index would not change between them and remotes would not decode the second one."
+msgstr "ステップ {0} と {1} は同じパラメーターを送るため、その間でインデックスが変化せず、リモート側は 2 つ目をデコードしません。"
+
+msgid "Every step sends the same parameters, so the index would never change and remotes would stop decoding. Give at least two steps different parameters."
+msgstr "すべてのステップが同じパラメーターを送るため、インデックスが変化せず、リモート側がデコードを止めます。少なくとも 2 つのステップに異なるパラメーターを割り当ててください。"
+
+msgid "Every step sends the same parameters, so only the clock tells them apart — and the clock alternates, which an odd number of steps can't do. Add or drop a step."
+msgstr "すべてのステップが同じパラメーターを送るため、両者を区別できるのはクロックだけです。クロックは位相を交互に反転させるので、ステップ数が奇数だと 1 周のつなぎ目で同じ位相が並びます。ステップを 1 つ足すか減らしてください。"
 
 msgid "The ×{0} rate on '{1}' can't be separated by the other slots; it effectively runs at ×{2}. Add parameters or lower the rate."
 msgstr "'{1}' の ×{0} レートは他のスロットでは間隔を空けきれず、実効 ×{2} で動作します。パラメーターを追加するか、レートを下げてください。"
@@ -1968,6 +2155,9 @@ msgstr "あなたの Build がエクスポート側の BuildGenerated と同じ�
 msgid "This recipe has no exported half to compare against."
 msgstr "この Recipe には比較対象のエクスポート側がありません。"
 
+msgid "Layer '{0}' was already there and no recipe generated it — the DBT gadgets replaced it. Give one of the two another name to keep both."
+msgstr "レイヤー '{0}' は元からあったもので、どの Recipe も生成していません。DBT ガジェットがこれを置き換えました。両方残すなら、どちらかの名前を変えてください。"
+
 msgid "Post steps (Raw, Async Sync, DBT gadgets) declare nothing comparable — check those by hand."
 msgstr "後段ステップ（Raw・巡回同期・DBT ガジェット）は比較対象になりません。そこは目視で確認してください。"
 
@@ -1994,6 +2184,12 @@ msgstr "C# Recipe をエクスポート"
 
 msgid "Export Layer To C#"
 msgstr "レイヤーを C# にエクスポート"
+
+msgid "Async sync layers are regenerated at the end of the controller; the layer order will differ from the original."
+msgstr "巡回同期のレイヤーはコントローラーの末尾に再生成されます。元のレイヤー順とは変わります。"
+
+msgid "Layer '{0}' no longer holds the states its saved async-sync setup would build; exported as raw states instead of an AsyncSync call."
+msgstr "レイヤー '{0}' は、保存された巡回同期の設定が生成するはずのステートと一致しません（手で編集された可能性があります）。AsyncSync 呼び出しではなく生のステートとして書き出します。"
 
 msgid "Gadget layers are regenerated at the end of the controller; the layer order will differ from the original."
 msgstr "ガジェットのレイヤーはコントローラーの末尾に再生成されます。元のレイヤー順とは変わります。"
@@ -2075,6 +2271,12 @@ msgstr "この Recipe には後段ステップ（Raw・巡回同期・DBT ガジ
 
 msgid "DBT gadget '{0}' in layer '{1}': {2}"
 msgstr "レイヤー '{1}' の DBT ガジェット '{0}': {2}"
+
+msgid "DBT gadget '{0}' in layer '{1}' reads two different frames of the same signal: '{2}' is {3} frame(s) behind and '{4}' is {5}. Buffer the newer one by {6} frame(s) and read the copy — Buffer(\"{4}\", \"{4}/Aligned\", {6})."
+msgstr "レイヤー '{1}' の DBT ガジェット '{0}' が、同じ信号の異なるフレームを読んでいます。'{2}' は {3} フレーム遅れ、'{4}' は {5} フレーム遅れです。新しい方を {6} フレーム Buffer して、その複製を読んでください — Buffer(\"{4}\", \"{4}/Aligned\", {6})。"
+
+msgid "DBT gadget '{0}' in layer '{1}' reads '{2}', which '{3}' writes later in the same chain — the chain feeds back. It is built, starting from zero, but frame counts describe one-way chains: FramesBehind and the alignment check no longer apply around the loop. Measure whether it settles instead."
+msgstr "レイヤー '{1}' の DBT ガジェット '{0}' が '{2}' を読んでいますが、これは同じ連鎖の後段で '{3}' が書き込む値です。連鎖が輪になっています。0 から始まる形で生成はされますが、フレーム数は一方向の連鎖を前提とした値です。輪の周りでは FramesBehind も整列検査も当てはまらないため、収束するかどうかは実測してください。"
 
 msgid "Transition from '{0}' to '{1}' could not be resolved — skipped."
 msgstr "'{0}' から '{1}' への Transition を解決できなかったため、スキップしました。"
@@ -2370,3 +2572,128 @@ msgstr "その他"
 
 msgid "No StateMachineBehaviour types found"
 msgstr "StateMachineBehaviour の型が見つかりません"
+
+# ---- strings that never went through the catalogue ----
+
+msgid "Click to ping in Project · Double-click to focus on this tree"
+msgstr "クリックで Project 内をピング・ダブルクリックでこのツリーへ"
+
+msgid "Drag the border to move the frame alone"
+msgstr "枠線をドラッグするとフレームだけが動きます"
+
+msgid "Drag to move the frame and the nodes inside it. Double-click or F2 to rename."
+msgstr "ドラッグでフレームと中のノードを一緒に移動します。ダブルクリックまたは F2 で名前を変更。"
+
+msgid "Lock / unlock this frame"
+msgstr "このフレームをロック／解除"
+
+msgid "Incoming transitions"
+msgstr "入ってくる遷移"
+
+msgid "Drag from here to create a transition"
+msgstr "ここからドラッグして遷移を作成"
+
+msgid "Write Defaults: {0}"
+msgstr "Write Defaults: {0}"
+
+msgid "Double-click or F2 to edit"
+msgstr "ダブルクリックまたは F2 で編集"
+
+msgid "Default state"
+msgstr "Default State への接続"
+
+msgid "Return to the state machine view"
+msgstr "ステートマシン表示に戻る"
+
+msgid "No controller loaded."
+msgstr "コントローラーが読み込まれていません。"
+
+msgid "No parameters."
+msgstr "パラメーターがありません。"
+
+msgid "Rename Failed"
+msgstr "名前の変更に失敗"
+
+msgid "'{0}' is not used anywhere"
+msgstr "'{0}' はどこにも使われていません"
+
+msgid "{0} usage(s) of '{1}'"
+msgstr "'{1}' の使用箇所 {0} 件"
+
+msgid "Duplicate"
+msgstr "複製"
+
+msgid "Paste After ('{0}')"
+msgstr "後ろに貼り付け（'{0}'）"
+
+msgid "Paste After"
+msgstr "後ろに貼り付け"
+
+msgid "Remap References To"
+msgstr "参照の付け替え先"
+
+msgid "VRChat/Add All Missing ({0})"
+msgstr "VRChat/未追加をすべて追加 ({0})"
+
+msgid "VRChat/Add All Missing"
+msgstr "VRChat/未追加をすべて追加"
+
+msgid "VRChat/Sync Expression Parameters Asset"
+msgstr "VRChat/Expression Parameters と同期"
+
+msgid "OK"
+msgstr "OK"
+
+msgid "Motions"
+msgstr "モーション"
+
+msgid "+ Add Motion"
+msgstr "+ モーションを追加"
+
+msgid "+ Add Nested Blend Tree"
+msgstr "+ ネストした Blend Tree を追加"
+
+msgid "Position (X, Y)"
+msgstr "位置 (X, Y)"
+
+msgid "Blend Type"
+msgstr "ブレンドの種類"
+
+msgid "Layer settings"
+msgstr "レイヤー設定"
+
+msgid "Layer Settings"
+msgstr "レイヤー設定"
+
+msgid "+ Add Layer"
+msgstr "+ レイヤーを追加"
+
+msgid "Weight"
+msgstr "ウェイト"
+
+msgid "Blending"
+msgstr "合成方法"
+
+msgid "Mask"
+msgstr "マスク"
+
+msgid "IK Pass"
+msgstr "IK Pass"
+
+msgid "Delete Layer"
+msgstr "レイヤーを削除"
+
+msgid "Delete layer '{0}' and all of its states?"
+msgstr "レイヤー '{0}' と、その中のすべての State を削除しますか？"
+
+msgid "Convert Parameter"
+msgstr "パラメーターの型変換"
+
+msgid "Rename Clip"
+msgstr "クリップ名の変更"
+
+msgid "Object"
+msgstr "オブジェクト"
+
+msgid "BlendShapes"
+msgstr "BlendShape"

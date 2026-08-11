@@ -14,25 +14,20 @@ namespace Yozolab.DaerD
         readonly Label _nameLabel;
         readonly Label _motionLabel;
         readonly Action<AnimatorState> _onOpenBlendTree;
-        static readonly Color DefaultStateColor = new Color(0.78f, 0.45f, 0.13f);
-        static readonly Color CurrentStateColor = new Color(0.20f, 0.55f, 0.25f);
-        static readonly Color HighlightBorderColor = new Color(0.96f, 0.84f, 0.22f);
-        static readonly Color DropTargetColor = new Color(0.42f, 0.82f, 0.46f);
-        // Opaque #393939. The stock node-border / port columns are translucent, so the node body
-        // showed the graph background through it and overlapping states bled through. Painting the
-        // rounded node-border (not the square root) plus the port columns opaque fixes both.
-        static readonly Color BodyColor = new Color(0.224f, 0.224f, 0.224f);
-        static readonly Color BadgeWdOnColor = new Color(0.47f, 0.78f, 0.51f);
-        static readonly Color BadgeBOnColor = new Color(0.55f, 0.67f, 0.94f);
-        static readonly Color BadgeOffColor = new Color(0.42f, 0.42f, 0.42f);
 
         bool _highlighted;
         bool _dropTarget;
+        // The playback the node is currently showing; a fresh node shows none, which is what
+        // these start as.
+        bool _playing;
+        bool _next;
+        float _shownProgress = -1f;
         TextField _renameField;
         readonly VisualElement _nodeBorder;
         readonly Label _wdBadge;
         readonly Label _behaviourBadge;
         readonly VisualElement _badgeRow;
+        readonly VisualElement _progressBar;
 
         public StateNode(AnimatorState state, Action<AnimatorState> onOpenBlendTree = null)
         {
@@ -46,8 +41,8 @@ namespace Yozolab.DaerD
             // The title bar is dropped (see DaerD.uss); the name and motion show in a
             // text column between the input port (left) and output port (right). Every
             // state node uses the same fixed width.
-            Input.tooltip = "Incoming transitions";
-            Output.tooltip = "Drag from here to create a transition";
+            Input.tooltip = L.Tr("Incoming transitions");
+            Output.tooltip = L.Tr("Drag from here to create a transition");
 
             var text = new VisualElement { pickingMode = PickingMode.Ignore };
             text.AddToClassList("compact-node__text");
@@ -74,6 +69,13 @@ namespace Yozolab.DaerD
             _badgeRow.Add(_behaviourBadge);
             Add(_badgeRow);
 
+            // Play-mode readout: a hairline across the bottom of the node, hidden until the
+            // layer is actually in this state.
+            _progressBar = new VisualElement { pickingMode = PickingMode.Ignore };
+            _progressBar.AddToClassList("state-node__progress");
+            _progressBar.style.display = DisplayStyle.None;
+            Add(_progressBar);
+
             capabilities |= Capabilities.Movable | Capabilities.Selectable | Capabilities.Deletable
                           | Capabilities.Copiable | Capabilities.Snappable;
 
@@ -89,7 +91,7 @@ namespace Yozolab.DaerD
             });
 
             _nodeBorder = this.Q("node-border");
-            ApplyBodyColor(BodyColor);
+            ApplyBodyColor(DaerDColors.StateBody);
 
             RefreshLabels();
             RefreshExpandedState();
@@ -120,9 +122,9 @@ namespace Yozolab.DaerD
             var behaviours = State.behaviours;
             int behaviourCount = behaviours != null ? behaviours.Length : 0;
             _badgeRow.style.display = DaerDSettings.ShowStateBadges ? DisplayStyle.Flex : DisplayStyle.None;
-            _wdBadge.style.color = State.writeDefaultValues ? BadgeWdOnColor : BadgeOffColor;
-            _wdBadge.tooltip = "Write Defaults: " + (State.writeDefaultValues ? "ON" : "OFF");
-            _behaviourBadge.style.color = behaviourCount > 0 ? BadgeBOnColor : BadgeOffColor;
+            _wdBadge.style.color = State.writeDefaultValues ? DaerDColors.BadgeWriteDefaultsOn : DaerDColors.BadgeOff;
+            _wdBadge.tooltip = L.Tr("Write Defaults: {0}", State.writeDefaultValues ? "ON" : "OFF");
+            _behaviourBadge.style.color = behaviourCount > 0 ? DaerDColors.BadgeBehavioursOn : DaerDColors.BadgeOff;
             _behaviourBadge.tooltip = behaviourCount > 0
                 ? behaviourCount + " StateMachineBehaviour(s)"
                 : "No StateMachineBehaviours";
@@ -190,13 +192,31 @@ namespace Yozolab.DaerD
         public void SetIsDefault(bool isDefault)
         {
             _nameLabel.style.backgroundColor =
-                isDefault ? DefaultStateColor : (StyleColor)StyleKeyword.Null;
+                isDefault ? DaerDColors.DefaultState : (StyleColor)StyleKeyword.Null;
         }
 
-        /// <summary>Highlights the node when it is the live state during play mode.</summary>
-        public void SetIsCurrent(bool isCurrent)
+        /// <summary>Highlights the node when the running Animator is in this state, or heading
+        /// into it, and runs the bar along the bottom edge as the clip plays.</summary>
+        public override void SetPlayback(bool playing, bool next, float progress)
         {
-            ApplyBodyColor(isCurrent ? CurrentStateColor : BodyColor);
+            // A Direct blend tree is played continuously and goes nowhere. Its normalized time
+            // is a real number that means nothing, and a bar sweeping across a gadget layer
+            // would read as progress through something.
+            bool bar = playing
+                && !(State.motion is BlendTree tree && tree.blendType == BlendTreeType.Direct);
+            float shown = bar ? Mathf.Clamp01(progress) : -1f;
+
+            // Called for every node on every editor tick while playing. Only the one node that
+            // moved may touch its style; the rest would repaint the whole graph for nothing.
+            if (playing == _playing && next == _next && Mathf.Approximately(shown, _shownProgress))
+                return;
+            _playing = playing;
+            _next = next;
+            _shownProgress = shown;
+
+            ApplyBodyColor(playing ? DaerDColors.Playing : next ? DaerDColors.PlayingNext : DaerDColors.StateBody);
+            _progressBar.style.display = bar ? DisplayStyle.Flex : DisplayStyle.None;
+            if (bar) _progressBar.style.width = new Length(shown * 100f, LengthUnit.Percent);
         }
 
         /// <summary>Outlines the node when a find-usages query matches it.</summary>
@@ -219,12 +239,12 @@ namespace Yozolab.DaerD
             StyleFloat width;
             if (_dropTarget)
             {
-                color = DropTargetColor;
+                color = DaerDColors.DropTarget;
                 width = 2.5f;
             }
             else if (_highlighted)
             {
-                color = HighlightBorderColor;
+                color = DaerDColors.FoundByQuery;
                 width = 2f;
             }
             else

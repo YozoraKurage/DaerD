@@ -4,8 +4,8 @@ using UnityEditor.Animations;
 namespace Yozolab.DaerD.Authoring
 {
     /// <summary>
-    /// Async Sync (巡回同期) from a recipe, with everything the wizard offers plus the one
-    /// thing it doesn't: an explicit schedule. Runs after the declared layers are applied;
+    /// Async Sync (巡回同期) from a recipe: everything the wizard offers, in the order the
+    /// wizard offers it. Runs after the declared layers are applied;
     /// regenerates its own layer in place on every Generate (matched by base name through
     /// the saved setup, exactly like the wizard's layer choice). Unnamed, it runs under the
     /// controller's derived default base name — a flat "Async" would collide with the next
@@ -16,13 +16,20 @@ namespace Yozolab.DaerD.Authoring
     ///    .Rate("Hue", 2)                      // or spell the cycle out yourself:
     ///    .Schedule("Hue", "Outfit", "Hue", "TailState")
     ///    .FloatChannels(2).Step(0.3f);
+    ///
+    /// Sends() goes one deeper still, saying what each step carries rather than which slot it
+    /// visits — the only way to send two types in one step, or to overlap two steps.
+    /// AllowRepeats() lifts the one rule both of them are otherwise bound by: that no slot may
+    /// occupy adjacent steps.
     /// </summary>
     public sealed class AsyncSyncRecipeBuilder
     {
         readonly AsyncSyncBuilder.Request _request = new AsyncSyncBuilder.Request();
+        readonly ControllerBuilder _root;
 
         internal AsyncSyncRecipeBuilder(ControllerBuilder root, string baseName)
         {
+            _root = root;
             _request.baseName = baseName;
             root.PostOps.Add(controller =>
             {
@@ -92,11 +99,33 @@ namespace Yozolab.DaerD.Authoring
             return AsyncSyncBuilder.DefaultBaseName(controller);
         }
 
+        // ---- recording -----------------------------------------------------------
+
+        /// <summary>
+        /// Records one call as source, the way <see cref="GadgetRecipeBuilder"/> does: on this
+        /// builder, so a run of them comes back out as the single fluent chain the API is
+        /// written to read as. Everything it is told is recorded — deciding that an argument
+        /// matches its default and can be left out belongs to the caller, because only the
+        /// caller knows whether the call happened at all.
+        /// </summary>
+        AsyncSyncRecipeBuilder Record(string method, params string[] args)
+        {
+            _root?.Script?.Call(this, method + "(" + string.Join(", ", args) + ")");
+            return this;
+        }
+
+        static string[] Names(string[] values)
+        {
+            var literals = new string[values.Length];
+            for (int i = 0; i < values.Length; i++) literals[i] = RecipeScript.S(values[i]);
+            return literals;
+        }
+
         /// <summary>The parameters to multiplex, in cycle order.</summary>
         public AsyncSyncRecipeBuilder Targets(params string[] parameters)
         {
             _request.targets.AddRange(parameters);
-            return this;
+            return Record("Targets", Names(parameters));
         }
 
         /// <summary>Sync this parameter <paramref name="timesPerPass"/> times per pass
@@ -104,7 +133,7 @@ namespace Yozolab.DaerD.Authoring
         public AsyncSyncRecipeBuilder Rate(string parameter, int timesPerPass)
         {
             _request.rates[parameter] = timesPerPass;
-            return this;
+            return Record("Rate", RecipeScript.S(parameter), timesPerPass.ToString());
         }
 
         /// <summary>
@@ -116,65 +145,128 @@ namespace Yozolab.DaerD.Authoring
         public AsyncSyncRecipeBuilder Requestable(params string[] targets)
         {
             _request.requestTargets.AddRange(targets);
-            return this;
+            return Record("Requestable", Names(targets));
         }
 
         /// <summary>
-        /// Spell the cycle out step by step — the control the wizard doesn't expose. Every
-        /// multiplexed parameter must appear at least once and no slot may occupy adjacent
-        /// steps (including the wrap); Generate reports violations instead of applying.
+        /// Spell the cycle out step by step, naming one target per step (a batched target
+        /// stands for its whole slot). Every multiplexed parameter must appear at least once
+        /// and no slot may occupy adjacent steps (including the wrap); Generate reports
+        /// violations instead of applying. Ignored entirely when <see cref="Sends"/> is used,
+        /// which says the same thing and more.
         /// </summary>
         public AsyncSyncRecipeBuilder Schedule(params string[] stepsInOrder)
         {
             _request.scheduleOverride.Clear();
             _request.scheduleOverride.AddRange(stepsInOrder);
-            return this;
+            return Record("Schedule", Names(stepsInOrder));
+        }
+
+        /// <summary>
+        /// Spell one step out as the set of targets it sends, and call it once per step. This
+        /// replaces the batching, the rates and <see cref="Schedule"/> together: the slots
+        /// become the distinct sets, so the call says which targets share a step as well as
+        /// when each step comes round.
+        ///
+        /// It is the only way to send targets of different types together (channels are per
+        /// type, and the automatic batching only ever groups like with like) and the only way
+        /// to have one target ride two steps in a row — neighbouring sets may overlap, they
+        /// just may not be equal. Every target must be sent by some step, and a step may not
+        /// carry more of a type than that type has channels.
+        ///
+        ///   c.AsyncSync("Zip").Targets("Hue", "Outfit", "Tail")
+        ///    .Sends("Hue", "Outfit")
+        ///    .Sends("Hue", "Tail");
+        /// </summary>
+        public AsyncSyncRecipeBuilder Sends(params string[] targets)
+        {
+            var step = new GraphFrameData.AsyncSyncConfig.StepSpec();
+            step.targets.AddRange(targets);
+            _request.steps.Add(step);
+            return Record("Sends", Names(targets));
+        }
+
+        /// <summary>
+        /// Let a step send what the step before it sent — the wrap included. The decoder fires
+        /// on the index changing, so without this a repeated step is one nobody sees; with it,
+        /// a clock phase folded into the index tells the two apart. The price is a decoder
+        /// state per parameter set that actually repeats (and, under a Bool index, sometimes a
+        /// synced bit), so it is asked for rather than assumed.
+        ///
+        ///   c.AsyncSync("Zip").Targets("Hue", "Outfit").AllowRepeats()
+        ///    .Sends("Hue").Sends("Hue").Sends("Outfit");
+        /// </summary>
+        public AsyncSyncRecipeBuilder AllowRepeats()
+        {
+            _request.allowRepeatSteps = true;
+            return Record("AllowRepeats");
         }
 
         /// <summary>Synced Float channels (1–8): each step carries up to this many Floats.</summary>
         public AsyncSyncRecipeBuilder FloatChannels(int channels)
         {
             _request.floatChannels = channels;
-            return this;
+            return Record("FloatChannels", channels.ToString());
+        }
+
+        /// <summary>
+        /// Give these targets a slot of their own instead of letting them share channels with
+        /// the target listed before them. Batched targets are copied by one driver in one
+        /// step, so they always go out together — split them when they need to reach remotes
+        /// at different moments (and leave them batched when they belong together, which is
+        /// what the extra channels are for).
+        /// </summary>
+        public AsyncSyncRecipeBuilder Split(params string[] targets)
+        {
+            _request.slotBreaks.AddRange(targets);
+            return Record("Split", Names(targets));
+        }
+
+        /// <summary>Synced Bool channels (1–8): each step carries up to this many Bools, at
+        /// one synced bit each — the cheapest way to shorten a Bool-heavy pass.</summary>
+        public AsyncSyncRecipeBuilder BoolChannels(int channels)
+        {
+            _request.boolChannels = channels;
+            return Record("BoolChannels", channels.ToString());
         }
 
         /// <summary>Dwell per step in seconds (VRChat syncs roughly every 0.3 s).</summary>
         public AsyncSyncRecipeBuilder Step(float seconds)
         {
             _request.stepSeconds = seconds;
-            return this;
+            return Record("Step", RecipeScript.F(seconds));
         }
 
         public AsyncSyncRecipeBuilder EncodingInt()
         {
             _request.encoding = AsyncSyncBuilder.IndexEncoding.Int;
-            return this;
+            return Record("EncodingInt");
         }
 
         public AsyncSyncRecipeBuilder EncodingBool()
         {
             _request.encoding = AsyncSyncBuilder.IndexEncoding.Bool;
-            return this;
+            return Record("EncodingBool");
         }
 
         public AsyncSyncRecipeBuilder EncodingAuto()
         {
             _request.encoding = AsyncSyncBuilder.IndexEncoding.Auto;
-            return this;
+            return Record("EncodingAuto");
         }
 
         /// <summary>Name the generated layer (defaults to the base name).</summary>
         public AsyncSyncRecipeBuilder LayerName(string name)
         {
             _request.layerName = name;
-            return this;
+            return Record("LayerName", RecipeScript.S(name));
         }
 
         /// <summary>Don't add the generated synced parameters to the parameter store.</summary>
         public AsyncSyncRecipeBuilder NoStore()
         {
             _request.addToStore = false;
-            return this;
+            return Record("NoStore");
         }
 
         /// <summary>Leave the generated states motion-less instead of filling them with the
@@ -182,7 +274,7 @@ namespace Yozolab.DaerD.Authoring
         public AsyncSyncRecipeBuilder NoEmptyClip()
         {
             _request.assignEmptyClip = false;
-            return this;
+            return Record("NoEmptyClip");
         }
 
         /// <summary>Tests only: build the structure without the VRC Parameter Driver.</summary>

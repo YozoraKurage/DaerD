@@ -54,11 +54,11 @@ namespace Yozolab.DaerD
             // the body interior, so clicks still fall through to the states they hit.
             layer = 5;
 
-            tooltip = "Drag the border to move the frame alone";
+            tooltip = L.Tr("Drag the border to move the frame alone");
 
             _titleBar = new VisualElement
             {
-                tooltip = "Drag to move the frame and the nodes inside it. Double-click or F2 to rename.",
+                tooltip = L.Tr("Drag to move the frame and the nodes inside it. Double-click or F2 to rename."),
             };
             _titleBar.AddToClassList("dd-frame__title");
             _titleBar.style.height = TitleHeight;
@@ -67,7 +67,7 @@ namespace Yozolab.DaerD
             _titleBar.Add(_titleLabel);
 
             // Inspector-style lock toggle in the frame's top-right corner.
-            _lockButton = new Image { tooltip = "Lock / unlock this frame" };
+            _lockButton = new Image { tooltip = L.Tr("Lock / unlock this frame") };
             _lockButton.AddToClassList("dd-frame__lock");
             _lockButton.RegisterCallback<MouseDownEvent>(evt =>
             {
@@ -219,8 +219,8 @@ namespace Yozolab.DaerD
         {
             _titleLabel.text = string.IsNullOrEmpty(Frame.title) ? "Frame" : Frame.title;
             var c = Frame.color;
-            _titleBar.style.backgroundColor = new Color(c.r, c.g, c.b, Frame.locked ? 0.55f : 0.85f);
-            _body.style.backgroundColor = new Color(c.r, c.g, c.b, 0.12f);
+            _titleBar.style.backgroundColor = DaerDColors.Fade(c, Frame.locked ? 0.55f : 0.85f);
+            _body.style.backgroundColor = DaerDColors.Fade(c, 0.12f);
 
             var lockIcon = EditorGUIUtility.IconContent(Frame.locked ? "LockIcon-On" : "LockIcon");
             _lockButton.image = lockIcon?.image;
@@ -240,7 +240,7 @@ namespace Yozolab.DaerD
         void ApplyBorder()
         {
             var c = Frame.color;
-            var borderColor = selected ? new Color(0.40f, 0.70f, 1.00f) : new Color(c.r, c.g, c.b, 0.9f);
+            var borderColor = selected ? DaerDColors.Selected : DaerDColors.Fade(c, 0.9f);
             float width = selected ? 2f : 1f;
             style.borderTopColor = borderColor;
             style.borderBottomColor = borderColor;

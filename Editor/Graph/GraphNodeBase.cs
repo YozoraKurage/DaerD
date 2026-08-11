@@ -13,6 +13,10 @@ namespace Yozolab.DaerD
         /// <summary>The underlying animator object (AnimatorState, AnimatorStateMachine, ...).</summary>
         public abstract object Model { get; }
 
+        /// <summary>What this node is doing in the running Animator. Nodes that have nothing to
+        /// show for it (Entry, Exit, Any State) keep the default no-op.</summary>
+        public virtual void SetPlayback(bool playing, bool next, float progress) { }
+
         /// <summary>
         /// The transition end a graph node stands for — the model behind the node, as the
         /// transition commands see it. A null or unrecognised node becomes

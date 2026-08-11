@@ -29,17 +29,17 @@ namespace Yozolab.DaerD
             {
                 case SpecialNodeKind.Entry:
                     label = "Entry";
-                    color = new Color(0.27f, 0.43f, 0.27f);
+                    color = DaerDColors.EntryNode;
                     AddOutputPort();
                     break;
                 case SpecialNodeKind.Exit:
                     label = "Exit";
-                    color = new Color(0.46f, 0.27f, 0.27f);
+                    color = DaerDColors.ExitNode;
                     AddInputPort();
                     break;
                 default: // AnyState
                     label = "Any State";
-                    color = new Color(0.30f, 0.40f, 0.46f);
+                    color = DaerDColors.AnyStateNode;
                     AddOutputPort();
                     break;
             }

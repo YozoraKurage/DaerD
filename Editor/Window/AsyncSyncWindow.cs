@@ -49,6 +49,11 @@ namespace Yozolab.DaerD
             window.ShowUtility();
         }
 
+        /// <summary>The AAP set the warnings read is cached across repaints, and this window
+        /// has no controller-change events to drop it on. Regaining focus is the moment an
+        /// edit made in another window can have landed, and it is free.</summary>
+        void OnFocus() => _form.InvalidateAnimatedParameters();
+
         void OnGUI()
         {
             // Utility windows outlive domain reloads but their fields don't; bail out.
@@ -79,16 +84,17 @@ namespace Yozolab.DaerD
             _form.DrawOrderSection(request);
 
             _form.DrawPreview(request);
-            foreach (var warning in AsyncSyncBuilder.Warnings(request))
+            _form.DrawBlockingProblem(request);
+            foreach (var warning in AsyncSyncBuilder.Warnings(request, _form.AnimatedParameters()))
                 EditorGUILayout.HelpBox(warning, MessageType.Warning);
             _form.DrawStoreFix(request);
 
             EditorGUILayout.Space(8);
             EditorGUILayout.BeginHorizontal();
             GUILayout.FlexibleSpace();
-            if (GUILayout.Button(L.Tr("Cancel"), GUILayout.Width(100)))
+            if (GUILayout.Button(L.Tr("Cancel"), GUILayout.Width(DaerDLayout.DialogButton)))
                 Close();
-            if (GUILayout.Button(L.Tr("Create"), GUILayout.Width(100)))
+            if (GUILayout.Button(L.Tr("Create"), GUILayout.Width(DaerDLayout.DialogButton)))
                 TryApply(request);
             EditorGUILayout.EndHorizontal();
 

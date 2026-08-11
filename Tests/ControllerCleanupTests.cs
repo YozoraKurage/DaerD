@@ -4,11 +4,6 @@ using UnityEngine;
 
 namespace Yozolab.DaerD.Tests
 {
-    /// <summary>Stands in for a VRC behaviour (the SDK isn't referenced by the tests).</summary>
-    class CleanupTestBehaviour : StateMachineBehaviour
-    {
-    }
-
     public class ControllerCleanupTests
     {
         static AnimatorController NewController(out AnimatorStateMachine sm)

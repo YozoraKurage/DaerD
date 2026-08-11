@@ -21,14 +21,23 @@ namespace Yozolab.DaerD
         bool _storeLoaded;
         Dictionary<string, VrcExpressionParameters.Entry> _exprEntries;
 
-        // Parameters written by AAP clips (one-key Animator-binding curves). Scanning every
-        // clip is too costly per repaint, so the set is cached and dropped on structure edits.
+        // Two whole-controller scans the rows need. Both walk far more than the parameter list
+        // — the AAP set reads every clip, the unused set every transition condition, blend
+        // tree, state parameter and driver entry — and DrawContent runs for every repaint the
+        // pointer causes. So they are computed once and dropped when something that could
+        // change them happens.
         HashSet<string> _aapParams;
-        AnimatorController _aapCacheController;
+        HashSet<string> _unusedParams;
+        AnimatorController _scanCacheController;
 
         /// <summary>Session clipboard for one parameter definition; survives controller
         /// switches so parameters can be copied across open tabs.</summary>
         static AnimatorControllerParameter s_parameterClipboard;
+
+        /// <summary>Show runtime values while the editor plays. Session-static like the
+        /// analyzer's severity filter — a display preference, not worth an EditorPref. On by
+        /// default: during play mode the defaults are the less useful of the two.</summary>
+        static bool s_live = true;
 
         static readonly GUIContent FindContent = new GUIContent("?",
             "Find where this parameter is used (click to list every usage)");
@@ -42,8 +51,17 @@ namespace Yozolab.DaerD
             // The store slot is also editable from the home screen, which announces the change
             // as a parameter change — the cached wrapper here would otherwise stay stale.
             context.ParametersChanged += InvalidateStore;
-            context.GraphStructureChanged += () => _aapParams = null;
-            context.ParametersChanged += () => _aapParams = null;
+            context.GraphStructureChanged += DropScans;
+            context.ParametersChanged += DropScans;
+            // A blend tree edit moves which parameter drives it, which is exactly what the
+            // unused set is counting.
+            context.BlendTreeChanged += DropScans;
+        }
+
+        void DropScans()
+        {
+            _aapParams = null;
+            _unusedParams = null;
         }
 
         void InvalidateStore()
@@ -66,6 +84,41 @@ namespace Yozolab.DaerD
             _search = EditorGUILayout.TextField(_search, EditorStyles.toolbarSearchField,
                 GUILayout.MinWidth(0), GUILayout.ExpandWidth(true));
             EditorGUILayout.EndHorizontal();
+            DrawLiveBar();
+        }
+
+        /// <summary>
+        /// The play-mode row: which Animator is being read, and the switch back to editing the
+        /// controller's defaults. Only drawn while the editor plays, so the panel looks exactly
+        /// as it always has the rest of the time.
+        /// </summary>
+        void DrawLiveBar()
+        {
+            if (!EditorApplication.isPlaying) return;
+            var live = Context.Live;
+
+            EditorGUILayout.BeginHorizontal();
+            s_live = GUILayout.Toggle(s_live, new GUIContent(L.Tr("Live"),
+                    L.Tr("Show what the running Animator holds instead of the controller's defaults.")),
+                EditorStyles.miniButton, GUILayout.Width(50));
+            var shown = live.Pinned != null ? live.Pinned : live.Current;
+            var picked = (Animator)EditorGUILayout.ObjectField(shown, typeof(Animator), true,
+                GUILayout.MinWidth(0));
+            if (picked != shown) live.Pinned = picked;
+            EditorGUILayout.EndHorizontal();
+
+            if (!s_live) return;
+            if (live.IsLive)
+                EditorGUILayout.LabelField(
+                    L.Tr("Runtime values. Editing one writes to the Animator, not to the controller asset."),
+                    EditorStyles.centeredGreyMiniLabel);
+            else if (live.Ambiguous)
+                EditorGUILayout.HelpBox(
+                    L.Tr("Several Animators in the scene run this controller. Pick the one to read above."),
+                    MessageType.Info);
+            else
+                EditorGUILayout.HelpBox(
+                    L.Tr("No Animator in the scene is running this controller."), MessageType.Info);
         }
 
         protected override void DrawContent()
@@ -73,7 +126,7 @@ namespace Yozolab.DaerD
             var controller = Context.Controller;
             var parameters = controller.parameters;
 
-            var unused = new HashSet<string>(ControllerAnalyzer.FindUnusedParameters(controller));
+            var unused = UnusedParams(controller);
 
             if (!_storeLoaded)
             {
@@ -106,14 +159,14 @@ namespace Yozolab.DaerD
                 visibleReal.Add(i);
 
                 var prevColor = GUI.color;
-                if (unused.Contains(p.name)) GUI.color = new Color(1f, 0.6f, 0.6f);
+                if (unused.Contains(p.name)) GUI.color = DaerDColors.Warning;
                 EditorGUI.BeginChangeCheck();
                 string newName = EditorGUILayout.DelayedTextField(p.name, GUILayout.MinWidth(90));
                 if (EditorGUI.EndChangeCheck() && newName != p.name && !string.IsNullOrEmpty(newName))
                 {
                     if (!ParameterRenamer.Rename(controller, p.name, newName))
-                        EditorUtility.DisplayDialog("Rename Failed",
-                            "A parameter named '" + newName + "' already exists.", "OK");
+                        EditorUtility.DisplayDialog(L.Tr("Rename Failed"),
+                            L.Tr("A parameter named '{0}' already exists.", newName), L.Tr("OK"));
                     else
                     {
                         _store?.Rename(p.name, newName);
@@ -136,24 +189,28 @@ namespace Yozolab.DaerD
                     GUIUtility.ExitGUI();
                 }
 
-                if (AapParams(controller).Contains(p.name))
-                    GUILayout.Label(new GUIContent("AAP",
-                        L.Tr("Driven by an animation clip (Animator-Animated Parameter)")),
+                // The clip scan is a guess about what will happen; while something is running,
+                // the animation system's own answer is available and outranks it.
+                bool driven = s_live && Context.Live.IsCurveDriven(p.name);
+                if (driven || AapParams(controller).Contains(p.name))
+                    GUILayout.Label(new GUIContent("AAP", driven
+                        ? L.Tr("An animation clip is driving this right now")
+                        : L.Tr("Driven by an animation clip (Animator-Animated Parameter)")),
                         EditorStyles.centeredGreyMiniLabel, GUILayout.Width(30));
 
-                DrawDefaultValue(controller, parameters, i);
+                DrawValue(controller, parameters, i);
                 DrawVrcFlags(p);
 
                 // Find-uses: lists every transition condition / blend-tree blend slot / state
                 // parameter override that mentions this parameter, plus row actions
                 // (duplicate / copy / remap / delete-and-clean).
-                if (GUILayout.Button(FindContent, EditorStyles.miniButton, GUILayout.Width(22)))
+                if (GUILayout.Button(FindContent, EditorStyles.miniButton, GUILayout.Width(DaerDLayout.GlyphButton)))
                 {
                     ShowUsagesMenu(p.name, i);
                     GUIUtility.ExitGUI();
                 }
 
-                if (GUILayout.Button("✕", EditorStyles.miniButton, GUILayout.Width(22)))
+                if (GUILayout.Button("✕", EditorStyles.miniButton, GUILayout.Width(DaerDLayout.GlyphButton)))
                 { RemoveParameter(i); GUIUtility.ExitGUI(); }
 
                 EditorGUILayout.EndHorizontal();
@@ -162,7 +219,61 @@ namespace Yozolab.DaerD
             _reorder.End((from, to) => MoveParameter(visibleReal[from], visibleReal[to]));
 
             if (parameters.Length == 0)
-                EditorGUILayout.LabelField("No parameters.", EditorStyles.centeredGreyMiniLabel);
+                EditorGUILayout.LabelField(L.Tr("No parameters."), EditorStyles.centeredGreyMiniLabel);
+        }
+
+        /// <summary>The value column: what the Animator holds while something is running it,
+        /// and the controller's own default the rest of the time.</summary>
+        void DrawValue(AnimatorController controller, AnimatorControllerParameter[] parameters, int index)
+        {
+            var p = parameters[index];
+            if (s_live && Context.Live.Has(p.name, p.type)) DrawLiveValue(p);
+            else DrawDefaultValue(controller, parameters, index);
+        }
+
+        void DrawLiveValue(AnimatorControllerParameter p)
+        {
+            var live = Context.Live;
+            if (p.type == AnimatorControllerParameterType.Trigger)
+            {
+                // A trigger is consumed by the transition that reads it, so there is no steady
+                // value to show — only the act of setting it.
+                if (GUILayout.Button(new GUIContent(L.Tr("Fire"),
+                        L.Tr("Set this trigger on the running Animator")),
+                        EditorStyles.miniButton, GUILayout.Width(56)))
+                    live.FireTrigger(p.name);
+                return;
+            }
+
+            // A curve-driven parameter is rewritten by the animation system every frame; a
+            // value typed here would be gone before the next repaint.
+            bool driven = live.IsCurveDriven(p.name);
+            float f = 0f;
+            int n = 0;
+            bool b = false;
+            using (new EditorGUI.DisabledScope(driven))
+            {
+                EditorGUI.BeginChangeCheck();
+                switch (p.type)
+                {
+                    case AnimatorControllerParameterType.Float:
+                        f = EditorGUILayout.FloatField(live.GetFloat(p.name), GUILayout.Width(56));
+                        break;
+                    case AnimatorControllerParameterType.Int:
+                        n = EditorGUILayout.IntField(live.GetInt(p.name), GUILayout.Width(56));
+                        break;
+                    default:
+                        b = EditorGUILayout.Toggle(live.GetBool(p.name), GUILayout.Width(56));
+                        break;
+                }
+                if (!EditorGUI.EndChangeCheck() || driven) return;
+            }
+            switch (p.type)
+            {
+                case AnimatorControllerParameterType.Float: live.SetFloat(p.name, f); break;
+                case AnimatorControllerParameterType.Int: live.SetInt(p.name, n); break;
+                default: live.SetBool(p.name, b); break;
+            }
         }
 
         void DrawDefaultValue(AnimatorController controller, AnimatorControllerParameter[] parameters, int index)
@@ -217,7 +328,7 @@ namespace Yozolab.DaerD
 
             EditorGUILayout.BeginHorizontal();
             var prev = GUI.color;
-            if (capacity >= 0 && used > capacity) GUI.color = new Color(1f, 0.5f, 0.5f);
+            if (capacity >= 0 && used > capacity) GUI.color = DaerDColors.Warning;
             string label = capacity >= 0
                 ? L.Tr("{0}: {1} / {2} bit", _store.Kind, used, capacity)
                 : L.Tr("{0}: {1} bit", _store.Kind, used);
@@ -279,10 +390,10 @@ namespace Yozolab.DaerD
             {
                 bool synced = GUILayout.Toggle(entry.synced,
                     new GUIContent("S", L.Tr("Network synced (costs bits)")),
-                    EditorStyles.miniButton, GUILayout.Width(22));
+                    EditorStyles.miniButton, GUILayout.Width(DaerDLayout.GlyphButton));
                 bool saved = GUILayout.Toggle(entry.saved,
                     new GUIContent("D", L.Tr("Saved between worlds")),
-                    EditorStyles.miniButton, GUILayout.Width(22));
+                    EditorStyles.miniButton, GUILayout.Width(DaerDLayout.GlyphButton));
                 if (synced != entry.synced || saved != entry.saved)
                     _store.Edit(parameter.name, e =>
                     {
@@ -295,7 +406,7 @@ namespace Yozolab.DaerD
             var mapped = VrcExpressionParameters.MapType(parameter.type);
             using (new EditorGUI.DisabledScope(mapped == null))
                 if (GUILayout.Button(new GUIContent("+", L.Tr("Add to the VRC expression parameters asset")),
-                        EditorStyles.miniButton, GUILayout.Width(46)))
+                        EditorStyles.miniButton, GUILayout.Width(DaerDLayout.RowAction)))
                     _store.Add(new VrcExpressionParameters.Entry
                     {
                         name = parameter.name,
@@ -334,10 +445,6 @@ namespace Yozolab.DaerD
                 }
         }
 
-        /// <summary>A DBT gadget added parameters, possibly a layer and a blend tree — let
-        /// every panel and the graph pick that up.</summary>
-        void OnDbtGadgetApplied() => Context.NotifyLayerStructureChanged();
-
         void ShowUsagesMenu(string parameterName, int index)
         {
             var controller = Context.Controller;
@@ -345,11 +452,11 @@ namespace Yozolab.DaerD
             var menu = new GenericMenu();
             if (usages.Count == 0)
             {
-                menu.AddDisabledItem(new GUIContent("'" + parameterName + "' is not used anywhere"));
+                menu.AddDisabledItem(new GUIContent(L.Tr("'{0}' is not used anywhere", parameterName)));
             }
             else
             {
-                menu.AddDisabledItem(new GUIContent(usages.Count + " usage(s) of '" + parameterName + "'"));
+                menu.AddDisabledItem(new GUIContent(L.Tr("{0} usage(s) of '{1}'", usages.Count, parameterName)));
                 menu.AddSeparator(string.Empty);
                 foreach (var u in usages)
                 {
@@ -363,13 +470,13 @@ namespace Yozolab.DaerD
             }
 
             menu.AddSeparator(string.Empty);
-            menu.AddItem(new GUIContent("Duplicate"), false, () => DuplicateParameter(index));
-            menu.AddItem(new GUIContent("Copy"), false, () => CopyParameter(index));
+            menu.AddItem(new GUIContent(L.Tr("Duplicate")), false, () => DuplicateParameter(index));
+            menu.AddItem(new GUIContent(L.Tr("Copy")), false, () => CopyParameter(index));
             if (s_parameterClipboard != null)
-                menu.AddItem(new GUIContent("Paste After ('" + s_parameterClipboard.name + "')"),
+                menu.AddItem(new GUIContent(L.Tr("Paste After ('{0}')", s_parameterClipboard.name)),
                     false, () => PasteParameterAfter(index));
             else
-                menu.AddDisabledItem(new GUIContent("Paste After"));
+                menu.AddDisabledItem(new GUIContent(L.Tr("Paste After")));
 
             // Redirect every reference to another parameter (both stay in the list).
             bool anyTarget = false;
@@ -378,7 +485,7 @@ namespace Yozolab.DaerD
                 if (other.name == parameterName) continue;
                 anyTarget = true;
                 var captured = other.name;
-                menu.AddItem(new GUIContent("Remap References To/" + captured.Replace('/', '∕')),
+                menu.AddItem(new GUIContent(L.Tr("Remap References To") + "/" + captured.Replace('/', '∕')),
                     false, () =>
                     {
                         ParameterRenamer.RedirectReferences(Context.Controller, parameterName, captured);
@@ -387,9 +494,9 @@ namespace Yozolab.DaerD
                     });
             }
             if (!anyTarget)
-                menu.AddDisabledItem(new GUIContent("Remap References To"));
+                menu.AddDisabledItem(new GUIContent(L.Tr("Remap References To")));
 
-            menu.AddItem(new GUIContent("Delete and Clean"), false, () =>
+            menu.AddItem(new GUIContent(L.Tr("Delete and Clean")), false, () =>
             {
                 if (!EditorUtility.DisplayDialog(L.Tr("Delete and Clean"),
                         L.Tr("Delete '{0}' and remove every condition and driver entry that references it?", parameterName),
@@ -406,9 +513,9 @@ namespace Yozolab.DaerD
         /// structure edits.</summary>
         HashSet<string> AapParams(AnimatorController controller)
         {
-            if (_aapParams != null && _aapCacheController == controller) return _aapParams;
+            if (_aapParams != null && _scanCacheController == controller) return _aapParams;
             _aapParams = new HashSet<string>();
-            _aapCacheController = controller;
+            _scanCacheController = controller;
             foreach (var entry in ControllerCleanup.CollectClipUsages(controller))
             {
                 if (entry.clip == null) continue;
@@ -417,6 +524,15 @@ namespace Yozolab.DaerD
                         _aapParams.Add(binding.propertyName);
             }
             return _aapParams;
+        }
+
+        /// <summary>Parameters nothing in the controller reads. The scan behind this walks the
+        /// whole graph, so it is held the same way the AAP set beside it is.</summary>
+        HashSet<string> UnusedParams(AnimatorController controller)
+        {
+            if (_unusedParams != null && _scanCacheController == controller) return _unusedParams;
+            _scanCacheController = controller;
+            return _unusedParams = new HashSet<string>(ControllerAnalyzer.FindUnusedParameters(controller));
         }
 
         void DuplicateParameter(int index)
@@ -490,15 +606,12 @@ namespace Yozolab.DaerD
                 menu.AddItem(new GUIContent(type.ToString()), false, () => AddParameter(captured));
             }
 
-            // Computed parameters: a DBT gadget adds its output (and helper) parameters and
-            // the Direct-blend-tree machinery that drives them.
-            menu.AddSeparator(string.Empty);
-            menu.AddItem(new GUIContent("DBT Gadget (AAP)"), false, () =>
-                AapGadgetWindow.Open(Context.Controller, OnDbtGadgetApplied));
-            menu.AddItem(new GUIContent("Object Toggle"), false, () =>
-                ToggleBuilderWindow.Open(Context.Controller, _ => OnDbtGadgetApplied()));
-            menu.AddItem(new GUIContent("Async Sync"), false, () =>
-                AsyncSyncWindow.Open(Context.Controller, _ => OnDbtGadgetApplied()));
+            // The generators that add computed parameters — DBT gadgets and async sync — are
+            // reached from the home screen, which lists what a controller already has as well
+            // as offering to add more. Adding one is not the part that needs an entry point:
+            // finding the four you built last month is, and this menu could never show that.
+            // Object Toggle is not on the home screen either, by an older decision — it records
+            // nothing in the controller, so there is nothing for a management surface to list.
 
             // VRChat built-in parameters. Already-present ones show as a checked, disabled entry so
             // the menu doubles as a quick "which standard parameters does this controller have?".
@@ -508,10 +621,10 @@ namespace Yozolab.DaerD
                 if (!existing.Contains(def.name)) missing++;
 
             if (missing > 0)
-                menu.AddItem(new GUIContent("VRChat/Add All Missing (" + missing + ")"), false, AddAllVrcParameters);
+                menu.AddItem(new GUIContent(L.Tr("VRChat/Add All Missing ({0})", missing)), false, AddAllVrcParameters);
             else
-                menu.AddDisabledItem(new GUIContent("VRChat/Add All Missing"));
-            var syncLabel = new GUIContent("VRChat/Sync Expression Parameters Asset");
+                menu.AddDisabledItem(new GUIContent(L.Tr("VRChat/Add All Missing")));
+            var syncLabel = new GUIContent(L.Tr("VRChat/Sync Expression Parameters Asset"));
             if (_store != null)
             {
                 var store = _store;

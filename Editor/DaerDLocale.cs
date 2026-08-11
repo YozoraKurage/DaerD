@@ -44,13 +44,31 @@ namespace Yozolab.DaerD
             }
         }
 
+        /// <summary>
+        /// A language pinned for this session only, never written to the preference. The test
+        /// suite pins English: assertions about a message have to mean the same thing on a
+        /// Japanese editor as on an English one, and writing the real preference to get that
+        /// would change the setting of whoever ran the tests — and leave it changed if the run
+        /// died halfway.
+        /// </summary>
+        public static void OverrideLanguage(DaerDLanguage? language)
+        {
+            if (s_override == language) return;
+            s_override = language;
+            s_isJapanese = null;
+            s_catalog = null;
+            LanguageChanged?.Invoke();
+        }
+
+        static DaerDLanguage? s_override;
+
         public static bool IsJapanese
         {
             get
             {
                 if (!s_isJapanese.HasValue)
                 {
-                    var language = Language;
+                    var language = s_override ?? Language;
                     s_isJapanese = language == DaerDLanguage.Japanese ||
                         (language == DaerDLanguage.Auto && Application.systemLanguage == SystemLanguage.Japanese);
                 }

@@ -8,7 +8,7 @@ namespace Yozolab.DaerD.Tests
     /// field layout, so the SerializedObject-based store works against it without MA
     /// installed. Lives in its own file (Unity requires that to attach a MonoBehaviour).
     /// </summary>
-    class ModularAvatarParameters : MonoBehaviour
+    public class ModularAvatarParameters : MonoBehaviour
     {
         [System.Serializable]
         public struct ParameterConfig

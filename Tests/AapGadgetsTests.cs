@@ -217,7 +217,7 @@ namespace Yozolab.DaerD.Tests
         }
 
         [Test]
-        public void Smooth_DelegatesToAapSmoothing()
+        public void Smooth_IsBuiltThroughTheSamePathAsEveryOtherKind()
         {
             var controller = NewController("A");
             var request = NewRequest(controller, AapGadgets.Kind.Smooth);
@@ -275,11 +275,13 @@ namespace Yozolab.DaerD.Tests
             Assert.IsTrue(AapGadgets.Apply(request));
 
             Assert.IsNotNull(DbtBuilder.FindParameter(controller, "Out/Shift"));
+            Assert.IsNotNull(DbtBuilder.FindParameter(controller, "Out/Delayed"));
             Assert.AreEqual(2, controller.layers.Length, "Base and the blend tree layer, nothing else");
             Assert.IsFalse(HasLayer(controller, "Out 1/x"), "the sub-1 half is a tree now, not a layer");
 
             var gadget = GadgetRoot(controller);
-            Assert.AreEqual(3, gadget.children.Length, "the shift, the exact core, the table");
+            Assert.AreEqual(4, gadget.children.Length,
+                "the shift, the delayed input, the exact core, the table");
 
             // Out/Shift = A - 1, so the normalized core divides by (Shift + 1) = A.
             var shift = (BlendTree)gadget.children[0].motion;
@@ -288,7 +290,15 @@ namespace Yozolab.DaerD.Tests
             Assert.AreEqual(1f, ClipValue(shift.children[0].motion, "Out/Shift"), 1e-4f);
             Assert.AreEqual(-1f, ClipValue(shift.children[1].motion, "Out/Shift"), 1e-4f);
 
-            var core = (BlendTree)gadget.children[1].motion;
+            // Out/Delayed = A, one frame late, so the table below reads the same frame the core
+            // does instead of running a frame ahead of it.
+            var delayed = (BlendTree)gadget.children[1].motion;
+            Assert.AreEqual(BlendTreeType.Direct, delayed.blendType);
+            Assert.AreEqual(1, delayed.children.Length);
+            Assert.AreEqual("A", delayed.children[0].directBlendParameter);
+            Assert.AreEqual(1f, ClipValue(delayed.children[0].motion, "Out/Delayed"), 1e-4f);
+
+            var core = (BlendTree)gadget.children[2].motion;
             using (var so = new SerializedObject(core))
                 Assert.IsTrue(so.FindProperty("m_NormalizedBlendValues").boolValue);
             Assert.AreEqual("Out/Shift", core.children[0].directBlendParameter);
@@ -299,9 +309,9 @@ namespace Yozolab.DaerD.Tests
 
             // The table holds what the core is short of below 1: (1/u - 1), so the two add up
             // to 1/u. From 1 up it holds 0 and the exact core stands alone.
-            var table = (BlendTree)gadget.children[2].motion;
+            var table = (BlendTree)gadget.children[3].motion;
             Assert.AreEqual(BlendTreeType.Simple1D, table.blendType);
-            Assert.AreEqual("A", table.blendParameter);
+            Assert.AreEqual("Out/Delayed", table.blendParameter, "the table reads the delayed copy");
             Assert.AreEqual(97, table.children.Length, "96 rungs of the ladder, both ends included");
 
             var thresholds = AscendingThresholds(table);
@@ -338,17 +348,30 @@ namespace Yozolab.DaerD.Tests
             Assert.IsFalse(HasLayer(controller, "Out/Inv 1/x"));
 
             var gadget = GadgetRoot(controller);
-            Assert.AreEqual(2, gadget.children.Length);
-            var multiply = (BlendTree)gadget.children[1].motion;
-            Assert.AreEqual("A", multiply.children[0].directBlendParameter);
+            Assert.AreEqual(4, gadget.children.Length,
+                "the reciprocal, the numerator's two-frame wait, and the multiply");
+
+            // A is held back by the two frames the reciprocal takes, so the multiply pairs
+            // readings of the same frame.
+            Assert.IsNotNull(DbtBuilder.FindParameter(controller, "Out/Num/1"));
+            Assert.IsNotNull(DbtBuilder.FindParameter(controller, "Out/Num"));
+            var first = (BlendTree)gadget.children[1].motion;
+            Assert.AreEqual("A", first.children[0].directBlendParameter);
+            Assert.AreEqual(1f, ClipValue(first.children[0].motion, "Out/Num/1"), 1e-4f);
+            var second = (BlendTree)gadget.children[2].motion;
+            Assert.AreEqual("Out/Num/1", second.children[0].directBlendParameter);
+            Assert.AreEqual(1f, ClipValue(second.children[0].motion, "Out/Num"), 1e-4f);
+
+            var multiply = (BlendTree)gadget.children[3].motion;
+            Assert.AreEqual("Out/Num", multiply.children[0].directBlendParameter);
             var inner = (BlendTree)multiply.children[0].motion;
             Assert.AreEqual("Out/Inv", inner.children[0].directBlendParameter);
             Assert.AreEqual(1f, ClipValue(inner.children[0].motion, "Out"), 1e-4f);
 
             // The reciprocal — table and all — belongs to B, the divisor.
             var reciprocal = (BlendTree)gadget.children[0].motion;
-            Assert.AreEqual(3, reciprocal.children.Length);
-            Assert.AreEqual("B", ((BlendTree)reciprocal.children[2].motion).blendParameter);
+            Assert.AreEqual(4, reciprocal.children.Length);
+            Assert.AreEqual("Out/Inv/Delayed", ((BlendTree)reciprocal.children[3].motion).blendParameter);
 
             Object.DestroyImmediate(controller);
         }
@@ -1035,6 +1058,49 @@ namespace Yozolab.DaerD.Tests
                 Assert.AreEqual(1, saved.Count);
                 Assert.AreSame(root.children[0].motion, saved[0].tree, "the record points at the new tree");
                 Assert.AreEqual(before, CountSubAssets(path), "the old trees and clips went with it");
+            });
+        }
+
+        /// <summary>
+        /// Smoothing regenerates like every other kind. Worth its own case because it is the
+        /// one gadget whose output is also one of its inputs: the sweep takes the output
+        /// parameter with it, and the rebuild has to put back a feedback branch reading the
+        /// parameter it just recreated. A layer left holding two of these would be two trees
+        /// writing one parameter — a gadget that still looks right in the graph and smooths at
+        /// the wrong rate.
+        /// </summary>
+        [Test]
+        public void Apply_WithReplaces_RebuildsSmoothingInPlace()
+        {
+            WithSavedController(controller =>
+            {
+                controller.AddParameter("A", AnimatorControllerParameterType.Float);
+                var request = NewRequest(controller, AapGadgets.Kind.Smooth);
+                request.inputB = null;
+                request.output = "A/Smoothed";
+                request.smoothing = "A/Smoothing";
+                Assert.IsTrue(AapGadgets.Apply(request));
+
+                string path = AssetDatabase.GetAssetPath(controller);
+                int before = CountSubAssets(path);
+
+                var config = GraphFrameData.GetGadgets(controller)[0];
+                var again = AapGadgets.ToRequest(config, controller);
+                again.replaces = config;
+                Assert.IsTrue(AapGadgets.Apply(again));
+
+                var root = (BlendTree)controller.layers[1].stateMachine.states[0].state.motion;
+                Assert.AreEqual(1, root.children.Length, "the layer holds one smoother, not two");
+                Assert.AreEqual(2, controller.layers.Length, "and one layer, not two");
+                Assert.AreEqual(before, CountSubAssets(path), "the old trees and clips went with it");
+
+                // The rebuilt gadget reads its own output again, through the parameter the
+                // sweep removed and this run put back.
+                var smooth = (BlendTree)root.children[0].motion;
+                Assert.AreEqual("A/Smoothing", smooth.blendParameter);
+                var feedback = (BlendTree)smooth.children[1].motion;
+                Assert.AreEqual("A/Smoothed", feedback.blendParameter);
+                Assert.IsNotNull(DbtBuilder.FindParameter(controller, "A/Smoothed"));
             });
         }
 

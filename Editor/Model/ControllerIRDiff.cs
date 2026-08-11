@@ -101,7 +101,8 @@ namespace Yozolab.DaerD
             for (int i = 0; i < states; i++)
                 CompareState(where + " / State '" + a.states[i].name + "'", a.states[i], b.states[i], diffs);
 
-            CompareTransitions(where + " / AnyState", a.anyStateTransitions, b.anyStateTransitions, diffs);
+            CompareTransitions(where + " / AnyState", a.anyStateTransitions, b.anyStateTransitions, diffs,
+                fromAnyState: true);
             CompareTransitions(where + " / Entry", a.entryTransitions, b.entryTransitions, diffs);
 
             CompareCount(where + ": sub-machines", a.machines.Count, b.machines.Count, diffs);
@@ -146,7 +147,7 @@ namespace Yozolab.DaerD
             Motion assetB, ControllerIR.Tree treeB, List<string> diffs)
         {
             if (assetA != assetB)
-                diffs.Add(where + ": motion " + Name(assetA) + " ≠ " + Name(assetB));
+                diffs.Add(where + ": motion " + Mismatch(assetA, assetB));
             if ((treeA == null) != (treeB == null))
             {
                 diffs.Add(where + ": embedded tree present " + (treeA != null) + " ≠ " + (treeB != null));
@@ -156,13 +157,26 @@ namespace Yozolab.DaerD
                 CompareTree(where + " / Tree '" + treeA.name + "'", treeA, treeB, diffs);
         }
 
+        static bool Is2D(UnityEditor.Animations.BlendTreeType type) =>
+            type == UnityEditor.Animations.BlendTreeType.SimpleDirectional2D
+            || type == UnityEditor.Animations.BlendTreeType.FreeformDirectional2D
+            || type == UnityEditor.Animations.BlendTreeType.FreeformCartesian2D;
+
         static void CompareTree(string where, ControllerIR.Tree a, ControllerIR.Tree b,
             List<string> diffs)
         {
             Field(where, "name", a.name, b.name, diffs);
             Field(where, "blend type", a.type, b.type, diffs);
-            Field(where, "parameter", a.blendParameter, b.blendParameter, diffs);
-            Field(where, "parameter Y", a.blendParameterY, b.blendParameterY, diffs);
+            // A parameter is only worth comparing on a type that reads it. A Direct tree
+            // blends per child and never consults the master parameter, and only the 2D
+            // types have a second axis — Unity fills both fields with "Blend" on any new
+            // tree and leaves them there, so a 1D tree built in code (which says nothing
+            // about Y) reads as drifted from the identical one in the asset. Same reason
+            // the thresholds below are conditional.
+            if (a.type != UnityEditor.Animations.BlendTreeType.Direct)
+                Field(where, "parameter", a.blendParameter, b.blendParameter, diffs);
+            if (Is2D(a.type))
+                Field(where, "parameter Y", a.blendParameterY, b.blendParameterY, diffs);
             Field(where, "auto thresholds", a.useAutomaticThresholds, b.useAutomaticThresholds, diffs);
             // Min/max only matter to a 1D tree with automatic thresholds; other configurations
             // let Unity write whatever transient values it likes into them.
@@ -218,7 +232,7 @@ namespace Yozolab.DaerD
         }
 
         static void CompareTransitions(string where, List<ControllerIR.Transition> a,
-            List<ControllerIR.Transition> b, List<string> diffs)
+            List<ControllerIR.Transition> b, List<string> diffs, bool fromAnyState = false)
         {
             CompareCount(where + ": transitions", a.Count, b.Count, diffs);
             int count = Mathf.Min(a.Count, b.Count);
@@ -245,7 +259,12 @@ namespace Yozolab.DaerD
                     Field(child, "offset", ta.offset, tb.offset, diffs);
                     Field(child, "interruption", ta.interruptionSource, tb.interruptionSource, diffs);
                     Field(child, "ordered interruption", ta.orderedInterruption, tb.orderedInterruption, diffs);
-                    Field(child, "can transition to self", ta.canTransitionToSelf, tb.canTransitionToSelf, diffs);
+                    // Unity only offers this on an Any State transition and starts every
+                    // other one with it on, so comparing it elsewhere reports drift against
+                    // declared IR that simply never had reason to mention it.
+                    if (fromAnyState)
+                        Field(child, "can transition to self",
+                            ta.canTransitionToSelf, tb.canTransitionToSelf, diffs);
                 }
 
                 CompareCount(child + ": conditions", ta.conditions.Count, tb.conditions.Count, diffs);
@@ -285,7 +304,21 @@ namespace Yozolab.DaerD
 
         static void Asset(string where, string field, Object a, Object b, List<string> diffs)
         {
-            if (a != b) diffs.Add(where + ": " + field + " " + Name(a) + " ≠ " + Name(b));
+            if (a != b) diffs.Add(where + ": " + field + " " + Mismatch(a, b));
+        }
+
+        /// <summary>
+        /// Two assets that are not the same asset, said in a way that survives them sharing a
+        /// name. Assets are compared by identity and named in the report, so a clip rebuilt
+        /// under the name it had before — which is what a regenerated blend tree's AAP clips
+        /// are — printed as "'X' ≠ 'X'" and read as a fault in the comparison rather than the
+        /// difference it is.
+        /// </summary>
+        static string Mismatch(Object a, Object b)
+        {
+            if (a != null && b != null && a.name == b.name)
+                return "'" + a.name + "' ≠ another asset of the same name";
+            return Name(a) + " ≠ " + Name(b);
         }
 
         static string Name(Object asset) => asset == null ? "(none)" : "'" + asset.name + "'";

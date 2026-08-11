@@ -164,6 +164,23 @@ namespace Yozolab.DaerD.Tests
                     Assert.IsTrue(HasCondition(transition, "Async/Index", AnimatorConditionMode.Equals, 1f));
         }
 
+        /// <summary>
+        /// The driver on a state, read as data rather than cast to a type. The builder looks
+        /// its driver class up by NAME, so in a project that also has the real VRChat SDK
+        /// installed it is the SDK's VRCAvatarParameterDriver that gets attached, not the
+        /// stub beside these tests, and a cast would come back null there while passing
+        /// here. Reading it the way the product does — through the SerializedObject
+        /// accessor — asserts the same thing whichever class won the lookup.
+        /// </summary>
+        static ControllerIR.DriverSpec DriverOn(AnimatorState state, int index = 0)
+        {
+            Assert.Greater(state.behaviours.Length, index, "no behaviour on '" + state.name + "'");
+            var behaviour = state.behaviours[index];
+            Assert.IsTrue(VrcParameterDriver.Is(behaviour),
+                "behaviour " + index + " on '" + state.name + "' is not a parameter driver");
+            return VrcParameterDriver.ReadSpec(behaviour);
+        }
+
         static AnimatorState FindState(AnimatorStateMachine stateMachine, string name)
         {
             foreach (var child in stateMachine.states)
@@ -389,14 +406,60 @@ namespace Yozolab.DaerD.Tests
             Assert.IsFalse(AsyncSyncBuilder.Warnings(worthwhile).Exists(w => w.Contains("saves nothing")));
         }
 
+        [Test]
+        public void Warnings_CallOutATargetAnimationWrites()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            Assert.IsFalse(AsyncSyncBuilder.Warnings(request).Exists(w => w.Contains("(AAP")));
+
+            // A clip animating the parameter on the Animator itself — a DBT gadget output.
+            var clip = new AnimationClip { name = "F AAP" };
+            AnimationUtility.SetEditorCurve(clip,
+                EditorCurveBinding.FloatCurve(string.Empty, typeof(Animator), "F"),
+                AnimationCurve.Constant(0f, 1f, 1f));
+            controller.layers[0].stateMachine.AddState("Write").motion = clip;
+
+            Assert.IsTrue(AsyncSyncBuilder.Warnings(request)
+                .Exists(w => w.Contains("(AAP") && w.Contains("'F'")));
+            // Said, not refused: the scan can't yet tell a clip that plays from one that
+            // merely exists, so it must not block a setup that may be fine.
+            Assert.IsNull(AsyncSyncBuilder.Validate(request));
+
+            Object.DestroyImmediate(controller);
+        }
+
+        /// <summary>
+        /// A caller that already holds the AAP set is believed rather than made to pay for the
+        /// scan again. The wizard's draw path leans on this: it runs per event, while the scan
+        /// walks every state, every blend tree and every clip of the controller.
+        /// </summary>
+        [Test]
+        public void Warnings_TakeAPrecomputedAapSet()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            // Nothing in this controller animates anything, so the passed-in set is the only
+            // thing the warning can be reading.
+            Assert.IsTrue(AsyncSyncBuilder.Warnings(request, new HashSet<string> { "F" })
+                .Exists(w => w.Contains("(AAP") && w.Contains("'F'")));
+
+            // An empty set is an answer ("nothing is animated"), not a request to go and look.
+            Assert.IsFalse(AsyncSyncBuilder.Warnings(request, new HashSet<string>())
+                .Exists(w => w.Contains("(AAP")));
+
+            Object.DestroyImmediate(controller);
+        }
+
         // ---- float channels ---------------------------------------------------
 
         [Test]
-        public void RequestDefaults_AutoEncoding_OneFloatChannel()
+        public void RequestDefaults_AutoEncoding_OneChannelPerType()
         {
             var request = new AsyncSyncBuilder.Request();
             Assert.AreEqual(AsyncSyncBuilder.IndexEncoding.Auto, request.encoding);
             Assert.AreEqual(1, request.floatChannels);
+            Assert.AreEqual(1, request.boolChannels);
         }
 
         [Test]
@@ -459,6 +522,154 @@ namespace Yozolab.DaerD.Tests
 
             Assert.AreEqual(AnimatorControllerParameterType.Float,
                 DbtBuilder.FindParameter(controller, "Async/Float2").type);
+        }
+
+        // ---- bool channels ----------------------------------------------------
+
+        static AnimatorController BoolController(int count)
+        {
+            var controller = new AnimatorController();
+            controller.AddLayer("Base");
+            for (int i = 1; i <= count; i++)
+                controller.AddParameter("B" + i, AnimatorControllerParameterType.Bool);
+            return controller;
+        }
+
+        static string[] BoolNames(int count)
+        {
+            var names = new string[count];
+            for (int i = 0; i < count; i++) names[i] = "B" + (i + 1);
+            return names;
+        }
+
+        [Test]
+        public void BoolChannels_BatchBoolsIntoSharedSlots()
+        {
+            var controller = BoolController(5);
+            var request = NewRequest(controller, BoolNames(5));
+            request.boolChannels = 2;
+
+            var slots = AsyncSyncBuilder.BuildSlots(request);
+            Assert.AreEqual(3, slots.Count, "5 bools over 2 channels = 3 slots");
+            CollectionAssert.AreEqual(new[] { "B1", "B2" }, slots[0].targets);
+            CollectionAssert.AreEqual(new[] { "B3", "B4" }, slots[1].targets);
+            CollectionAssert.AreEqual(new[] { "B5" }, slots[2].targets);
+
+            Assert.AreEqual(2, AsyncSyncBuilder.BoolChannelsUsed(request));
+        }
+
+        [Test]
+        public void BoolChannels_TradeOneSyncedBitForAShorterPass()
+        {
+            var controller = BoolController(16);
+            var slow = NewRequest(controller, BoolNames(16));
+            slow.encoding = AsyncSyncBuilder.IndexEncoding.Bool;
+            // 16 slots -> 4 index bits + 1 channel; one pass is 16 steps.
+            Assert.AreEqual(5, AsyncSyncBuilder.CompressedBits(slow));
+            Assert.AreEqual(16, AsyncSyncBuilder.BuildSchedule(AsyncSyncBuilder.BuildSlots(slow)).Count);
+
+            var fast = NewRequest(controller, BoolNames(16));
+            fast.encoding = AsyncSyncBuilder.IndexEncoding.Bool;
+            fast.boolChannels = 4;
+            // 4 slots -> 2 index bits + 4 channels: one more bit, a quarter of the pass.
+            Assert.AreEqual(6, AsyncSyncBuilder.CompressedBits(fast));
+            Assert.AreEqual(4, AsyncSyncBuilder.BuildSchedule(AsyncSyncBuilder.BuildSlots(fast)).Count);
+        }
+
+        [Test]
+        public void BoolChannels_Channel0_KeepsTheNameOlderSetupsAlreadySync()
+        {
+            var controller = BoolController(4);
+            var request = NewRequest(controller, BoolNames(4));
+            request.boolChannels = 2;
+
+            var generated = AsyncSyncBuilder.GeneratedParameters(request);
+            // Renaming channel 0 would strand the store entry an existing setup syncs.
+            Assert.IsTrue(generated.Exists(g => g.name == "Async/Bool"));
+            Assert.IsTrue(generated.Exists(g => g.name == "Async/Bool2"));
+            Assert.AreEqual(AsyncSyncBuilder.ChannelParameter("Async", AnimatorControllerParameterType.Bool),
+                AsyncSyncBuilder.BoolChannelParameter("Async", 0));
+        }
+
+        [Test]
+        public void BoolChannels_UnusedChannelsAreNotCreated()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "B", "F", "I");
+            request.boolChannels = 4;
+
+            Assert.AreEqual(1, AsyncSyncBuilder.BoolChannelsUsed(request));
+            Assert.IsFalse(AsyncSyncBuilder.GeneratedParameters(request)
+                .Exists(g => g.name == "Async/Bool2"));
+        }
+
+        [Test]
+        public void BoolChannels_DoNotBatchAcrossRatesOrTypes()
+        {
+            var controller = BoolController(3);
+            controller.AddParameter("I", AnimatorControllerParameterType.Int);
+            controller.AddParameter("I2", AnimatorControllerParameterType.Int);
+            var request = NewRequest(controller, "B1", "B2", "B3", "I", "I2");
+            request.boolChannels = 4;
+            request.rates["B3"] = 2;    // a different rate is a different batch
+
+            var slots = AsyncSyncBuilder.BuildSlots(request);
+            CollectionAssert.AreEqual(new[] { "B1", "B2" }, slots[0].targets);
+            CollectionAssert.AreEqual(new[] { "B3" }, slots[1].targets);
+            // Ints never batch: one channel, one target.
+            CollectionAssert.AreEqual(new[] { "I" }, slots[2].targets);
+            CollectionAssert.AreEqual(new[] { "I2" }, slots[3].targets);
+        }
+
+        [Test]
+        public void Apply_WithBoolChannels_SendsAndDecodesTheBatch()
+        {
+            var controller = BoolController(4);
+            controller.AddParameter("F", AnimatorControllerParameterType.Float);
+            var request = NewRequest(controller, "B1", "B2", "B3", "F");
+            request.boolChannels = 2;
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var sm = controller.layers[1].stateMachine;
+            // 3 slots ({B1,B2}, {B3}, {F}) -> 3 send + idle + 3 recv.
+            Assert.AreEqual(7, sm.states.Length);
+            Assert.IsNotNull(FindState(sm, "Send B1 +1"));
+            Assert.IsNotNull(FindState(sm, "Recv B1 +1"));
+            Assert.AreEqual(3, sm.anyStateTransitions.Length);
+
+            Assert.AreEqual(AnimatorControllerParameterType.Bool,
+                DbtBuilder.FindParameter(controller, "Async/Bool2").type);
+        }
+
+        [Test]
+        public void BoolChannels_SurviveTheSavedSetup()
+        {
+            var controller = BoolController(4);
+            var config = new GraphFrameData.AsyncSyncConfig
+            {
+                baseName = "Async",
+                boolChannels = 2,
+                targets = new List<string>(BoolNames(4)),
+            };
+            Assert.AreEqual(2, AsyncSyncBuilder.FromConfig(controller, config).boolChannels);
+
+            // Setups saved before the field existed deserialize to 0 and must read as 1.
+            var legacy = new GraphFrameData.AsyncSyncConfig { boolChannels = 0 };
+            Assert.AreEqual(1, legacy.BoolChannelsOrDefault);
+            Assert.AreEqual(1, AsyncSyncBuilder.FromConfig(controller, legacy).boolChannels);
+        }
+
+        [Test]
+        public void BoolChannels_OutOfRange_IsRefused()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B");
+            request.boolChannels = 0;
+            Assert.IsNotNull(AsyncSyncBuilder.Validate(request));
+            request.boolChannels = 9;
+            Assert.IsNotNull(AsyncSyncBuilder.Validate(request));
+            request.boolChannels = 8;
+            Assert.IsNull(AsyncSyncBuilder.Validate(request));
         }
 
         // ---- rate scheduling --------------------------------------------------
@@ -635,6 +846,140 @@ namespace Yozolab.DaerD.Tests
             Assert.IsNotNull(AsyncSyncBuilder.Validate(badChannels));
         }
 
+        // ---- slots that mix types ---------------------------------------------
+
+        /// <summary>A slot the automatic batching can never produce: it groups by type, so
+        /// only a hand-written grid puts a Float, a Bool and an Int in one step. Everything
+        /// that numbers channels has to count each type on its own, and these pin that.</summary>
+        static AsyncSyncBuilder.Slot MixedSlot(params string[] targets)
+        {
+            var slot = new AsyncSyncBuilder.Slot();
+            slot.targets.AddRange(targets);
+            return slot;
+        }
+
+        [Test]
+        public void ChannelsInSlot_CountsEachTypeSeparately()
+        {
+            var controller = NewController();
+            controller.AddParameter("F2", AnimatorControllerParameterType.Float);
+            var request = NewRequest(controller, "F", "F2", "B", "I");
+            var slot = MixedSlot("F", "B", "F2", "I");
+
+            // Reading the slot's size would have said 4 Float channels, and billed for them.
+            Assert.AreEqual(2, AsyncSyncCost.ChannelsInSlot(request, slot,
+                AnimatorControllerParameterType.Float));
+            Assert.AreEqual(1, AsyncSyncCost.ChannelsInSlot(request, slot,
+                AnimatorControllerParameterType.Bool));
+            Assert.AreEqual(1, AsyncSyncCost.ChannelsInSlot(request, slot,
+                AnimatorControllerParameterType.Int));
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void AddChannelCopies_NumbersEachTypesChannelsFromZero()
+        {
+            if (!VrcParameterDriver.SdkAvailable)
+                Assert.Ignore("Reading the copy entries needs the Parameter Driver behaviour.");
+
+            var controller = NewController();
+            controller.AddParameter("F2", AnimatorControllerParameterType.Float);
+            var request = NewRequest(controller, "F", "F2", "B", "I");
+            var slot = MixedSlot("F", "B", "F2", "I");
+            var machine = controller.layers[0].stateMachine;
+
+            var send = VrcParameterDriver.AddTo(machine.AddState("Send", Vector3.zero));
+            AsyncSyncApplier.AddChannelCopies(send, request, slot, toChannels: true);
+            var entries = VrcParameterDriver.ReadSpec(send).entries;
+            Assert.AreEqual(4, entries.Count);
+            // B sits second in the slot but is the FIRST Bool, and F2 the second Float.
+            CollectionAssert.AreEqual(new[] { "F", "B", "F2", "I" },
+                entries.ConvertAll(e => e.source));
+            CollectionAssert.AreEqual(
+                new[] { "Async/Float", "Async/Bool", "Async/Float2", "Async/Int" },
+                entries.ConvertAll(e => e.name));
+
+            // The decoder is the same call with the arrow reversed, so one numbering serves
+            // both — a per-type counter that only fixed the send side would desync the pair.
+            var recv = VrcParameterDriver.AddTo(machine.AddState("Recv", Vector3.zero));
+            AsyncSyncApplier.AddChannelCopies(recv, request, slot, toChannels: false);
+            var back = VrcParameterDriver.ReadSpec(recv).entries;
+            CollectionAssert.AreEqual(
+                new[] { "Async/Float", "Async/Bool", "Async/Float2", "Async/Int" },
+                back.ConvertAll(e => e.source));
+            CollectionAssert.AreEqual(new[] { "F", "B", "F2", "I" },
+                back.ConvertAll(e => e.name));
+
+            Object.DestroyImmediate(controller);
+        }
+
+        // ---- slot breaks ------------------------------------------------------
+
+        static AnimatorController FloatController(int count)
+        {
+            var controller = new AnimatorController();
+            controller.AddLayer("Base");
+            for (int i = 1; i <= count; i++)
+                controller.AddParameter("F" + i, AnimatorControllerParameterType.Float);
+            return controller;
+        }
+
+        [Test]
+        public void SlotBreaks_LetABatchedTargetTakeAStepOfItsOwn()
+        {
+            var controller = FloatController(4);
+            var request = NewRequest(controller, "F1", "F2", "F3", "F4");
+            request.floatChannels = 2;
+            CollectionAssert.AreEqual(new[] { "F1", "F2" },
+                AsyncSyncBuilder.BuildSlots(request)[0].targets);
+
+            // F2 declines the batch F1 opened — and opens one F3 may still join, so the
+            // author says where the groups begin rather than giving batching up entirely.
+            request.slotBreaks.Add("F2");
+            var slots = AsyncSyncBuilder.BuildSlots(request);
+            Assert.AreEqual(3, slots.Count);
+            CollectionAssert.AreEqual(new[] { "F1" }, slots[0].targets);
+            CollectionAssert.AreEqual(new[] { "F2", "F3" }, slots[1].targets);
+            CollectionAssert.AreEqual(new[] { "F4" }, slots[2].targets);
+
+            // A name that is not multiplexed is ignored, same contract as a stale rate.
+            request.slotBreaks.Add("Gone");
+            Assert.AreEqual(3, AsyncSyncBuilder.BuildSlots(request).Count);
+        }
+
+        [Test]
+        public void SlotBreaks_OnEveryTarget_LeaveTheSpareChannelUnbilled()
+        {
+            var controller = FloatController(4);
+            var request = NewRequest(controller, "F1", "F2", "F3", "F4");
+            request.floatChannels = 2;
+            request.slotBreaks.AddRange(new[] { "F2", "F3", "F4" });
+
+            Assert.AreEqual(4, AsyncSyncBuilder.BuildSlots(request).Count);
+            // Nothing batches any more, so the second channel is neither generated nor paid
+            // for — splitting costs steps, not synced bits.
+            Assert.AreEqual(1, AsyncSyncBuilder.FloatChannelsUsed(request));
+            Assert.IsFalse(AsyncSyncBuilder.GeneratedParameters(request)
+                .Exists(g => g.name == "Async/Float2"));
+        }
+
+        [Test]
+        public void SlotBreaks_SurviveTheSavedSetup()
+        {
+            var controller = FloatController(2);
+            var restored = AsyncSyncBuilder.FromConfig(controller,
+                new GraphFrameData.AsyncSyncConfig
+                {
+                    baseName = "Async",
+                    targets = new List<string> { "F1", "F2" },
+                    slotBreaks = new List<string> { "F2" },
+                });
+            CollectionAssert.AreEqual(new[] { "F2" }, restored.slotBreaks);
+
+            Object.DestroyImmediate(controller);
+        }
+
         // ---- explicit schedule -----------------------------------------------
 
         [Test]
@@ -678,6 +1023,542 @@ namespace Yozolab.DaerD.Tests
             wrap.scheduleOverride.AddRange(new[] { "F", "B", "I", "F" });
             Assert.IsNotNull(AsyncSyncBuilder.Validate(wrap),
                 "the last and first step are adjacent too — the cycle wraps");
+        }
+
+        [Test]
+        public void RefreshIntervals_ReportTheWorstGap_NotTheAverageOne()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            // F sits at steps 0 and 2 of six: 2 steps one way round, 4 the other. Averaging
+            // would call that "every 3 steps" and hide the wait that actually happens.
+            request.scheduleOverride.AddRange(new[] { "F", "B", "F", "I", "B", "I" });
+            Assert.IsNull(AsyncSyncBuilder.Validate(request));
+
+            var intervals = AsyncSyncBuilder.RefreshIntervals(request);
+            Assert.AreEqual(4f * request.stepSeconds, intervals["F"], 0.0001f);
+            Assert.AreEqual(3f * request.stepSeconds, intervals["B"], 0.0001f);
+            Assert.AreEqual(4f * request.stepSeconds, intervals["I"], 0.0001f);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void ScheduleOverride_SurvivesTheSavedSetup()
+        {
+            var controller = NewController();
+            var config = new GraphFrameData.AsyncSyncConfig
+            {
+                baseName = "Async",
+                targets = new List<string> { "F", "B", "I" },
+                schedule = new List<string> { "F", "B", "F", "I" },
+            };
+
+            var request = AsyncSyncBuilder.FromConfig(controller, config);
+            CollectionAssert.AreEqual(config.schedule, request.scheduleOverride);
+
+            // The regression this closes: SyncRequestBuilder rebuilds a layer through
+            // FromConfig, and a schedule that did not survive the trip meant adding one sync
+            // request silently re-timed a hand-written (or recipe-written) cycle to the rates.
+            var slots = AsyncSyncBuilder.BuildSlots(request);
+            CollectionAssert.AreEqual(new[] { 0, 1, 0, 2 },
+                AsyncSyncBuilder.EffectiveSchedule(request, slots));
+
+            // Saved before the field existed: no schedule, so the pass comes from the rates.
+            var legacy = AsyncSyncBuilder.FromConfig(controller, new GraphFrameData.AsyncSyncConfig
+            {
+                baseName = "Async",
+                targets = new List<string> { "F", "B", "I" },
+            });
+            Assert.AreEqual(0, legacy.scheduleOverride.Count);
+            CollectionAssert.AreEqual(
+                AsyncSyncBuilder.BuildSchedule(AsyncSyncBuilder.BuildSlots(legacy)),
+                AsyncSyncBuilder.EffectiveSchedule(legacy, AsyncSyncBuilder.BuildSlots(legacy)));
+
+            Object.DestroyImmediate(controller);
+        }
+
+        // ---- explicit grid ----------------------------------------------------
+
+        static GraphFrameData.AsyncSyncConfig.StepSpec GridStep(params string[] targets)
+        {
+            var step = new GraphFrameData.AsyncSyncConfig.StepSpec();
+            step.targets.AddRange(targets);
+            return step;
+        }
+
+        static void Sends(AsyncSyncBuilder.Request request, params string[] targets) =>
+            request.steps.Add(GridStep(targets));
+
+        /// <summary>A grid is the only way to put two types in one step, and the cost model
+        /// has to charge it one channel per type rather than one per target.</summary>
+        [Test]
+        public void Steps_MixedStep_BillsOneChannelOfEachType()
+        {
+            var controller = NewController();
+            controller.AddParameter("F2", AnimatorControllerParameterType.Float);
+            var request = NewRequest(controller, "F", "F2", "B", "I");
+            Sends(request, "F", "B");
+            Sends(request, "F2", "I");
+
+            Assert.IsNull(AsyncSyncBuilder.Validate(request));
+            Assert.AreEqual(1, AsyncSyncBuilder.FloatChannelsUsed(request));
+            Assert.AreEqual(1, AsyncSyncBuilder.BoolChannelsUsed(request));
+            // 8 index + 8 Float channel + 1 Bool channel + 8 Int channel.
+            Assert.AreEqual(25, AsyncSyncBuilder.CompressedBits(request));
+            Assert.IsFalse(AsyncSyncBuilder.GeneratedParameters(request)
+                .Exists(g => g.name == "Async/Float2"));
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void Apply_WithSteps_SendsEachStepAndDecodesOneStatePerSet()
+        {
+            var controller = NewController();
+            controller.AddParameter("F2", AnimatorControllerParameterType.Float);
+            var request = NewRequest(controller, "F", "F2", "B", "I");
+            request.skipDrivers = false;
+            Sends(request, "F", "B");
+            Sends(request, "F2", "I");
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var sm = controller.layers[1].stateMachine;
+            // 2 steps -> 2 send + idle + 2 recv, and one Any-State route per set.
+            Assert.AreEqual(5, sm.states.Length);
+            Assert.AreEqual(2, sm.anyStateTransitions.Length);
+
+            var driver = DriverOn(FindState(sm, "Send F +1"));
+            // The Bool rides Bool channel 0 even though it sits second in the step.
+            Assert.AreEqual("F", driver.entries[0].source);
+            Assert.AreEqual("Async/Float", driver.entries[0].name);
+            Assert.AreEqual("B", driver.entries[1].source);
+            Assert.AreEqual("Async/Bool", driver.entries[1].name);
+            Assert.AreEqual("Async/Index", driver.entries[2].name);
+            Assert.AreEqual(0f, driver.entries[2].value);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void Steps_Validate_RefusesWhatTheDecoderCouldNotRun()
+        {
+            var controller = NewController();
+            controller.AddParameter("F2", AnimatorControllerParameterType.Float);
+
+            var empty = NewRequest(controller, "F", "B");
+            Sends(empty, "F");
+            Sends(empty);
+            Assert.IsNotNull(AsyncSyncBuilder.Validate(empty), "an empty step carries nothing");
+
+            var overrun = NewRequest(controller, "F", "F2", "B");
+            Sends(overrun, "F", "F2");
+            Sends(overrun, "B");
+            Assert.IsNotNull(AsyncSyncBuilder.Validate(overrun),
+                "two Floats in one step need two Float channels");
+            overrun.floatChannels = 2;
+            Assert.IsNull(AsyncSyncBuilder.Validate(overrun));
+
+            var uncovered = NewRequest(controller, "F", "B", "I");
+            Sends(uncovered, "F");
+            Sends(uncovered, "B");
+            Assert.IsNotNull(AsyncSyncBuilder.Validate(uncovered), "'I' is never sent");
+
+            var repeat = NewRequest(controller, "F", "B", "I");
+            Sends(repeat, "F");
+            Sends(repeat, "F");
+            Sends(repeat, "B");
+            Sends(repeat, "I");
+            Assert.IsNotNull(AsyncSyncBuilder.Validate(repeat));
+
+            var wrap = NewRequest(controller, "F", "B", "I");
+            Sends(wrap, "F");
+            Sends(wrap, "B");
+            Sends(wrap, "I");
+            Sends(wrap, "F");
+            Assert.IsNotNull(AsyncSyncBuilder.Validate(wrap),
+                "the last and first step are adjacent too — the cycle wraps");
+
+            var single = NewRequest(controller, "F", "B");
+            single.floatChannels = 1;
+            Sends(single, "F", "B");
+            Sends(single, "B", "F");
+            Assert.IsNotNull(AsyncSyncBuilder.Validate(single),
+                "one set spelled twice is still one index");
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void Steps_OverlappingSets_GetStateNamesOfTheirOwn()
+        {
+            var controller = FloatController(3);
+            var request = NewRequest(controller, "F1", "F2", "F3");
+            request.floatChannels = 2;
+            // Both slots lead with F1 and hold two targets, so both want the same name.
+            Sends(request, "F1", "F2");
+            Sends(request, "F1", "F3");
+
+            var expected = AsyncSyncApplier.ExpectedStateNames(request);
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var built = new List<string>();
+            foreach (var child in controller.layers[1].stateMachine.states)
+                built.Add(child.state.name);
+            CollectionAssert.Contains(built, "Send F1 +1");
+            CollectionAssert.Contains(built, "Send F1 +1 #2");
+            CollectionAssert.Contains(built, "Recv F1 +1 #2");
+            Assert.AreEqual(built.Count, new HashSet<string>(built).Count,
+                "two states of one machine must not answer to one name");
+
+            // And the export's recognition rule has to name them the same way, or a grid
+            // would come back as raw states with a warning.
+            expected.Sort(System.StringComparer.Ordinal);
+            built.Sort(System.StringComparer.Ordinal);
+            CollectionAssert.AreEqual(built, expected);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void Steps_SurviveTheSavedSetup()
+        {
+            var controller = NewController();
+            var saved = new GraphFrameData.AsyncSyncConfig
+            {
+                baseName = "Async",
+                targets = new List<string> { "F", "B", "I" },
+            };
+            saved.steps.Add(GridStep("F", "B"));
+            saved.steps.Add(GridStep("I"));
+
+            // The regression this closes for the older cycle applies here too: a sync request
+            // rebuilds the layer through FromConfig, and a grid that did not survive the trip
+            // would re-time the layer to the rates behind the user's back.
+            var restored = AsyncSyncBuilder.FromConfig(controller, saved);
+            Assert.AreEqual(2, restored.steps.Count);
+            CollectionAssert.AreEqual(new[] { "F", "B" }, restored.steps[0].targets);
+            CollectionAssert.AreEqual(new[] { 0, 1 },
+                AsyncSyncBuilder.EffectiveSchedule(restored,
+                    AsyncSyncBuilder.BuildSlots(restored)));
+
+            // Editing the restored grid must not reach back into what was saved: the wizard
+            // rewrites this list on every click, and the panel it came from is still open.
+            restored.steps[0].targets.Clear();
+            CollectionAssert.AreEqual(new[] { "F", "B" }, saved.steps[0].targets);
+
+            // Saved before the field existed: no grid, so the slots are batched as before.
+            var legacy = AsyncSyncBuilder.FromConfig(controller,
+                new GraphFrameData.AsyncSyncConfig
+                {
+                    baseName = "Async",
+                    targets = new List<string> { "F", "B", "I" },
+                });
+            Assert.AreEqual(0, legacy.steps.Count);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void Steps_LetOneTargetRunTwoStepsInARow()
+        {
+            var controller = FloatController(3);
+            var request = NewRequest(controller, "F1", "F2", "F3");
+            request.floatChannels = 2;
+            // {F1,F2} then {F1,F3}: the sets differ, so the index changes and the decoder
+            // fires — while F1 is refreshed by both steps. The automatic batching cannot
+            // express this, and neither could the older step-by-step cycle.
+            Sends(request, "F1", "F2");
+            Sends(request, "F1", "F3");
+
+            Assert.IsNull(AsyncSyncBuilder.Validate(request));
+            var intervals = AsyncSyncBuilder.RefreshIntervals(request);
+            Assert.AreEqual(request.stepSeconds, intervals["F1"], 0.0001f);
+            Assert.AreEqual(2f * request.stepSeconds, intervals["F2"], 0.0001f);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void ExpectedStateNames_MatchWhatApplyReallyBuilds()
+        {
+            var controller = NewController();
+            controller.AddParameter("F2", AnimatorControllerParameterType.Float);
+            var request = NewRequest(controller, "F", "F2", "B", "I");
+            request.floatChannels = 2;
+            request.rates["B"] = 2;
+
+            // The export decides whether a layer may be rewritten as one AsyncSync call by
+            // comparing it against these names, so a rule that drifted from the builder would
+            // quietly rewrite a layer somebody had edited by hand.
+            var expected = AsyncSyncApplier.ExpectedStateNames(request);
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var built = new List<string>();
+            foreach (var child in controller.layers[1].stateMachine.states)
+                built.Add(child.state.name);
+
+            expected.Sort(System.StringComparer.Ordinal);
+            built.Sort(System.StringComparer.Ordinal);
+            CollectionAssert.AreEqual(built, expected);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        // ---- clock phase ------------------------------------------------------
+
+        /// <summary>The index value the decoder's Any-State route to this state fires on.</summary>
+        static void AssertDecodes(AnimatorStateMachine stateMachine, string state, int index)
+        {
+            var destination = FindState(stateMachine, state);
+            foreach (var transition in stateMachine.anyStateTransitions)
+                if (transition.destinationState == destination)
+                {
+                    Assert.IsTrue(
+                        HasCondition(transition, "Async/Index", AnimatorConditionMode.Equals, index),
+                        "'" + state + "' should decode index " + index);
+                    return;
+                }
+            Assert.Fail("No Any-State route to '" + state + "'.");
+        }
+
+        [Test]
+        public void Clock_LetsOneSlotHoldTwoStepsInARow()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.allowRepeatSteps = true;
+            Sends(request, "F");
+            Sends(request, "F");
+            Sends(request, "B");
+            Sends(request, "I");
+
+            Assert.IsNull(AsyncSyncBuilder.Validate(request),
+                "the clock is exactly what pays for the repeated step");
+            var expected = AsyncSyncApplier.ExpectedStateNames(request);
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var sm = controller.layers[1].stateMachine;
+            // 4 send + idle + 3 recv, and a second Recv for the slot that repeats.
+            Assert.AreEqual(9, sm.states.Length);
+            Assert.AreEqual(4, sm.anyStateTransitions.Length);
+
+            // The two steps of F land on two states, on two index values — which is the whole
+            // mechanism: the route is refused when it would re-enter the state already active.
+            AssertDecodes(sm, "Recv F", 0);
+            AssertDecodes(sm, "Recv F (2)", 1);
+            AssertDecodes(sm, "Recv B", 2);
+            AssertDecodes(sm, "Recv I", 3);
+
+            // The exporter decides whether a layer may be rewritten as one AsyncSync call by
+            // comparing it against these names, and the clock adds states it has to know about.
+            var built = new List<string>();
+            foreach (var child in sm.states) built.Add(child.state.name);
+            expected.Sort(System.StringComparer.Ordinal);
+            built.Sort(System.StringComparer.Ordinal);
+            CollectionAssert.AreEqual(built, expected);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void Clock_SendsTheTwoStepsOfOneSlotOnDifferentIndices()
+        {
+            if (!VrcParameterDriver.SdkAvailable)
+                Assert.Ignore("Reading the index the send driver writes needs the Parameter Driver behaviour.");
+
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.allowRepeatSteps = true;
+            request.skipDrivers = false;
+            Sends(request, "F");
+            Sends(request, "F");
+            Sends(request, "B");
+            Sends(request, "I");
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var sm = controller.layers[1].stateMachine;
+            var first = DriverOn(FindState(sm, "Send F"));
+            var second = DriverOn(FindState(sm, "Send F (2)"));
+            // Same copy, different index: the payload repeats and the index does not.
+            Assert.AreEqual("F", first.entries[0].source);
+            Assert.AreEqual("F", second.entries[0].source);
+            Assert.AreEqual("Async/Index", first.entries[1].name);
+            Assert.AreEqual(0f, first.entries[1].value);
+            Assert.AreEqual("Async/Index", second.entries[1].name);
+            Assert.AreEqual(1f, second.entries[1].value);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void Clock_CostsNothingUntilThePassActuallyRepeats()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.allowRepeatSteps = true;
+
+            // Nothing repeats, so no slot needs a second phase: the index still runs 0,1,2 and
+            // the layer is the one the same setup builds with the clock off.
+            Assert.AreEqual(3, AsyncSyncBuilder.IndexValues(request));
+            Assert.AreEqual(25, AsyncSyncBuilder.CompressedBits(request));
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var sm = controller.layers[1].stateMachine;
+            Assert.AreEqual(7, sm.states.Length);
+            Assert.AreEqual(3, sm.anyStateTransitions.Length);
+            AssertDecodes(sm, "Recv B", 1);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void Clock_IsFreeUnderTheIntIndex_AndWidensTheBoolOneOnlyOnOverflow()
+        {
+            var controller = FloatController(4);
+            var request = NewRequest(controller, "F1", "F2", "F3", "F4");
+            request.encoding = AsyncSyncBuilder.IndexEncoding.Bool;
+            request.allowRepeatSteps = true;
+            Sends(request, "F1");
+            Sends(request, "F2");
+            Sends(request, "F3");
+            Sends(request, "F4");
+            // 4 slots, 4 index values: two bits, and one Float channel.
+            Assert.AreEqual(4, AsyncSyncBuilder.IndexValues(request));
+            Assert.AreEqual(2 + 8, AsyncSyncBuilder.CompressedBits(request));
+
+            // A fifth step repeating F4 gives that slot a second value, and five values need
+            // a third bit — the tail of the range being free is what makes this the exception.
+            Sends(request, "F4");
+            Assert.IsNull(AsyncSyncBuilder.Validate(request));
+            Assert.AreEqual(5, AsyncSyncBuilder.IndexValues(request));
+            Assert.AreEqual(3 + 8, AsyncSyncBuilder.CompressedBits(request));
+
+            // The Int index holds 255 values however they are shared out, so it pays nothing.
+            request.encoding = AsyncSyncBuilder.IndexEncoding.Int;
+            Assert.AreEqual(8 + 8, AsyncSyncBuilder.CompressedBits(request));
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void Clock_RefusesAPassOfOneSlotWithAnOddNumberOfSteps()
+        {
+            var controller = NewController();
+            var odd = NewRequest(controller, "F", "B");
+            odd.allowRepeatSteps = true;
+            Sends(odd, "F", "B");
+            Sends(odd, "F", "B");
+            Sends(odd, "F", "B");
+            Assert.IsNotNull(AsyncSyncBuilder.Validate(odd),
+                "three steps of one slot close the alternation into a ring that can't alternate");
+
+            var even = NewRequest(controller, "F", "B");
+            even.allowRepeatSteps = true;
+            Sends(even, "F", "B");
+            Sends(even, "F", "B");
+            Assert.IsNull(AsyncSyncBuilder.Validate(even));
+            Assert.IsTrue(AsyncSyncBuilder.Apply(even));
+
+            var sm = controller.layers[1].stateMachine;
+            // One slot, two phases: 2 send + idle + 2 recv.
+            Assert.AreEqual(5, sm.states.Length);
+            Assert.AreEqual(2, sm.anyStateTransitions.Length);
+            AssertDecodes(sm, "Recv F +1", 0);
+            AssertDecodes(sm, "Recv F +1 (2)", 1);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void Clock_MakesASingleSlotSetupBuildable_AndSaysWhatItCosts()
+        {
+            var controller = new AnimatorController();
+            controller.AddLayer("Base");
+            for (int i = 1; i <= 4; i++)
+                controller.AddParameter("B" + i, AnimatorControllerParameterType.Bool);
+
+            var request = NewRequest(controller, "B1", "B2", "B3", "B4");
+            request.boolChannels = 4;
+            Assert.AreEqual(1, AsyncSyncBuilder.BuildSlots(request).Count);
+            Assert.IsNotNull(AsyncSyncBuilder.Validate(request),
+                "without a clock the index would never change");
+
+            request.allowRepeatSteps = true;
+            Assert.IsNull(AsyncSyncBuilder.Validate(request));
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+            Assert.AreEqual(5, controller.layers[1].stateMachine.states.Length,
+                "2 send + idle + 2 recv: the one slot alternates against itself");
+
+            Assert.IsTrue(AsyncSyncBuilder.Warnings(request)
+                    .Exists(w => w.Contains("every step sends every target")),
+                "one slot is direct sync wearing a cycle, and that has to be said");
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void Clock_SurvivesTheSavedSetup()
+        {
+            // Regenerating outside the wizard — a state's sync request, the layer panel —
+            // starts from the saved setup, and one that lost the clock would rebuild a layer
+            // whose own grid it then refuses. The setup only persists on a controller that has
+            // an asset to hold it, hence the file.
+            const string path = "Assets/DaerDAsyncSyncClockTest.controller";
+            AssetDatabase.CreateAsset(new AnimatorController(), path);
+            try
+            {
+                var controller = AssetDatabase.LoadAssetAtPath<AnimatorController>(path);
+                controller.AddLayer("Base");
+                controller.AddParameter("F", AnimatorControllerParameterType.Float);
+                controller.AddParameter("B", AnimatorControllerParameterType.Bool);
+
+                var request = NewRequest(controller, "F", "B");
+                request.allowRepeatSteps = true;
+                Sends(request, "F");
+                Sends(request, "F");
+                Sends(request, "B");
+                Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+                var configs = GraphFrameData.GetAsyncSyncs(controller);
+                Assert.AreEqual(1, configs.Count);
+                Assert.IsTrue(configs[0].allowRepeatSteps);
+
+                var restored = AsyncSyncBuilder.FromConfig(controller, configs[0]);
+                Assert.IsTrue(restored.allowRepeatSteps);
+                restored.skipDrivers = true;
+                Assert.IsNull(AsyncSyncBuilder.Validate(restored),
+                    "the restored setup still describes the layer that was built");
+
+                // Data saved before the field existed deserializes to false, which is the pass
+                // those setups already had.
+                Assert.IsFalse(AsyncSyncBuilder.FromConfig(controller,
+                    new GraphFrameData.AsyncSyncConfig { baseName = "Async" }).allowRepeatSteps);
+            }
+            finally
+            {
+                AssetDatabase.DeleteAsset(path);
+            }
+        }
+
+        [Test]
+        public void Clock_LetsAnExplicitScheduleRepeatASlot()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.scheduleOverride.AddRange(new[] { "F", "F", "B", "I" });
+            Assert.IsNotNull(AsyncSyncBuilder.Validate(request), "unclocked, this is refused");
+
+            request.allowRepeatSteps = true;
+            Assert.IsNull(AsyncSyncBuilder.Validate(request));
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var sm = controller.layers[1].stateMachine;
+            Assert.AreEqual(9, sm.states.Length);
+            AssertDecodes(sm, "Recv F", 0);
+            AssertDecodes(sm, "Recv F (2)", 1);
+
+            Object.DestroyImmediate(controller);
         }
 
         // ---- sync requests ---------------------------------------------------
@@ -816,23 +1697,157 @@ namespace Yozolab.DaerD.Tests
             Assert.IsTrue(AsyncSyncBuilder.Apply(request));
 
             var sendB = FindState(controller.layers[1].stateMachine, "Send B");
-            var driver = sendB.behaviours[0] as VRCAvatarParameterDriver;
-            Assert.IsNotNull(driver);
+            var driver = DriverOn(sendB);
             Assert.IsTrue(driver.localOnly);
 
-            Assert.AreEqual(3, driver.parameters.Count);
-            Assert.AreEqual(3, driver.parameters[0].type);   // Copy: B -> channel
-            Assert.AreEqual("B", driver.parameters[0].source);
-            Assert.AreEqual("Async/Index", driver.parameters[1].name);
-            Assert.AreEqual(1f, driver.parameters[1].value);
-            Assert.AreEqual(0, driver.parameters[2].type);   // Set: flag down
-            Assert.AreEqual("Async/Req/B", driver.parameters[2].name);
-            Assert.AreEqual(0f, driver.parameters[2].value);
+            Assert.AreEqual(3, driver.entries.Count);
+            Assert.AreEqual(3, driver.entries[0].kind);   // Copy: B -> channel
+            Assert.AreEqual("B", driver.entries[0].source);
+            Assert.AreEqual("Async/Index", driver.entries[1].name);
+            Assert.AreEqual(1f, driver.entries[1].value);
+            Assert.AreEqual(0, driver.entries[2].kind);   // Set: flag down
+            Assert.AreEqual("Async/Req/B", driver.entries[2].name);
+            Assert.AreEqual(0f, driver.entries[2].value);
 
             // States that don't serve the slot don't touch the flag.
             var sendF = FindState(controller.layers[1].stateMachine, "Send F");
-            var sendFDriver = sendF.behaviours[0] as VRCAvatarParameterDriver;
-            Assert.IsFalse(sendFDriver.parameters.Exists(p => p.name == "Async/Req/B"));
+            Assert.IsFalse(DriverOn(sendF).entries.Exists(e => e.name == "Async/Req/B"));
+        }
+
+        /// <summary>
+        /// Requests and a hand-built grid, together. The redirect machinery was written for a
+        /// pass that visits each slot once, and a grid may visit one several times — so every
+        /// step that is not the requested slot still gets a route, and they all land on the
+        /// slot's FIRST appearance rather than the nearest one. Landing anywhere is correct
+        /// (the ring resumes from wherever it arrives); landing consistently is what makes the
+        /// route buildable at all, since a step has no notion of which visit is "next".
+        /// </summary>
+        [Test]
+        public void Apply_WithRequests_AndAGrid_RedirectsToTheSlotsFirstVisit()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            Sends(request, "F");
+            Sends(request, "B");
+            Sends(request, "F");   // the same slot again, which only a grid can ask for
+            Sends(request, "I");
+            request.requestTargets.Add("B");
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var sm = controller.layers[1].stateMachine;
+            var sendF = FindState(sm, "Send F");
+            var sendB = FindState(sm, "Send B");
+            var sendFAgain = FindState(sm, "Send F (2)");
+            var sendI = FindState(sm, "Send I");
+
+            foreach (var state in new[] { sendF, sendFAgain, sendI })
+            {
+                Assert.AreEqual(2, state.transitions.Length, state.name + " keeps redirect + ring");
+                Assert.AreEqual(sendB, state.transitions[0].destinationState,
+                    state.name + " redirects to the first visit of B's slot");
+                Assert.IsTrue(HasCondition(state.transitions[0], "Async/Req/B",
+                    AnimatorConditionMode.If, 0f));
+                Assert.AreEqual(0, state.transitions[1].conditions.Length, "the ring is the fallback");
+            }
+
+            // Still no self-redirect, and a repeated slot does not become one by repeating.
+            Assert.AreEqual(1, sendB.transitions.Length);
+        }
+
+        /// <summary>
+        /// A grid may send one slot twice in a pass, and the flag has to come down whichever
+        /// visit serves it — the clearing lives on the send driver, so a visit that skipped it
+        /// would leave the flag raised behind a value that already went out and spend the next
+        /// boundary re-sending it.
+        /// </summary>
+        [Test]
+        public void Apply_WithRequests_ForARepeatedSlot_ClearsTheFlagAtEveryVisit()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.skipDrivers = false;
+            Sends(request, "F");
+            Sends(request, "B");
+            Sends(request, "F");
+            Sends(request, "I");
+            request.requestTargets.Add("F");
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var sm = controller.layers[1].stateMachine;
+            foreach (var name in new[] { "Send F", "Send F (2)" })
+            {
+                var entries = DriverOn(FindState(sm, name)).entries;
+                Assert.IsTrue(entries.Exists(e => e.name == "Async/Req/F" && e.value == 0f),
+                    name + " serves the request too, so it lowers the flag");
+            }
+
+            // And the steps that are not F route to F's first visit.
+            var sendF = FindState(sm, "Send F");
+            foreach (var name in new[] { "Send B", "Send I" })
+                Assert.AreEqual(sendF, FindState(sm, name).transitions[0].destinationState);
+        }
+
+        /// <summary>
+        /// The one configuration where a jump to the state's own slot would be legal — a grid
+        /// that visits a slot in neighbouring steps, with a clock giving those two visits
+        /// opposite phases, so the index does change. It is still not built, and that is the
+        /// decision this pins rather than an oversight: the only such jump worth having runs
+        /// from the run's last step back to its first, and a flag raised again during each
+        /// dwell would walk that pair forever with every other slot starved. One other slot
+        /// gets a turn between two services of the same one, however hard a request is driven.
+        /// </summary>
+        [Test]
+        public void Apply_WithAClockAndARepeatedSlot_StillNeverRedirectsToItsOwnSlot()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.allowRepeatSteps = true;
+            Sends(request, "F");
+            Sends(request, "F");   // neighbours, so the clock gives them opposite phases
+            Sends(request, "B");
+            Sends(request, "I");
+            request.requestTargets.Add("F");
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var slots = AsyncSyncBuilder.BuildSlots(request);
+            var clock = AsyncSyncBuilder.BuildClock(request, slots,
+                AsyncSyncBuilder.EffectiveSchedule(request, slots));
+            Assert.AreNotEqual(clock.stepPhases[0], clock.stepPhases[1],
+                "the premise: the decoder can tell these two sends of one slot apart");
+
+            var sm = controller.layers[1].stateMachine;
+            var sendF = FindState(sm, "Send F");
+            var sendFAgain = FindState(sm, "Send F (2)");
+
+            // Both F steps keep the ring alone — no route back into their own slot.
+            Assert.AreEqual(1, sendF.transitions.Length);
+            Assert.AreEqual(1, sendFAgain.transitions.Length);
+            Assert.AreEqual(0, sendF.transitions[0].conditions.Length, "the ring is unconditional");
+
+            // The steps that are not F still route to it, so the request is served either way.
+            Assert.AreEqual(sendF, FindState(sm, "Send B").transitions[0].destinationState);
+            Assert.AreEqual(sendF, FindState(sm, "Send I").transitions[0].destinationState);
+        }
+
+        /// <summary>
+        /// The redirect builder looks a requestable target's slot up by name, and a grid is
+        /// free to leave a target out of every step — which would leave it belonging to no
+        /// slot. Validation refuses that before the build reaches the lookup, so the answer is
+        /// a sentence rather than an exception out of a dictionary.
+        /// </summary>
+        [Test]
+        public void Apply_WithARequestableTargetNoStepCarries_IsRefused()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            Sends(request, "F");
+            Sends(request, "I");   // B is a target, and nothing sends it
+            request.requestTargets.Add("B");
+
+            var refusal = AsyncSyncBuilder.Validate(request);
+            Assert.IsNotNull(refusal, "a target no step carries cannot be built");
+            StringAssert.Contains("'B'", refusal);
+            Assert.IsFalse(AsyncSyncBuilder.Apply(request));
         }
 
         // ---- Empty clip -----------------------------------------------------
@@ -894,7 +1909,13 @@ namespace Yozolab.DaerD.Tests
         public void Apply_IgnoresAZeroLengthEmptyClip()
         {
             var controller = NewController();
+            // A clip with no curves at all is not zero length — Unity reports one second for
+            // it. Length only reaches zero once there is a curve whose every key sits at
+            // time zero, which is the shape a hand-made "do nothing" clip actually takes.
             var clip = new AnimationClip { name = "Zero" };
+            clip.SetCurve("", typeof(Transform), "localPosition.x",
+                new AnimationCurve(new Keyframe(0f, 0f)));
+            Assert.AreEqual(0f, clip.length, "the clip under test has to be zero length");
             var request = NewRequest(controller, "F", "B");
             request.emptyClip = clip;
             Assert.IsNull(AsyncSyncBuilder.ResolveEmptyClip(request));

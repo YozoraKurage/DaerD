@@ -6,11 +6,6 @@ using UnityEngine;
 
 namespace Yozolab.DaerD.Tests
 {
-    class ClipboardTestBehaviour : StateMachineBehaviour
-    {
-        public string payload;
-    }
-
     public class LayerClipboardTests
     {
         /// <summary>Controller with a "Source" layer: A → B on Go, A drives a 1D blend tree

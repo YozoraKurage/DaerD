@@ -102,7 +102,7 @@ namespace Yozolab.DaerD
                 EditorGUILayout.BeginHorizontal();
 
                 var prevColor = GUI.color;
-                if (!sharedByAll) GUI.color = new Color(1f, 0.85f, 0.4f);   // amber marks partial coverage
+                if (!sharedByAll) GUI.color = DaerDColors.Partial;   // amber marks partial coverage
                 EditorGUILayout.LabelField(entry.count + "/" + total, EditorStyles.miniLabel, GUILayout.Width(32));
                 GUI.color = prevColor;
 
@@ -114,7 +114,7 @@ namespace Yozolab.DaerD
                 ConditionGui.DrawConditionValue(working, type, delayed: true);
                 bool edited = EditorGUI.EndChangeCheck();
 
-                bool remove = GUILayout.Button("X", EditorStyles.miniButton, GUILayout.Width(22));
+                bool remove = GUILayout.Button("X", EditorStyles.miniButton, GUILayout.Width(DaerDLayout.GlyphButton));
                 EditorGUILayout.EndHorizontal();
 
                 if (remove)
@@ -151,7 +151,7 @@ namespace Yozolab.DaerD
             _newCondition.parameter = paramNames[paramIndex];
             var type = typeByName.TryGetValue(_newCondition.parameter, out var ty) ? ty : AnimatorControllerParameterType.Float;
             ConditionGui.DrawConditionValue(_newCondition, type);
-            if (GUILayout.Button(L.Tr("Add"), EditorStyles.miniButton, GUILayout.Width(46)))
+            if (GUILayout.Button(L.Tr("Add"), EditorStyles.miniButton, GUILayout.Width(DaerDLayout.RowAction)))
             {
                 AddConditionToAll(_newCondition);
                 GUIUtility.ExitGUI();

@@ -125,7 +125,7 @@ namespace Yozolab.DaerD
             }
 
             if (r.mode == Mode.DirectBlendTree)
-                return AapSmoothing.ValidateLayerChoice(controller, r.layerIndex, r.newLayerName);
+                return DbtBuilder.ValidateLayerChoice(controller, r.layerIndex, r.newLayerName);
             return null;
         }
 

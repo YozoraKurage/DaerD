@@ -20,19 +20,23 @@ namespace Yozolab.DaerD.Authoring
         /// <summary>The layers that can be written back as gadget calls (empty for a
         /// controller that saved none).</summary>
         readonly RecipeExporter.GadgetPlan _gadgets;
+        /// <summary>The layers that can be written back as one AsyncSync call.</summary>
+        readonly RecipeExporter.AsyncSyncPlan _asyncSyncs;
         readonly Dictionary<string, ParamHandle> _handles =
             new Dictionary<string, ParamHandle>();
         readonly Dictionary<string, AnimatorControllerParameterType> _types =
             new Dictionary<string, AnimatorControllerParameterType>();
 
         public RecipeDriver(ControllerBuilder c, ControllerIR ir, List<string> warnings,
-            RecipeExporter.GadgetPlan gadgets = null)
+            RecipeExporter.GadgetPlan gadgets = null,
+            RecipeExporter.AsyncSyncPlan asyncSyncs = null)
         {
             _c = c;
             _ir = ir;
             _warnings = warnings;
             _folds = new RecipeFoldPlanner(this, c);
             _gadgets = gadgets ?? new RecipeExporter.GadgetPlan();
+            _asyncSyncs = asyncSyncs ?? new RecipeExporter.AsyncSyncPlan();
             foreach (var p in ir.parameters)
                 _types[p.name] = p.type;
         }
@@ -48,6 +52,8 @@ namespace Yozolab.DaerD.Authoring
                 // A covered gadget's own parameters are created by its call further down; a
                 // declaration here would only restate what the next Generate rebuilds anyway.
                 if (_gadgets.Owns(p.name)) continue;
+                // Likewise the index, channels and request flags a sync setup mints.
+                if (_asyncSyncs.Owns(p.name)) continue;
                 _handles[p.name] = Declare(p);
             }
 
@@ -67,6 +73,12 @@ namespace Yozolab.DaerD.Authoring
                 {
                     _c.Script.Comment(RecipeExporter.Header("Layer: " + layer.name + " (DBT gadgets)"));
                     EmitGadgets(layer.name, gadgets);
+                    continue;
+                }
+                if (_asyncSyncs.layers.TryGetValue(layer.name, out var sync))
+                {
+                    _c.Script.Comment(RecipeExporter.Header("Layer: " + layer.name + " (async sync)"));
+                    EmitAsyncSync(layer.name, sync);
                     continue;
                 }
                 if (_gadgets.supporting.Contains(layer.name))
@@ -137,6 +149,73 @@ namespace Yozolab.DaerD.Authoring
         /// construction — and the replayed builder carries the same post step the generated
         /// code will run, which is what makes the export verifiable rather than merely printed.
         /// </summary>
+        /// <summary>
+        /// One sync setup as the call that rebuilds it. Arguments that match the method's own
+        /// default are left out entirely — same reasoning as the gadget calls' trailing-argument
+        /// trimming, except each of these is its own method, so "left out" means not called.
+        ///
+        /// Two of the wizard's switches are not in the saved setup and are read off the result
+        /// instead: whether the generated parameters reached the store, and whether the states
+        /// were given a motion. Both are inferences, and both are only ever wrong in the
+        /// direction of restating a default.
+        /// </summary>
+        void EmitAsyncSync(string layerName, AsyncSyncBuilder.Request r)
+        {
+            var sync = _c.AsyncSync(r.baseName);
+            sync.Targets(r.targets.ToArray());
+            // A grid answers what the rates, the splits and the cycle answer, and the builder
+            // ignores all three once it has one. Writing them out anyway would be restating
+            // inputs that do nothing — and worse than noise: .Rate("A", 2) beside a grid reads
+            // as a claim about how often A is sent, which only the grid decides.
+            bool grid = r.steps != null && r.steps.Count > 0;
+            if (!grid)
+                foreach (var target in r.targets)
+                {
+                    int rate = r.RateOf(target);
+                    if (rate > 1) sync.Rate(target, rate);
+                }
+            var requestable = AsyncSyncBuilder.RequestableTargets(r);
+            if (requestable.Count > 0) sync.Requestable(requestable.ToArray());
+            // Before the cycle and the grid, which are the calls it makes legal: a Sends run
+            // that repeats a step reads as a mistake until the line above it says otherwise.
+            if (r.allowRepeatSteps) sync.AllowRepeats();
+            if (grid)
+                foreach (var step in r.steps) sync.Sends(step.targets.ToArray());
+            if (!grid && r.slotBreaks.Count > 0) sync.Split(r.slotBreaks.ToArray());
+            if (!grid && r.scheduleOverride.Count > 0) sync.Schedule(r.scheduleOverride.ToArray());
+            if (r.floatChannels != 1) sync.FloatChannels(r.floatChannels);
+            if (r.boolChannels != 1) sync.BoolChannels(r.boolChannels);
+            if (!Mathf.Approximately(r.stepSeconds, 0.3f)) sync.Step(r.stepSeconds);
+            if (r.encoding == AsyncSyncBuilder.IndexEncoding.Int) sync.EncodingInt();
+            else if (r.encoding == AsyncSyncBuilder.IndexEncoding.Bool) sync.EncodingBool();
+            if (layerName != r.baseName) sync.LayerName(layerName);
+            if (!StoreHasGenerated(r)) sync.NoStore();
+            if (!StatesHaveMotion(r)) sync.NoEmptyClip();
+        }
+
+        /// <summary>Whether the setup's synced parameters are in the store the controller is
+        /// associated with. No store at all is not evidence either way — the call would find
+        /// none to write to, so it may as well keep its default.</summary>
+        static bool StoreHasGenerated(AsyncSyncBuilder.Request r)
+        {
+            var store = ParameterStore.Of(r.controller);
+            if (store == null) return true;
+            foreach (var (name, _) in AsyncSyncBuilder.GeneratedParameters(r))
+                if (store.Find(name) == null) return false;
+            return true;
+        }
+
+        static bool StatesHaveMotion(AsyncSyncBuilder.Request r)
+        {
+            if (r.layerIndex < 0 || r.layerIndex >= r.controller.layers.Length) return true;
+            var machine = r.controller.layers[r.layerIndex].stateMachine;
+            if (machine == null) return true;
+            foreach (var child in machine.states)
+                if (child.state != null && child.state.motion == null)
+                    return false;
+            return true;
+        }
+
         void EmitGadgets(string layerName, List<AapGadgets.Request> requests)
         {
             var gadgets = _c.Gadgets(layerName);
@@ -158,6 +237,9 @@ namespace Yozolab.DaerD.Authoring
                     case AapGadgets.Kind.Multiply:
                         gadgets.Multiply(r.inputA, r.inputB, r.output);
                         break;
+                    case AapGadgets.Kind.MultiplySigned:
+                        gadgets.MultiplySigned(r.inputA, r.inputB, r.output, r.rangeMin, r.rangeMax);
+                        break;
                     case AapGadgets.Kind.And: gadgets.And(r.inputA, r.inputB, r.output); break;
                     case AapGadgets.Kind.Or: gadgets.Or(r.inputA, r.inputB, r.output); break;
                     case AapGadgets.Kind.Not: gadgets.Not(r.inputA, r.output); break;
@@ -168,8 +250,17 @@ namespace Yozolab.DaerD.Authoring
                         gadgets.Remap(r.inputA, r.output, r.inMin, r.inMax, r.rangeMin, r.rangeMax);
                         break;
                     case AapGadgets.Kind.Reciprocal: gadgets.Reciprocal(r.inputA, r.output); break;
+                    case AapGadgets.Kind.ReciprocalRanged:
+                        gadgets.ReciprocalRanged(r.inputA, r.output, r.inMin, r.inMax);
+                        break;
+                    case AapGadgets.Kind.DivideRanged:
+                        gadgets.DivideRanged(r.inputA, r.inputB, r.output, r.inMin, r.inMax);
+                        break;
                     case AapGadgets.Kind.Divide:
                         gadgets.Divide(r.inputA, r.inputB, r.output);
+                        break;
+                    case AapGadgets.Kind.DivideSigned:
+                        gadgets.DivideSigned(r.inputA, r.inputB, r.output, r.rangeMin, r.rangeMax);
                         break;
                     case AapGadgets.Kind.FrameTime: gadgets.FrameTime(r.output); break;
                     case AapGadgets.Kind.SmoothLinear:
@@ -184,6 +275,22 @@ namespace Yozolab.DaerD.Authoring
                     case AapGadgets.Kind.Tangent: gadgets.Tangent(r.inputA, r.output); break;
                     case AapGadgets.Kind.Lut1D:
                         gadgets.Lut1D(r.inputA, r.output, r.curve, r.lutSamples);
+                        break;
+                    case AapGadgets.Kind.Sqrt:
+                        gadgets.Sqrt(r.inputA, r.output, r.inMin, r.inMax, r.lutSamples);
+                        break;
+                    case AapGadgets.Kind.InverseSqrt:
+                        gadgets.InverseSqrt(r.inputA, r.output, r.inMin, r.inMax, r.lutSamples);
+                        break;
+                    case AapGadgets.Kind.Log2:
+                        gadgets.Log2(r.inputA, r.output, r.inMin, r.inMax, r.lutSamples);
+                        break;
+                    case AapGadgets.Kind.Exp2:
+                        gadgets.Exp2(r.inputA, r.output, r.inMin, r.inMax, r.lutSamples);
+                        break;
+                    case AapGadgets.Kind.Power:
+                        gadgets.Power(r.inputA, r.inputB, r.output, r.inMin, r.inMax,
+                            r.rangeMin, r.rangeMax, r.lutSamples);
                         break;
                     // Input A is atan2's numerator and input B its denominator, which is the
                     // order the y, x pair the method takes reads in.
@@ -514,7 +621,7 @@ namespace Yozolab.DaerD.Authoring
                 if (built == null)
                     _warnings.Add(L.Tr("Any-State transition to '{0}' could not be resolved — skipped.", t.destination));
                 else
-                    EmitTransition(built, t);
+                    EmitTransition(built, t, fromAnyState: true);
             }
             foreach (var t in machine.entryTransitions)
             {
@@ -570,7 +677,8 @@ namespace Yozolab.DaerD.Authoring
         }
 
         /// <summary>Conditions, then only the settings that differ from authoring defaults.</summary>
-        void EmitTransition(TransitionBuilder tb, ControllerIR.Transition t)
+        void EmitTransition(TransitionBuilder tb, ControllerIR.Transition t,
+            bool fromAnyState = false)
         {
             if (tb == null) return;
             for (int i = 0; i < t.conditions.Count; i++)
@@ -597,7 +705,11 @@ namespace Yozolab.DaerD.Authoring
             if (t.interruptionSource != TransitionInterruptionSource.None)
                 tb.WithInterruption(t.interruptionSource);
             if (!t.orderedInterruption) tb.WithNoOrderedInterruption();
-            if (t.canTransitionToSelf) tb.WithTransitionToSelf();
+            // Any State is the only place this flag does anything, and the authoring default
+            // there is "do not re-trigger". Writing it whenever Unity's own true showed up
+            // put the call on nearly every line in the file, including the state-to-state
+            // transitions where the editor does not even offer the checkbox.
+            if (fromAnyState && t.canTransitionToSelf) tb.WithTransitionToSelf();
             if (t.solo) tb.Solo();
             if (t.mute) tb.Mute();
         }

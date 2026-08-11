@@ -118,7 +118,7 @@ namespace Yozolab.DaerD
                 new GUIContent(L.Tr("Namespace (optional)")), _namespace);
             EditorGUILayout.BeginHorizontal();
             _folder = EditorGUILayout.TextField(L.Tr("Output Folder"), _folder);
-            if (GUILayout.Button("…", GUILayout.Width(28)))
+            if (GUILayout.Button("…", GUILayout.Width(DaerDLayout.GlyphButton)))
             {
                 string picked = EditorUtility.SaveFolderPanel(L.Tr("Output Folder"), _folder, string.Empty);
                 if (!string.IsNullOrEmpty(picked))
@@ -181,7 +181,7 @@ namespace Yozolab.DaerD
             string projectFolder = ProjectFolder;
             using (new EditorGUI.DisabledScope(CheckedCount == 0
                 || string.IsNullOrEmpty(_className) || projectFolder == null))
-                if (GUILayout.Button(L.Tr("Export"), GUILayout.Width(100)))
+                if (GUILayout.Button(L.Tr("Export"), GUILayout.Width(DaerDLayout.DialogButton)))
                 {
                     DoExport(Exclusive, projectFolder);
                     GUIUtility.ExitGUI();

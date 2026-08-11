@@ -152,8 +152,24 @@ namespace Yozolab.DaerD.Authoring
         /// base name is derived from the target controller so two distributions that both
         /// multiplex don't fight over the same synced parameters.
         /// </summary>
-        public AsyncSyncRecipeBuilder AsyncSync(string baseName = null) =>
-            new AsyncSyncRecipeBuilder(this, baseName);
+        public AsyncSyncRecipeBuilder AsyncSync(string baseName = null)
+        {
+            // Idempotent like Gadgets, and for the same reason: a second builder over the same
+            // name would post a second rebuild of the one layer, and the later one would undo
+            // the earlier. The key is the argument as written, not the base name it resolves
+            // to — an unnamed setup only learns its name once the controller is known.
+            string key = baseName ?? string.Empty;
+            if (!_asyncSyncs.TryGetValue(key, out var builder))
+            {
+                _asyncSyncs[key] = builder = new AsyncSyncRecipeBuilder(this, baseName);
+                Script?.Declare(builder, "Async Sync", this,
+                    baseName == null ? "AsyncSync()" : $"AsyncSync({RecipeScript.S(baseName)})");
+            }
+            return builder;
+        }
+
+        readonly Dictionary<string, AsyncSyncRecipeBuilder> _asyncSyncs =
+            new Dictionary<string, AsyncSyncRecipeBuilder>();
 
         /// <summary>
         /// DBT (AAP) gadgets — the per-frame float math from the parameter panel's Add menu —

@@ -146,6 +146,128 @@ namespace Yozolab.DaerD.Tests
             CollectionAssert.AreEqual(new[] { 0, 1, 2 }, schedule);
         }
 
+        // ---- repairing a hand-timed cycle ------------------------------------
+
+        static AnimatorController Floats(params string[] names)
+        {
+            var controller = new AnimatorController();
+            controller.AddLayer("Base");
+            foreach (var name in names)
+                controller.AddParameter(name, AnimatorControllerParameterType.Float);
+            return controller;
+        }
+
+        static AsyncSyncBuilder.Request Multiplexing(AnimatorController controller,
+            params string[] targets)
+        {
+            var request = new AsyncSyncBuilder.Request { controller = controller };
+            request.targets.AddRange(targets);
+            return request;
+        }
+
+        /// <summary>What every repair must be able to promise: whatever comes back, if it is
+        /// not empty, is a cycle the decoder can actually run.</summary>
+        static List<string> Repair(AsyncSyncBuilder.Request request, params string[] schedule)
+        {
+            var repaired = AsyncSyncSchedule.RepairScheduleOverride(request,
+                new List<string>(schedule));
+            if (repaired.Count == 0) return repaired;
+
+            var errors = new List<string>();
+            request.scheduleOverride.Clear();
+            request.scheduleOverride.AddRange(repaired);
+            Assert.IsNotNull(
+                AsyncSyncSchedule.ResolveScheduleOverride(request,
+                    AsyncSyncSchedule.BuildSlots(request), errors),
+                "a repaired cycle must resolve: " + string.Join(", ", errors));
+            return repaired;
+        }
+
+        [Test]
+        public void RepairScheduleOverride_LeavesAValidCycleAlone()
+        {
+            // The one that matters most: the wizard repairs on every edit, so a repair that
+            // shuffled a cycle it had no quarrel with would move steps under the user's hand.
+            var controller = Floats("A", "B", "C");
+            var request = Multiplexing(controller, "A", "B", "C");
+
+            CollectionAssert.AreEqual(new[] { "A", "B", "A", "C" },
+                Repair(request, "A", "B", "A", "C"));
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void RepairScheduleOverride_DropsStepsForParametersThatAreGone()
+        {
+            var controller = Floats("A", "B", "C", "D");
+            // D was unticked since the cycle was written; its step goes with it.
+            var request = Multiplexing(controller, "A", "B", "C");
+
+            CollectionAssert.AreEqual(new[] { "A", "B", "A", "C" },
+                Repair(request, "A", "B", "A", "C", "D"));
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void RepairScheduleOverride_GivesANewlyTickedParameterAStep()
+        {
+            var controller = Floats("A", "B", "C");
+            var request = Multiplexing(controller, "A", "B", "C");
+
+            // C joined after the cycle was written. Appending matches the tick list, which
+            // also appends — and a slot nothing visits cannot land beside itself.
+            CollectionAssert.AreEqual(new[] { "A", "B", "C" }, Repair(request, "A", "B"));
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void RepairScheduleOverride_SettlesASlotThatBatchingMerged()
+        {
+            var controller = Floats("A", "B", "C");
+            var request = Multiplexing(controller, "A", "B", "C");
+            // Two channels put A and B in one slot, so a cycle that alternated them is now
+            // asking for the same slot three times over, twice in a row.
+            request.floatChannels = 2;
+
+            var repaired = Repair(request, "A", "B", "A", "C");
+
+            Assert.AreEqual(2, repaired.Count);
+            CollectionAssert.AreEqual(new[] { "A", "C" }, repaired);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void RepairScheduleOverride_WithNothingToSchedule_FallsBackToTheRates()
+        {
+            var controller = Floats("A", "B");
+            // One slot has no cycle to speak of; an empty result is how the caller is told
+            // to stop overriding.
+            Assert.AreEqual(0,
+                AsyncSyncSchedule.RepairScheduleOverride(Multiplexing(controller, "A"),
+                    new List<string> { "A" }).Count);
+            // Nothing recognisable left either.
+            Assert.AreEqual(0,
+                AsyncSyncSchedule.RepairScheduleOverride(Multiplexing(controller, "A", "B"),
+                    new List<string> { "Gone" }).Count);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void NextStepSlot_PicksTheLeastVisitedSlotThatTouchesNeitherEnd()
+        {
+            // 1 and 3 are free of both ends; 3 has been visited least.
+            Assert.AreEqual(3, AsyncSyncSchedule.NextStepSlot(new List<int> { 0, 1, 0, 2 }, 4));
+            Assert.AreEqual(1, AsyncSyncSchedule.NextStepSlot(new List<int> { 0, 1, 2 }, 3));
+            // Two slots have no such slot — their cycle can only be even — so the far end is
+            // given up and the wrap is left for the repair to settle.
+            Assert.AreEqual(0, AsyncSyncSchedule.NextStepSlot(new List<int> { 0, 1 }, 2));
+        }
+
         // ---- explicit schedules ----------------------------------------------
 
         [Test]
@@ -202,6 +324,206 @@ namespace Yozolab.DaerD.Tests
             CollectionAssert.IsEmpty(errors);
         }
 
+        // ---- steps written out as sets ---------------------------------------
+
+        static GraphFrameData.AsyncSyncConfig.StepSpec Step(params string[] targets)
+        {
+            var step = new GraphFrameData.AsyncSyncConfig.StepSpec();
+            step.targets.AddRange(targets);
+            return step;
+        }
+
+        static AsyncSyncBuilder.Request Sending(AnimatorController controller,
+            string[] targets, params string[][] steps)
+        {
+            var request = Multiplexing(controller, targets);
+            foreach (var step in steps) request.steps.Add(Step(step));
+            return request;
+        }
+
+        /// <summary>The grid's sets, one per step, as the names they normalize to.</summary>
+        static List<string[]> Grid(List<GraphFrameData.AsyncSyncConfig.StepSpec> steps)
+        {
+            var grid = new List<string[]>();
+            foreach (var step in steps) grid.Add(step.targets.ToArray());
+            return grid;
+        }
+
+        static void AssertGrid(List<GraphFrameData.AsyncSyncConfig.StepSpec> steps,
+            params string[][] expected)
+        {
+            var actual = Grid(steps);
+            Assert.AreEqual(expected.Length, actual.Count,
+                "step count: " + string.Join(" | ", actual.ConvertAll(s => string.Join(",", s))));
+            for (int i = 0; i < expected.Length; i++)
+                CollectionAssert.AreEqual(expected[i], actual[i], "step " + (i + 1));
+        }
+
+        [Test]
+        public void BuildSlots_FromSteps_MakesTheDistinctSetsTheSlots()
+        {
+            var controller = Floats("A", "B", "C");
+            // Two steps naming the same targets are one slot revisited, whatever order they
+            // list them in — otherwise the second would be an index carrying an identical copy.
+            var request = Sending(controller, new[] { "A", "B", "C" },
+                new[] { "A", "B" }, new[] { "A", "C" }, new[] { "B", "A" });
+            request.floatChannels = 2;
+
+            var slots = AsyncSyncSchedule.BuildSlots(request);
+            Assert.AreEqual(2, slots.Count);
+            CollectionAssert.AreEqual(new[] { "A", "B" }, slots[0].targets,
+                "the set is put back into target order, so it has one spelling");
+            CollectionAssert.AreEqual(new[] { "A", "C" }, slots[1].targets);
+            CollectionAssert.AreEqual(new[] { 0, 1, 0 },
+                AsyncSyncSchedule.EffectiveSchedule(request, slots));
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void BuildSlots_FromSteps_DropWhatIsNotMultiplexed_AndTakeOverTheOtherInputs()
+        {
+            var controller = Floats("A", "B", "C");
+            var request = Sending(controller, new[] { "A", "B" },
+                new[] { "A", "Gone" }, new[] { "B", "C" });
+            // A grid answers what the rates and the cycle answered, so both are ignored: this
+            // is a set of slots the greedy batching could not have produced anyway.
+            request.rates["A"] = 4;
+            request.slotBreaks.Add("B");
+            request.scheduleOverride.AddRange(new[] { "B", "A", "B" });
+
+            var slots = AsyncSyncSchedule.BuildSlots(request);
+            Assert.AreEqual(2, slots.Count);
+            CollectionAssert.AreEqual(new[] { "A" }, slots[0].targets, "'Gone' is not a target");
+            CollectionAssert.AreEqual(new[] { "B" }, slots[1].targets, "'C' is not a target");
+            Assert.AreEqual(1, slots[0].rate, "rates say nothing about a grid");
+            CollectionAssert.AreEqual(new[] { 0, 1 },
+                AsyncSyncSchedule.EffectiveSchedule(request, slots));
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void EffectiveSchedule_FromSteps_IsReturnedEvenWhenItCannotRun()
+        {
+            var controller = Floats("A", "B");
+            // Two steps sending the same set: the decoder would never see the second. The
+            // editor draws this and Validate refuses it — falling back to the rates here
+            // would redraw a cycle nobody asked for at the moment an edit went wrong.
+            var request = Sending(controller, new[] { "A", "B" },
+                new[] { "A" }, new[] { "A" }, new[] { "B" });
+
+            CollectionAssert.AreEqual(new[] { 0, 0, 1 },
+                AsyncSyncSchedule.EffectiveSchedule(request,
+                    AsyncSyncSchedule.BuildSlots(request)));
+
+            Object.DestroyImmediate(controller);
+        }
+
+        // ---- repairing a grid ------------------------------------------------
+
+        [Test]
+        public void RepairSteps_LeavesAValidGridAlone()
+        {
+            // The one that matters most, for the same reason as the cycle's repair: this runs
+            // on every edit, and a grid it shuffled would move cells under the user's hand.
+            var controller = Floats("A", "B", "C");
+            var request = Sending(controller, new[] { "A", "B", "C" },
+                new[] { "A", "B" }, new[] { "A", "C" });
+            request.floatChannels = 2;
+
+            var repaired = AsyncSyncSchedule.RepairSteps(request, request.steps);
+            AssertGrid(repaired, new[] { "A", "B" }, new[] { "A", "C" });
+
+            // And it is a fixed point: repairing the repair changes nothing further.
+            AssertGrid(AsyncSyncSchedule.RepairSteps(request, repaired),
+                new[] { "A", "B" }, new[] { "A", "C" });
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void RepairSteps_DropsParametersThatAreGone_AndEmptiedSteps()
+        {
+            var controller = Floats("A", "B", "C");
+            var request = Sending(controller, new[] { "A", "B" },
+                new[] { "A" }, new[] { "C" }, new[] { "B", "C" });
+
+            // C was unticked: its step goes with it, and the step it shared stays.
+            AssertGrid(AsyncSyncSchedule.RepairSteps(request, request.steps),
+                new[] { "A" }, new[] { "B" });
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void RepairSteps_GivesANewlyTickedParameterAStepWithRoom()
+        {
+            var controller = Floats("A", "B", "C");
+            var request = Sending(controller, new[] { "A", "B", "C" },
+                new[] { "A" }, new[] { "B" });
+            request.floatChannels = 2;
+
+            // C joined after the grid was written and rides along in the first step that has
+            // a channel free — which cannot make that step equal another, C being in no other.
+            AssertGrid(AsyncSyncSchedule.RepairSteps(request, request.steps),
+                new[] { "A", "C" }, new[] { "B" });
+
+            // With no room anywhere it takes a step of its own instead.
+            request.floatChannels = 1;
+            AssertGrid(AsyncSyncSchedule.RepairSteps(request, request.steps),
+                new[] { "A" }, new[] { "B" }, new[] { "C" });
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void RepairSteps_TrimsAStepTheChannelsNoLongerHold()
+        {
+            var controller = Floats("A", "B", "C", "D");
+            var request = Sending(controller, new[] { "A", "B", "C", "D" },
+                new[] { "A", "B" }, new[] { "C", "D" });
+            // The channel count came down to 1 after the grid was written: each step keeps the
+            // target it named first, and the two that fell out get steps of their own.
+            request.floatChannels = 1;
+
+            AssertGrid(AsyncSyncSchedule.RepairSteps(request, request.steps),
+                new[] { "A" }, new[] { "C" }, new[] { "B" }, new[] { "D" });
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void RepairSteps_DropsAStepThatRepeatsItsNeighbour_IncludingAcrossTheWrap()
+        {
+            var controller = Floats("A", "B");
+            var request = Sending(controller, new[] { "A", "B" },
+                new[] { "A" }, new[] { "A" }, new[] { "B" }, new[] { "A" });
+
+            // The run of A collapses to one, and the last A is the first A's neighbour across
+            // the wrap, so it goes too.
+            AssertGrid(AsyncSyncSchedule.RepairSteps(request, request.steps),
+                new[] { "A" }, new[] { "B" });
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void RepairSteps_WithNothingSchedulable_FallsBackToTheRates()
+        {
+            var controller = Floats("A", "B");
+            // Every step sends the same thing: one slot is no cycle, and an empty result is
+            // how the caller is told to stop overriding.
+            var same = Sending(controller, new[] { "A" }, new[] { "A" }, new[] { "A" });
+            Assert.AreEqual(0, AsyncSyncSchedule.RepairSteps(same, same.steps).Count);
+
+            // Nothing recognisable left either.
+            var stale = Sending(controller, new[] { "A", "B" }, new[] { "Gone" });
+            Assert.AreEqual(0, AsyncSyncSchedule.RepairSteps(stale, stale.steps).Count);
+
+            Object.DestroyImmediate(controller);
+        }
+
         // ---- slots -----------------------------------------------------------
 
         [Test]
@@ -226,6 +548,150 @@ namespace Yozolab.DaerD.Tests
                 "a ×2 Float can't share a slot with ×1 ones — a batch is revisited whole");
             Assert.AreEqual(2, slots[1].rate);
             CollectionAssert.AreEqual(new[] { "B" }, slots[2].targets);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        // ---- the clock -------------------------------------------------------
+
+        static AsyncSyncBuilder.Request Clocked() =>
+            new AsyncSyncBuilder.Request { allowRepeatSteps = true };
+
+        static bool HasAdjacency(List<int> schedule)
+        {
+            for (int i = 0; i < schedule.Count; i++)
+                if (schedule.Count > 1 && schedule[i] == schedule[(i + 1) % schedule.Count])
+                    return true;
+            return false;
+        }
+
+        [Test]
+        public void BuildClock_WithoutOne_LeavesTheIndexAsTheSlotNumber()
+        {
+            // The property everything else rests on: an unclocked setup runs the same code
+            // and comes out of it exactly as it did before clocks existed.
+            var clock = AsyncSyncSchedule.BuildClock(new AsyncSyncBuilder.Request(), Slots(1, 1, 1),
+                new List<int> { 0, 1, 2 });
+            CollectionAssert.AreEqual(new[] { 0, 0, 0 }, clock.stepPhases);
+            CollectionAssert.AreEqual(new[] { 1, 1, 1 }, clock.slotPhases);
+            Assert.AreEqual(3, clock.indexValues);
+            for (int i = 0; i < 3; i++) Assert.AreEqual(i, clock.Index(i, 0));
+            Assert.IsTrue(clock.separates);
+        }
+
+        [Test]
+        public void BuildClock_AlternatesOnlyWhereASlotSitsBesideItself()
+        {
+            var clock = AsyncSyncSchedule.BuildClock(Clocked(), Slots(1, 1, 1),
+                new List<int> { 0, 0, 1, 2 });
+
+            CollectionAssert.AreEqual(new[] { 0, 1, 0, 0 }, clock.stepPhases);
+            CollectionAssert.AreEqual(new[] { 2, 1, 1 }, clock.slotPhases,
+                "only the slot that repeats needs a second decoder state");
+            // Phases laid end to end, so the slots that don't repeat cost one value each.
+            Assert.AreEqual(4, clock.indexValues);
+            Assert.AreEqual(0, clock.Index(0, 0));
+            Assert.AreEqual(1, clock.Index(0, 1));
+            Assert.AreEqual(2, clock.Index(1, 0));
+            Assert.AreEqual(3, clock.Index(2, 0));
+            Assert.IsTrue(clock.separates);
+        }
+
+        [Test]
+        public void BuildClock_ColoursARunThatStraddlesTheWrap()
+        {
+            // Steps 3, 0 and 1 are one run of slot 0 read around the wrap. Walking the pass
+            // from the step that STARTS a run is what gets all three coloured; a walk from
+            // position 0 would have split the run and left the wrap repeating a phase.
+            var clock = AsyncSyncSchedule.BuildClock(Clocked(), Slots(1, 1),
+                new List<int> { 0, 0, 1, 0 });
+
+            CollectionAssert.AreEqual(new[] { 1, 0, 0, 0 }, clock.stepPhases);
+            CollectionAssert.AreEqual(new[] { 2, 1 }, clock.slotPhases);
+            Assert.IsTrue(clock.separates);
+        }
+
+        [Test]
+        public void BuildClock_CannotColourAnOddPassOfOneSlot()
+        {
+            // Every step sending one slot closes the alternation into a ring, and an odd ring
+            // has no two-colouring — the one shape Validate has to refuse outright.
+            Assert.IsFalse(
+                AsyncSyncSchedule.BuildClock(Clocked(), Slots(1), new List<int> { 0, 0, 0 }).separates);
+            Assert.IsFalse(
+                AsyncSyncSchedule.BuildClock(Clocked(), Slots(1), new List<int> { 0 }).separates);
+
+            var even = AsyncSyncSchedule.BuildClock(Clocked(), Slots(1), new List<int> { 0, 0 });
+            Assert.IsTrue(even.separates);
+            CollectionAssert.AreEqual(new[] { 0, 1 }, even.stepPhases);
+            Assert.AreEqual(2, even.indexValues);
+        }
+
+        [Test]
+        public void EffectiveSchedule_WithOneSlotAndAClock_RunsItTwice()
+        {
+            var slots = Slots(1);
+            CollectionAssert.AreEqual(new[] { 0 },
+                AsyncSyncSchedule.EffectiveSchedule(new AsyncSyncBuilder.Request(), slots),
+                "unclocked, a lone slot is the single step Validate refuses");
+            CollectionAssert.AreEqual(new[] { 0, 0 },
+                AsyncSyncSchedule.EffectiveSchedule(Clocked(), slots),
+                "the clock is the whole cycle when there is no other slot to alternate with");
+        }
+
+        [Test]
+        public void BuildSchedule_WithAClock_LeavesTheRoundingArtefactWhereItLanded()
+        {
+            // ×3/×6/×7 is one of the mixes whose even spread rounds two visits of one slot
+            // into neighbouring cells. Unclocked they are traded apart; with a clock there is
+            // nothing to trade — and trading is what can cost a visit outright.
+            var slots = Slots(3, 6, 7);
+            var traded = AsyncSyncSchedule.BuildSchedule(slots);
+            var asPlaced = AsyncSyncSchedule.BuildSchedule(slots, allowRepeats: true);
+
+            Assert.IsFalse(HasAdjacency(traded), "the unclocked pass is repaired as it always was");
+            Assert.IsTrue(HasAdjacency(asPlaced), "the clocked pass keeps the placement as spread");
+            Assert.AreEqual(16, asPlaced.Count, "and every visit the weights asked for");
+        }
+
+        [Test]
+        public void ResolveScheduleOverride_TakesARepeatWhenAClockPaysForIt()
+        {
+            var slots = Slots(1, 1, 1);
+            var request = Clocked();
+            request.scheduleOverride.AddRange(new[] { "P0", "P0", "P1", "P2" });
+
+            var errors = new List<string>();
+            CollectionAssert.AreEqual(new[] { 0, 0, 1, 2 },
+                AsyncSyncSchedule.ResolveScheduleOverride(request, slots, errors));
+            CollectionAssert.IsEmpty(errors);
+        }
+
+        [Test]
+        public void RepairScheduleOverride_KeepsARepeatWhenAClockPaysForIt()
+        {
+            var controller = Floats("A", "B", "C");
+            var request = Multiplexing(controller, "A", "B", "C");
+            request.allowRepeatSteps = true;
+
+            CollectionAssert.AreEqual(new[] { "A", "A", "B", "C" },
+                Repair(request, "A", "A", "B", "C"));
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void RepairSteps_KeepsARepeatedStepWhenAClockPaysForIt()
+        {
+            var controller = Floats("A", "B");
+            var request = Sending(controller, new[] { "A", "B" },
+                new[] { "A" }, new[] { "A" }, new[] { "B" });
+            request.allowRepeatSteps = true;
+
+            // The run of A collapses without a clock (see the test above); with one it is the
+            // pass its author drew, and the repair has nothing to say about it.
+            AssertGrid(AsyncSyncSchedule.RepairSteps(request, request.steps),
+                new[] { "A" }, new[] { "A" }, new[] { "B" });
 
             Object.DestroyImmediate(controller);
         }

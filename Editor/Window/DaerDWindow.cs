@@ -461,7 +461,7 @@ namespace Yozolab.DaerD
                 _breadcrumb.Add(new ToolbarButton(() => _context.ExitBlendTree())
                 {
                     text = (originState != null ? originState.name : "Blend Tree") + " ▾",
-                    tooltip = "Return to the state machine view",
+                    tooltip = L.Tr("Return to the state machine view"),
                 });
                 for (int i = 0; i < _context.BlendTreePath.Count; i++)
                 {
@@ -620,29 +620,36 @@ namespace Yozolab.DaerD
             _homePanel?.Refresh();
         }
 
-        void OnPlayModeChanged(PlayModeStateChange change) => _graphView?.Sync.RequestRebuild();
+        void OnPlayModeChanged(PlayModeStateChange change)
+        {
+            // Leaving play mode destroys whatever was being read; the panels must stop showing
+            // its last values as though they were still live.
+            _context?.Live.Clear();
+            _parametersPanel?.Refresh();
+            _layersPanel?.Refresh();
+            _graphView?.Sync.SetRuntimePlayback(default);
+            _graphView?.Sync.RequestRebuild();
+        }
 
         void PollRuntime()
         {
-            if (!EditorApplication.isPlaying || _context == null || _graphView == null || _controller == null) return;
-            if (EditorApplication.timeSinceStartup - _lastRuntimePoll < 0.1) return;
-            _lastRuntimePoll = EditorApplication.timeSinceStartup;
+            if (!EditorApplication.isPlaying || _context == null || _controller == null) return;
 
-            var go = Selection.activeGameObject;
-            if (go == null) return;
-            var animator = go.GetComponent<Animator>();
-            if (animator == null || !ControllerMatches(animator.runtimeAnimatorController)) return;
-            if (animator.layerCount == 0) return;
+            // Two cadences. The panels are throttled — numbers changing more than ten times a
+            // second are unreadable anyway, and each refresh repaints an IMGUI list. The graph
+            // reads every tick, because a progress bar that steps ten times a second looks
+            // broken rather than slow.
+            if (EditorApplication.timeSinceStartup - _lastRuntimePoll >= 0.1)
+            {
+                _lastRuntimePoll = EditorApplication.timeSinceStartup;
+                _context.Live.Poll(_controller, EditorApplication.timeSinceStartup);
+                _parametersPanel?.Refresh();
+                _layersPanel?.Refresh();
+            }
 
-            int layer = Mathf.Clamp(_context.LayerIndex, 0, animator.layerCount - 1);
-            var info = animator.GetCurrentAnimatorStateInfo(layer);
-            _graphView.Sync.SetRuntimeStateHash(info.shortNameHash);
-        }
-
-        bool ControllerMatches(RuntimeAnimatorController runtime)
-        {
-            if (runtime == _controller) return true;
-            return runtime is AnimatorOverrideController over && over.runtimeAnimatorController == _controller;
+            if (_graphView == null) return;
+            _graphView.Sync.SetRuntimePlayback(
+                AnimatorPlayback.Read(_context.Live.Current, _context.LayerIndex));
         }
 
         static StyleSheet LoadStyleSheet()

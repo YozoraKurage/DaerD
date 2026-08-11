@@ -132,7 +132,7 @@ namespace Yozolab.DaerD
                 else _expanded.Remove(entry.clip);
             }
             if (GUILayout.Button(new GUIContent(L.Tr("Ping"), L.Tr("Highlight this object in the Project / graph")),
-                    EditorStyles.miniButton, GUILayout.Width(46)))
+                    EditorStyles.miniButton, GUILayout.Width(DaerDLayout.RowAction)))
                 EditorGUIUtility.PingObject(entry.clip);
             EditorGUILayout.EndHorizontal();
 
@@ -158,7 +158,7 @@ namespace Yozolab.DaerD
                 EditorGUILayout.LabelField(new GUIContent(usage.label, usage.label), EditorStyles.miniLabel);
                 if (GUILayout.Button(new GUIContent(L.Tr("Jump"),
                         L.Tr("Open the layer and select the state that uses this clip")),
-                        EditorStyles.miniButton, GUILayout.Width(46)))
+                        EditorStyles.miniButton, GUILayout.Width(DaerDLayout.RowAction)))
                     _pendingJump = usage;
                 EditorGUILayout.EndHorizontal();
             }

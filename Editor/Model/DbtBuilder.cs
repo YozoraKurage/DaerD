@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
@@ -23,6 +24,31 @@ namespace Yozolab.DaerD
             foreach (var sm in layer.stateMachine.SelfAndDescendants())
                 if (sm.states.Length > 0) return false;
             return true;
+        }
+
+        /// <summary>
+        /// Human-readable reason the chosen layer can't host a gadget, or null when it can. The
+        /// question every builder that adds a Direct child asks first — gadgets, toggles wired
+        /// as a tree — because the answer is about the layer, not about what is being added:
+        /// an index that no longer resolves, or a layer already carrying states that are not
+        /// Direct trees and would be joined rather than shared.
+        /// </summary>
+        public static string ValidateLayerChoice(AnimatorController controller, int layerIndex,
+            string newLayerName)
+        {
+            if (layerIndex >= 0)
+            {
+                if (layerIndex >= controller.layers.Length)
+                    return L.Tr("The target layer no longer exists.");
+                var layer = controller.layers[layerIndex];
+                if (!IsLayerEmpty(layer) && !ControllerAnalyzer.IsDirectBlendTreeOnlyLayer(layer))
+                    return L.Tr("The target layer must be empty or contain only Direct blend tree states.");
+            }
+            else if (string.IsNullOrEmpty(newLayerName))
+            {
+                return L.Tr("The new layer needs a name.");
+            }
+            return null;
         }
 
         /// <summary>
@@ -141,6 +167,30 @@ namespace Yozolab.DaerD
                 if (p.name == name) return p;
             return null;
         }
+
+        /// <summary>
+        /// Every parameter by name, read in one go. Use this instead of
+        /// <see cref="FindParameter"/> whenever a loop asks about more than a couple of names:
+        /// <c>AnimatorController.parameters</c> is a native property that builds and marshals a
+        /// fresh array on every access, so asking per item costs the whole parameter list per
+        /// item. On an avatar's worth of parameters, a loop over twenty targets was moving a
+        /// few thousand objects across to answer twenty questions.
+        /// </summary>
+        public static Dictionary<string, AnimatorControllerParameter> ParametersByName(
+            AnimatorController controller)
+        {
+            var byName = new Dictionary<string, AnimatorControllerParameter>();
+            if (controller == null) return byName;
+            foreach (var p in controller.parameters)
+                byName[p.name] = p;
+            return byName;
+        }
+
+        /// <summary>The parameter, or null — the dictionary form of <see cref="FindParameter"/>,
+        /// so a loop reads the same way whichever it uses.</summary>
+        public static AnimatorControllerParameter Find(
+            this Dictionary<string, AnimatorControllerParameter> byName, string name) =>
+            name != null && byName.TryGetValue(name, out var parameter) ? parameter : null;
 
         /// <summary>One-key clip animating the parameter itself on the Animator — the AAP.
         /// Left visible in the Project view so the generated pieces are discoverable.</summary>

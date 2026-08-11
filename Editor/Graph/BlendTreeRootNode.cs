@@ -11,8 +11,6 @@ namespace Yozolab.DaerD
         public BlendTree Tree { get; }
         public override object Model => Tree;
 
-        static readonly Color HeaderColor = new Color(0.32f, 0.42f, 0.62f);
-        static readonly Color NestedHeaderColor = new Color(0.38f, 0.32f, 0.55f);
 
         public BlendTreeRootNode(BlendTree tree, bool isFocusedRoot, System.Action onClick, System.Action onDoubleClick)
         {
@@ -33,7 +31,7 @@ namespace Yozolab.DaerD
             capabilities = Capabilities.Selectable;
 
             title = tree != null ? tree.name : "Blend Tree";
-            titleContainer.style.backgroundColor = isFocusedRoot ? HeaderColor : NestedHeaderColor;
+            titleContainer.style.backgroundColor = isFocusedRoot ? DaerDColors.BlendTreeRootHeader : DaerDColors.BlendTreeNestedHeader;
 
             var body = new VisualElement();
             body.style.paddingLeft = 8;
@@ -64,7 +62,7 @@ namespace Yozolab.DaerD
             RefreshExpandedState();
             RefreshPorts();
 
-            tooltip = "Click to ping in Project · Double-click to focus on this tree";
+            tooltip = L.Tr("Click to ping in Project · Double-click to focus on this tree");
             RegisterCallback<MouseDownEvent>(evt =>
             {
                 if (evt.button != 0) return;

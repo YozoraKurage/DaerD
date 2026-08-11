@@ -1,18 +1,21 @@
 {
-  "name": "Claude Code Sandbox",
+  "name": "DaerD (Claude Code + Unity)",
   "build": {
     "dockerfile": "Dockerfile",
     "args": {
       "TZ": "${localEnv:TZ:Asia/Tokyo}",
       "CLAUDE_CODE_VERSION": "latest",
       "GIT_DELTA_VERSION": "0.18.2",
-      "ZSH_IN_DOCKER_VERSION": "1.2.0"
+      "ZSH_IN_DOCKER_VERSION": "1.2.0",
+      "UNITY_VERSION": "2022.3.22f1",
+      "UNITY_IMAGE_VERSION": "3"
     }
   },
   "runArgs": [
     "--cap-add=NET_ADMIN",
     "--cap-add=NET_RAW"
   ],
+  "init": true,
   "customizations": {
     "vscode": {
       "extensions": [
@@ -43,13 +46,25 @@
   "remoteUser": "node",
   "mounts": [
     "source=claude-code-bashhistory-${devcontainerId},target=/commandhistory,type=volume",
-    "source=claude-code-config-${devcontainerId},target=/home/node/.claude,type=volume"
+    "source=claude-code-config-${devcontainerId},target=/home/node/.claude,type=volume",
+    // Unity テストプロジェクト。Library/ キャッシュがここに溜まるので、
+    // ボリュームにしておくと再ビルドしても 2 回目以降のテストが速いまま。
+    // ワークスペース (D: の 9p バインド) ではなくボリュームに置くのは I/O が
+    // 桁違いに速いから。
+    "source=daerd-unity-project-${devcontainerId},target=/home/node/unity-testproject,type=volume",
+    // Personal ライセンス (.ulf) の保管場所。再ビルドで消えないようにする。
+    "source=daerd-unity-license-${devcontainerId},target=/home/node/.unity-license,type=volume",
+    // Unity のパッケージキャッシュ・エディタ設定
+    "source=daerd-unity-config-${devcontainerId},target=/home/node/.config/unity3d,type=volume"
   ],
   "containerEnv": {
     "NODE_OPTIONS": "--max-old-space-size=4096",
     "CLAUDE_CONFIG_DIR": "/home/node/.claude",
-    "POWERLEVEL9K_DISABLE_GITSTATUS": "true"
+    "POWERLEVEL9K_DISABLE_GITSTATUS": "true",
+    "DAERD_UNITY_PROJECT": "/home/node/unity-testproject"
   },
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=delegated",
-  "workspaceFolder": "/workspace"
+  "workspaceFolder": "/workspace",
+  // chmod は Windows ホストから clone した場合に実行ビットが落ちているのを直すため。
+  "postCreateCommand": "chmod +x /workspace/.devcontainer/unity/*.sh /workspace/.devcontainer/unity/*.js && bash /workspace/.devcontainer/unity/setup.sh"
 }

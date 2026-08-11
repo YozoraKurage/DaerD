@@ -56,11 +56,11 @@ namespace Yozolab.DaerD
                 EditorGUILayout.BeginHorizontal();
                 EditorGUILayout.LabelField(ControllerCleanup.Describe(asset), EditorStyles.miniLabel);
                 if (GUILayout.Button(new GUIContent(L.Tr("Ping"), L.Tr("Highlight this object in the Project / graph")),
-                        EditorStyles.miniButton, GUILayout.Width(46)))
+                        EditorStyles.miniButton, GUILayout.Width(DaerDLayout.RowAction)))
                     EditorGUIUtility.PingObject(asset);
                 if (GUILayout.Button(new GUIContent(L.Tr("Delete"),
                         L.Tr("Delete this leftover sub-asset from the .controller file")),
-                        EditorStyles.miniButton, GUILayout.Width(46)))
+                        EditorStyles.miniButton, GUILayout.Width(DaerDLayout.RowAction)))
                 {
                     // Undoable single delete — no dialog, matching the analyzer's one-click fixes.
                     ControllerCleanup.DeleteSubAssets(controller, new[] { asset });
