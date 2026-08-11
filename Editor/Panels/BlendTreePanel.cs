@@ -71,8 +71,8 @@ namespace Yozolab.DaerD
                         break;
                 }
 
-                child.timeScale = EditorGUILayout.FloatField(child.timeScale, GUILayout.Width(46));
-                if (GUILayout.Button("X", EditorStyles.miniButton, GUILayout.Width(22)))
+                child.timeScale = EditorGUILayout.FloatField(child.timeScale, GUILayout.Width(DaerDLayout.RowAction));
+                if (GUILayout.Button("X", EditorStyles.miniButton, GUILayout.Width(DaerDLayout.GlyphButton)))
                     removeIndex = i;
                 children[i] = child;
                 EditorGUILayout.EndHorizontal();
@@ -163,7 +163,7 @@ namespace Yozolab.DaerD
                     EditorGUILayout.LabelField(L.Tr("Position (X, Y)"), headerStyle, GUILayout.Width(120));
                     break;
             }
-            EditorGUILayout.LabelField(L.Tr("Speed"), headerStyle, GUILayout.Width(46));
+            EditorGUILayout.LabelField(L.Tr("Speed"), headerStyle, GUILayout.Width(DaerDLayout.RowAction));
             // Spacer matches the per-row "X" remove button so the header line never wraps.
             GUILayout.Space(22 + 4);
             EditorGUILayout.EndHorizontal();

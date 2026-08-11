@@ -97,7 +97,7 @@ namespace Yozolab.DaerD
             bool auto = GUILayout.Toggle(_autoRepath,
                 new GUIContent(L.Tr("Auto-Repath"),
                     L.Tr("While this window is open, follow renames and moves under the avatar and rewrite the bindings that were valid when this was enabled.")),
-                EditorStyles.miniButton, GUILayout.Width(100));
+                EditorStyles.miniButton, GUILayout.Width(DaerDLayout.DialogButton));
             if (auto != _autoRepath)
                 SetAutoRepath(auto);
             EditorGUILayout.EndHorizontal();
@@ -163,7 +163,7 @@ namespace Yozolab.DaerD
                     new GUIContent(entry.clip.name + " : " + entry.binding.path,
                         entry.binding.propertyName),
                     EditorStyles.miniLabel);
-                if (GUILayout.Button(L.Tr("Ping"), EditorStyles.miniButton, GUILayout.Width(46)))
+                if (GUILayout.Button(L.Tr("Ping"), EditorStyles.miniButton, GUILayout.Width(DaerDLayout.RowAction)))
                     EditorGUIUtility.PingObject(entry.clip);
                 EditorGUILayout.EndHorizontal();
             }

@@ -85,10 +85,10 @@ namespace Yozolab.DaerD
                 }
 
                 using (new EditorGUI.DisabledScope(i == 0))
-                    if (GUILayout.Button("↑", EditorStyles.miniButton, GUILayout.Width(22)))
+                    if (GUILayout.Button("↑", EditorStyles.miniButton, GUILayout.Width(DaerDLayout.GlyphButton)))
                     { VrcBehaviours.Move(state, i, -1); GUIUtility.ExitGUI(); }
                 using (new EditorGUI.DisabledScope(i == behaviours.Length - 1))
-                    if (GUILayout.Button("↓", EditorStyles.miniButton, GUILayout.Width(22)))
+                    if (GUILayout.Button("↓", EditorStyles.miniButton, GUILayout.Width(DaerDLayout.GlyphButton)))
                     { VrcBehaviours.Move(state, i, +1); GUIUtility.ExitGUI(); }
                 if (GUILayout.Button(L.Tr("Remove"), EditorStyles.miniButton, GUILayout.Width(60)))
                 {

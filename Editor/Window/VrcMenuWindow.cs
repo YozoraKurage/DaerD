@@ -200,16 +200,16 @@ namespace Yozolab.DaerD
                     _selected = i;
                 GUI.backgroundColor = prev;
                 using (new EditorGUI.DisabledScope(i == 0))
-                    if (GUILayout.Button("↑", EditorStyles.miniButtonMid, GUILayout.Width(22))
+                    if (GUILayout.Button("↑", EditorStyles.miniButtonMid, GUILayout.Width(DaerDLayout.GlyphButton))
                         && VrcMenuAccess.MoveControl(menu, i, i - 1))
                     { _selected = i - 1; GUIUtility.ExitGUI(); }
                 using (new EditorGUI.DisabledScope(i == controls.Count - 1))
-                    if (GUILayout.Button("↓", EditorStyles.miniButtonMid, GUILayout.Width(22))
+                    if (GUILayout.Button("↓", EditorStyles.miniButtonMid, GUILayout.Width(DaerDLayout.GlyphButton))
                         && VrcMenuAccess.MoveControl(menu, i, i + 1))
                     { _selected = i + 1; GUIUtility.ExitGUI(); }
                 if (control.type == VrcMenuAccess.ControlType.SubMenu && control.subMenu != null)
                     if (GUILayout.Button(new GUIContent(L.Tr("Open"), L.Tr("Edit this submenu")),
-                            EditorStyles.miniButtonRight, GUILayout.Width(46)))
+                            EditorStyles.miniButtonRight, GUILayout.Width(DaerDLayout.RowAction)))
                     {
                         _stack.Add(control.subMenu);
                         _selected = -1;
@@ -224,10 +224,10 @@ namespace Yozolab.DaerD
                 GUILayout.Width(50));
             GUILayout.FlexibleSpace();
             using (new EditorGUI.DisabledScope(controls.Count >= max))
-                if (GUILayout.Button("+", EditorStyles.miniButton, GUILayout.Width(26)))
+                if (GUILayout.Button("+", EditorStyles.miniButton, GUILayout.Width(DaerDLayout.GlyphButton)))
                     _selected = VrcMenuAccess.AddControl(menu);
             using (new EditorGUI.DisabledScope(_selected < 0 || controls.Count == 0))
-                if (GUILayout.Button("−", EditorStyles.miniButton, GUILayout.Width(26)))
+                if (GUILayout.Button("−", EditorStyles.miniButton, GUILayout.Width(DaerDLayout.GlyphButton)))
                 {
                     VrcMenuAccess.RemoveControl(menu, _selected);
                     _selected = -1;
@@ -320,7 +320,7 @@ namespace Yozolab.DaerD
             string typed = EditorGUILayout.DelayedTextField(label, current);
             if (typed != current)
                 ApplyParameter(menu, index, slot, typed);
-            if (GUILayout.Button("▾", EditorStyles.miniButton, GUILayout.Width(22)))
+            if (GUILayout.Button("▾", EditorStyles.miniButton, GUILayout.Width(DaerDLayout.GlyphButton)))
             {
                 var picker = new GenericMenu();
                 if (_controller != null)

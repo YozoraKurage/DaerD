@@ -92,9 +92,9 @@ namespace Yozolab.DaerD
             EditorGUILayout.Space(8);
             EditorGUILayout.BeginHorizontal();
             GUILayout.FlexibleSpace();
-            if (GUILayout.Button(L.Tr("Cancel"), GUILayout.Width(100)))
+            if (GUILayout.Button(L.Tr("Cancel"), GUILayout.Width(DaerDLayout.DialogButton)))
                 Close();
-            if (GUILayout.Button(L.Tr("Create"), GUILayout.Width(100)))
+            if (GUILayout.Button(L.Tr("Create"), GUILayout.Width(DaerDLayout.DialogButton)))
                 TryApply(request);
             EditorGUILayout.EndHorizontal();
 

@@ -204,13 +204,13 @@ namespace Yozolab.DaerD
                 // Find-uses: lists every transition condition / blend-tree blend slot / state
                 // parameter override that mentions this parameter, plus row actions
                 // (duplicate / copy / remap / delete-and-clean).
-                if (GUILayout.Button(FindContent, EditorStyles.miniButton, GUILayout.Width(22)))
+                if (GUILayout.Button(FindContent, EditorStyles.miniButton, GUILayout.Width(DaerDLayout.GlyphButton)))
                 {
                     ShowUsagesMenu(p.name, i);
                     GUIUtility.ExitGUI();
                 }
 
-                if (GUILayout.Button("✕", EditorStyles.miniButton, GUILayout.Width(22)))
+                if (GUILayout.Button("✕", EditorStyles.miniButton, GUILayout.Width(DaerDLayout.GlyphButton)))
                 { RemoveParameter(i); GUIUtility.ExitGUI(); }
 
                 EditorGUILayout.EndHorizontal();
@@ -390,10 +390,10 @@ namespace Yozolab.DaerD
             {
                 bool synced = GUILayout.Toggle(entry.synced,
                     new GUIContent("S", L.Tr("Network synced (costs bits)")),
-                    EditorStyles.miniButton, GUILayout.Width(22));
+                    EditorStyles.miniButton, GUILayout.Width(DaerDLayout.GlyphButton));
                 bool saved = GUILayout.Toggle(entry.saved,
                     new GUIContent("D", L.Tr("Saved between worlds")),
-                    EditorStyles.miniButton, GUILayout.Width(22));
+                    EditorStyles.miniButton, GUILayout.Width(DaerDLayout.GlyphButton));
                 if (synced != entry.synced || saved != entry.saved)
                     _store.Edit(parameter.name, e =>
                     {
@@ -406,7 +406,7 @@ namespace Yozolab.DaerD
             var mapped = VrcExpressionParameters.MapType(parameter.type);
             using (new EditorGUI.DisabledScope(mapped == null))
                 if (GUILayout.Button(new GUIContent("+", L.Tr("Add to the VRC expression parameters asset")),
-                        EditorStyles.miniButton, GUILayout.Width(46)))
+                        EditorStyles.miniButton, GUILayout.Width(DaerDLayout.RowAction)))
                     _store.Add(new VrcExpressionParameters.Entry
                     {
                         name = parameter.name,

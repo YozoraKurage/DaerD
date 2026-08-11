@@ -376,12 +376,12 @@ namespace Yozolab.DaerD
             EditorGUILayout.Space(8);
             EditorGUILayout.BeginHorizontal();
             GUILayout.FlexibleSpace();
-            if (GUILayout.Button(L.Tr("Cancel"), GUILayout.Width(100)))
+            if (GUILayout.Button(L.Tr("Cancel"), GUILayout.Width(DaerDLayout.DialogButton)))
                 Close();
-            if (_gadgetChoice > 0 && GUILayout.Button(L.Tr("Delete"), GUILayout.Width(100)))
+            if (_gadgetChoice > 0 && GUILayout.Button(L.Tr("Delete"), GUILayout.Width(DaerDLayout.DialogButton)))
                 TryDelete();
             if (GUILayout.Button(_gadgetChoice > 0 ? L.Tr("Regenerate") : L.Tr("Create"),
-                GUILayout.Width(100)))
+                GUILayout.Width(DaerDLayout.DialogButton)))
                 TryApply();
             EditorGUILayout.EndHorizontal();
         }

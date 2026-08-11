@@ -152,10 +152,10 @@ namespace Yozolab.DaerD
             EditorGUILayout.BeginHorizontal();
             EditorGUILayout.HelpBox(
                 "[" + ControllerAnalyzer.CategoryLabel(issue.kind) + "] " + issue.message, messageType);
-            var buttons = new GUILayoutOption[] { GUILayout.Width(46), GUILayout.Height(issue.fix != null ? 19 : 38) };
+            var buttons = new GUILayoutOption[] { GUILayout.Width(DaerDLayout.RowAction), GUILayout.Height(issue.fix != null ? 19 : 38) };
             if (issue.fix != null || issue.context != null)
             {
-                EditorGUILayout.BeginVertical(GUILayout.Width(46));
+                EditorGUILayout.BeginVertical(GUILayout.Width(DaerDLayout.RowAction));
                 if (issue.context != null && GUILayout.Button(
                         new GUIContent(L.Tr("Ping"), L.Tr("Highlight this object in the Project / graph")), buttons))
                     _pendingPing = issue;

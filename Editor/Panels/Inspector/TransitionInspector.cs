@@ -116,7 +116,7 @@ namespace Yozolab.DaerD
                     HandleRowClick(pool, i);
                 GUI.backgroundColor = prevBackground;
 
-                if (GUILayout.Button("X", EditorStyles.miniButton, GUILayout.Width(24)))
+                if (GUILayout.Button("X", EditorStyles.miniButton, GUILayout.Width(DaerDLayout.GlyphButton)))
                 {
                     DeleteTransitionRow(t, pool);
                     GUIUtility.ExitGUI();
@@ -326,7 +326,7 @@ namespace Yozolab.DaerD
                 var type = typeByName.TryGetValue(condition.parameter, out var t) ? t : AnimatorControllerParameterType.Float;
                 ConditionGui.DrawConditionValue(condition, type);
 
-                if (GUILayout.Button("X", EditorStyles.miniButton, GUILayout.Width(22)))
+                if (GUILayout.Button("X", EditorStyles.miniButton, GUILayout.Width(DaerDLayout.GlyphButton)))
                     removeIndex = i;
 
                 EditorGUILayout.EndHorizontal();
