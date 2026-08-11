@@ -1557,6 +1557,32 @@ msgstr ""
 msgid "Driven by an animation clip (Animator-Animated Parameter)"
 msgstr "アニメーションクリップから書き込まれています（AAP）"
 
+# ---- live values during play mode ----
+
+msgid "Live"
+msgstr "ライブ"
+
+msgid "Show what the running Animator holds instead of the controller's defaults."
+msgstr "コントローラーの既定値ではなく、実行中の Animator が保持している値を表示します。"
+
+msgid "Runtime values. Editing one writes to the Animator, not to the controller asset."
+msgstr "実行中の値です。編集しても書き込まれるのは Animator で、コントローラーのアセットは変わりません。"
+
+msgid "Several Animators in the scene run this controller. Pick the one to read above."
+msgstr "このコントローラーを実行している Animator がシーンに複数あります。読み取る 1 つを上で指定してください。"
+
+msgid "No Animator in the scene is running this controller."
+msgstr "このコントローラーを実行している Animator がシーンにありません。"
+
+msgid "An animation clip is driving this right now"
+msgstr "いまアニメーションクリップが書き込んでいます"
+
+msgid "Fire"
+msgstr "発火"
+
+msgid "Set this trigger on the running Animator"
+msgstr "実行中の Animator でこの Trigger を立てます"
+
 msgid "Delete and Clean"
 msgstr "削除してクリーン"
 

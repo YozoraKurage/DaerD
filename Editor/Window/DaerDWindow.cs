@@ -620,29 +620,29 @@ namespace Yozolab.DaerD
             _homePanel?.Refresh();
         }
 
-        void OnPlayModeChanged(PlayModeStateChange change) => _graphView?.Sync.RequestRebuild();
+        void OnPlayModeChanged(PlayModeStateChange change)
+        {
+            // Leaving play mode destroys whatever was being read; the panels must stop showing
+            // its last values as though they were still live.
+            _context?.Live.Clear();
+            _parametersPanel?.Refresh();
+            _graphView?.Sync.RequestRebuild();
+        }
 
         void PollRuntime()
         {
-            if (!EditorApplication.isPlaying || _context == null || _graphView == null || _controller == null) return;
+            if (!EditorApplication.isPlaying || _context == null || _controller == null) return;
             if (EditorApplication.timeSinceStartup - _lastRuntimePoll < 0.1) return;
             _lastRuntimePoll = EditorApplication.timeSinceStartup;
 
-            var go = Selection.activeGameObject;
-            if (go == null) return;
-            var animator = go.GetComponent<Animator>();
-            if (animator == null || !ControllerMatches(animator.runtimeAnimatorController)) return;
-            if (animator.layerCount == 0) return;
+            _context.Live.Poll(_controller);
+            _parametersPanel?.Refresh();
 
+            var animator = _context.Live.Current;
+            if (_graphView == null || animator == null || animator.layerCount == 0) return;
             int layer = Mathf.Clamp(_context.LayerIndex, 0, animator.layerCount - 1);
             var info = animator.GetCurrentAnimatorStateInfo(layer);
             _graphView.Sync.SetRuntimeStateHash(info.shortNameHash);
-        }
-
-        bool ControllerMatches(RuntimeAnimatorController runtime)
-        {
-            if (runtime == _controller) return true;
-            return runtime is AnimatorOverrideController over && over.runtimeAnimatorController == _controller;
         }
 
         static StyleSheet LoadStyleSheet()

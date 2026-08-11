@@ -30,6 +30,11 @@ namespace Yozolab.DaerD
         /// switches so parameters can be copied across open tabs.</summary>
         static AnimatorControllerParameter s_parameterClipboard;
 
+        /// <summary>Show runtime values while the editor plays. Session-static like the
+        /// analyzer's severity filter — a display preference, not worth an EditorPref. On by
+        /// default: during play mode the defaults are the less useful of the two.</summary>
+        static bool s_live = true;
+
         static readonly GUIContent FindContent = new GUIContent("?",
             "Find where this parameter is used (click to list every usage)");
 
@@ -66,6 +71,41 @@ namespace Yozolab.DaerD
             _search = EditorGUILayout.TextField(_search, EditorStyles.toolbarSearchField,
                 GUILayout.MinWidth(0), GUILayout.ExpandWidth(true));
             EditorGUILayout.EndHorizontal();
+            DrawLiveBar();
+        }
+
+        /// <summary>
+        /// The play-mode row: which Animator is being read, and the switch back to editing the
+        /// controller's defaults. Only drawn while the editor plays, so the panel looks exactly
+        /// as it always has the rest of the time.
+        /// </summary>
+        void DrawLiveBar()
+        {
+            if (!EditorApplication.isPlaying) return;
+            var live = Context.Live;
+
+            EditorGUILayout.BeginHorizontal();
+            s_live = GUILayout.Toggle(s_live, new GUIContent(L.Tr("Live"),
+                    L.Tr("Show what the running Animator holds instead of the controller's defaults.")),
+                EditorStyles.miniButton, GUILayout.Width(50));
+            var shown = live.Pinned != null ? live.Pinned : live.Current;
+            var picked = (Animator)EditorGUILayout.ObjectField(shown, typeof(Animator), true,
+                GUILayout.MinWidth(0));
+            if (picked != shown) live.Pinned = picked;
+            EditorGUILayout.EndHorizontal();
+
+            if (!s_live) return;
+            if (live.IsLive)
+                EditorGUILayout.LabelField(
+                    L.Tr("Runtime values. Editing one writes to the Animator, not to the controller asset."),
+                    EditorStyles.centeredGreyMiniLabel);
+            else if (live.Ambiguous)
+                EditorGUILayout.HelpBox(
+                    L.Tr("Several Animators in the scene run this controller. Pick the one to read above."),
+                    MessageType.Info);
+            else
+                EditorGUILayout.HelpBox(
+                    L.Tr("No Animator in the scene is running this controller."), MessageType.Info);
         }
 
         protected override void DrawContent()
@@ -136,12 +176,16 @@ namespace Yozolab.DaerD
                     GUIUtility.ExitGUI();
                 }
 
-                if (AapParams(controller).Contains(p.name))
-                    GUILayout.Label(new GUIContent("AAP",
-                        L.Tr("Driven by an animation clip (Animator-Animated Parameter)")),
+                // The clip scan is a guess about what will happen; while something is running,
+                // the animation system's own answer is available and outranks it.
+                bool driven = s_live && Context.Live.IsCurveDriven(p.name);
+                if (driven || AapParams(controller).Contains(p.name))
+                    GUILayout.Label(new GUIContent("AAP", driven
+                        ? L.Tr("An animation clip is driving this right now")
+                        : L.Tr("Driven by an animation clip (Animator-Animated Parameter)")),
                         EditorStyles.centeredGreyMiniLabel, GUILayout.Width(30));
 
-                DrawDefaultValue(controller, parameters, i);
+                DrawValue(controller, parameters, i);
                 DrawVrcFlags(p);
 
                 // Find-uses: lists every transition condition / blend-tree blend slot / state
@@ -163,6 +207,60 @@ namespace Yozolab.DaerD
 
             if (parameters.Length == 0)
                 EditorGUILayout.LabelField("No parameters.", EditorStyles.centeredGreyMiniLabel);
+        }
+
+        /// <summary>The value column: what the Animator holds while something is running it,
+        /// and the controller's own default the rest of the time.</summary>
+        void DrawValue(AnimatorController controller, AnimatorControllerParameter[] parameters, int index)
+        {
+            var p = parameters[index];
+            if (s_live && Context.Live.Has(p.name, p.type)) DrawLiveValue(p);
+            else DrawDefaultValue(controller, parameters, index);
+        }
+
+        void DrawLiveValue(AnimatorControllerParameter p)
+        {
+            var live = Context.Live;
+            if (p.type == AnimatorControllerParameterType.Trigger)
+            {
+                // A trigger is consumed by the transition that reads it, so there is no steady
+                // value to show — only the act of setting it.
+                if (GUILayout.Button(new GUIContent(L.Tr("Fire"),
+                        L.Tr("Set this trigger on the running Animator")),
+                        EditorStyles.miniButton, GUILayout.Width(56)))
+                    live.FireTrigger(p.name);
+                return;
+            }
+
+            // A curve-driven parameter is rewritten by the animation system every frame; a
+            // value typed here would be gone before the next repaint.
+            bool driven = live.IsCurveDriven(p.name);
+            float f = 0f;
+            int n = 0;
+            bool b = false;
+            using (new EditorGUI.DisabledScope(driven))
+            {
+                EditorGUI.BeginChangeCheck();
+                switch (p.type)
+                {
+                    case AnimatorControllerParameterType.Float:
+                        f = EditorGUILayout.FloatField(live.GetFloat(p.name), GUILayout.Width(56));
+                        break;
+                    case AnimatorControllerParameterType.Int:
+                        n = EditorGUILayout.IntField(live.GetInt(p.name), GUILayout.Width(56));
+                        break;
+                    default:
+                        b = EditorGUILayout.Toggle(live.GetBool(p.name), GUILayout.Width(56));
+                        break;
+                }
+                if (!EditorGUI.EndChangeCheck() || driven) return;
+            }
+            switch (p.type)
+            {
+                case AnimatorControllerParameterType.Float: live.SetFloat(p.name, f); break;
+                case AnimatorControllerParameterType.Int: live.SetInt(p.name, n); break;
+                default: live.SetBool(p.name, b); break;
+            }
         }
 
         void DrawDefaultValue(AnimatorController controller, AnimatorControllerParameter[] parameters, int index)
