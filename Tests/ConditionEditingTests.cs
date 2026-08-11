@@ -101,13 +101,14 @@ namespace Yozolab.DaerD.Tests
             // not offer a finer step for a value that has to stay whole.
             Assert.AreEqual(3f, ConditionGui.Stepped(2.5f, 1, AnimatorControllerParameterType.Int, fine: false));
             Assert.AreEqual(4f, ConditionGui.Stepped(3f, 1, AnimatorControllerParameterType.Int, fine: true));
+            Assert.AreEqual(2f, ConditionGui.Stepped(3f, -1, AnimatorControllerParameterType.Int, fine: true));
         }
 
         [Test]
-        public void AWheelNotchOnAFloatThreshold_MovesItByATenth()
+        public void AWheelNotchOnAFloatThreshold_MovesItByOne()
         {
-            Assert.AreEqual(0.6f, ConditionGui.Stepped(0.5f, 1, AnimatorControllerParameterType.Float, fine: false), 1e-5f);
-            Assert.AreEqual(0.51f, ConditionGui.Stepped(0.5f, 1, AnimatorControllerParameterType.Float, fine: true), 1e-5f);
+            Assert.AreEqual(1.5f, ConditionGui.Stepped(0.5f, 1, AnimatorControllerParameterType.Float, fine: false), 1e-5f);
+            Assert.AreEqual(0.6f, ConditionGui.Stepped(0.5f, 1, AnimatorControllerParameterType.Float, fine: true), 1e-5f);
         }
 
         [Test]
@@ -115,7 +116,7 @@ namespace Yozolab.DaerD.Tests
         {
             float value = 0f;
             for (int i = 0; i < 10; i++)
-                value = ConditionGui.Stepped(value, 1, AnimatorControllerParameterType.Float, fine: false);
+                value = ConditionGui.Stepped(value, 1, AnimatorControllerParameterType.Float, fine: true);
 
             // Without the rounding this is 0.99999994, and the field shows it.
             Assert.AreEqual(1f, value);

@@ -117,15 +117,16 @@ namespace Yozolab.DaerD
         public static int Wrap(int index, int count) => count <= 0 ? 0 : ((index % count) + count) % count;
 
         /// <summary>
-        /// One notch on a threshold. A Float moves by a tenth, or a hundredth with Ctrl held, and
-        /// is rounded afterwards so ten notches of a tenth land on 1 rather than on 0.99999994.
-        /// An Int moves by whole numbers whatever is held down: a threshold of 2.5 on an Int
-        /// parameter is not a finer setting, it is one no value can sit on.
+        /// One notch on a threshold: whole numbers, or tenths with Ctrl held. The result is
+        /// rounded so ten notches of a tenth land on 1 rather than on 0.99999994.
+        ///
+        /// An Int ignores the finer step — a threshold of 2.5 on an Int parameter is not a finer
+        /// setting, it is one no value can sit on.
         /// </summary>
         public static float Stepped(float value, int notches, AnimatorControllerParameterType type, bool fine)
         {
             if (type == AnimatorControllerParameterType.Int) return Mathf.Round(value) + notches;
-            return (float)Math.Round(value + notches * (fine ? 0.01f : 0.1f), 4);
+            return (float)Math.Round(value + notches * (fine ? 0.1f : 1f), 4);
         }
 
         public static List<TransitionClipboard.ConditionData> ToDataList(AnimatorTransitionBase transition)

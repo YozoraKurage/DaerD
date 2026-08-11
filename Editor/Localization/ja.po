@@ -1394,18 +1394,6 @@ msgstr "条件を編集する前にパラメーターを追加してください
 msgid "(set)"
 msgstr "(セット)"
 
-msgid "Greater"
-msgstr "より大"
-
-msgid "Less"
-msgstr "より小"
-
-msgid "Equals"
-msgstr "＝"
-
-msgid "NotEqual"
-msgstr "≠"
-
 msgid "{0} transitions selected"
 msgstr "{0} 件の Transition を選択中"
 

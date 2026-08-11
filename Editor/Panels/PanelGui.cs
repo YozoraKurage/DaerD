@@ -111,11 +111,17 @@ namespace Yozolab.DaerD
             }
         }
 
+        /// <summary>
+        /// The comparison names as Unity writes them — Greater, Less, Equals, NotEqual — and
+        /// deliberately not translated. They are the words on the same popup in the Animator
+        /// window and in every guide written about it; a translated pair like "より大 / より小"
+        /// reads as a different control than the one being described.
+        /// </summary>
         public static string[] ModeLabels(AnimatorConditionMode[] modes)
         {
             var labels = new string[modes.Length];
             for (int i = 0; i < modes.Length; i++)
-                labels[i] = L.Tr(modes[i].ToString());
+                labels[i] = modes[i].ToString();
             return labels;
         }
 
