@@ -108,15 +108,6 @@ msgstr "Solo を解除"
 msgid "Turn Solo off on every transition leaving this node"
 msgstr "このノードから出る全ての遷移の Solo を解除します"
 
-msgid "{0} transition(s)"
-msgstr "遷移 {0} 本"
-
-msgid "{0} muted transition(s)"
-msgstr "Mute された遷移 {0} 本"
-
-msgid "{0} transition(s), shut out by a soloed transition on the same state"
-msgstr "遷移 {0} 本 — 同じステートの Solo された遷移に阻まれて評価されません"
-
 msgid "State '{0}' has no incoming transition and is not a default state."
 msgstr "State '{0}' には入ってくる遷移がなく、Default State でもありません。"
 
@@ -2608,9 +2599,6 @@ msgstr "Write Defaults: {0}"
 msgid "Double-click or F2 to edit"
 msgstr "ダブルクリックまたは F2 で編集"
 
-msgid "Default state"
-msgstr "Default State への接続"
-
 msgid "Return to the state machine view"
 msgstr "ステートマシン表示に戻る"
 
@@ -2748,3 +2736,6 @@ msgstr "オフにする"
 
 msgid "Clear Can Transition To Self on these transitions"
 msgstr "これらの遷移の Can Transition To Self を解除します"
+
+msgid "{0} marked as sources. Select the destinations and press T."
+msgstr "{0} 個を遷移元としてマークしました。遷移先を選んで T キーを押してください。"

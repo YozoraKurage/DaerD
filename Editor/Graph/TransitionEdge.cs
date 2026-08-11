@@ -106,7 +106,6 @@ namespace Yozolab.DaerD
             if (IsDefaultEdge)
             {
                 capabilities &= ~Capabilities.Deletable;
-                tooltip = L.Tr("Default state");
                 _badge.style.display = DisplayStyle.None;
                 _conditionLabel.style.display = DisplayStyle.None;
                 ApplyColor();
@@ -140,10 +139,6 @@ namespace Yozolab.DaerD
             foreach (var t in Transitions)
                 if (t != null && t.solo && !t.mute) { carriesSolo = true; break; }
             _shutOutBySolo = _sourceHasSolo && !carriesSolo && !_allMuted;
-
-            tooltip = _allMuted ? L.Tr("{0} muted transition(s)", Transitions.Count)
-                : _shutOutBySolo ? L.Tr("{0} transition(s), shut out by a soloed transition on the same state", Transitions.Count)
-                : L.Tr("{0} transition(s)", Transitions.Count);
 
             if (Transitions.Count > 1)
             {

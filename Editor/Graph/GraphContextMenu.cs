@@ -235,6 +235,44 @@ namespace Yozolab.DaerD
         // the live GraphNodeBase visuals so the marks survive a rebuild.
         static List<object> s_markedSources;
 
+        public static int MarkedSourceCount => s_markedSources?.Count ?? 0;
+
+        /// <summary>
+        /// M: remember the selection as the source set of a wiring pass. Nothing is created yet —
+        /// the marks survive changing the selection, which is the whole point of them.
+        /// </summary>
+        public bool MarkSelectedAsSources()
+        {
+            var selected = _view.GetSelectedConnectables();
+            if (selected.Count == 0) return false;
+            s_markedSources = ToModels(selected);
+            return true;
+        }
+
+        /// <summary>
+        /// T: the one wiring key. With sources marked it connects every marked node to every
+        /// selected one and drops the marks; with nothing marked it chains the selection in the
+        /// order it was clicked, which is the two-node case that needs no marking at all.
+        /// Returns false when there is nothing it could mean, so the key falls through.
+        /// </summary>
+        public bool ConnectSelection()
+        {
+            s_markedSources?.RemoveAll(IsMarkedSourceStale);
+            var selected = _view.GetSelectedConnectables();
+            if (selected.Count == 0) return false;
+
+            if (MarkedSourceCount > 0)
+            {
+                _sync.CrossProductNodes(ResolveMarkedSources(), selected);
+                s_markedSources = null;
+                return true;
+            }
+
+            if (selected.Count < 2) return false;
+            _sync.ChainNodes(selected);
+            return true;
+        }
+
         public static void ClearMarkedSources() => s_markedSources = null;
 
         /// <summary>
@@ -252,7 +290,7 @@ namespace Yozolab.DaerD
                 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled;
 
             evt.menu.AppendAction(
-                MenuPath(group, L.Tr("Chain in click order ({0})", selected.Count)),
+                MenuPath(group, L.Tr("Chain in click order ({0})", selected.Count) + "  (T)"),
                 _ => _sync.ChainNodes(_view.GetSelectedConnectables()), chainStatus);
 
             BuildFanEntries(evt, selected, group);
@@ -337,11 +375,11 @@ namespace Yozolab.DaerD
             // Numbered, because this is the one flow in the menu that takes two passes: mark a set,
             // change the selection, then connect. Without the numbers nobody guesses the order.
             evt.menu.AppendAction(
-                MenuPath(group, L.Tr("Step 1: mark the selected {0} as sources", selected.Count)),
+                MenuPath(group, L.Tr("Step 1: mark the selected {0} as sources", selected.Count) + "  (M)"),
                 _ => s_markedSources = ToModels(_view.GetSelectedConnectables()),
                 selected.Count > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
             evt.menu.AppendAction(
-                MenuPath(group, L.Tr("Step 2: marked ({0}) → selected ({1})", marked, selected.Count)),
+                MenuPath(group, L.Tr("Step 2: marked ({0}) → selected ({1})", marked, selected.Count) + "  (T)"),
                 _ =>
                 {
                     _sync.CrossProductNodes(ResolveMarkedSources(), _view.GetSelectedConnectables());

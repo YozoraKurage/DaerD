@@ -449,6 +449,23 @@ namespace Yozolab.DaerD
                     FrameAll();
                     evt.StopPropagation();
                 }
+                // M marks, T wires. Both are the keyboard face of the Connect States menu,
+                // which otherwise takes two trips through a submenu to join two states.
+                else if (evt.keyCode == KeyCode.M && _menu.MarkSelectedAsSources())
+                {
+                    Owner?.Window?.ShowNotification(new GUIContent(
+                        L.Tr("{0} marked as sources. Select the destinations and press T.",
+                            GraphContextMenu.MarkedSourceCount)));
+                    evt.StopPropagation();
+                }
+                else if (evt.keyCode == KeyCode.T && _menu.ConnectSelection())
+                {
+                    evt.StopPropagation();
+                }
+                else if (MoveSelectionKey(evt.keyCode, out var direction) && MoveSelection(direction))
+                {
+                    evt.StopPropagation();
+                }
                 return;
             }
             if (evt.keyCode == KeyCode.F)
@@ -480,6 +497,105 @@ namespace Yozolab.DaerD
                 else SelectAllNodes();
                 evt.StopPropagation();
             }
+        }
+
+        /// <summary>The graph direction an arrow key means; false for any other key. Y grows
+        /// downwards here, so "up" is negative.</summary>
+        static bool MoveSelectionKey(KeyCode key, out Vector2 direction)
+        {
+            switch (key)
+            {
+                case KeyCode.UpArrow: direction = new Vector2(0f, -1f); return true;
+                case KeyCode.DownArrow: direction = new Vector2(0f, 1f); return true;
+                case KeyCode.LeftArrow: direction = new Vector2(-1f, 0f); return true;
+                case KeyCode.RightArrow: direction = new Vector2(1f, 0f); return true;
+                default: direction = Vector2.zero; return false;
+            }
+        }
+
+        /// <summary>
+        /// Arrow keys walk from the selected node to its neighbour in that direction. Only from a
+        /// single node: with several selected there is no "from" to measure against.
+        ///
+        /// Nodes are scored by how far along the direction they sit plus twice how far off to the
+        /// side, so a near neighbour slightly off-axis beats a distant one dead ahead. Anything
+        /// more sideways than forwards is held back and used only when nothing is ahead of it —
+        /// otherwise pressing Up in a wide layout would jump to something that is really beside.
+        /// </summary>
+        bool MoveSelection(Vector2 direction)
+        {
+            if (selection.Count != 1 || !(selection[0] is GraphNodeBase current)) return false;
+
+            var candidates = new List<GraphNodeBase>();
+            var centres = new List<Vector2>();
+            nodes.ForEach(node =>
+            {
+                if (!(node is GraphNodeBase candidate) || candidate == current) return;
+                candidates.Add(candidate);
+                centres.Add(candidate.GetPosition().center);
+            });
+
+            int index = PickNeighbour(current.GetPosition().center, centres, direction);
+            if (index < 0) return false;
+
+            ReplaceSelection(new List<GraphElement> { candidates[index] });
+            ScrollIntoView(candidates[index]);
+            return true;
+        }
+
+        /// <summary>
+        /// Which of <paramref name="centres"/> the arrow key lands on, or -1 when nothing lies
+        /// that way. Scored by distance along the direction plus twice the distance off to the
+        /// side, so a near neighbour slightly off-axis beats a distant one dead ahead.
+        /// </summary>
+        public static int PickNeighbour(Vector2 from, IList<Vector2> centres, Vector2 direction)
+        {
+            var sideways = new Vector2(-direction.y, direction.x);
+            int ahead = -1, beside = -1;
+            float aheadScore = float.MaxValue, besideScore = float.MaxValue;
+
+            for (int i = 0; i < centres.Count; i++)
+            {
+                Vector2 delta = centres[i] - from;
+                float along = Vector2.Dot(delta, direction);
+                if (along <= 1f) continue;
+                float across = Mathf.Abs(Vector2.Dot(delta, sideways));
+                float score = along + across * 2f;
+                if (score < besideScore) { besideScore = score; beside = i; }
+                // More sideways than forwards is not "the one above" — kept only for when
+                // nothing is properly ahead, so an arrow key in a wide layout still moves.
+                if (across > along * 2f) continue;
+                if (score < aheadScore) { aheadScore = score; ahead = i; }
+            }
+
+            return ahead >= 0 ? ahead : beside;
+        }
+
+        /// <summary>
+        /// Pans just enough to bring a node inside the viewport, keeping the zoom. Framing it
+        /// instead would re-zoom on every arrow press, which turns walking a state machine into
+        /// a series of lurches.
+        /// </summary>
+        void ScrollIntoView(GraphNodeBase node)
+        {
+            const float Margin = 48f;
+            float scale = viewTransform.scale.x;
+            if (scale <= 0f) return;
+            Vector2 origin = viewTransform.position;
+
+            Rect placed = node.GetPosition();
+            var onScreen = new Rect(placed.position * scale + origin, placed.size * scale);
+            var viewport = new Rect(Margin, Margin, layout.width - Margin * 2f, layout.height - Margin * 2f);
+            if (viewport.width <= 0f || viewport.height <= 0f) return;
+
+            Vector2 shift = Vector2.zero;
+            if (onScreen.xMin < viewport.xMin) shift.x = viewport.xMin - onScreen.xMin;
+            else if (onScreen.xMax > viewport.xMax) shift.x = viewport.xMax - onScreen.xMax;
+            if (onScreen.yMin < viewport.yMin) shift.y = viewport.yMin - onScreen.yMin;
+            else if (onScreen.yMax > viewport.yMax) shift.y = viewport.yMax - onScreen.yMax;
+            if (shift == Vector2.zero) return;
+
+            UpdateViewTransform(origin + shift, viewTransform.scale);
         }
 
         /// <summary>Ctrl+A: every node (states, sub-state machines, special nodes).</summary>
