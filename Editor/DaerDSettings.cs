@@ -89,18 +89,34 @@ namespace Yozolab.DaerD
 
         // --- graph display ---
 
+        // These two are asked once per node and once per edge, every time a layer's graph is
+        // built — eight hundred native preference reads to draw a two-hundred-state layer. The
+        // rest of the settings on this page are read once per action and stay direct. Held in
+        // memory rather than re-read; DaerD's own settings UI is the only writer, and a domain
+        // reload starts them over.
+        static bool? s_showTransitionConditions;
+        static bool? s_showStateBadges;
+
         /// <summary>Draw a one-line condition summary on single-transition edges.</summary>
         public static bool ShowTransitionConditions
         {
-            get => EditorPrefs.GetBool(Prefix + "ShowTransitionConditions", true);
-            set => EditorPrefs.SetBool(Prefix + "ShowTransitionConditions", value);
+            get => s_showTransitionConditions ??= EditorPrefs.GetBool(Prefix + "ShowTransitionConditions", true);
+            set
+            {
+                s_showTransitionConditions = value;
+                EditorPrefs.SetBool(Prefix + "ShowTransitionConditions", value);
+            }
         }
 
         /// <summary>Draw WD / B badges on state nodes (Write Defaults on, has behaviours).</summary>
         public static bool ShowStateBadges
         {
-            get => EditorPrefs.GetBool(Prefix + "ShowStateBadges", true);
-            set => EditorPrefs.SetBool(Prefix + "ShowStateBadges", value);
+            get => s_showStateBadges ??= EditorPrefs.GetBool(Prefix + "ShowStateBadges", true);
+            set
+            {
+                s_showStateBadges = value;
+                EditorPrefs.SetBool(Prefix + "ShowStateBadges", value);
+            }
         }
 
         // --- behavior ---

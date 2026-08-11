@@ -228,6 +228,134 @@ namespace Yozolab.DaerD.Tests
             Object.DestroyImmediate(controller);
         }
 
+        // ---- how often the scene is searched ----------------------------------
+        //
+        // Resolve ends in FindObjectsOfType when neither the pin nor the selection answers,
+        // which is the ordinary case — nothing is selected. The poll runs ten times a second
+        // for as long as the editor plays, so what decides whether to search again is worth
+        // more than the search.
+
+        [Test]
+        public void AnAnswerThatStillHolds_IsNotSearchedForAgain()
+        {
+            var controller = NewController("C");
+            var animator = NewAnimator("Only", controller);
+
+            var live = new LiveAnimator();
+            Assert.IsTrue(live.NeedsSearch(controller, null, 0d), "nothing has been worked out yet");
+
+            live.Refresh(controller, null, 0d);
+            Assert.AreSame(animator, live.Current);
+
+            // Ten seconds of polling at ten times a second, and not one more scene search.
+            for (double t = 0.1; t < 10d; t += 0.1)
+                Assert.IsFalse(live.NeedsSearch(controller, null, t),
+                    $"asked to search again at {t:0.0}s with nothing changed");
+
+            Object.DestroyImmediate(animator.gameObject);
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void AChangedSelectionOrController_IsSearchedForAgain()
+        {
+            var controller = NewController("C");
+            var other = NewController("Other");
+            var animator = NewAnimator("Only", controller);
+            var somethingElse = new GameObject("Prop");
+
+            var live = new LiveAnimator();
+            live.Refresh(controller, null, 0d);
+
+            Assert.IsTrue(live.NeedsSearch(controller, somethingElse, 1d),
+                "a selection can outrank what the scene search found, so it has to be re-asked");
+            Assert.IsTrue(live.NeedsSearch(other, null, 1d));
+
+            Object.DestroyImmediate(somethingElse);
+            Object.DestroyImmediate(animator.gameObject);
+            Object.DestroyImmediate(other);
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void AnAnimatorThatSwitchesController_IsSearchedForAgainAtOnce()
+        {
+            var controller = NewController("C");
+            var other = NewController("Other");
+            var animator = NewAnimator("Only", controller);
+
+            var live = new LiveAnimator();
+            live.Refresh(controller, null, 0d);
+            Assert.IsFalse(live.NeedsSearch(controller, null, 0.1d));
+
+            animator.runtimeAnimatorController = other;
+
+            Assert.IsTrue(live.NeedsSearch(controller, null, 0.1d),
+                "it is still there but no longer running what is being edited");
+
+            Object.DestroyImmediate(animator.gameObject);
+            Object.DestroyImmediate(other);
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void AnAnimatorThatIsDestroyed_FallsInWithTheOtherEmptyAnswers()
+        {
+            var controller = NewController("C");
+            var animator = NewAnimator("Only", controller);
+
+            var live = new LiveAnimator();
+            live.Refresh(controller, null, 0d);
+            Object.DestroyImmediate(animator.gameObject);
+
+            // Not the same case as one that switched controller: a destroyed Animator reads as
+            // no answer at all, so it waits out the retry window rather than searching at once.
+            // Play mode ending is what usually destroys one, and that clears the lot anyway.
+            Assert.IsFalse(live.NeedsSearch(controller, null, 0.5d));
+            Assert.IsTrue(live.NeedsSearch(controller, null, 1.5d));
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void AnAnswerOfNothing_IsRetriedButNotEveryTick()
+        {
+            var controller = NewController("C");
+
+            var live = new LiveAnimator();
+            live.Refresh(controller, null, 0d);
+            Assert.IsNull(live.Current);
+
+            // An avatar can still be dropped into the scene mid-session, so "nothing" cannot
+            // stand forever — but it must not put the scene search back on every tick either.
+            Assert.IsFalse(live.NeedsSearch(controller, null, 0.5d));
+            Assert.IsTrue(live.NeedsSearch(controller, null, 1.5d));
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void PinningAnAnimator_AsksForTheSearchStraightAway()
+        {
+            var controller = NewController("C");
+            var found = NewAnimator("Found", controller);
+            var wanted = NewAnimator("Wanted", controller);
+
+            var live = new LiveAnimator();
+            live.Refresh(controller, null, 0d);
+
+            live.Pinned = wanted;
+
+            Assert.IsTrue(live.NeedsSearch(controller, null, 0.05d),
+                "the pin is the user answering the question; it does not wait for a timer");
+            live.Refresh(controller, null, 0.05d);
+            Assert.AreSame(wanted, live.Current);
+
+            Object.DestroyImmediate(found.gameObject);
+            Object.DestroyImmediate(wanted.gameObject);
+            Object.DestroyImmediate(controller);
+        }
+
         [Test]
         public void Poll_OutsidePlayMode_ReadsNothing()
         {
@@ -238,7 +366,7 @@ namespace Yozolab.DaerD.Tests
             live.Bind(animator);
             Assert.IsNotNull(live.Current);
 
-            live.Poll(controller);   // the tests never run inside play mode
+            live.Poll(controller, 0d);   // the tests never run inside play mode
 
             Assert.IsNull(live.Current);
             Assert.IsFalse(live.IsLive);

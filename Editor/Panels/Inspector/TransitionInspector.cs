@@ -351,10 +351,14 @@ namespace Yozolab.DaerD
                 Undo.RegisterCompleteObjectUndo(transition, "Edit Conditions");
                 TransitionClipboard.SetConditions(transition, working);
                 EditorUtility.SetDirty(transition);
-                // Nothing was told before this. The edge in the graph draws a summary of these
-                // conditions and the parameter list marks the ones nothing reads — both were
-                // left showing the conditions as they were until some unrelated edit came along.
-                _context.NotifyGraphStructureChanged();
+                // Nothing was told before this. The edge in the graph draws a summary of
+                // these conditions and the parameter list marks the ones nothing reads — both
+                // were left showing the old answer until some unrelated edit came past. Neither
+                // needs the graph rebuilt: one edge changed how it reads, and the set of
+                // parameters something references changed. Saying more than that would tear
+                // down and rebuild every node in the layer to relabel one line.
+                _context.NotifyGraphVisualsChanged(transition);
+                _context.NotifyParametersChanged();
             }
         }
     }

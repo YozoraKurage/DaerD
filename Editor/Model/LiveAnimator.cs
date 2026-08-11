@@ -22,7 +22,25 @@ namespace Yozolab.DaerD
         /// <summary>An Animator the user chose by hand. Beats every other candidate for as long
         /// as it lives and still runs the controller — the scene may hold several, and the one
         /// being debugged is not always the one selected.</summary>
-        public Animator Pinned { get; set; }
+        public Animator Pinned
+        {
+            get => _pinned;
+            set { _pinned = value; _resolvedFor = null; }
+        }
+
+        Animator _pinned;
+
+        // What the standing answer was worked out from. Resolving means a scene-wide search for
+        // Animators, and the poll runs ten times a second for as long as the editor plays, so
+        // the search happens when one of these stops being true rather than on every tick.
+        AnimatorController _resolvedFor;
+        GameObject _resolvedFrom;
+        double _lastSearch;
+
+        /// <summary>How long to leave a "nothing in this scene runs it" answer standing. An
+        /// avatar can still be spawned mid-session, so the search is repeated — a second apart
+        /// rather than ten times a second.</summary>
+        const double SearchAgainAfter = 1.0;
 
         /// <summary>The Animator being read, or null when none was found.</summary>
         public Animator Current { get; private set; }
@@ -38,17 +56,47 @@ namespace Yozolab.DaerD
         /// <summary>An Animator that has been bound and initialized: reads return real values.</summary>
         public bool IsLive => Current != null && Current.isInitialized;
 
-        /// <summary>Re-resolves against the scene. Called on a timer while the editor plays;
-        /// outside play mode there is nothing running to read.</summary>
-        public void Poll(AnimatorController controller)
+        /// <summary>Re-resolves against the scene when the standing answer will not do. Called
+        /// on a timer while the editor plays; outside play mode there is nothing to read.</summary>
+        /// <param name="now">Editor time, passed in rather than read, so the one decision that
+        /// depends on it can be tested.</param>
+        public void Poll(AnimatorController controller, double now)
         {
             if (!EditorApplication.isPlaying) { Clear(); return; }
-            var resolution = Resolve(controller, Pinned, Selection.activeGameObject);
+            Refresh(controller, Selection.activeGameObject, now);
+        }
+
+        /// <summary>The half of the poll that has nothing to do with the editor's state:
+        /// searches when the standing answer will not do, and adopts what it finds. Separate
+        /// because the tests never run inside play mode, and this is the part worth testing.</summary>
+        public void Refresh(AnimatorController controller, GameObject selected, double now)
+        {
+            if (!NeedsSearch(controller, selected, now)) return;
+
+            _resolvedFor = controller;
+            _resolvedFrom = selected;
+            _lastSearch = now;
+            var resolution = Resolve(controller, _pinned, selected);
             // A pin that stopped matching (destroyed with the play session, or pointed at a
             // controller the user has since switched away from) is dropped rather than kept
-            // around to override every later resolution.
-            if (Pinned != null && resolution.animator != Pinned) Pinned = null;
+            // around to override every later resolution. Assigned to the field, not the
+            // property, whose setter would ask for yet another search.
+            if (_pinned != null && resolution.animator != _pinned) _pinned = null;
             Bind(resolution.animator, resolution.ambiguous);
+        }
+
+        /// <summary>
+        /// Whether the standing answer still holds. It does not when it was worked out for a
+        /// different controller or a different selection, or when the Animator it named has
+        /// been destroyed or now runs something else. An answer of "nothing" holds only
+        /// briefly — see <see cref="SearchAgainAfter"/>.
+        /// </summary>
+        public bool NeedsSearch(AnimatorController controller, GameObject selected, double now)
+        {
+            if (!ReferenceEquals(controller, _resolvedFor)) return true;
+            if (!ReferenceEquals(selected, _resolvedFrom)) return true;
+            if (Current != null) return !Runs(Current, controller);
+            return now - _lastSearch >= SearchAgainAfter;
         }
 
         public void Clear()
@@ -56,13 +104,21 @@ namespace Yozolab.DaerD
             Current = null;
             Ambiguous = false;
             _present.Clear();
+            _resolvedFor = null;
+            _resolvedFrom = null;
         }
 
         /// <summary>Points the reader at an Animator and re-reads what it declares.</summary>
         public void Bind(Animator animator, bool ambiguous = false)
         {
-            Current = animator;
             Ambiguous = ambiguous;
+            // animator.parameters builds a fresh array every time it is asked; rebuilding the
+            // same map from it on a timer is pure waste.
+            if (ReferenceEquals(animator, Current) && animator != null
+                && _present.Count == animator.parameterCount)
+                return;
+
+            Current = animator;
             _present.Clear();
             if (animator == null || animator.runtimeAnimatorController == null) return;
             foreach (var parameter in animator.parameters)

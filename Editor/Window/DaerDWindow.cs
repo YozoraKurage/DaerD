@@ -642,7 +642,7 @@ namespace Yozolab.DaerD
             if (EditorApplication.timeSinceStartup - _lastRuntimePoll >= 0.1)
             {
                 _lastRuntimePoll = EditorApplication.timeSinceStartup;
-                _context.Live.Poll(_controller);
+                _context.Live.Poll(_controller, EditorApplication.timeSinceStartup);
                 _parametersPanel?.Refresh();
                 _layersPanel?.Refresh();
             }
