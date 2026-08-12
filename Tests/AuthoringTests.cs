@@ -447,6 +447,7 @@ namespace Yozolab.DaerD.Tests
                     .Targets("Hue", "Outfit", "Tail")
                     .Ready()
                     .Stale()
+                    .Group("Outfit", "Hue", "Tail")
                     .SkipDriversForTest();
             });
 
@@ -467,6 +468,9 @@ namespace Yozolab.DaerD.Tests
             }
             Assert.AreEqual(3, Watcher("Zip Ready")?.states.Length);
             Assert.AreEqual(4, Watcher("Zip Stale")?.states.Length);
+            Assert.AreEqual(2, Watcher("Zip Outfit")?.states.Length);
+            Assert.IsNotNull(DbtBuilder.FindParameter(controller, "Zip/Hold/Hue"));
+            Assert.IsNotNull(DbtBuilder.FindParameter(controller, "Zip/Held/Hue"));
 
             // The watchers belong to the same call, so a second Generate rebuilds them rather
             // than adding more beside them.

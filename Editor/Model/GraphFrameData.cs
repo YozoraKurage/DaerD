@@ -93,6 +93,10 @@ namespace Yozolab.DaerD
             /// <see cref="ready"/> is off — the same "identifies the layer across renames"
             /// job <see cref="layer"/> does, for the second layer a setup can own.</summary>
             public AnimatorStateMachine readyLayer;
+            /// <summary>Targets that must reach a remote's real parameters together, however
+            /// far apart the pass sends them. Empty in data saved before the field existed,
+            /// which is the behaviour those setups already had.</summary>
+            public List<SyncGroup> groups = new List<SyncGroup>();
             /// <summary>Generate the drift-suspicion flag. False in data saved before the
             /// field existed, which is the behaviour those setups already had.</summary>
             public bool stale;
@@ -125,6 +129,23 @@ namespace Yozolab.DaerD
             {
                 public string name;
                 public int rate = 1;
+            }
+
+            /// <summary>
+            /// A set of targets assigned together: the decoder holds each of them aside as it
+            /// arrives, and one driver copies the whole set into the real parameters once the
+            /// last one is in. A class rather than a bare list for the reason
+            /// <see cref="StepSpec"/> is one — Unity does not serialize a list of lists.
+            /// </summary>
+            [Serializable]
+            public class SyncGroup
+            {
+                public string name;
+                public List<string> members = new List<string>();
+                /// <summary>Root state machine of this group's commit layer, or null when the
+                /// group was never built. Identifies the layer across renames, exactly as
+                /// <see cref="AsyncSyncConfig.layer"/> does for the cycle's own.</summary>
+                public AnimatorStateMachine layer;
             }
 
             /// <summary>

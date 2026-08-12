@@ -178,5 +178,23 @@ namespace Yozolab.DaerD.Tests
             Assert.IsFalse(Rebuild(controller, config).stale);
         }
 
+        /// <summary>Groups live on the rows in the form and as a list in the setup, and the
+        /// translation between the two is the only place either shape is written.</summary>
+        [Test]
+        public void Groups_SurviveTheRoundTrip()
+        {
+            var controller = NewController();
+            var config = Config();
+            var group = new GraphFrameData.AsyncSyncConfig.SyncGroup { name = "Outfit" };
+            group.members.AddRange(new[] { "I", "F" });
+            config.groups.Add(group);
+
+            var rebuilt = Rebuild(controller, config);
+            Assert.AreEqual(1, rebuilt.groups.Count);
+            Assert.AreEqual("Outfit", rebuilt.groups[0].name);
+            // Cycle order, not the order the members were listed in.
+            CollectionAssert.AreEqual(new[] { "F", "I" }, rebuilt.groups[0].members);
+        }
+
     }
 }

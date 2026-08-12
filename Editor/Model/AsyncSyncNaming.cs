@@ -85,6 +85,24 @@ namespace Yozolab.DaerD
         public static string StaleLayerName(string layerName) => layerName + " Stale";
 
         /// <summary>
+        /// Where a grouped target waits: the decoder writes here instead of into the parameter
+        /// itself, and the group's commit copies the whole set across at once. Same type as
+        /// the target, local, and never synced.
+        /// </summary>
+        public static string HoldParameter(string baseName, string target) =>
+            baseName + "/Hold/" + target;
+
+        /// <summary>"This member has arrived and is waiting in its Hold": raised by the
+        /// decoder, and put down by the commit that consumed it.</summary>
+        public static string HeldParameter(string baseName, string target) =>
+            baseName + "/Held/" + target;
+
+        /// <summary>The layer a group's commit gets. One per group: each waits for its own
+        /// members, and a shared layer could only ever be in one of those waits at a time.</summary>
+        public static string GroupLayerName(string layerName, string groupName) =>
+            layerName + " " + groupName;
+
+        /// <summary>
         /// The base name a new setup on this controller starts from: "DD" plus the first six
         /// hex digits of the controller's asset GUID. A fixed default collides as soon as two
         /// distributions that each bring a cycle meet on one avatar — both would own

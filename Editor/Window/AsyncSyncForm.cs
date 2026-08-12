@@ -30,6 +30,10 @@ namespace Yozolab.DaerD
             public bool request;
             /// <summary>Start a slot rather than share channels with the row above.</summary>
             public bool split;
+            /// <summary>Name of the group this parameter is assigned with, or null. A group
+            /// exists exactly as long as two rows point at it, which is why it is a name on
+            /// the row rather than a list beside it.</summary>
+            public string group;
         }
 
         AnimatorController _controller;
@@ -68,6 +72,8 @@ namespace Yozolab.DaerD
         /// running it unprompted still invites steps to move on their own. Toggling a cell is
         /// deliberately NOT such an edit — see <see cref="PaintCell"/>.</summary>
         bool _stepsStale;
+        /// <summary>Group names in row order, rebuilt each draw — the picker's options.</summary>
+        readonly List<string> _groupNames = new List<string>();
         /// <summary>
         /// An explicit cycle the setup already carries: target names, one per step — the
         /// vocabulary <c>c.AsyncSync().Schedule(…)</c> writes. Carried through rather than
@@ -189,6 +195,7 @@ namespace Yozolab.DaerD
                 row.rate = 1;
                 row.request = false;
                 row.split = false;
+                row.group = null;
             }
             _order.Clear();
             // The saved target list is ordered — restoring it restores the cycle order.
@@ -204,6 +211,15 @@ namespace Yozolab.DaerD
                         _order.Add(row);
                         break;
                     }
+
+            // After the order, so a member listed in two groups lands in the first one the
+            // same way AsyncSyncBuilder.EffectiveGroups would put it there.
+            if (config.groups != null)
+                foreach (var group in config.groups)
+                    if (group?.members != null)
+                        foreach (var row in _order)
+                            if (string.IsNullOrEmpty(row.group) && group.members.Contains(row.name))
+                                row.group = group.name;
         }
 
         public AsyncSyncBuilder.Request BuildRequest(int layerIndex)
@@ -231,6 +247,20 @@ namespace Yozolab.DaerD
                 if (row.rate > 1) request.rates[row.name] = row.rate;
                 if (row.request) request.requestTargets.Add(row.name);
                 if (row.split) request.slotBreaks.Add(row.name);
+            }
+
+            // Groups are read back off the rows: cycle order for the members, first mention
+            // for the groups themselves.
+            foreach (var row in _order)
+            {
+                if (string.IsNullOrEmpty(row.group)) continue;
+                var group = request.groups.Find(entry => entry.name == row.group);
+                if (group == null)
+                {
+                    group = new GraphFrameData.AsyncSyncConfig.SyncGroup { name = row.group };
+                    request.groups.Add(group);
+                }
+                group.members.Add(row.name);
             }
 
             // The repair needs the slots, which need the request — hence here, once the
@@ -284,6 +314,40 @@ namespace Yozolab.DaerD
         {
             request.steps.Clear();
             foreach (var step in _steps) request.steps.Add(StepOf(step.targets));
+        }
+
+        /// <summary>
+        /// Which group this parameter is assigned with: none, one that already exists, or a
+        /// new one. A group is nothing but a name two rows share, so creating one is picking a
+        /// name and leaving one is clearing it — there is no list to keep in step.
+        /// </summary>
+        void DrawGroupPicker(Row row)
+        {
+            var labels = new GUIContent[_groupNames.Count + 2];
+            labels[0] = new GUIContent(L.Tr("(no group)"));
+            for (int i = 0; i < _groupNames.Count; i++)
+                labels[i + 1] = new GUIContent(_groupNames[i]);
+            labels[labels.Length - 1] = new GUIContent(L.Tr("New group…"));
+
+            int current = string.IsNullOrEmpty(row.group)
+                ? 0 : _groupNames.IndexOf(row.group) + 1;
+            int picked = EditorGUILayout.Popup(current, labels, GUILayout.Width(84));
+            if (picked == current) return;
+            row.group = picked == 0 ? null
+                : picked == labels.Length - 1 ? NextGroupName()
+                : _groupNames[picked - 1];
+        }
+
+        /// <summary>"Group 1", "Group 2"… — the lowest number nothing answers to yet, so
+        /// deleting one and making another does not leave a gap in the names.</summary>
+        string NextGroupName()
+        {
+            // Terminates: the taken set is finite and every candidate name is distinct.
+            for (int n = 1; ; n++)
+            {
+                string name = "Group " + n;
+                if (!_groupNames.Contains(name)) return name;
+            }
         }
 
         static GraphFrameData.AsyncSyncConfig.StepSpec StepOf(List<string> targets)
@@ -422,6 +486,7 @@ namespace Yozolab.DaerD
                 row.rate = 1;
                 row.request = false;
                 row.split = false;
+                row.group = null;
             }
             _stepsStale = true;
         }
@@ -466,6 +531,11 @@ namespace Yozolab.DaerD
             for (int i = 0; i < slots.Count; i++)
                 foreach (var name in slots[i].targets)
                     slotOfRow[name] = i;
+
+            _groupNames.Clear();
+            foreach (var row in _order)
+                if (!string.IsNullOrEmpty(row.group) && !_groupNames.Contains(row.group))
+                    _groupNames.Add(row.group);
 
             _reorder.Begin();
             foreach (var row in _order)
@@ -526,6 +596,8 @@ namespace Yozolab.DaerD
                         L.Tr("Accept sync requests: a state's Sync Request (or anything setting the '{0}' flag) makes the cycle send this parameter at the next step instead of waiting a full pass. Costs no synced bits.",
                             AsyncSyncBuilder.RequestParameter(request.baseName, row.name))),
                     EditorStyles.miniButton, GUILayout.Width(36));
+
+                DrawGroupPicker(row);
 
                 string interval = intervals.TryGetValue(row.name, out float seconds)
                     ? L.Tr("every {0:0.##} s", seconds)
@@ -981,6 +1053,17 @@ namespace Yozolab.DaerD
                     L.Tr("Remote initialized flag: {0} local Bool(s) and one layer, nothing synced.",
                         slots.Count + 1),
                     EditorStyles.miniLabel);
+
+            var groups = AsyncSyncBuilder.EffectiveGroups(request);
+            if (groups.Count > 0)
+            {
+                int members = 0;
+                foreach (var group in groups) members += group.members.Count;
+                EditorGUILayout.LabelField(
+                    L.Tr("Groups: {0}, holding {1} parameter(s) — {2} local parameters and {0} layer(s), nothing synced.",
+                        groups.Count, members, members * 2),
+                    EditorStyles.miniLabel);
+            }
 
             if (request.stale)
             {

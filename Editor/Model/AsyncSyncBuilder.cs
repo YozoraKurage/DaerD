@@ -5,6 +5,7 @@ using UnityEngine;
 // One step of an explicit grid is saved data first and a request field second, so the shape
 // is declared with the rest of the saved setup; the alias keeps the request reading plainly.
 using StepSpec = Yozolab.DaerD.GraphFrameData.AsyncSyncConfig.StepSpec;
+using SyncGroup = Yozolab.DaerD.GraphFrameData.AsyncSyncConfig.SyncGroup;
 
 namespace Yozolab.DaerD
 {
@@ -145,6 +146,22 @@ namespace Yozolab.DaerD
             /// carry the flag, and <see cref="Validate"/> says so.
             /// </summary>
             public bool stale;
+
+            /// <summary>
+            /// Sets of targets that must reach a remote's real parameters together. The pass
+            /// sends them whenever it sends them; the decoder holds each aside as it arrives,
+            /// and one driver copies the whole set across once the last one is in — so remotes
+            /// never see half a change, however many steps apart the halves were sent.
+            ///
+            /// A driver's entries all run in one frame, which is what makes the simultaneity
+            /// structural rather than a matter of timing. Members that share a step already
+            /// arrive together and need no group; this is for the ones that cannot share one,
+            /// because their types differ or the channels are too narrow.
+            ///
+            /// Costs nothing on the wire: a shadow parameter and a flag per member, both
+            /// animator-local, and a two-state layer per group.
+            /// </summary>
+            public List<SyncGroup> groups = new List<SyncGroup>();
 
             /// <summary>
             /// Targets that start a slot of their own instead of joining the batch the target
@@ -314,6 +331,15 @@ namespace Yozolab.DaerD
 
         public static string StaleLayerName(string layerName) =>
             AsyncSyncNaming.StaleLayerName(layerName);
+
+        public static string HoldParameter(string baseName, string target) =>
+            AsyncSyncNaming.HoldParameter(baseName, target);
+
+        public static string HeldParameter(string baseName, string target) =>
+            AsyncSyncNaming.HeldParameter(baseName, target);
+
+        public static string GroupLayerName(string layerName, string groupName) =>
+            AsyncSyncNaming.GroupLayerName(layerName, groupName);
 
         public static string DefaultBaseName(AnimatorController controller) =>
             AsyncSyncNaming.DefaultBaseName(controller);
@@ -518,6 +544,18 @@ namespace Yozolab.DaerD
                     return errors[0];
             }
 
+            // Two groups under one name would want one layer between them, and the saved
+            // setup could not tell them apart afterwards either.
+            if (r.groups != null)
+            {
+                var names = new HashSet<string>();
+                foreach (var group in r.groups)
+                    if (group != null && !string.IsNullOrEmpty(group.name)
+                        && !names.Add(group.name))
+                        return L.Tr("Two groups are called '{0}'. Give them different names.",
+                            group.name);
+            }
+
             // The flag is measured by watching a slot the pass sends exactly once. Refused
             // rather than quietly dropped: a Stale that never falls is worse than none, and
             // the two ways out are worth naming.
@@ -532,6 +570,7 @@ namespace Yozolab.DaerD
             machineParameters.AddRange(RequestParameters(r));
             machineParameters.AddRange(ReadyParameters(r));
             machineParameters.AddRange(StaleParameters(r));
+            machineParameters.AddRange(GroupParameters(r));
             foreach (var (name, type) in machineParameters)
             {
                 if (seen.Contains(name))
@@ -784,6 +823,30 @@ namespace Yozolab.DaerD
                         StaleParameter(r.baseName), staleSlots[marker].targets[0]));
             }
 
+            // A group whose members already share a step is machinery for a guarantee the
+            // step itself is already making — one driver copies them, so they were never
+            // going to arrive apart.
+            var groups = EffectiveGroups(r);
+            if (groups.Count > 0)
+            {
+                var groupSlots = BuildSlots(r);
+                var slotOfTarget = new Dictionary<string, int>();
+                for (int i = 0; i < groupSlots.Count; i++)
+                    foreach (var name in groupSlots[i].targets)
+                        slotOfTarget[name] = i;
+                foreach (var group in groups)
+                {
+                    var seen = new HashSet<int>();
+                    foreach (var name in group.members)
+                        if (slotOfTarget.TryGetValue(name, out int slot)) seen.Add(slot);
+                    if (seen.Count > 1) continue;
+                    warnings.Add(L.Tr(
+                        "'{0}' groups parameters that already share a step, so they were never going to arrive apart. The group holds them back for nothing — drop it, or split the step.",
+                        group.name));
+                    break;
+                }
+            }
+
             if (r.stepSeconds < 0.3f)
                 warnings.Add(L.Tr("Steps shorter than VRChat's ~0.3 s sync cadence risk remotes skipping slots."));
             foreach (var type in ChannelTypes(r))
@@ -901,6 +964,78 @@ namespace Yozolab.DaerD
         }
 
         /// <summary>
+        /// The groups the setup actually builds: members restricted to real targets,
+        /// deduplicated, and each target left in the FIRST group that claims it — a target can
+        /// only be held in one place, and a second claim would have two commits writing it.
+        /// A group with fewer than two usable members is dropped: holding one target back
+        /// until it arrives is what the decoder does anyway.
+        ///
+        /// Same "a stale saved entry must not block regeneration" contract as
+        /// <see cref="Request.rates"/>, which is why this filters rather than refuses.
+        /// </summary>
+        public static List<SyncGroup> EffectiveGroups(Request r)
+        {
+            var groups = new List<SyncGroup>();
+            if (r?.groups == null || r.targets == null) return groups;
+            var claimed = new HashSet<string>();
+            foreach (var group in r.groups)
+            {
+                if (group == null) continue;
+                var kept = new SyncGroup { name = group.name };
+                // In cycle order, so the members read as the pass visits them rather than as
+                // they were typed — and so the commit driver's entries do too.
+                foreach (var name in r.targets)
+                    if (group.members != null && group.members.Contains(name)
+                        && claimed.Add(name))
+                        kept.members.Add(name);
+                if (kept.members.Count < 2)
+                {
+                    // Put the names back: a group too small to build must not eat a member the
+                    // next group could still hold.
+                    foreach (var name in kept.members) claimed.Remove(name);
+                    continue;
+                }
+                if (string.IsNullOrEmpty(kept.name))
+                    kept.name = "Group " + (groups.Count + 1);
+                groups.Add(kept);
+            }
+            return groups;
+        }
+
+        /// <summary>Every target held by some group — what the decoder checks to know whether
+        /// a value goes to its parameter or to the parameter's shadow.</summary>
+        public static HashSet<string> GroupMembers(Request r)
+        {
+            var members = new HashSet<string>();
+            foreach (var group in EffectiveGroups(r))
+                foreach (var name in group.members)
+                    members.Add(name);
+            return members;
+        }
+
+        /// <summary>
+        /// A shadow and a flag per grouped member. The shadow carries the target's own type —
+        /// it stands in for it — and neither is ever synced: the whole mechanism runs on the
+        /// receiving client, out of values that already arrived.
+        /// </summary>
+        public static List<(string name, AnimatorControllerParameterType type)> GroupParameters(Request r)
+        {
+            var generated = new List<(string, AnimatorControllerParameterType)>();
+            if (r?.controller == null) return generated;
+            var byName = DbtBuilder.ParametersByName(r.controller);
+            foreach (var group in EffectiveGroups(r))
+                foreach (var name in group.members)
+                {
+                    var parameter = byName.Find(name);
+                    if (parameter == null) continue;
+                    generated.Add((HoldParameter(r.baseName, name), parameter.type));
+                    generated.Add((HeldParameter(r.baseName, name),
+                        AnimatorControllerParameterType.Bool));
+                }
+            return generated;
+        }
+
+        /// <summary>
         /// The slot whose arrival closes a lap, or -1 when the pass has none. Rates always
         /// leave one; a cycle written by hand need not, and a slot anything can request is no
         /// use as one however rarely the pass sends it.
@@ -967,6 +1102,16 @@ namespace Yozolab.DaerD
                 request.scheduleOverride.AddRange(config.schedule);
             if (config.slotBreaks != null)
                 request.slotBreaks.AddRange(config.slotBreaks);
+            // Copied down to the member lists, for the reason the grid is: this request is
+            // handed to editors that go on rewriting it, and the saved setup must not move.
+            if (config.groups != null)
+                foreach (var group in config.groups)
+                {
+                    if (group == null) continue;
+                    var copy = new SyncGroup { name = group.name };
+                    if (group.members != null) copy.members.AddRange(group.members);
+                    request.groups.Add(copy);
+                }
             // Copied down to the step lists: this request is handed to editors that go on
             // rewriting its grid, and the saved setup must not move with them.
             if (config.steps != null)

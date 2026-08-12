@@ -300,10 +300,14 @@ namespace Yozolab.DaerD.Authoring
                     continue;
                 }
                 plan.layers[layer.name] = request;
+                var owned = new HashSet<AnimatorStateMachine>();
+                if (config.readyLayer != null) owned.Add(config.readyLayer);
+                if (config.staleLayer != null) owned.Add(config.staleLayer);
+                if (config.groups != null)
+                    foreach (var group in config.groups)
+                        if (group?.layer != null) owned.Add(group.layer);
                 foreach (var other in controller.layers)
-                    if (other.stateMachine != null
-                        && (other.stateMachine == config.readyLayer
-                            || other.stateMachine == config.staleLayer))
+                    if (other.stateMachine != null && owned.Contains(other.stateMachine))
                         plan.supporting.Add(other.name);
             }
 

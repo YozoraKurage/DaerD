@@ -184,6 +184,8 @@ namespace Yozolab.DaerD.Authoring
             if (requestable.Count > 0) sync.Requestable(requestable.ToArray());
             if (r.ready) sync.Ready();
             if (r.stale) sync.Stale();
+            foreach (var group in AsyncSyncBuilder.EffectiveGroups(r))
+                sync.Group(group.name, group.members.ToArray());
             // Before the cycle and the grid, which are the calls it makes legal: a Sends run
             // that repeats a step reads as a mistake until the line above it says otherwise.
             if (r.allowRepeatSteps) sync.AllowRepeats();

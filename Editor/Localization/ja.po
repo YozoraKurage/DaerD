@@ -1010,6 +1010,21 @@ msgstr "1 周を単独で閉じるスロットが無いため、1 周を測る�
 msgid "'{0}' is judged every time '{1}' comes round, which is once per pass. A remote that arrives mid-pass reads it as on for the rest of that pass — pair it with the remote initialized flag to tell that apart from a cycle that has actually started dropping steps."
 msgstr "'{0}' は '{1}' が回ってくるたび、つまり 1 周に 1 回判定されます。周の途中で入ったリモートはその周のあいだ 1 のままになるので、本当に取りこぼし始めた場合と区別したいときはリモート初期化フラグと組み合わせてください。"
 
+msgid "(no group)"
+msgstr "(グループなし)"
+
+msgid "New group…"
+msgstr "新しいグループ…"
+
+msgid "Groups: {0}, holding {1} parameter(s) — {2} local parameters and {0} layer(s), nothing synced."
+msgstr "グループ: {0} 個、対象 {1} 個 — ローカルパラメーター {2} 個とレイヤー {0} 枚（同期コストなし）"
+
+msgid "Two groups are called '{0}'. Give them different names."
+msgstr "'{0}' という名前のグループが 2 つあります。別々の名前を付けてください。"
+
+msgid "'{0}' groups parameters that already share a step, so they were never going to arrive apart. The group holds them back for nothing — drop it, or split the step."
+msgstr "'{0}' は既に同じステップを共有しているパラメーターをまとめています。もともと別々には届かないので、このグループは意味なく待たせるだけです。グループを外すか、ステップを分けてください。"
+
 msgid "With requests running: up to {0:0.#} s per pass."
 msgstr "リクエストが動いているとき: 1 周あたり最大 {0:0.#} 秒"
 

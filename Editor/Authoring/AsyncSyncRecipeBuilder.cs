@@ -98,10 +98,14 @@ namespace Yozolab.DaerD.Authoring
             var names = new List<string>();
             var config = GraphFrameData.FindAsyncSync(controller, baseName);
             if (config == null) return names;
+            var owned = new HashSet<AnimatorStateMachine>();
+            if (config.readyLayer != null) owned.Add(config.readyLayer);
+            if (config.staleLayer != null) owned.Add(config.staleLayer);
+            if (config.groups != null)
+                foreach (var group in config.groups)
+                    if (group?.layer != null) owned.Add(group.layer);
             foreach (var layer in controller.layers)
-                if (layer.stateMachine != null
-                    && (layer.stateMachine == config.readyLayer
-                        || layer.stateMachine == config.staleLayer))
+                if (layer.stateMachine != null && owned.Contains(layer.stateMachine))
                     names.Add(layer.name);
             return names;
         }
@@ -210,6 +214,35 @@ namespace Yozolab.DaerD.Authoring
         {
             _request.stale = true;
             return Record("Stale");
+        }
+
+        /// <summary>
+        /// Assign these targets together, however far apart the pass sends them: a remote holds
+        /// each of them aside as it arrives and copies the whole set into the real parameters
+        /// once the last one is in, so it never shows half a change. One driver does the copy,
+        /// which is what makes them land in the same frame rather than merely close together.
+        ///
+        /// For targets that could share a step, batching already does this and does it sooner —
+        /// one driver sends them, so they were never going to arrive apart. Reach for a group
+        /// when they cannot share one: different types, or more of a type than the channels
+        /// carry.
+        ///
+        /// A lap that loses a member commits nothing and leaves the remote on the last
+        /// complete set, which is the trade: a whole value that is one pass old, rather than a
+        /// fresh half of one. Costs no synced bits — a shadow parameter and a flag per member,
+        /// and a two-state layer per group.
+        ///
+        ///   c.AsyncSync("Zip").Targets("Hue", "Mesh", "Shape")
+        ///    .Group("Outfit", "Hue", "Mesh", "Shape");
+        /// </summary>
+        public AsyncSyncRecipeBuilder Group(string name, params string[] members)
+        {
+            var group = new GraphFrameData.AsyncSyncConfig.SyncGroup { name = name };
+            group.members.AddRange(members);
+            _request.groups.Add(group);
+            var args = new List<string> { RecipeScript.S(name) };
+            args.AddRange(Names(members));
+            return Record("Group", args.ToArray());
         }
 
         /// <summary>

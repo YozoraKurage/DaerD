@@ -6,6 +6,7 @@ using UnityEngine;
 // importing the facade keeps Request, Slot and the naming / schedule / cost helpers in
 // scope, so every statement below reads exactly as it did there.
 using static Yozolab.DaerD.AsyncSyncBuilder;
+using SyncGroup = Yozolab.DaerD.GraphFrameData.AsyncSyncConfig.SyncGroup;
 
 namespace Yozolab.DaerD
 {
@@ -57,9 +58,10 @@ namespace Yozolab.DaerD
                 var readyLayer = BuildReadyLayer(controller, r, slots, previous, empty);
                 var staleLayer = BuildStaleLayer(controller, r, slots, clock, encoding,
                     indexBits, previous, empty);
+                var groups = BuildGroupLayers(controller, r, previous, empty);
 
                 SyncGeneratedParameters(r, generated);
-                SaveConfig(controller, stateMachine, readyLayer, staleLayer, r);
+                SaveConfig(controller, stateMachine, readyLayer, staleLayer, groups, r);
 
                 EditorUtility.SetDirty(stateMachine);
                 EditorUtility.SetDirty(controller);
@@ -84,6 +86,9 @@ namespace Yozolab.DaerD
             foreach (var (name, type) in ReadyParameters(r))
                 DbtBuilder.EnsureParameter(controller, name, type);
             foreach (var (name, type) in StaleParameters(r))
+                DbtBuilder.EnsureParameter(controller, name, type);
+            // The shadows and their flags, on the same terms: created, never synced.
+            foreach (var (name, type) in GroupParameters(r))
                 DbtBuilder.EnsureParameter(controller, name, type);
             return generated;
         }
@@ -599,6 +604,118 @@ namespace Yozolab.DaerD
             return machine;
         }
 
+        /// <summary>
+        /// One commit layer per group: it waits for every member's arrival flag, copies the
+        /// whole set out of the shadows into the real parameters, and puts the flags down
+        /// again. Two states, because a driver cannot ask a question — the waiting has to be
+        /// a transition, and what it guards has to be somewhere to enter.
+        ///
+        /// The copies and the clears are entries of ONE driver, so they run in one frame: the
+        /// simultaneity is structural rather than a matter of timing, which is the whole point
+        /// of the exercise. And the guard is "every member has arrived" rather than "the last
+        /// member just did", so a lap that lost one of them commits nothing and leaves the
+        /// remote on the last complete set — a stale whole rather than a torn one.
+        ///
+        /// Nothing here runs on the wearer: the decoder that raises the flags is behind the
+        /// cycle layer's remote branch, so the flags never come up and the real parameters are
+        /// never written from the shadows.
+        /// </summary>
+        static List<SyncGroup> BuildGroupLayers(AnimatorController controller, Request r,
+            GraphFrameData.AsyncSyncConfig previous, AnimationClip empty)
+        {
+            var built = new List<SyncGroup>();
+            string main = MainLayerName(r);
+            foreach (var group in EffectiveGroups(r))
+            {
+                string wanted = GroupLayerName(main, group.name);
+                var machine = ResolveWatcherLayer(controller,
+                    ResolveExistingLayer(controller, PreviousGroupLayer(previous, group.name),
+                        wanted),
+                    wanted);
+
+                var idle = AddReadyState(machine, "Idle", empty, 260f, 60f);
+                var commit = AddReadyState(machine, "Commit", empty, 440f, 60f);
+                machine.defaultState = idle;
+
+                var arm = Instant(idle, commit);
+                foreach (var name in group.members)
+                    arm.AddCondition(AnimatorConditionMode.If, 0f,
+                        HeldParameter(r.baseName, name));
+                // Straight back: the flags are down by the time this is evaluated, so the
+                // guard above cannot fire again until the next member arrives.
+                Instant(commit, idle);
+
+                if (!r.skipDrivers) AddCommitDriver(commit, r, group);
+                EditorUtility.SetDirty(machine);
+
+                var record = new SyncGroup { name = group.name, layer = machine };
+                record.members.AddRange(group.members);
+                built.Add(record);
+            }
+            RemoveRetiredGroupLayers(controller, r, previous, built, main);
+            return built;
+        }
+
+        /// <summary>Copies the set across and opens the next round. One driver, so one
+        /// frame — see <see cref="BuildGroupLayers"/>.</summary>
+        static void AddCommitDriver(AnimatorState state, Request r, SyncGroup group)
+        {
+            var driver = VrcParameterDriver.AddTo(state, "Async Group");
+            if (driver == null) return;
+            Undo.RegisterCompleteObjectUndo(driver, "Async Sync");
+            VrcParameterDriver.SetLocalOnly(driver, false);
+            foreach (var name in group.members)
+                VrcParameterDriver.AddCopyEntry(driver, HoldParameter(r.baseName, name), name);
+            foreach (var name in group.members)
+                VrcParameterDriver.AddSetEntry(driver, HeldParameter(r.baseName, name), 0f);
+        }
+
+        static AnimatorStateMachine PreviousGroupLayer(GraphFrameData.AsyncSyncConfig previous,
+            string name)
+        {
+            if (previous?.groups == null) return null;
+            foreach (var group in previous.groups)
+                if (group != null && group.name == name)
+                    return group.layer;
+            return null;
+        }
+
+        /// <summary>
+        /// Takes away the layers of groups this run no longer builds. From the saved setup,
+        /// which knows their layers, and also by name from the request's own list — a group
+        /// emptied down to one member is gone from <see cref="AsyncSyncBuilder.EffectiveGroups"/>
+        /// but still named there, and on a controller with no saved setup to read that name is
+        /// the only thing left pointing at the layer.
+        /// </summary>
+        static void RemoveRetiredGroupLayers(AnimatorController controller, Request r,
+            GraphFrameData.AsyncSyncConfig previous, List<SyncGroup> built, string main)
+        {
+            bool Kept(AnimatorStateMachine machine)
+            {
+                foreach (var record in built)
+                    if (record.layer == machine) return true;
+                return false;
+            }
+
+            if (previous?.groups != null)
+                foreach (var group in previous.groups)
+                    if (group?.layer != null && !Kept(group.layer))
+                        RemoveLayer(controller, group.layer);
+
+            if (r.groups == null) return;
+            foreach (var group in r.groups)
+            {
+                if (group == null || string.IsNullOrEmpty(group.name)) continue;
+                bool still = false;
+                foreach (var record in built)
+                    if (record.name == group.name) still = true;
+                if (still) continue;
+                var stray = ResolveExistingLayer(controller, null,
+                    GroupLayerName(main, group.name));
+                if (stray != null && !Kept(stray)) RemoveLayer(controller, stray);
+            }
+        }
+
         /// <summary>Says what the lap was, then opens the next one. Not localOnly: every
         /// client judges its own decoding, exactly like the Ready watcher.</summary>
         static void AddJudgementDriver(AnimatorState state, Request r, List<string> slotNames,
@@ -683,7 +800,7 @@ namespace Yozolab.DaerD
 
         static void SaveConfig(AnimatorController controller,
             AnimatorStateMachine stateMachine, AnimatorStateMachine readyLayer,
-            AnimatorStateMachine staleLayer, Request r)
+            AnimatorStateMachine staleLayer, List<SyncGroup> groups, Request r)
         {
             // Remember the setup with the controller so the wizard can re-open and
             // regenerate this layer later (same pattern as the DBT layer choice).
@@ -708,6 +825,7 @@ namespace Yozolab.DaerD
                 readyLayer = readyLayer,
                 stale = r.stale,
                 staleLayer = staleLayer,
+                groups = groups,
             });
         }
 
@@ -818,6 +936,10 @@ namespace Yozolab.DaerD
         internal static void AddChannelCopies(StateMachineBehaviour driver, Request r, Slot slot,
             bool toChannels)
         {
+            // Only the arriving direction is diverted. The wearer's own parameter is what the
+            // cycle reads, group or no group — the holding is for values that came off the
+            // wire, and there is nothing to hold on the side that already has them.
+            var held = toChannels ? null : GroupMembers(r);
             int floats = 0, bools = 0;
             foreach (var target in slot.targets)
             {
@@ -829,9 +951,19 @@ namespace Yozolab.DaerD
                         : ChannelParameter(r.baseName, type);
                 if (toChannels)
                     VrcParameterDriver.AddCopyEntry(driver, target, channel);
+                else if (held.Contains(target))
+                    VrcParameterDriver.AddCopyEntry(driver, channel,
+                        HoldParameter(r.baseName, target));
                 else
                     VrcParameterDriver.AddCopyEntry(driver, channel, target);
             }
+            // Raised after the values are in their shadows, so the commit this may complete
+            // never runs on a Hold that has not been written yet.
+            if (held != null)
+                foreach (var target in slot.targets)
+                    if (held.Contains(target))
+                        VrcParameterDriver.AddSetEntry(driver,
+                            HeldParameter(r.baseName, target), 1f);
         }
 
         /// <summary>Empties a layer for regeneration: transitions, states (and their

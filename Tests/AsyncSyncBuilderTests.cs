@@ -2587,5 +2587,196 @@ namespace Yozolab.DaerD.Tests
             Assert.IsTrue(AsyncSyncBuilder.Warnings(request)
                 .Exists(w => w.Contains("Async/Stale") && w.Contains("'F'")));
         }
+
+        // ---- groups ---------------------------------------------------------
+
+        static GraphFrameData.AsyncSyncConfig.SyncGroup Group(string name,
+            params string[] members)
+        {
+            var group = new GraphFrameData.AsyncSyncConfig.SyncGroup { name = name };
+            group.members.AddRange(members);
+            return group;
+        }
+
+        [Test]
+        public void EffectiveGroups_FollowCycleOrder_AndDropWhatCannotBeAGroup()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.groups.Add(Group("Outfit", "I", "F", "Gone"));   // listed out of order
+            request.groups.Add(Group("Other", "F", "B"));            // F is already claimed
+            request.groups.Add(Group("Alone", "B"));
+
+            var groups = AsyncSyncBuilder.EffectiveGroups(request);
+            Assert.AreEqual(1, groups.Count, "only the first group has two usable members");
+            Assert.AreEqual("Outfit", groups[0].name);
+            CollectionAssert.AreEqual(new[] { "F", "I" }, groups[0].members);
+
+            // A group too small to build gives its member back rather than eating it.
+            request.groups.Clear();
+            request.groups.Add(Group("Alone", "F"));
+            request.groups.Add(Group("Real", "F", "B"));
+            groups = AsyncSyncBuilder.EffectiveGroups(request);
+            Assert.AreEqual(1, groups.Count);
+            CollectionAssert.AreEqual(new[] { "F", "B" }, groups[0].members);
+        }
+
+        [Test]
+        public void GroupParameters_ShadowEachMemberInItsOwnType()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            CollectionAssert.IsEmpty(AsyncSyncBuilder.GroupParameters(request));
+
+            request.groups.Add(Group("Outfit", "F", "I"));
+            var generated = AsyncSyncBuilder.GroupParameters(request);
+            CollectionAssert.AreEqual(
+                new[] { "Async/Hold/F", "Async/Held/F", "Async/Hold/I", "Async/Held/I" },
+                generated.ConvertAll(entry => entry.name));
+            // The shadow stands in for the target, so it has to be able to hold what it holds.
+            Assert.AreEqual(AnimatorControllerParameterType.Float, generated[0].type);
+            Assert.AreEqual(AnimatorControllerParameterType.Bool, generated[1].type);
+            Assert.AreEqual(AnimatorControllerParameterType.Int, generated[2].type);
+        }
+
+        [Test]
+        public void Apply_WithAGroup_HoldsWhatArrivesAndCommitsTheSetAtOnce()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.groups.Add(Group("Outfit", "F", "B"));
+            request.skipDrivers = false;
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            // The arriving direction is diverted; the flag goes up after the value is in.
+            var sm = controller.layers[1].stateMachine;
+            var recvF = DriverOn(FindState(sm, "Recv F")).entries;
+            Assert.AreEqual(2, recvF.Count);
+            Assert.AreEqual(3, recvF[0].kind);                       // Copy
+            Assert.AreEqual("Async/Float", recvF[0].source);
+            Assert.AreEqual("Async/Hold/F", recvF[0].name);
+            Assert.AreEqual("Async/Held/F", recvF[1].name);
+            Assert.AreEqual(1f, recvF[1].value);
+            // An ungrouped target still lands in its own parameter.
+            Assert.AreEqual("I", DriverOn(FindState(sm, "Recv I")).entries[0].name);
+
+            // The cycle reads the real parameters either way: there is nothing to hold on the
+            // side that already has the values.
+            Assert.AreEqual("F", DriverOn(FindState(sm, "Send F")).entries[0].source);
+
+            var commitLayer = FindLayer(controller, "Async Outfit");
+            Assert.IsNotNull(commitLayer);
+            Assert.AreEqual(2, commitLayer.states.Length);
+            var idle = FindState(commitLayer, "Idle");
+            Assert.AreEqual(idle, commitLayer.defaultState);
+            Assert.AreEqual(1, idle.transitions.Length);
+            Assert.AreEqual(2, idle.transitions[0].conditions.Length, "one per member");
+            Assert.IsTrue(HasCondition(idle.transitions[0], "Async/Held/F",
+                AnimatorConditionMode.If, 0f));
+            Assert.IsTrue(HasCondition(idle.transitions[0], "Async/Held/B",
+                AnimatorConditionMode.If, 0f));
+
+            // One driver: the copies and the clears run in the same frame, which is the whole
+            // guarantee — and the clears come after the copies.
+            var commit = FindState(commitLayer, "Commit");
+            var driver = DriverOn(commit);
+            Assert.IsFalse(driver.localOnly);
+            Assert.AreEqual(4, driver.entries.Count);
+            Assert.AreEqual("Async/Hold/F", driver.entries[0].source);
+            Assert.AreEqual("F", driver.entries[0].name);
+            Assert.AreEqual("Async/Hold/B", driver.entries[1].source);
+            Assert.AreEqual("B", driver.entries[1].name);
+            Assert.AreEqual("Async/Held/F", driver.entries[2].name);
+            Assert.AreEqual(0f, driver.entries[2].value);
+            Assert.AreEqual("Async/Held/B", driver.entries[3].name);
+            Assert.AreEqual(0f, driver.entries[3].value);
+
+            Assert.AreEqual(1, commit.transitions.Length);
+            Assert.AreEqual("Idle", commit.transitions[0].destinationState.name);
+            Assert.AreEqual(0, commit.transitions[0].conditions.Length);
+        }
+
+        [Test]
+        public void Apply_WithTwoGroups_GivesEachItsOwnWait()
+        {
+            var controller = NewController();
+            controller.AddParameter("F2", AnimatorControllerParameterType.Float);
+            controller.AddParameter("B2", AnimatorControllerParameterType.Bool);
+            var request = NewRequest(controller, "F", "B", "I", "F2", "B2");
+            request.groups.Add(Group("Outfit", "F", "B"));
+            request.groups.Add(Group("Face", "F2", "B2"));
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            Assert.IsNotNull(FindLayer(controller, "Async Outfit"));
+            Assert.IsNotNull(FindLayer(controller, "Async Face"));
+            Assert.AreEqual(4, controller.layers.Length);
+        }
+
+        [Test]
+        public void Apply_WithoutGroups_BuildsNone_AndDroppingOneTakesItsLayerAway()
+        {
+            var controller = NewController();
+            Assert.IsTrue(AsyncSyncBuilder.Apply(NewRequest(controller, "F", "B", "I")));
+            Assert.AreEqual(2, controller.layers.Length);
+
+            var on = NewRequest(controller, "F", "B", "I");
+            on.groups.Add(Group("Outfit", "F", "B"));
+            on.layerIndex = 1;
+            Assert.IsTrue(AsyncSyncBuilder.Apply(on));
+            Assert.AreEqual(3, controller.layers.Length);
+
+            // Emptied down to one member: gone from the build, and its layer with it.
+            var emptied = NewRequest(controller, "F", "B", "I");
+            emptied.groups.Add(Group("Outfit", "F"));
+            emptied.layerIndex = 1;
+            Assert.IsTrue(AsyncSyncBuilder.Apply(emptied));
+            Assert.AreEqual(2, controller.layers.Length);
+            Assert.IsNull(FindLayer(controller, "Async Outfit"));
+        }
+
+        [Test]
+        public void Apply_WithAGroupTwice_RegeneratesTheOneLayer()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.groups.Add(Group("Outfit", "F", "B"));
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var again = NewRequest(controller, "F", "B", "I");
+            again.groups.Add(Group("Outfit", "F", "B"));
+            again.layerIndex = 1;
+            Assert.IsTrue(AsyncSyncBuilder.Apply(again));
+            Assert.AreEqual(3, controller.layers.Length);
+            Assert.AreEqual(2, FindLayer(controller, "Async Outfit").states.Length);
+        }
+
+        [Test]
+        public void Validate_RefusesTwoGroupsUnderOneName()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.groups.Add(Group("Outfit", "F", "B"));
+            request.groups.Add(Group("Outfit", "I", "F"));
+            var error = AsyncSyncBuilder.Validate(request);
+            Assert.IsNotNull(error);
+            StringAssert.Contains("Outfit", error);
+        }
+
+        [Test]
+        public void Warnings_WhenAGroupsMembersAlreadyShareAStep()
+        {
+            var controller = NewController();
+            controller.AddParameter("B2", AnimatorControllerParameterType.Bool);
+            var request = NewRequest(controller, "F", "B", "B2");
+            request.boolChannels = 2;                    // B and B2 ride one slot
+            request.groups.Add(Group("Pair", "B", "B2"));
+            Assert.IsTrue(AsyncSyncBuilder.Warnings(request)
+                .Exists(w => w.Contains("Pair") && w.Contains("already share a step")));
+
+            // Split them and the group is doing something again.
+            request.slotBreaks.Add("B2");
+            Assert.IsFalse(AsyncSyncBuilder.Warnings(request)
+                .Exists(w => w.Contains("already share a step")));
+        }
     }
 }
