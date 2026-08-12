@@ -35,6 +35,11 @@ namespace Yozolab.DaerD.DynamicAnalyze
         readonly Dictionary<SignalTrace.Signal, Vector2> _ranges =
             new Dictionary<SignalTrace.Signal, Vector2>();
         SignalTrace _rangedFor;
+        // The filtered row list, kept rather than rebuilt: OnGUI runs at least twice a frame
+        // and this is walked by both of them.
+        readonly List<SignalTrace.Signal> _visible = new List<SignalTrace.Signal>();
+        SignalTrace _visibleFor;
+        string _visibleFilter;
 
         public int Frames => trace != null ? trace.Frames : 0;
 
@@ -69,7 +74,12 @@ namespace Yozolab.DaerD.DynamicAnalyze
             var view = new Rect(rect.x, plot.y, rect.width, plot.height);
             _rowScroll = GUI.BeginScrollView(view,
                 _rowScroll, new Rect(0f, 0f, rect.width - 16f, content), false, content > plot.height);
-            for (int i = 0; i < visible.Count; i++)
+            // Only the rows on screen. A scroll view clips the rest, but clipping happens after
+            // the drawing has already been asked for, which is the expensive half.
+            int firstRow = Mathf.Max(0, Mathf.FloorToInt(_rowScroll.y / RowHeight));
+            int lastRow = Mathf.Min(visible.Count - 1,
+                Mathf.CeilToInt((_rowScroll.y + plot.height) / RowHeight));
+            for (int i = firstRow; i <= lastRow; i++)
             {
                 var row = new Rect(0f, i * RowHeight, rect.width - 16f, RowHeight);
                 if (i % 2 == 1) EditorGUI.DrawRect(row, WaveformColors.RowTint);
@@ -91,6 +101,9 @@ namespace Yozolab.DaerD.DynamicAnalyze
             var value = new Rect(row.x + NameWidth, row.y, ValueWidth - 6f, row.height);
             EditorGUI.LabelField(value, signal.TextAt(cursorFrame), EditorStyles.miniLabel);
 
+            // The waveform is pixels and nothing else — no control, no layout — so the Layout
+            // pass has no business computing it.
+            if (Event.current.type != EventType.Repaint) return;
             var plot = new Rect(row.x + NameWidth + ValueWidth, row.y + 2f,
                 Mathf.Max(1f, row.width - NameWidth - ValueWidth), row.height - 4f);
             if (signal.kind == SignalKind.State) DrawBands(signal, plot);
@@ -119,8 +132,15 @@ namespace Yozolab.DaerD.DynamicAnalyze
             }
         }
 
-        /// <summary>A line, column by column: the value at this column and a stroke back to the
-        /// one before it, so an edge is a vertical and a hold is a horizontal.</summary>
+        /// <summary>
+        /// A line: one horizontal per run of frames that share a pixel row, and one vertical
+        /// where the level changes. Not one rect per frame — a flat signal is one rect however
+        /// long the run is, which is the difference between a window that scrolls and one that
+        /// does not. Most rows in most runs are flat for most of their length.
+        ///
+        /// Zoomed out past a pixel per frame it steps by whole columns, so the work is bounded
+        /// by the width of the window rather than by the length of the run.
+        /// </summary>
         void DrawTrace(SignalTrace.Signal signal, Rect plot)
         {
             var range = _ranges.TryGetValue(signal, out var r) ? r : new Vector2(0f, 1f);
@@ -128,19 +148,31 @@ namespace Yozolab.DaerD.DynamicAnalyze
                 : signal.kind == SignalKind.Int ? WaveformColors.IntInk : WaveformColors.FloatInk;
             if (signal.scope == Simulation.WireScope) ink = WaveformColors.EventInk;
 
+            float perFrame = Mathf.Max(0.02f, pixelsPerFrame);
+            int stride = perFrame >= 1f ? 1 : Mathf.Max(1, Mathf.FloorToInt(1f / perFrame));
             int last = LastFrame(plot.width);
-            float previous = Y(plot, signal.At(firstFrame), range);
-            for (int frame = firstFrame; frame <= last; frame++)
+            int runStart = firstFrame;
+            float runY = Y(plot, signal.At(firstFrame), range);
+
+            for (int frame = firstFrame + stride; frame <= last; frame += stride)
             {
-                float x = X(plot, frame);
                 float y = Y(plot, signal.At(frame), range);
-                float top = Mathf.Min(previous, y), bottom = Mathf.Max(previous, y);
-                float width = Mathf.Max(1f, pixelsPerFrame);
-                // One rect covers the hold and the edge together: a flat run draws as a 1px
-                // line, and a jump draws as the vertical that joins the two levels.
-                EditorGUI.DrawRect(new Rect(x, top, width, Mathf.Max(1f, bottom - top + 1f)), ink);
-                previous = y;
+                if (Mathf.Abs(y - runY) < 0.5f) continue;      // still the same pixel row
+                Hold(plot, ink, runStart, frame, runY);
+                float top = Mathf.Min(runY, y), bottom = Mathf.Max(runY, y);
+                EditorGUI.DrawRect(new Rect(X(plot, frame), top,
+                    Mathf.Max(1f, perFrame), bottom - top + 1f), ink);
+                runStart = frame;
+                runY = y;
             }
+            Hold(plot, ink, runStart, last + 1, runY);
+        }
+
+        void Hold(Rect plot, Color ink, int from, int to, float y)
+        {
+            float x0 = X(plot, from), x1 = X(plot, to);
+            if (x1 <= x0) return;
+            EditorGUI.DrawRect(new Rect(x0, y, x1 - x0, 1f), ink);
         }
 
         // ---- chrome ---------------------------------------------------------
@@ -250,12 +282,22 @@ namespace Yozolab.DaerD.DynamicAnalyze
 
         public List<SignalTrace.Signal> Visible()
         {
-            var visible = new List<SignalTrace.Signal>();
+            if (_visibleFor == trace && _visibleFilter == filter
+                && (trace == null || _visible.Count <= trace.Signals.Count))
+                return _visible;
+            _visibleFor = trace;
+            _visibleFilter = filter;
+            _visible.Clear();
+            if (trace == null) return _visible;
             foreach (var signal in trace.Signals)
                 if (string.IsNullOrEmpty(filter)
                     || signal.Path.IndexOf(filter, System.StringComparison.OrdinalIgnoreCase) >= 0)
-                    visible.Add(signal);
-            return visible;
+                    _visible.Add(signal);
+            return _visible;
         }
+
+        /// <summary>Drops the cached row list — for a trace that grew since it was built, which
+        /// is every frame of a live session.</summary>
+        public void Invalidate() => _visibleFor = null;
     }
 }

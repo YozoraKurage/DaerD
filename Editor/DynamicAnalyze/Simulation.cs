@@ -30,6 +30,9 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// <summary>The wire's own signals — when a sample went, and when one was lost.</summary>
         public const string WireScope = "Wire";
 
+        /// <summary>How far behind the other person is, per parameter — the remote view.</summary>
+        public const string LagScope = "Lag";
+
         public static SignalTrace Run(AnimatorController controller, SimClock clock = null,
             Stimulus stimulus = null) =>
             Run(controller, new SimSettings
@@ -40,8 +43,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
 
         public static SignalTrace Run(AnimatorController controller, SimSettings settings)
         {
-            var trace = new SignalTrace();
-            if (controller == null) return trace;
+            if (controller == null) return new SignalTrace();
             settings = settings ?? new SimSettings();
             var clock = settings.clock ?? new SimClock();
             var wire = settings.wire;
@@ -57,12 +59,8 @@ namespace Yozolab.DaerD.DynamicAnalyze
                     clients.Add(new SimClient(controller, RemoteScope, false,
                         clock.seed ^ 0x2545F491));
 
-                var readers = new List<Reader>();
-                foreach (var client in clients)
-                    Declare(trace, controller, client, readers);
-                var sent = wire != null ? trace.Declare(WireScope, "sample", SignalKind.Bool) : null;
-                var lost = wire != null ? trace.Declare(WireScope, "lost", SignalKind.Bool) : null;
-
+                var recorder = new TraceRecorder(controller, clients, wire != null,
+                    settings.lagRows);
                 var steps = clock.Steps();
                 var pending = settings.stimulus != null
                     ? settings.stimulus.InOrder() : new List<Stimulus.Entry>();
@@ -94,18 +92,14 @@ namespace Yozolab.DaerD.DynamicAnalyze
 
                     foreach (var client in clients) client.Step(steps[frame]);
                     time += steps[frame];
-                    trace.Frame(time, steps[frame]);
-
-                    foreach (var reader in readers) reader.Sample();
-                    if (sent != null) sent.samples.Add(sampled ? 1f : 0f);
-                    if (lost != null) lost.samples.Add(dropped ? 1f : 0f);
+                    recorder.Record(time, steps[frame], sampled, dropped);
                 }
+                return recorder.Trace;
             }
             finally
             {
                 foreach (var client in clients) client.Dispose();
             }
-            return trace;
         }
 
         /// <summary>
@@ -113,7 +107,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// pressing things — and a run where a menu toggle appeared on a remote by itself
         /// would hide the very thing worth watching, which is whether it ever gets there.
         /// </summary>
-        static void Poke(List<SimClient> clients, Stimulus.Entry entry)
+        internal static void Poke(List<SimClient> clients, Stimulus.Entry entry)
         {
             foreach (var client in clients)
                 if (string.IsNullOrEmpty(entry.scope)
@@ -124,7 +118,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
 
         /// <summary>One sample: every synced parameter read off the wearer and written to the
         /// remote, together and in the shape the wire allows.</summary>
-        static void Carry(SyncWire wire, SimClient from, SimClient to)
+        internal static void Carry(SyncWire wire, SimClient from, SimClient to)
         {
             foreach (var name in wire.parameters)
             {
@@ -133,68 +127,5 @@ namespace Yozolab.DaerD.DynamicAnalyze
             }
         }
 
-        /// <summary>One signal and where its next value comes from, paired up before the run so
-        /// the loop above does no lookups per frame.</summary>
-        sealed class Reader
-        {
-            public SignalTrace.Signal signal;
-            public System.Func<float> read;
-            public void Sample() => signal.samples.Add(read());
-        }
-
-        /// <summary>
-        /// Everything worth watching, declared up front: every parameter the controller has,
-        /// and for every layer both which state it is in and whether it is between two.
-        ///
-        /// Every parameter rather than the interesting ones, because which ones are interesting
-        /// is the question being asked — a viewer can hide rows, and a run that recorded only
-        /// what it was asked for would have to be run again to answer the next question.
-        /// </summary>
-        static void Declare(SignalTrace trace, AnimatorController controller, SimClient client,
-            List<Reader> readers)
-        {
-            foreach (var parameter in controller.parameters)
-            {
-                string name = parameter.name;
-                var signal = trace.Declare(client.Scope, name, KindOf(parameter.type));
-                readers.Add(new Reader { signal = signal, read = () => client.Read(name) });
-            }
-
-            var layers = controller.layers;
-            for (int i = 0; i < layers.Length; i++)
-            {
-                int layer = i;
-                var state = trace.Declare(client.Scope, layers[i].name + "/state",
-                    SignalKind.State, client.StateLabels(layer));
-                readers.Add(new Reader
-                {
-                    signal = state,
-                    read = () => client.CurrentState(layer),
-                });
-                // Worth its own row: a layer that spends the run mid-blend looks identical to a
-                // settled one if all you can see is which state it is in.
-                var moving = trace.Declare(client.Scope, layers[i].name + "/transition",
-                    SignalKind.Bool);
-                readers.Add(new Reader
-                {
-                    signal = moving,
-                    read = () => client.InTransition(layer) ? 1f : 0f,
-                });
-            }
-        }
-
-        static SignalKind KindOf(UnityEngine.AnimatorControllerParameterType type)
-        {
-            switch (type)
-            {
-                case UnityEngine.AnimatorControllerParameterType.Bool:
-                case UnityEngine.AnimatorControllerParameterType.Trigger:
-                    return SignalKind.Bool;
-                case UnityEngine.AnimatorControllerParameterType.Int:
-                    return SignalKind.Int;
-                default:
-                    return SignalKind.Float;
-            }
-        }
     }
 }

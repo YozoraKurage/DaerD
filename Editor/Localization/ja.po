@@ -2966,3 +2966,45 @@ msgstr "ストアから取得"
 
 msgid "No run yet — press Run."
 msgstr "まだ実行していません。「実行」を押してください。"
+
+msgid "Restart"
+msgstr "開き直す"
+
+msgid "Pause"
+msgstr "一時停止"
+
+msgid "Play"
+msgstr "再生"
+
+msgid "Follow"
+msgstr "追従"
+
+msgid "Inputs"
+msgstr "入力"
+
+msgid "How long a run covers. In a live session it is how much history the window keeps."
+msgstr "1 回の実行が覆う長さです。ライブでは、どれだけの履歴を残すかになります。"
+
+msgid "Remote Lag Rows"
+msgstr "リモート遅延の行"
+
+msgid "A row per parameter saying how long the other person has been looking at a different value. For a multiplexed target that is the age of their copy — the remote view, as a number."
+msgstr "パラメーターごとに「相手が別の値を見ている時間」を 1 行で表示します。多重化されたターゲットではそれが相手のコピーの古さ、つまりリモート視点そのものになります。"
+
+msgid "Press Play or Restart to open a live session."
+msgstr "「再生」か「開き直す」でライブセッションを開きます。"
+
+msgid "Poke"
+msgstr "操作先"
+
+msgid "Wearer"
+msgstr "装着者"
+
+msgid "Remote"
+msgstr "リモート"
+
+msgid "Timed inputs"
+msgstr "時刻指定の入力"
+
+msgid "s"
+msgstr "秒"

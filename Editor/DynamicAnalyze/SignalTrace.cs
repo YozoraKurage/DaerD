@@ -141,5 +141,21 @@ namespace Yozolab.DaerD.DynamicAnalyze
             _time.Add(time);
             _step.Add(step);
         }
+
+        /// <summary>
+        /// Drops the oldest frames so a session that never ends stays a fixed size. Times are
+        /// left as they were — they count from the start of the session, not from the start of
+        /// what is still kept, so the ruler goes on counting up and a moment does not change
+        /// its name when the window slides past it.
+        /// </summary>
+        internal void Trim(int keep)
+        {
+            int drop = Frames - Mathf.Max(1, keep);
+            if (drop <= 0) return;
+            _time.RemoveRange(0, drop);
+            _step.RemoveRange(0, drop);
+            foreach (var signal in _signals)
+                signal.samples.RemoveRange(0, Mathf.Min(drop, signal.samples.Count));
+        }
     }
 }

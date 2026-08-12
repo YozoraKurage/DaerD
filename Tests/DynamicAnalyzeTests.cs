@@ -369,6 +369,128 @@ namespace Yozolab.DaerD.Tests
             Assert.AreEqual(0f, trace.Find(Simulation.LocalScope, "N").At(0));
         }
 
+        // ---- the live session -----------------------------------------------
+
+        [Test]
+        public void Session_StepsOnTheTimeItIsGiven_AndKeepsTheRemainder()
+        {
+            var settings = new SimSettings
+            {
+                clock = new SimClock { fps = 100f, seconds = 1f, seed = 3 },
+            };
+            using (var session = new SimSession(NewController(), settings))
+            {
+                Assert.AreEqual(0, session.Trace.Frames);
+                // A tenth of a second at 100 fps is ten frames, and half a frame's worth of
+                // time is kept rather than rounded away.
+                Assert.AreEqual(10, session.Advance(0.105f));
+                Assert.AreEqual(10, session.Trace.Frames);
+                Assert.AreEqual(0.1f, session.Time, 1e-4f);
+                Assert.AreEqual(1, session.Advance(0.006f), "the leftover paid for the next one");
+
+                // However long the editor was away, it never tries to catch up forever.
+                Assert.AreEqual(SimSession.MaxCatchUp, session.Advance(60f));
+            }
+        }
+
+        [Test]
+        public void Session_TakesAPokeOnTheNextFrameItSteps()
+        {
+            using (var session = new SimSession(NewController(),
+                       new SimSettings { clock = new SimClock { fps = 60f, seconds = 1f } }))
+            {
+                session.StepOnce();
+                Assert.AreEqual(0f, session.Read(Simulation.LocalScope, "Go"));
+
+                session.Write(Simulation.LocalScope, "Go", 1f);
+                session.StepOnce();
+                session.StepOnce();
+                Assert.AreEqual(1f, session.Read(Simulation.LocalScope, "Go"));
+                var state = session.Trace.Find(Simulation.LocalScope, "Base/state");
+                Assert.AreEqual("On", state.TextAt(state.Frames - 1));
+            }
+        }
+
+        [Test]
+        public void Session_KeepsAWindowAndGoesOnCountingPastIt()
+        {
+            var settings = new SimSettings { clock = new SimClock { fps = 60f, seconds = 0.1f } };
+            using (var session = new SimSession(NewController(), settings) { Window = 5 })
+            {
+                for (int i = 0; i < 20; i++) session.StepOnce();
+                Assert.AreEqual(5, session.Trace.Frames, "the oldest frames are forgotten");
+                foreach (var signal in session.Trace.Signals)
+                    Assert.AreEqual(5, signal.Frames, "every row forgets the same ones");
+                // Times count from the session's start, not from the start of what is kept.
+                Assert.AreEqual(20f / 60f, session.Trace.TimeAt(4), 1e-4f);
+            }
+        }
+
+        [Test]
+        public void Session_AndARunAgreeOnWhatTheyRecord()
+        {
+            var settings = new SimSettings
+            {
+                clock = new SimClock { fps = 60f, seconds = 0.2f, seed = 5 },
+                wire = new SyncWire().Syncs("X"),
+            };
+            var batch = Simulation.Run(NewController(), settings);
+            using (var session = new SimSession(NewController(), settings))
+            {
+                for (int i = 0; i < 12; i++) session.StepOnce();
+                Assert.AreEqual(batch.Signals.Count, session.Trace.Signals.Count);
+                for (int i = 0; i < batch.Signals.Count; i++)
+                    Assert.AreEqual(batch.Signals[i].Path, session.Trace.Signals[i].Path);
+            }
+        }
+
+        // ---- the remote view ------------------------------------------------
+
+        [Test]
+        public void Lag_SaysHowLongTheOtherPersonHasBeenLookingAtSomethingElse()
+        {
+            var wire = new SyncWire { intervalSeconds = 0.2f }.Syncs("X");
+            var stimulus = new Stimulus().At(0.05f, "X", 0.5f);
+            var trace = Simulation.Run(NewController(), Wired(1f, wire, stimulus));
+
+            var lag = trace.Find(Simulation.LagScope, "X");
+            Assert.IsNotNull(lag);
+            Assert.AreEqual(SignalKind.Float, lag.kind);
+
+            // Agreed at the start, behind from the moment the wearer moved, and agreed again
+            // once the sample landed — the age of their copy, which is the remote view.
+            Assert.AreEqual(0f, lag.At(0), 1e-4f);
+            int worst = 0;
+            for (int frame = 0; frame < trace.Frames; frame++)
+                if (lag.At(frame) > lag.At(worst)) worst = frame;
+            Assert.Greater(lag.At(worst), 0.1f, "it fell behind while the sample was pending");
+            Assert.Less(lag.At(worst), 0.25f, "and never by more than the wire's own cadence");
+            Assert.AreEqual(0f, lag.At(trace.Frames - 1), 1e-4f);
+        }
+
+        [Test]
+        public void Lag_KeepsClimbingForSomethingThatNeverTravels()
+        {
+            // "Go" is not on the wire, so the remote never agrees again after the wearer
+            // moves — which reads as a line that only goes up.
+            var wire = new SyncWire { intervalSeconds = 0.1f }.Syncs("X");
+            var stimulus = new Stimulus().At(0.05f, "Go", true);
+            var trace = Simulation.Run(NewController(), Wired(1f, wire, stimulus));
+
+            var lag = trace.Find(Simulation.LagScope, "Go");
+            Assert.Greater(lag.At(trace.Frames - 1), 0.9f);
+            for (int frame = 1; frame < trace.Frames; frame++)
+                Assert.GreaterOrEqual(lag.At(frame), lag.At(frame - 1) - 1e-4f);
+        }
+
+        [Test]
+        public void Lag_IsNotRecordedWithoutSomebodyToBeBehind()
+        {
+            var trace = Simulation.Run(NewController(), Clock(0.2f));
+            foreach (var signal in trace.Signals)
+                Assert.AreNotEqual(Simulation.LagScope, signal.scope);
+        }
+
         // ---- the viewer's model side ----------------------------------------
 
         [Test]

@@ -91,5 +91,13 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// <summary>Null for a single client — an Animator question rather than a VRChat
         /// one.</summary>
         public SyncWire wire;
+
+        /// <summary>
+        /// Record, per parameter, how long the other person has been looking at a different
+        /// value. That IS the remote view: for a multiplexed target it is the age of their
+        /// copy, and for a synced one it is the sawtooth of the wire's own cadence. Costs a row
+        /// per parameter, and means nothing without a second client.
+        /// </summary>
+        public bool lagRows = true;
     }
 }

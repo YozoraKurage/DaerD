@@ -6,13 +6,18 @@ using UnityEngine;
 namespace Yozolab.DaerD.DynamicAnalyze
 {
     /// <summary>
-    /// DD DynamicAnalyze's front door: settings on the left of a run, the run's waveform under
-    /// it, and a transport that walks a cursor along the result.
+    /// DD DynamicAnalyze's front door, in two moods.
     ///
-    /// The window computes nothing. A run is <see cref="Simulation.Run"/>, whole, from settings
-    /// that are all data; play and pause move a cursor along what came back. That split is why
-    /// the engine can be tested with nothing drawn — and why pausing cannot desynchronize
-    /// anything, because there is nothing left running to pause.
+    /// RUN computes an experiment whole from settings that are all data — a clock, a list of
+    /// timed inputs, a wire — and the transport then walks a cursor along the finished result.
+    /// Repeatable, comparable, and the only mood a seed means anything in.
+    ///
+    /// LIVE keeps the same clients open and steps them on the editor's own update, so a value
+    /// changed here takes effect on the next frame and the waveform grows under it. Nothing
+    /// about a controller is learned faster than by pushing on it and watching, and no amount
+    /// of writing the pushes down in advance replaces having done that once.
+    ///
+    /// Both produce the same trace, and the same viewer reads it.
     /// </summary>
     sealed class DynamicAnalyzeWindow : EditorWindow
     {
@@ -21,8 +26,17 @@ namespace Yozolab.DaerD.DynamicAnalyze
         {
             var window = GetWindow<DynamicAnalyzeWindow>();
             window.titleContent = new GUIContent(L.Tr("DD DynamicAnalyze"));
-            window.minSize = new Vector2(560f, 320f);
+            window.minSize = new Vector2(620f, 360f);
             window.Show();
+        }
+
+        [System.Serializable]
+        sealed class Poke
+        {
+            public float at;
+            public string scope = string.Empty;
+            public string parameter = string.Empty;
+            public float value;
         }
 
         [SerializeField] AnimatorController _controller;
@@ -34,17 +48,23 @@ namespace Yozolab.DaerD.DynamicAnalyze
         [SerializeField] float _interval = 0.2f;
         [SerializeField] float _dropChance;
         [SerializeField] bool _quantize = true;
+        [SerializeField] bool _lagRows = true;
         [SerializeField] List<string> _synced = new List<string>();
+        [SerializeField] List<Poke> _pokes = new List<Poke>();
+        [SerializeField] bool _live;
         [SerializeField] bool _settingsOpen = true;
+        [SerializeField] bool _inputsOpen = true;
 
         readonly WaveformView _view = new WaveformView();
-        readonly Stimulus _stimulus = new Stimulus();
+        SimSession _session;
 
         bool _playing;
+        bool _follow = true;
         double _lastTick;
         float _speed = 1f;
+        Vector2 _inputScroll;
         static readonly float[] Speeds = { 0.25f, 0.5f, 1f, 2f, 4f };
-        static readonly string[] SpeedLabels = { "0.25×", "0.5×", "1×", "2×", "4×" };
+        static readonly string[] SpeedLabels = { "0.25x", "0.5x", "1x", "2x", "4x" };
 
         void OnEnable()
         {
@@ -52,17 +72,32 @@ namespace Yozolab.DaerD.DynamicAnalyze
             if (_controller == null) _controller = Selection.activeObject as AnimatorController;
         }
 
-        void OnDisable() => EditorApplication.update -= Tick;
+        void OnDisable()
+        {
+            EditorApplication.update -= Tick;
+            // Before a domain reload rather than after: the clients own hidden GameObjects, and
+            // one that outlives the C# holding it is a leak nothing can reach to clean up.
+            DropSession();
+        }
 
-        /// <summary>Play, in the only sense this window has one: the cursor walks the finished
-        /// run at wall-clock speed. Nothing is being computed while it moves.</summary>
         void Tick()
         {
-            if (!_playing || _view.trace == null || _view.Frames == 0) return;
             double now = EditorApplication.timeSinceStartup;
             float elapsed = (float)(now - _lastTick);
             _lastTick = now;
+            if (!_playing) return;
 
+            if (_live)
+            {
+                if (_session == null) { _playing = false; return; }
+                if (_session.Advance(elapsed * _speed) == 0) return;
+                _view.trace = _session.Trace;
+                if (_follow) _view.cursorFrame = _view.Frames - 1;
+                Repaint();
+                return;
+            }
+
+            if (_view.trace == null || _view.Frames == 0) { _playing = false; return; }
             float target = _view.trace.TimeAt(_view.cursorFrame) + elapsed * _speed;
             int frame = _view.trace.FrameAt(target);
             if (frame <= _view.cursorFrame) frame = _view.cursorFrame + 1;
@@ -79,45 +114,81 @@ namespace Yozolab.DaerD.DynamicAnalyze
         {
             DrawToolbar();
             if (_settingsOpen) DrawSettings();
+            if (_inputsOpen) { if (_live) DrawLiveInputs(); else DrawStimulus(); }
             var rect = GUILayoutUtility.GetRect(0f, 100000f, 0f, 100000f);
             _view.Draw(rect);
             if (GUI.changed) Repaint();
         }
 
+        // ---- toolbar --------------------------------------------------------
+
         void DrawToolbar()
         {
             EditorGUILayout.BeginHorizontal(EditorStyles.toolbar);
 
+            bool live = GUILayout.Toggle(_live, L.Tr("Live"), EditorStyles.toolbarButton,
+                GUILayout.Width(44f));
+            if (live != _live)
+            {
+                _live = live;
+                _playing = false;
+                DropSession();
+                if (!_live) _view.trace = null;
+            }
+
             EditorGUI.BeginDisabledGroup(_controller == null);
-            if (GUILayout.Button(L.Tr("Run"), EditorStyles.toolbarButton, GUILayout.Width(46f)))
-                RunNow();
+            if (GUILayout.Button(_live ? L.Tr("Restart") : L.Tr("Run"),
+                    EditorStyles.toolbarButton, GUILayout.Width(56f)))
+            {
+                if (_live) StartSession();
+                else RunNow();
+            }
             EditorGUI.EndDisabledGroup();
 
-            EditorGUI.BeginDisabledGroup(_view.trace == null || _view.Frames == 0);
-            if (GUILayout.Button("|◀", EditorStyles.toolbarButton, GUILayout.Width(28f)))
+            bool has = _view.trace != null && _view.Frames > 0;
+            EditorGUI.BeginDisabledGroup(!has && !_live);
+
+            if (!_live && GUILayout.Button("|<", EditorStyles.toolbarButton, GUILayout.Width(26f)))
             { _view.cursorFrame = 0; _playing = false; }
-            if (GUILayout.Button("◀", EditorStyles.toolbarButton, GUILayout.Width(24f)))
+            if (!_live && GUILayout.Button("<", EditorStyles.toolbarButton, GUILayout.Width(24f)))
             { _view.cursorFrame = Mathf.Max(0, _view.cursorFrame - 1); _playing = false; }
-            if (GUILayout.Toggle(_playing, _playing ? "❚❚" : "▶",
-                    EditorStyles.toolbarButton, GUILayout.Width(28f)) != _playing)
+
+            if (GUILayout.Toggle(_playing, _playing ? L.Tr("Pause") : L.Tr("Play"),
+                    EditorStyles.toolbarButton, GUILayout.Width(52f)) != _playing)
             {
                 _playing = !_playing;
                 _lastTick = EditorApplication.timeSinceStartup;
-                // Playing from the end would look like nothing happening at all.
-                if (_playing && _view.cursorFrame >= _view.Frames - 1) _view.cursorFrame = 0;
+                if (_playing && _live && _session == null) StartSession();
+                if (_playing && !_live && _view.cursorFrame >= _view.Frames - 1)
+                    _view.cursorFrame = 0;
             }
-            if (GUILayout.Button("▶", EditorStyles.toolbarButton, GUILayout.Width(24f)))
-            { _view.cursorFrame = Mathf.Min(_view.Frames - 1, _view.cursorFrame + 1); _playing = false; }
-            if (GUILayout.Button("▶|", EditorStyles.toolbarButton, GUILayout.Width(28f)))
-            { _view.cursorFrame = Mathf.Max(0, _view.Frames - 1); _playing = false; }
+
+            if (GUILayout.Button(">|", EditorStyles.toolbarButton, GUILayout.Width(26f)))
+            {
+                if (_live)
+                {
+                    // One frame of simulation rather than one frame of scrubbing: in a live
+                    // session the newest frame does not exist until something makes it.
+                    if (_session == null) StartSession();
+                    _session.StepOnce();
+                    _view.trace = _session.Trace;
+                    if (_follow) _view.cursorFrame = _view.Frames - 1;
+                }
+                else _view.cursorFrame = Mathf.Max(0, _view.Frames - 1);
+                _playing = false;
+            }
 
             int speed = Mathf.Max(0, System.Array.IndexOf(Speeds, _speed));
             speed = EditorGUILayout.Popup(speed, SpeedLabels, EditorStyles.toolbarPopup,
-                GUILayout.Width(52f));
+                GUILayout.Width(50f));
             _speed = Speeds[speed];
 
-            GUILayout.Space(8f);
-            if (_view.trace != null && _view.Frames > 0)
+            if (_live)
+                _follow = GUILayout.Toggle(_follow, L.Tr("Follow"), EditorStyles.toolbarButton,
+                    GUILayout.Width(52f));
+
+            GUILayout.Space(6f);
+            if (has)
                 GUILayout.Label(L.Tr("frame {0} / {1}   {2:0.###} s",
                         _view.cursorFrame, _view.Frames - 1,
                         _view.trace.TimeAt(_view.cursorFrame)),
@@ -126,24 +197,30 @@ namespace Yozolab.DaerD.DynamicAnalyze
 
             GUILayout.FlexibleSpace();
             _view.filter = EditorGUILayout.TextField(_view.filter,
-                EditorStyles.toolbarSearchField, GUILayout.Width(150f));
-            if (GUILayout.Button(L.Tr("Fit"), EditorStyles.toolbarButton, GUILayout.Width(34f)))
+                EditorStyles.toolbarSearchField, GUILayout.Width(140f));
+            if (GUILayout.Button(L.Tr("Fit"), EditorStyles.toolbarButton, GUILayout.Width(32f)))
                 _view.Fit(position.width);
+            _inputsOpen = GUILayout.Toggle(_inputsOpen, L.Tr("Inputs"),
+                EditorStyles.toolbarButton, GUILayout.Width(52f));
             _settingsOpen = GUILayout.Toggle(_settingsOpen, L.Tr("Settings"),
-                EditorStyles.toolbarButton, GUILayout.Width(64f));
+                EditorStyles.toolbarButton, GUILayout.Width(60f));
             EditorGUILayout.EndHorizontal();
         }
+
+        // ---- settings -------------------------------------------------------
 
         void DrawSettings()
         {
             EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+            EditorGUI.BeginChangeCheck();
             _controller = (AnimatorController)EditorGUILayout.ObjectField(
                 L.Tr("Controller"), _controller, typeof(AnimatorController), false);
 
             EditorGUILayout.BeginHorizontal();
             _fps = EditorGUILayout.FloatField(new GUIContent(L.Tr("FPS"),
                 L.Tr("Frames per simulated second. The frame count is this times the length; jitter varies how long each one is, not how many there are.")), _fps);
-            _seconds = EditorGUILayout.FloatField(L.Tr("Seconds"), _seconds);
+            _seconds = EditorGUILayout.FloatField(new GUIContent(L.Tr("Seconds"),
+                L.Tr("How long a run covers. In a live session it is how much history the window keeps.")), _seconds);
             EditorGUILayout.EndHorizontal();
 
             EditorGUILayout.BeginHorizontal();
@@ -157,28 +234,165 @@ namespace Yozolab.DaerD.DynamicAnalyze
             _twoClients = EditorGUILayout.Toggle(new GUIContent(L.Tr("Wearer And A Remote"),
                 L.Tr("Run two copies of the avatar off one clock, with only the synced parameters crossing between them. Off runs one, which answers questions about the Animator rather than about VRChat.")),
                 _twoClients);
-            if (!_twoClients)
+            if (_twoClients)
             {
+                EditorGUILayout.BeginHorizontal();
+                _interval = EditorGUILayout.FloatField(new GUIContent(L.Tr("Sync Every (s)"),
+                    L.Tr("Seconds between samples. The wearer's synced values are read whole and handed over together, so a change that comes and goes inside one interval never leaves them.")), _interval);
+                _dropChance = EditorGUILayout.Slider(L.Tr("Loss"), _dropChance, 0f, 1f);
+                EditorGUILayout.EndHorizontal();
+
+                EditorGUILayout.BeginHorizontal();
+                _quantize = EditorGUILayout.Toggle(new GUIContent(L.Tr("Round Like The Wire"),
+                    L.Tr("Floats to 8 bits across -1..1, Ints to a byte, Bools to a bit. On, because that is what a remote actually holds.")), _quantize);
+                _lagRows = EditorGUILayout.Toggle(new GUIContent(L.Tr("Remote Lag Rows"),
+                    L.Tr("A row per parameter saying how long the other person has been looking at a different value. For a multiplexed target that is the age of their copy — the remote view, as a number.")), _lagRows);
+                EditorGUILayout.EndHorizontal();
+
+                EditorGUILayout.BeginHorizontal();
+                EditorGUILayout.LabelField(L.Tr("Synced: {0} parameter(s)", _synced.Count));
+                if (GUILayout.Button(L.Tr("From The Store"), EditorStyles.miniButton,
+                        GUILayout.Width(110f)))
+                    FillFromStore();
+                EditorGUILayout.EndHorizontal();
+            }
+            // A live session was built from these; changing one has to rebuild it or the
+            // window would be showing a run nobody asked for.
+            if (EditorGUI.EndChangeCheck() && _live) DropSession();
+            EditorGUILayout.EndVertical();
+        }
+
+        // ---- inputs ---------------------------------------------------------
+
+        /// <summary>
+        /// The wearer's hands, live. Every parameter the controller has, editable, writing
+        /// straight into the running client — which is the difference between reading a
+        /// controller and using one.
+        /// </summary>
+        void DrawLiveInputs()
+        {
+            EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+            if (_session == null)
+            {
+                EditorGUILayout.LabelField(
+                    L.Tr("Press Play or Restart to open a live session."),
+                    EditorStyles.miniLabel);
                 EditorGUILayout.EndVertical();
                 return;
             }
 
-            EditorGUILayout.BeginHorizontal();
-            _interval = EditorGUILayout.FloatField(new GUIContent(L.Tr("Sync Every (s)"),
-                L.Tr("Seconds between samples. The wearer's synced values are read whole and handed over together, so a change that comes and goes inside one interval never leaves them.")), _interval);
-            _dropChance = EditorGUILayout.Slider(L.Tr("Loss"), _dropChance, 0f, 1f);
-            EditorGUILayout.EndHorizontal();
-            _quantize = EditorGUILayout.Toggle(new GUIContent(L.Tr("Round Like The Wire"),
-                L.Tr("Floats to 8 bits across -1..1, Ints to a byte, Bools to a bit. On, because that is what a remote actually holds.")), _quantize);
+            string scope = Simulation.LocalScope;
+            if (_session.HasRemote)
+            {
+                EditorGUILayout.BeginHorizontal();
+                EditorGUILayout.LabelField(L.Tr("Poke"), GUILayout.Width(38f));
+                int which = GUILayout.Toolbar(_pokeRemote ? 1 : 0,
+                    new[] { L.Tr("Wearer"), L.Tr("Remote") }, GUILayout.Width(160f));
+                _pokeRemote = which == 1;
+                GUILayout.FlexibleSpace();
+                EditorGUILayout.EndHorizontal();
+                if (_pokeRemote) scope = Simulation.RemoteScope;
+            }
 
-            EditorGUILayout.BeginHorizontal();
-            EditorGUILayout.LabelField(L.Tr("Synced: {0} parameter(s)", _synced.Count));
-            if (GUILayout.Button(L.Tr("From The Store"), EditorStyles.miniButton,
-                    GUILayout.Width(110f)))
-                FillFromStore();
-            EditorGUILayout.EndHorizontal();
+            _inputScroll = EditorGUILayout.BeginScrollView(_inputScroll, GUILayout.Height(116f));
+            foreach (var name in _session.Parameters(_controller))
+            {
+                if (!string.IsNullOrEmpty(_view.filter)
+                    && name.IndexOf(_view.filter, System.StringComparison.OrdinalIgnoreCase) < 0)
+                    continue;
+                float current = _session.Read(scope, name);
+                float next = current;
+                switch (_session.TypeOf(name))
+                {
+                    case AnimatorControllerParameterType.Bool:
+                    case AnimatorControllerParameterType.Trigger:
+                        next = EditorGUILayout.Toggle(name, current != 0f) ? 1f : 0f;
+                        break;
+                    case AnimatorControllerParameterType.Int:
+                        next = EditorGUILayout.IntField(name, Mathf.RoundToInt(current));
+                        break;
+                    default:
+                        next = EditorGUILayout.FloatField(name, current);
+                        break;
+                }
+                if (!Mathf.Approximately(next, current)) _session.Write(scope, name, next);
+            }
+            EditorGUILayout.EndScrollView();
             EditorGUILayout.EndVertical();
         }
+
+        bool _pokeRemote;
+
+        /// <summary>
+        /// The same pokes, written down in advance. What a run has instead of hands — and what
+        /// makes an experiment repeatable, which hands are not.
+        /// </summary>
+        void DrawStimulus()
+        {
+            EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.LabelField(L.Tr("Timed inputs"), EditorStyles.boldLabel);
+            GUILayout.FlexibleSpace();
+            if (GUILayout.Button(L.Tr("Add"), EditorStyles.miniButton, GUILayout.Width(46f)))
+                _pokes.Add(new Poke { at = _pokes.Count > 0 ? _pokes[_pokes.Count - 1].at : 0f });
+            EditorGUILayout.EndHorizontal();
+
+            var names = ParameterNames();
+            int remove = -1;
+            for (int i = 0; i < _pokes.Count; i++)
+            {
+                var poke = _pokes[i];
+                EditorGUILayout.BeginHorizontal();
+                poke.at = EditorGUILayout.FloatField(poke.at, GUILayout.Width(52f));
+                GUILayout.Label(L.Tr("s"), GUILayout.Width(12f));
+
+                int at = Mathf.Max(0, names.IndexOf(poke.parameter));
+                if (names.Count > 0)
+                {
+                    at = EditorGUILayout.Popup(at, names.ToArray(), GUILayout.Width(150f));
+                    poke.parameter = names[at];
+                }
+                else poke.parameter = EditorGUILayout.TextField(poke.parameter,
+                    GUILayout.Width(150f));
+
+                var type = TypeOf(poke.parameter);
+                if (type == AnimatorControllerParameterType.Bool
+                    || type == AnimatorControllerParameterType.Trigger)
+                    poke.value = EditorGUILayout.Toggle(poke.value != 0f,
+                        GUILayout.Width(40f)) ? 1f : 0f;
+                else
+                    poke.value = EditorGUILayout.FloatField(poke.value, GUILayout.Width(60f));
+
+                poke.scope = GUILayout.Toolbar(poke.scope == Simulation.RemoteScope ? 1 : 0,
+                    new[] { L.Tr("Wearer"), L.Tr("Remote") }, GUILayout.Width(120f)) == 1
+                    ? Simulation.RemoteScope : string.Empty;
+
+                if (GUILayout.Button("-", EditorStyles.miniButton, GUILayout.Width(22f)))
+                    remove = i;
+                GUILayout.FlexibleSpace();
+                EditorGUILayout.EndHorizontal();
+            }
+            if (remove >= 0) _pokes.RemoveAt(remove);
+            EditorGUILayout.EndVertical();
+        }
+
+        List<string> ParameterNames()
+        {
+            var names = new List<string>();
+            if (_controller == null) return names;
+            foreach (var parameter in _controller.parameters) names.Add(parameter.name);
+            return names;
+        }
+
+        AnimatorControllerParameterType TypeOf(string parameter)
+        {
+            if (_controller != null)
+                foreach (var declared in _controller.parameters)
+                    if (declared.name == parameter) return declared.type;
+            return AnimatorControllerParameterType.Float;
+        }
+
+        // ---- running --------------------------------------------------------
 
         /// <summary>The avatar's own answer to "what travels": the synced entries of whichever
         /// parameter store the controller is associated with.</summary>
@@ -192,7 +406,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
                     _synced.Add(entry.name);
         }
 
-        void RunNow()
+        SimSettings BuildSettings()
         {
             var settings = new SimSettings
             {
@@ -203,7 +417,8 @@ namespace Yozolab.DaerD.DynamicAnalyze
                     jitter = _jitter,
                     seed = _seed,
                 },
-                stimulus = _stimulus,
+                stimulus = new Stimulus(),
+                lagRows = _lagRows,
                 wire = _twoClients
                     ? new SyncWire
                     {
@@ -214,17 +429,42 @@ namespace Yozolab.DaerD.DynamicAnalyze
                     }
                     : null,
             };
+            foreach (var poke in _pokes)
+                if (!string.IsNullOrEmpty(poke.parameter))
+                    settings.stimulus.At(poke.at, poke.parameter, poke.value, poke.scope);
             if (settings.wire != null)
             {
                 if (_synced.Count == 0) FillFromStore();
                 settings.wire.Syncs(_synced.ToArray());
             }
+            return settings;
+        }
 
+        void RunNow()
+        {
             _playing = false;
-            _view.trace = Simulation.Run(_controller, settings);
+            _view.trace = Simulation.Run(_controller, BuildSettings());
             _view.cursorFrame = 0;
             _view.Fit(position.width);
             Repaint();
+        }
+
+        void StartSession()
+        {
+            DropSession();
+            if (_controller == null) return;
+            _session = new SimSession(_controller, BuildSettings());
+            _view.trace = _session.Trace;
+            _view.cursorFrame = 0;
+            _view.Fit(position.width);
+            _lastTick = EditorApplication.timeSinceStartup;
+        }
+
+        void DropSession()
+        {
+            if (_session == null) return;
+            _session.Dispose();
+            _session = null;
         }
     }
 }
