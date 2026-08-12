@@ -35,6 +35,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
         float _time;
         float _carry;
         float _nextSample;
+        bool _arrived;
 
         public SignalTrace Trace => _recorder.Trace;
 
@@ -62,7 +63,12 @@ namespace Yozolab.DaerD.DynamicAnalyze
                     clock.seed ^ 0x2545F491));
             _recorder = new TraceRecorder(controller, _clients, _settings.wire != null,
                 _settings.lagRows);
-            _nextSample = _settings.wire != null ? _settings.wire.Interval : float.MaxValue;
+            // See Simulation.Run: joining at zero is everybody loading together, which hands
+            // nothing over because there is nothing yet to hand.
+            _arrived = _settings.wire == null || _settings.wire.remoteJoinsAt <= 0f;
+            _nextSample = _settings.wire != null
+                ? Mathf.Max(0f, _settings.wire.remoteJoinsAt) + _settings.wire.Interval
+                : float.MaxValue;
         }
 
         /// <summary>
@@ -96,6 +102,13 @@ namespace Yozolab.DaerD.DynamicAnalyze
         void StepOnce(float step)
         {
             bool sampled = false, dropped = false;
+            if (!_arrived && _time >= Mathf.Max(0f, _settings.wire.remoteJoinsAt))
+            {
+                // Arriving is itself a delivery — see Simulation.Run.
+                _arrived = true;
+                sampled = true;
+                Simulation.Carry(_settings.wire, _clients[0], _clients[1]);
+            }
             while (_time >= _nextSample)
             {
                 _nextSample += _settings.wire.Interval;
@@ -104,9 +117,13 @@ namespace Yozolab.DaerD.DynamicAnalyze
                 else Simulation.Carry(_settings.wire, _clients[0], _clients[1]);
             }
 
-            foreach (var client in _clients) client.Step(step);
+            for (int i = 0; i < _clients.Count; i++)
+            {
+                if (i > 0 && !_arrived) continue;
+                _clients[i].Step(step);
+            }
             _time += step;
-            _recorder.Record(_time, step, sampled, dropped);
+            _recorder.Record(_time, step, sampled, dropped, _arrived);
             _recorder.Trace.Trim(Window);
         }
 

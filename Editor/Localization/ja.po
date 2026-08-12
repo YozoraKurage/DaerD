@@ -3056,3 +3056,9 @@ msgstr " ほか {0} 件"
 
 msgid "What this run does not promise ({0})"
 msgstr "この実行が保証しないこと ({0})"
+
+msgid "Remote Joins At (s)"
+msgstr "リモートの入室 (秒)"
+
+msgid "When the other person turns up. Zero is everybody loading together, which is the one case that stops happening after the first minute of an instance. Somebody who arrives later is handed every synced value at once and has to work the rest out from there — which is what the flags about being caught up are for."
+msgstr "相手がいつ来るかです。0 は全員同時に読み込む場合ですが、それはインスタンスの最初の 1 分を過ぎると起きなくなります。あとから来た人は同期値を一括で受け取り、残りはそこから自力で追いつく必要があります（追いつけたかを示す各フラグはそのためのものです）。"

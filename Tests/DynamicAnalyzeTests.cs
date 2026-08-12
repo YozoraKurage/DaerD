@@ -599,6 +599,68 @@ namespace Yozolab.DaerD.Tests
             }
         }
 
+        [Test]
+        public void Wire_HoldsTheOtherPersonBackUntilTheyArrive()
+        {
+            var wire = new SyncWire { intervalSeconds = 0.1f, remoteJoinsAt = 0.5f }.Syncs("X");
+            var stimulus = new Stimulus().At(0f, "X", 0.5f).At(0f, "Go", true);
+            var trace = Simulation.Run(NewController(), Wired(1f, wire, stimulus));
+
+            var here = trace.Find(Simulation.WireScope, "remote here");
+            var remote = trace.Find(Simulation.RemoteScope, "X");
+            var state = trace.Find(Simulation.RemoteScope, "Base/state");
+
+            int arrived = -1;
+            for (int frame = 0; frame < trace.Frames && arrived < 0; frame++)
+                if (here.At(frame) != 0f) arrived = frame;
+            Assert.Greater(arrived, 0);
+            Assert.AreEqual(0.5f, trace.TimeAt(arrived), 0.03f);
+
+            // Before that they are not there: nothing crosses, and their copy is not running.
+            for (int frame = 0; frame < arrived; frame++)
+            {
+                Assert.AreEqual(0f, remote.At(frame), "a value reached somebody who is absent");
+                Assert.AreEqual("Idle", state.TextAt(frame), "their copy was running early");
+            }
+
+            // Arriving IS a delivery — they are handed the state at once rather than waiting
+            // out an interval, which is why a late arrival decodes whatever it lands on.
+            Assert.AreEqual(0.5f, remote.At(arrived), 0.01f);
+            // Everything the wire carries, and nothing it does not: arriving is a delivery of
+            // the synced set, not a copy of the wearer's whole animator.
+            Assert.AreEqual(0f, trace.Find(Simulation.RemoteScope, "Go").At(arrived));
+            Assert.AreEqual(0f,
+                trace.Find(Simulation.RemoteScope, "Go").At(trace.Frames - 1));
+        }
+
+        [Test]
+        public void Wire_HandsNothingOverWhenEverybodyLoadedTogether()
+        {
+            // Joining at zero is the case where there is nothing yet to hand over, so the
+            // first thing that crosses is still the first sample.
+            var wire = new SyncWire { intervalSeconds = 0.2f }.Syncs("X");
+            var stimulus = new Stimulus().At(0f, "X", 0.5f);
+            var trace = Simulation.Run(NewController(), Wired(0.5f, wire, stimulus));
+
+            Assert.AreEqual(0f, trace.Find(Simulation.RemoteScope, "X").At(0));
+            Assert.AreEqual(1f, trace.Find(Simulation.WireScope, "remote here").At(0));
+        }
+
+        [Test]
+        public void Lag_IsNotHeldAgainstSomebodyWhoIsNotThereYet()
+        {
+            var wire = new SyncWire { intervalSeconds = 0.1f, remoteJoinsAt = 0.4f }.Syncs("X");
+            var stimulus = new Stimulus().At(0f, "X", 0.5f);
+            var trace = Simulation.Run(NewController(), Wired(1f, wire, stimulus));
+
+            var lag = trace.Find(Simulation.LagScope, "X");
+            var here = trace.Find(Simulation.WireScope, "remote here");
+            for (int frame = 0; frame < trace.Frames; frame++)
+                if (here.At(frame) == 0f)
+                    Assert.AreEqual(0f, lag.At(frame),
+                        "counted an absence as being behind, at frame " + frame);
+        }
+
         // ---- what a run does not promise ------------------------------------
 
         static bool Mentions(System.Collections.Generic.List<string> notes, string fragment)

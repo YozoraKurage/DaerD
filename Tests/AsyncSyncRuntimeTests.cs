@@ -58,7 +58,7 @@ namespace Yozolab.DaerD.Tests
 
         /// <summary>The run: two clients, and the wire carrying exactly what the setup syncs.</summary>
         static SimSettings Settings(AsyncSyncBuilder.Request request, float seconds,
-            float loss = 0f)
+            float loss = 0f, float joinsAt = 0f)
         {
             var wire = new SyncWire
             {
@@ -66,6 +66,7 @@ namespace Yozolab.DaerD.Tests
                 // replaces it — the condition the wizard's own warning is about.
                 intervalSeconds = 0.1f,
                 dropChance = loss,
+                remoteJoinsAt = joinsAt,
                 seed = 4,
             };
             foreach (var (name, _) in AsyncSyncBuilder.GeneratedParameters(request))
@@ -206,6 +207,59 @@ namespace Yozolab.DaerD.Tests
             for (int frame = 0; frame < noisy.Frames; frame++)
                 if (flagged.At(frame) != 0f) raised = true;
             Assert.IsTrue(raised, "losing most of the wire went unnoticed");
+        }
+
+        // ---- somebody who turned up late --------------------------------------
+
+        [Test]
+        public void ALateArrivalIsCaughtUpInsideOnePass()
+        {
+            // The case the whole technique is about: they were not there when the values were
+            // set, and nothing will be set again.
+            var controller = Multiplexed(out var request, r => r.ready = true);
+            var settings = Settings(request, 8f, joinsAt: 3.4f);
+            settings.stimulus.At(0f, "F", 0.5f).At(0f, "B", true).At(0f, "I", 3f);
+
+            var trace = Simulation.Run(controller, settings);
+            Assert.AreEqual(0.5f, Remote(trace, "F"), 0.01f);
+            Assert.AreEqual(1f, Remote(trace, "B"));
+            Assert.AreEqual(3f, Remote(trace, "I"));
+
+            foreach (var (name, expected) in new[] { ("F", 0.5f), ("B", 1f), ("I", 3f) })
+            {
+                float at = Agreed(trace, name, expected);
+                Assert.Greater(at, 3.4f, name + " reached somebody who was not there");
+                Assert.Less(at - 3.4f, 1.2f, name + " took longer than a pass to catch up");
+            }
+        }
+
+        [Test]
+        public void ReadyDoesNotLieToSomebodyWhoArrivedMidPass()
+        {
+            var controller = Multiplexed(out var request, r => r.ready = true);
+            // Deliberately awkward: they turn up in the middle of a step, so the index they
+            // are handed is one they will not see change for a while.
+            var settings = Settings(request, 8f, joinsAt: 3.55f);
+            settings.stimulus.At(0f, "F", 0.5f).At(0f, "B", true).At(0f, "I", 3f);
+
+            var trace = Simulation.Run(controller, settings);
+            var ready = trace.Find(Simulation.RemoteScope, "Async/Ready");
+
+            int latched = -1;
+            for (int frame = 0; frame < trace.Frames && latched < 0; frame++)
+                if (ready.At(frame) != 0f) latched = frame;
+            Assert.Greater(latched, 0, "Ready never latched for a late arrival");
+
+            // The promise: not before every value is actually theirs. Ready may be late; it
+            // may never be early.
+            foreach (var (name, expected) in new[] { ("F", 0.5f), ("B", 1f), ("I", 3f) })
+            {
+                float agreed = Agreed(trace, name, expected);
+                Assert.Greater(agreed, 0f);
+                Assert.LessOrEqual(agreed, trace.TimeAt(latched) + 1e-3f,
+                    "Ready was on while " + name + " was still somebody else's value");
+            }
+            Assert.Less(trace.TimeAt(latched) - 3.55f, 1.3f, "later than the pass it promises");
         }
 
         // ---- groups -----------------------------------------------------------

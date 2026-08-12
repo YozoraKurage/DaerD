@@ -47,6 +47,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
         [SerializeField] bool _twoClients = true;
         [SerializeField] float _interval = 0.2f;
         [SerializeField] float _dropChance;
+        [SerializeField] float _joinsAt;
         [SerializeField] bool _quantize = true;
         [SerializeField] bool _lagRows = true;
         [SerializeField] List<string> _synced = new List<string>();
@@ -350,6 +351,10 @@ namespace Yozolab.DaerD.DynamicAnalyze
                 _dropChance = EditorGUILayout.Slider(L.Tr("Loss"), _dropChance, 0f, 1f);
                 EditorGUILayout.EndHorizontal();
 
+                _joinsAt = EditorGUILayout.FloatField(new GUIContent(L.Tr("Remote Joins At (s)"),
+                    L.Tr("When the other person turns up. Zero is everybody loading together, which is the one case that stops happening after the first minute of an instance. Somebody who arrives later is handed every synced value at once and has to work the rest out from there — which is what the flags about being caught up are for.")),
+                    _joinsAt);
+
                 EditorGUILayout.BeginHorizontal();
                 _quantize = EditorGUILayout.Toggle(new GUIContent(L.Tr("Round Like The Wire"),
                     L.Tr("Floats to 8 bits across -1..1, Ints to a byte, Bools to a bit. On, because that is what a remote actually holds.")), _quantize);
@@ -473,6 +478,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
                     {
                         intervalSeconds = _interval,
                         dropChance = _dropChance,
+                        remoteJoinsAt = _joinsAt,
                         quantize = _quantize,
                         seed = _seed,
                     }

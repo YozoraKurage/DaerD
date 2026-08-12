@@ -44,6 +44,18 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// not reshuffle the drops and vice versa.</summary>
         public int seed = 1;
 
+        /// <summary>
+        /// When the other person arrives, in seconds. Zero is everybody loading together,
+        /// which is the one case that never happens after the first minute of an instance —
+        /// and the case a cycle is least likely to be wrong in, because both copies start from
+        /// the same defaults.
+        ///
+        /// A late arrival is where the interesting failures live: they decode whatever index
+        /// they land on, they have no history to compare it against, and every flag about
+        /// being caught up exists because of them.
+        /// </summary>
+        public float remoteJoinsAt;
+
         /// <summary>The parameters that actually travel — the avatar's synced expression
         /// parameters. Taken as names rather than read out of a parameter store, so this module
         /// stays independent of how the project stores them.</summary>

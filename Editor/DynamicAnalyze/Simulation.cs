@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using UnityEditor.Animations;
+using UnityEngine;
 
 namespace Yozolab.DaerD.DynamicAnalyze
 {
@@ -68,10 +69,16 @@ namespace Yozolab.DaerD.DynamicAnalyze
 
                 int next = 0;
                 float time = 0f;
-                // The first sample is one interval in, so a remote starts the run knowing
-                // nothing — which is not a limitation of the model but the situation every
-                // remote is actually in when it arrives.
-                float nextSample = wire != null ? wire.Interval : float.MaxValue;
+                float joinAt = wire != null ? Mathf.Max(0f, wire.remoteJoinsAt) : 0f;
+                // Zero means everybody loaded together, and then there is nothing to hand
+                // over: both copies start from the same defaults and the first thing that
+                // crosses is the first sample. An arrival delivery is for somebody who turned
+                // up to a session already in progress.
+                bool arrived = wire == null || joinAt <= 0f;
+                // The first sample is one interval after the other person is there, so a
+                // remote starts knowing nothing — which is not a limitation of the model but
+                // the situation every remote is actually in when it arrives.
+                float nextSample = wire != null ? joinAt + wire.Interval : float.MaxValue;
 
                 for (int frame = 0; frame < steps.Length; frame++)
                 {
@@ -82,6 +89,15 @@ namespace Yozolab.DaerD.DynamicAnalyze
                         Poke(clients, pending[next++]);
 
                     bool sampled = false, dropped = false;
+                    if (!arrived && time >= joinAt)
+                    {
+                        // Arriving is itself a delivery: a joiner is handed the state of every
+                        // synced parameter at once, which is why they decode whatever index
+                        // they land on rather than waiting for the next change.
+                        arrived = true;
+                        sampled = true;
+                        Carry(wire, clients[0], clients[1]);
+                    }
                     while (time >= nextSample)
                     {
                         nextSample += wire.Interval;
@@ -90,9 +106,15 @@ namespace Yozolab.DaerD.DynamicAnalyze
                         else Carry(wire, clients[0], clients[1]);
                     }
 
-                    foreach (var client in clients) client.Step(steps[frame]);
+                    for (int i = 0; i < clients.Count; i++)
+                    {
+                        // Somebody who has not arrived is not running: their copy of the avatar
+                        // does not exist yet, and a flat line is what that looks like.
+                        if (i > 0 && !arrived) continue;
+                        clients[i].Step(steps[frame]);
+                    }
                     time += steps[frame];
-                    recorder.Record(time, steps[frame], sampled, dropped);
+                    recorder.Record(time, steps[frame], sampled, dropped, arrived);
                 }
                 return recorder.Trace;
             }

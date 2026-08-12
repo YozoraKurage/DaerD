@@ -40,7 +40,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
         readonly List<Reader> _readers = new List<Reader>();
         readonly List<Lag> _lags = new List<Lag>();
         readonly SimClient _local, _remote;
-        readonly SignalTrace.Signal _sent, _lost;
+        readonly SignalTrace.Signal _sent, _lost, _here;
 
         public SignalTrace Trace { get; } = new SignalTrace();
 
@@ -55,6 +55,10 @@ namespace Yozolab.DaerD.DynamicAnalyze
             {
                 _sent = Trace.Declare(Simulation.WireScope, "sample", SignalKind.Bool);
                 _lost = Trace.Declare(Simulation.WireScope, "lost", SignalKind.Bool);
+                // When the other person turned up. Nothing about their copy means anything
+                // before this, and a flat line that suddenly starts is the clearest way to say
+                // so on a waveform.
+                _here = Trace.Declare(Simulation.WireScope, "remote here", SignalKind.Bool);
             }
             if (lagRows && _remote != null)
                 foreach (var parameter in controller.parameters)
@@ -95,12 +99,25 @@ namespace Yozolab.DaerD.DynamicAnalyze
         }
 
         /// <summary>One frame of everything.</summary>
-        public void Record(float time, float step, bool sampled, bool dropped)
+        public void Record(float time, float step, bool sampled, bool dropped,
+            bool remoteHere = true)
         {
             Trace.Frame(time, step);
             foreach (var reader in _readers) reader.signal.Push(reader.read());
             if (_sent != null) _sent.Push(sampled ? 1f : 0f);
             if (_lost != null) _lost.Push(dropped ? 1f : 0f);
+            if (_here != null) _here.Push(remoteHere ? 1f : 0f);
+
+            // Nobody to be behind until they are there.
+            if (!remoteHere)
+            {
+                foreach (var lag in _lags)
+                {
+                    lag.lastAgreed = time;
+                    lag.signal.Push(0f);
+                }
+                return;
+            }
 
             foreach (var lag in _lags)
             {
