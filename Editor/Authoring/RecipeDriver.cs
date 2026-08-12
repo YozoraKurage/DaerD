@@ -568,9 +568,11 @@ namespace Yozolab.DaerD.Authoring
                         break;
                     case 2:
                         if (TypeOf(entry.name) == AnimatorControllerParameterType.Bool)
-                            sb.DrivingRandomizes(BoolOf(entry.name), entry.chance);
+                            sb.DrivingRandomizes(BoolOf(entry.name), entry.chance,
+                                entry.preventRepeats);
                         else
-                            sb.DrivingRandomizes(Handle(entry.name, AnimatorControllerParameterType.Float), entry.min, entry.max);
+                            sb.DrivingRandomizes(Handle(entry.name, AnimatorControllerParameterType.Float),
+                                entry.min, entry.max, entry.preventRepeats);
                         break;
                     case 3:
                         if (entry.convertRange)

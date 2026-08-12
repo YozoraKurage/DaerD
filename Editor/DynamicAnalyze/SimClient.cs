@@ -18,11 +18,16 @@ namespace Yozolab.DaerD.DynamicAnalyze
     /// working without the SDK, telling clients apart (<see cref="IsLocal"/> and localOnly),
     /// and being able to interfere.
     ///
-    /// Where it differs from a headset, stated so it can be argued with:
-    /// the drivers of a state are applied just AFTER the frame that entered it, not inside it,
-    /// so their effect on a transition shows up one frame later than on a headset; a transition
-    /// from a state to itself enters nothing this can see, so its drivers do not fire; and
-    /// layers are served in index order, which VRChat does not promise.
+    /// The SDK's driver applies its entries from OnStateEnter — read off the shipped type, and
+    /// pinned by VrcSdkConformanceTests so it stays read rather than remembered. This applies
+    /// them at the same event, one step later in the frame: Mecanim runs, and every state
+    /// entered by it is then served.
+    ///
+    /// Where that differs from a headset, stated so it can be argued with: a driver's write is
+    /// not visible to another LAYER inside the same frame, so a chain of drivers across layers
+    /// takes a frame per link here and one frame in total there; a transition from a state to
+    /// itself enters nothing this can see, so its drivers do not fire; and layers are served in
+    /// index order, which VRChat does not promise either way.
     /// </summary>
     sealed class SimClient : IDisposable
     {
@@ -257,11 +262,20 @@ namespace Yozolab.DaerD.DynamicAnalyze
                         break;
                     case 2:                                     // Random
                         var type = TypeOf(entry.name);
-                        Write(entry.name,
-                            type == AnimatorControllerParameterType.Bool
+                        float rolled = type == AnimatorControllerParameterType.Bool
+                            || type == AnimatorControllerParameterType.Trigger
+                            ? (_random.NextChance(entry.chance) ? 1f : 0f)
+                            : _random.NextRange(entry.min, entry.max);
+                        // The SDK's own option: never the value it just had. Bounded rather
+                        // than a loop, because a Bool with a chance of 1 has nowhere else to go
+                        // and would spin forever being asked for one.
+                        for (int tries = 0; entry.preventRepeats && tries < 8
+                             && Mathf.Approximately(rolled, Read(entry.name)); tries++)
+                            rolled = type == AnimatorControllerParameterType.Bool
                                 || type == AnimatorControllerParameterType.Trigger
                                 ? (_random.NextChance(entry.chance) ? 1f : 0f)
-                                : _random.NextRange(entry.min, entry.max));
+                                : _random.NextRange(entry.min, entry.max);
+                        Write(entry.name, rolled);
                         break;
                     case 3:                                     // Copy
                         if (!Has(entry.source)) break;

@@ -31,6 +31,7 @@ namespace Yozolab.DaerD.Tests
             public float chance;
             public float valueMin;
             public float valueMax;
+            public bool preventRepeats;
         }
 
         public bool localOnly;

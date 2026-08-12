@@ -113,7 +113,7 @@ namespace Yozolab.DaerD
         /// <summary>Appends a Random entry (type 2) rolling between min and max with the given
         /// chance (Bools use chance alone; the SDK reads the fields it needs per type).</summary>
         public static void AddRandomEntry(StateMachineBehaviour driver, string parameter,
-            float min, float max, float chance)
+            float min, float max, float chance, bool preventRepeats = false)
         {
             AppendEntry(driver, entry =>
             {
@@ -122,6 +122,8 @@ namespace Yozolab.DaerD
                 SetFloat(entry, "valueMin", min);
                 SetFloat(entry, "valueMax", max);
                 SetFloat(entry, "chance", chance);
+                var repeats = entry.FindPropertyRelative("preventRepeats");
+                if (repeats != null) repeats.boolValue = preventRepeats;
             });
         }
 
@@ -208,6 +210,8 @@ namespace Yozolab.DaerD
                 };
                 var convert = row.FindPropertyRelative("convertRange");
                 entry.convertRange = convert != null && convert.boolValue;
+                var repeats = row.FindPropertyRelative("preventRepeats");
+                entry.preventRepeats = repeats != null && repeats.boolValue;
                 spec.entries.Add(entry);
             }
             return spec;
@@ -222,7 +226,8 @@ namespace Yozolab.DaerD
                 switch (entry.kind)
                 {
                     case 1: AddAddEntry(driver, entry.name, entry.value); break;
-                    case 2: AddRandomEntry(driver, entry.name, entry.min, entry.max, entry.chance); break;
+                    case 2: AddRandomEntry(driver, entry.name, entry.min, entry.max, entry.chance,
+                        entry.preventRepeats); break;
                     case 3:
                         AddCopyEntry(driver, entry.source, entry.name, entry.convertRange,
                             entry.sourceMin, entry.sourceMax, entry.destMin, entry.destMax);

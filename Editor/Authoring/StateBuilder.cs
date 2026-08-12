@@ -198,14 +198,30 @@ namespace Yozolab.DaerD.Authoring
             Drive(new ControllerIR.DriverEntry { kind = 1, name = parameter.Name, value = -amount },
                 parameter, $"DrivingDecreases({{0}}, {RecipeScript.F(amount)})");
 
-        public StateBuilder DrivingRandomizes(ParamHandle parameter, float min, float max) =>
-            Drive(new ControllerIR.DriverEntry { kind = 2, name = parameter.Name, min = min, max = max },
-                parameter, $"DrivingRandomizes({{0}}, {RecipeScript.F(min)}, {RecipeScript.F(max)})");
+        /// <param name="preventRepeats">Never roll the value it just rolled. The SDK's own
+        /// option, so a controller that had it keeps it.</param>
+        public StateBuilder DrivingRandomizes(ParamHandle parameter, float min, float max,
+            bool preventRepeats = false) =>
+            Drive(new ControllerIR.DriverEntry
+                {
+                    kind = 2, name = parameter.Name, min = min, max = max,
+                    preventRepeats = preventRepeats,
+                },
+                parameter, preventRepeats
+                    ? $"DrivingRandomizes({{0}}, {RecipeScript.F(min)}, {RecipeScript.F(max)}, true)"
+                    : $"DrivingRandomizes({{0}}, {RecipeScript.F(min)}, {RecipeScript.F(max)})");
 
         /// <summary>Bool randomization: the chance of landing true.</summary>
-        public StateBuilder DrivingRandomizes(BoolParam parameter, float chance) =>
-            Drive(new ControllerIR.DriverEntry { kind = 2, name = parameter.Name, chance = chance },
-                parameter, $"DrivingRandomizes({{0}}, {RecipeScript.F(chance)})");
+        public StateBuilder DrivingRandomizes(BoolParam parameter, float chance,
+            bool preventRepeats = false) =>
+            Drive(new ControllerIR.DriverEntry
+                {
+                    kind = 2, name = parameter.Name, chance = chance,
+                    preventRepeats = preventRepeats,
+                },
+                parameter, preventRepeats
+                    ? $"DrivingRandomizes({{0}}, {RecipeScript.F(chance)}, true)"
+                    : $"DrivingRandomizes({{0}}, {RecipeScript.F(chance)})");
 
         public StateBuilder DrivingCopies(ParamHandle source, ParamHandle destination)
         {

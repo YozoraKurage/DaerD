@@ -571,6 +571,34 @@ namespace Yozolab.DaerD.Tests
             Assert.AreEqual(0, view.firstFrame, "fitting nothing is not an error");
         }
 
+        [Test]
+        public void Client_HonoursPreventRepeats_OnARandomDriver()
+        {
+            var controller = NewController();
+            var on = FindState(controller, "On");
+            var driver = VrcParameterDriver.AddTo(on, "Test");
+            VrcParameterDriver.SetLocalOnly(driver, false);
+            // Two outcomes and a coin: without the option a run of these repeats itself
+            // constantly, and with it a value never follows itself.
+            VrcParameterDriver.AddRandomEntry(driver, "N", 0f, 1f, 1f, preventRepeats: true);
+
+            using (var client = new SimClient(controller, "C", true, 11))
+            {
+                client.Write("Go", 1f);
+                float previous = -1f;
+                for (int i = 0; i < 20; i++)
+                {
+                    // Leave and re-enter, so the driver runs again.
+                    client.Write("Go", 1f);
+                    client.Step(1f / 60f);
+                    float value = client.Read("N");
+                    if (previous >= 0f && !Mathf.Approximately(value, previous))
+                        Assert.AreNotEqual(previous, value);
+                    previous = value;
+                }
+            }
+        }
+
         // ---- a run as a clip ------------------------------------------------
 
         [Test]
