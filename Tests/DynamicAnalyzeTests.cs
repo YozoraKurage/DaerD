@@ -369,6 +369,43 @@ namespace Yozolab.DaerD.Tests
             Assert.AreEqual(0f, trace.Find(Simulation.LocalScope, "N").At(0));
         }
 
+        // ---- the viewer's model side ----------------------------------------
+
+        [Test]
+        public void View_FiltersByPath_AndFitsTheWholeRunAcrossTheWidth()
+        {
+            var wire = new SyncWire { intervalSeconds = 0.1f }.Syncs("X");
+            var view = new WaveformView
+            {
+                trace = Simulation.Run(NewController(), Wired(1f, wire)),
+            };
+            Assert.AreEqual(60, view.Frames);
+
+            // Everything is recorded, and the filter is how a reader narrows it — which is why
+            // a run does not need to be told in advance what it will be asked.
+            int all = view.Visible().Count;
+            view.filter = Simulation.RemoteScope;
+            Assert.Less(view.Visible().Count, all);
+            foreach (var signal in view.Visible())
+                Assert.AreEqual(Simulation.RemoteScope, signal.scope);
+            view.filter = "Base/state";
+            Assert.AreEqual(2, view.Visible().Count, "one per client");
+
+            view.Fit(800f);
+            Assert.AreEqual(0, view.firstFrame);
+            // The whole run across the plot, which is the width less the two name columns.
+            Assert.AreEqual((800f - 284f) / 60f, view.pixelsPerFrame, 0.01f);
+        }
+
+        [Test]
+        public void View_HasNothingToSayBeforeARun()
+        {
+            var view = new WaveformView();
+            Assert.AreEqual(0, view.Frames);
+            view.Fit(800f);
+            Assert.AreEqual(0, view.firstFrame, "fitting nothing is not an error");
+        }
+
         static AnimatorState FindState(AnimatorController controller, string name)
         {
             foreach (var child in controller.layers[0].stateMachine.states)

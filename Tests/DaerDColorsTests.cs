@@ -84,7 +84,13 @@ namespace Yozolab.DaerD.Tests
 
             foreach (var file in Directory.GetFiles(root, "*.cs", SearchOption.AllDirectories))
             {
-                if (Path.GetFileName(file) == "DaerDColors.cs") continue;
+                // Two palettes, not a loophole: the product's, and DD DynamicAnalyze's own,
+                // which it has because that module is meant to be liftable into its own
+                // assembly and a palette it did not own would be what stopped it. The rule
+                // both keep is the one this test is for — a colour is written down once,
+                // under a name, and nowhere else.
+                string leaf = Path.GetFileName(file);
+                if (leaf == "DaerDColors.cs" || leaf == "WaveformColors.cs") continue;
                 scanned++;
                 var lines = File.ReadAllLines(file);
                 for (int i = 0; i < lines.Length; i++)

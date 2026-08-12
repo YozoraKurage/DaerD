@@ -2901,3 +2901,68 @@ msgstr "'{0}' の全遷移 ({1})"
 
 msgid "(no conditions)"
 msgstr "(条件なし)"
+
+# ---- DD DynamicAnalyze ----
+
+msgid "DD DynamicAnalyze"
+msgstr "DD 動的解析"
+
+msgid "Run"
+msgstr "実行"
+
+msgid "frame {0} / {1}   {2:0.###} s"
+msgstr "フレーム {0} / {1}   {2:0.###} 秒"
+
+msgid "Fit"
+msgstr "全体表示"
+
+msgid "FPS"
+msgstr "FPS"
+
+msgid "Frames per simulated second. The frame count is this times the length; jitter varies how long each one is, not how many there are."
+msgstr "シミュレート 1 秒あたりのフレーム数です。フレーム数はこれ × 秒数で決まり、ジッタが変えるのは各フレームの長さであってフレーム数ではありません。"
+
+msgid "Seconds"
+msgstr "秒数"
+
+msgid "Jitter"
+msgstr "ジッタ"
+
+msgid "How far a frame may stray from its nominal length, as a fraction of it. A controller that only works at exactly this frame rate works nowhere."
+msgstr "各フレームが基準の長さからどれだけずれてよいかを、その割合で指定します。ちょうどこのフレームレートでしか動かないコントローラーは、どこでも動きません。"
+
+msgid "Seed"
+msgstr "シード"
+
+msgid "Fixes the noise. Same settings and same seed are the same run; a new seed is the same question asked again."
+msgstr "ノイズを固定します。設定とシードが同じなら完全に同じ実行になり、シードを変えると同じ問いをもう一度別の形で試せます。"
+
+msgid "Wearer And A Remote"
+msgstr "装着者とリモート"
+
+msgid "Run two copies of the avatar off one clock, with only the synced parameters crossing between them. Off runs one, which answers questions about the Animator rather than about VRChat."
+msgstr "同じ時計で 2 つのアバターを走らせ、両者の間を渡るのは同期パラメーターだけにします。オフだと 1 つだけになり、VRChat ではなく Animator についての問いに答える形になります。"
+
+msgid "Sync Every (s)"
+msgstr "同期周期 (秒)"
+
+msgid "Seconds between samples. The wearer's synced values are read whole and handed over together, so a change that comes and goes inside one interval never leaves them."
+msgstr "サンプリングの間隔（秒）です。装着者の同期値はまとめて読まれて一括で渡るので、1 周期の中で起きて消えた変化は装着者から出ていきません。"
+
+msgid "Loss"
+msgstr "損失"
+
+msgid "Round Like The Wire"
+msgstr "実際の同期精度で丸める"
+
+msgid "Floats to 8 bits across -1..1, Ints to a byte, Bools to a bit. On, because that is what a remote actually holds."
+msgstr "Float は -1〜1 を 8bit、Int は 1 バイト、Bool は 1 ビットに丸めます。リモートが実際に保持しているのはこの値なので既定はオンです。"
+
+msgid "Synced: {0} parameter(s)"
+msgstr "同期対象: {0} 個"
+
+msgid "From The Store"
+msgstr "ストアから取得"
+
+msgid "No run yet — press Run."
+msgstr "まだ実行していません。「実行」を押してください。"
