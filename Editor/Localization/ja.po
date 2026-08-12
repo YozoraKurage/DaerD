@@ -980,6 +980,18 @@ msgstr "連続送信: {1} スロット中 {0} 個にデコーダー State がも
 msgid "Sync requests: {0} local Bool flag(s) and one Int, nothing synced."
 msgstr "同期リクエスト: ローカル Bool フラグ {0} 個と Int 1 個（同期コストなし）"
 
+msgid "Remote initialized flag: {0} local Bool(s) and one layer, nothing synced."
+msgstr "リモート初期化フラグ: ローカル Bool {0} 個とレイヤー 1 枚（同期コストなし）"
+
+msgid "Remote Initialized Flag"
+msgstr "リモート初期化フラグ"
+
+msgid "Generate a local Bool that turns on once this client has decoded every slot at least once — what a remote has instead of a way to ask. The wearer reads it as on from the start, so a remote that has finished initializing is Ready && !IsLocal. Costs one local Bool per slot and a second layer; nothing synced."
+msgstr "そのクライアントが全スロットを 1 度以上受信し終えたら 1 になるローカル Bool を生成します。リモートには問い合わせる手段が無く、これがその代わりです。装着者は最初から 1 なので、「初期化を終えたリモート」は Ready && !IsLocal と書けます。コストはスロット数ぶんのローカル Bool とレイヤー 1 枚で、同期は増えません。"
+
+msgid "'{0}' turns on once a remote has decoded every slot — within {1:0.#} s of arriving when nothing is lost, and later when something is. It never turns off again, and the wearer reads it as on from the start."
+msgstr "'{0}' はリモートが全スロットを受信し終えると 1 になります。取りこぼしが無ければ入室から {1:0.#} 秒以内、あれば その後です。一度 1 になったら戻りません。装着者は最初から 1 です。"
+
 msgid "With requests running: up to {0:0.#} s per pass."
 msgstr "リクエストが動いているとき: 1 周あたり最大 {0:0.#} 秒"
 

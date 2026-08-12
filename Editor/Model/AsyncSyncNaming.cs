@@ -49,6 +49,25 @@ namespace Yozolab.DaerD
         public static string ReturnParameter(string baseName) => baseName + "/Return";
 
         /// <summary>
+        /// The remote-initialized flag: 0 until this client has decoded every slot at least
+        /// once, and 1 from then on. Local and never synced — a remote has no way to tell the
+        /// wearer anything, so this is each client's own reading of what it has received.
+        /// </summary>
+        public static string ReadyParameter(string baseName) => baseName + "/Ready";
+
+        /// <summary>
+        /// One slot's "this client has decoded it at least once" bit, set by that slot's Recv
+        /// driver and never cleared. Named after the slot the way its states are, so a layer
+        /// and the parameter list read as the same setup.
+        /// </summary>
+        public static string SeenParameter(string baseName, string slotName) =>
+            baseName + "/Seen/" + slotName;
+
+        /// <summary>The layer the Ready watcher gets, beside the cycle's own. Its own layer
+        /// because it has to be evaluated while the sync layer is busy being a ring.</summary>
+        public static string ReadyLayerName(string layerName) => layerName + " Ready";
+
+        /// <summary>
         /// The base name a new setup on this controller starts from: "DD" plus the first six
         /// hex digits of the controller's asset GUID. A fixed default collides as soon as two
         /// distributions that each bring a cycle meet on one avatar — both would own

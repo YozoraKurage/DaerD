@@ -2136,5 +2136,240 @@ namespace Yozolab.DaerD.Tests
                 AssetDatabase.DeleteAsset(path);
             }
         }
+
+        // ---- remote initialized flag ----------------------------------------
+
+        static AnimatorStateMachine FindLayer(AnimatorController controller, string name)
+        {
+            foreach (var layer in controller.layers)
+                if (layer.name == name)
+                    return layer.stateMachine;
+            return null;
+        }
+
+        [Test]
+        public void ReadyParameters_AreOneFlagAndOneBitPerSlot()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            CollectionAssert.IsEmpty(AsyncSyncBuilder.ReadyParameters(request),
+                "a setup that doesn't ask for the flag mints nothing");
+
+            request.ready = true;
+            var names = new List<string>();
+            foreach (var (name, type) in AsyncSyncBuilder.ReadyParameters(request))
+            {
+                Assert.AreEqual(AnimatorControllerParameterType.Bool, type);
+                names.Add(name);
+            }
+            CollectionAssert.AreEqual(
+                new[] { "Async/Ready", "Async/Seen/F", "Async/Seen/B", "Async/Seen/I" }, names);
+        }
+
+        [Test]
+        public void ReadyParameters_NameTheSlot_NotEveryTargetRidingIt()
+        {
+            var controller = NewController();
+            controller.AddParameter("B2", AnimatorControllerParameterType.Bool);
+            var request = NewRequest(controller, "F", "B", "B2");
+            request.boolChannels = 2;                      // B and B2 share one slot
+            request.ready = true;
+
+            var names = new List<string>();
+            foreach (var (name, _) in AsyncSyncBuilder.ReadyParameters(request)) names.Add(name);
+            // One bit for the pair, spelled the way their shared states are.
+            CollectionAssert.AreEqual(new[] { "Async/Ready", "Async/Seen/F", "Async/Seen/B +1" },
+                names);
+        }
+
+        [Test]
+        public void Apply_WithReady_BuildsAWatcherThatLatchesOnEverySlot()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.ready = true;
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var watcher = FindLayer(controller, "Async Ready");
+            Assert.IsNotNull(watcher, "the flag gets a layer of its own");
+            Assert.AreEqual(3, watcher.states.Length);
+
+            // Remotes start watching; the wearer is taken aside on the way in.
+            var watch = FindState(watcher, "Watch");
+            Assert.AreEqual(watch, watcher.defaultState);
+            Assert.AreEqual(1, watcher.entryTransitions.Length);
+            Assert.AreEqual("Local", watcher.entryTransitions[0].destinationState.name);
+            Assert.IsTrue(HasCondition(watcher.entryTransitions[0], "IsLocal",
+                AnimatorConditionMode.If, 0f));
+
+            // One condition per slot, all on the same transition: they are read together.
+            Assert.AreEqual(1, watch.transitions.Length);
+            var toReady = watch.transitions[0];
+            Assert.AreEqual("Ready", toReady.destinationState.name);
+            Assert.IsFalse(toReady.hasExitTime);
+            Assert.AreEqual(3, toReady.conditions.Length);
+            foreach (var slot in new[] { "F", "B", "I" })
+                Assert.IsTrue(HasCondition(toReady, "Async/Seen/" + slot,
+                    AnimatorConditionMode.If, 0f), "no condition on " + slot);
+
+            // Nothing leaves Ready or Local — that is the latch.
+            Assert.AreEqual(0, FindState(watcher, "Ready").transitions.Length);
+            Assert.AreEqual(0, FindState(watcher, "Local").transitions.Length);
+        }
+
+        [Test]
+        public void Apply_WithoutReady_BuildsNoWatcher()
+        {
+            var controller = NewController();
+            Assert.IsTrue(AsyncSyncBuilder.Apply(NewRequest(controller, "F", "B", "I")));
+
+            Assert.AreEqual(2, controller.layers.Length);
+            Assert.IsNull(FindLayer(controller, "Async Ready"));
+            CollectionAssert.IsEmpty(AsyncSyncBuilder.ReadyParameters(
+                NewRequest(controller, "F", "B", "I")));
+        }
+
+        [Test]
+        public void Apply_WithReadyTurnedOffAgain_TakesTheWatcherAway()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.ready = true;
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+            Assert.AreEqual(3, controller.layers.Length);
+
+            // Regenerating the same layer without the flag: a watcher left behind would hold
+            // whatever it last latched, which is worse than not having one.
+            var again = NewRequest(controller, "F", "B", "I");
+            again.layerIndex = 1;
+            Assert.IsTrue(AsyncSyncBuilder.Apply(again));
+
+            Assert.AreEqual(2, controller.layers.Length);
+            Assert.IsNull(FindLayer(controller, "Async Ready"));
+        }
+
+        [Test]
+        public void Apply_WithReadyTwice_RegeneratesTheOneWatcher()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.ready = true;
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var again = NewRequest(controller, "F", "B", "I");
+            again.ready = true;
+            again.layerIndex = 1;
+            Assert.IsTrue(AsyncSyncBuilder.Apply(again));
+
+            Assert.AreEqual(3, controller.layers.Length, "the watcher is rebuilt, not stacked");
+            Assert.AreEqual(3, FindLayer(controller, "Async Ready").states.Length);
+        }
+
+        [Test]
+        public void Apply_WithReadyAndDrivers_EachRecvRaisesItsOwnBit()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.ready = true;
+            request.skipDrivers = false;
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var sm = controller.layers[1].stateMachine;
+            foreach (var slot in new[] { "F", "B", "I" })
+            {
+                var entries = DriverOn(FindState(sm, "Recv " + slot)).entries;
+                var seen = entries[entries.Count - 1];
+                Assert.AreEqual("Async/Seen/" + slot, seen.name, "on Recv " + slot);
+                Assert.AreEqual(0, seen.kind);                  // Set
+                Assert.AreEqual(1f, seen.value);
+            }
+
+            // Nothing anywhere puts a bit back down: the reading is cumulative, which is what
+            // spares it a window to size and a clear to race against.
+            foreach (var child in sm.states)
+                foreach (var behaviour in child.state.behaviours)
+                    foreach (var entry in VrcParameterDriver.ReadSpec(behaviour).entries)
+                        if (entry.name != null && entry.name.StartsWith("Async/Seen/"))
+                            Assert.AreEqual(1f, entry.value, "on " + child.state.name);
+        }
+
+        [Test]
+        public void Apply_WithReadyAndDrivers_TheWearerIsReadyWithoutWaiting()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.ready = true;
+            request.skipDrivers = false;
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var watcher = FindLayer(controller, "Async Ready");
+            foreach (var name in new[] { "Local", "Ready" })
+            {
+                var driver = DriverOn(FindState(watcher, name));
+                // Not localOnly: every client runs this on its own copy of the avatar, and
+                // each of them is answering for itself.
+                Assert.IsFalse(driver.localOnly, "on " + name);
+                Assert.AreEqual(1, driver.entries.Count);
+                Assert.AreEqual("Async/Ready", driver.entries[0].name);
+                Assert.AreEqual(1f, driver.entries[0].value);
+            }
+            Assert.AreEqual(0, FindState(watcher, "Watch").behaviours.Length);
+        }
+
+        [Test]
+        public void Apply_WithReadyAndAClock_BothPhasesOfASlotRaiseTheOneBit()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.allowRepeatSteps = true;
+            request.ready = true;
+            request.skipDrivers = false;
+            Sends(request, "F");                    // F beside itself: two phases, one slot
+            Sends(request, "F");
+            Sends(request, "B");
+            Sends(request, "I");
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            // Two decoder states for F, one bit between them: a slot arrives whole, and
+            // either index proves it did.
+            var sm = controller.layers[1].stateMachine;
+            foreach (var name in new[] { "Recv F", "Recv F (2)" })
+            {
+                var entries = DriverOn(FindState(sm, name)).entries;
+                Assert.AreEqual("Async/Seen/F", entries[entries.Count - 1].name);
+            }
+            // Three slots, so three conditions — the repeat costs an index value, not a bit.
+            Assert.AreEqual(3, FindState(FindLayer(controller, "Async Ready"), "Watch")
+                .transitions[0].conditions.Length);
+        }
+
+        [Test]
+        public void FromConfig_CarriesReady()
+        {
+            var controller = NewController();
+            var config = new GraphFrameData.AsyncSyncConfig
+            {
+                baseName = "Async",
+                stepSeconds = 0.3f,
+                targets = new List<string> { "F", "B", "I" },
+                ready = true,
+            };
+            Assert.IsTrue(AsyncSyncBuilder.FromConfig(controller, config).ready);
+            config.ready = false;
+            Assert.IsFalse(AsyncSyncBuilder.FromConfig(controller, config).ready);
+        }
+
+        [Test]
+        public void Warnings_WithReady_SayWhenItLatches()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            Assert.IsFalse(AsyncSyncBuilder.Warnings(request)
+                .Exists(w => w.Contains("Async/Ready")));
+
+            request.ready = true;
+            Assert.IsTrue(AsyncSyncBuilder.Warnings(request)
+                .Exists(w => w.Contains("Async/Ready") && w.Contains("0.9")));
+        }
     }
 }

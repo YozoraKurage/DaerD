@@ -86,6 +86,13 @@ namespace Yozolab.DaerD
             /// <summary>Targets that accept an on-demand sync request (a "base/Req/target"
             /// Bool plus redirect transitions in the generated layer).</summary>
             public List<string> requests = new List<string>();
+            /// <summary>Generate the remote-initialized flag. False in data saved before the
+            /// field existed, which is the behaviour those setups already had.</summary>
+            public bool ready;
+            /// <summary>Root state machine of the Ready watcher's layer, or null when
+            /// <see cref="ready"/> is off — the same "identifies the layer across renames"
+            /// job <see cref="layer"/> does, for the second layer a setup can own.</summary>
+            public AnimatorStateMachine readyLayer;
             /// <summary>Explicit cycle, as target names, one entry per step — empty when the
             /// pass is derived from the rates. Absent in data saved before the field existed,
             /// which reads as empty and so as "rates", the behaviour those setups already had.</summary>

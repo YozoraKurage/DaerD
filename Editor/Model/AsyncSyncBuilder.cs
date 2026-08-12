@@ -122,6 +122,18 @@ namespace Yozolab.DaerD
             public List<string> requestTargets = new List<string>();
 
             /// <summary>
+            /// Generate the remote-initialized flag: a local, unsynced Bool ("base/Ready")
+            /// that reads 0 until this client has decoded every slot at least once, and 1
+            /// from then on. The wearer reads 1 immediately — their own values were never
+            /// anywhere else — so "a remote that has finished initializing" is
+            /// <c>Ready &amp;&amp; !IsLocal</c>.
+            ///
+            /// Off by default: it costs a slot's worth of local Bools and a second layer,
+            /// and a setup nobody reads it from would pay for both.
+            /// </summary>
+            public bool ready;
+
+            /// <summary>
             /// Targets that start a slot of their own instead of joining the batch the target
             /// before them opened. Batched targets ride one Parameter Driver copy in one step,
             /// so they are sent together by construction and no schedule can separate them —
@@ -271,6 +283,15 @@ namespace Yozolab.DaerD
 
         public static string ReturnParameter(string baseName) =>
             AsyncSyncNaming.ReturnParameter(baseName);
+
+        public static string ReadyParameter(string baseName) =>
+            AsyncSyncNaming.ReadyParameter(baseName);
+
+        public static string SeenParameter(string baseName, string slotName) =>
+            AsyncSyncNaming.SeenParameter(baseName, slotName);
+
+        public static string ReadyLayerName(string layerName) =>
+            AsyncSyncNaming.ReadyLayerName(layerName);
 
         public static string DefaultBaseName(AnimatorController controller) =>
             AsyncSyncNaming.DefaultBaseName(controller);
@@ -481,6 +502,7 @@ namespace Yozolab.DaerD
 
             var machineParameters = GeneratedParameters(r);
             machineParameters.AddRange(RequestParameters(r));
+            machineParameters.AddRange(ReadyParameters(r));
             foreach (var (name, type) in machineParameters)
             {
                 if (seen.Contains(name))
@@ -713,6 +735,14 @@ namespace Yozolab.DaerD
                 }
             }
 
+            // Ready's own number, since the flag is invisible until someone else is in the
+            // instance: a remote has decoded every slot within one pass of arriving, so that
+            // is when it latches — later if the wire drops a step, never earlier.
+            if (r.ready)
+                warnings.Add(L.Tr(
+                    "'{0}' turns on once a remote has decoded every slot — within {1:0.#} s of arriving when nothing is lost, and later when something is. It never turns off again, and the wearer reads it as on from the start.",
+                    ReadyParameter(r.baseName), WorstCycleSeconds(r)));
+
             if (r.stepSeconds < 0.3f)
                 warnings.Add(L.Tr("Steps shorter than VRChat's ~0.3 s sync cadence risk remotes skipping slots."));
             foreach (var type in ChannelTypes(r))
@@ -786,6 +816,28 @@ namespace Yozolab.DaerD
             return generated;
         }
 
+        /// <summary>
+        /// The Ready flag and the per-slot bits behind it, or nothing when the setup does not
+        /// ask for it. Local like the request flags: a remote cannot tell the wearer what it
+        /// has received, so this whole mechanism is each client reading its own decoder.
+        ///
+        /// One bit per SLOT rather than per target, because a slot arrives whole — and per
+        /// slot rather than per index value, because a clock gives one slot two indices and
+        /// either of them proves the values came.
+        /// </summary>
+        public static List<(string name, AnimatorControllerParameterType type)> ReadyParameters(Request r)
+        {
+            var generated = new List<(string, AnimatorControllerParameterType)>();
+            if (r == null || !r.ready) return generated;
+            var slots = BuildSlots(r);
+            if (slots.Count == 0) return generated;
+            generated.Add((ReadyParameter(r.baseName), AnimatorControllerParameterType.Bool));
+            foreach (var slotName in AsyncSyncApplier.SlotNames(slots))
+                generated.Add((SeenParameter(r.baseName, slotName),
+                    AnimatorControllerParameterType.Bool));
+            return generated;
+        }
+
         /// <summary>Request targets in cycle order, deduplicated, restricted to actual
         /// targets — a stale saved entry must not block regeneration (same contract as
         /// <see cref="Request.rates"/>).</summary>
@@ -821,6 +873,7 @@ namespace Yozolab.DaerD
                 floatChannels = Mathf.Clamp(config.FloatChannelsOrDefault, 1, 8),
                 boolChannels = Mathf.Clamp(config.BoolChannelsOrDefault, 1, 8),
                 allowRepeatSteps = config.allowRepeatSteps,
+                ready = config.ready,
                 store = ParameterStore.Of(controller),
                 emptyClip = GraphFrameData.GetEmptyClip(controller),
                 layerIndex = LayerIndexOf(controller, config),

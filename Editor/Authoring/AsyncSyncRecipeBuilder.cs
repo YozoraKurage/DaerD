@@ -80,10 +80,29 @@ namespace Yozolab.DaerD.Authoring
                 string layer = string.IsNullOrEmpty(_request.layerName)
                     ? _request.baseName : _request.layerName;
                 if (!root.PostLayers.Contains(layer)) root.PostLayers.Add(layer);
+                // The Ready watcher is the same call's output and is rebuilt with it. Read
+                // back off the saved setup rather than derived from the name, which the
+                // builder may have had to make unique.
+                string readyLayer = ReadyLayerName(controller, _request.baseName);
+                if (readyLayer != null && !root.PostLayers.Contains(readyLayer))
+                    root.PostLayers.Add(readyLayer);
 
                 warnings.AddRange(AsyncSyncBuilder.Warnings(_request));
                 return warnings;
             });
+        }
+
+        /// <summary>The layer name the setup's Ready watcher ended up with, or null when it
+        /// has none — the builder uniquifies the name it creates, so only the saved setup
+        /// knows it.</summary>
+        static string ReadyLayerName(AnimatorController controller, string baseName)
+        {
+            var config = GraphFrameData.FindAsyncSync(controller, baseName);
+            if (config == null || config.readyLayer == null) return null;
+            foreach (var layer in controller.layers)
+                if (layer.stateMachine == config.readyLayer)
+                    return layer.name;
+            return null;
         }
 
         /// <summary>
@@ -146,6 +165,23 @@ namespace Yozolab.DaerD.Authoring
         {
             _request.requestTargets.AddRange(targets);
             return Record("Requestable", Names(targets));
+        }
+
+        /// <summary>
+        /// Generate the remote-initialized flag: a local, unsynced Bool ("base/Ready") that
+        /// turns on once a client has decoded every slot at least once, and never turns off
+        /// again. It is what a remote has instead of a way to ask — nothing it observes can
+        /// reach the wearer — so read it to hold back anything that would look wrong with
+        /// half the values in place.
+        ///
+        /// The wearer reads it as on from the start: their own values were never anywhere
+        /// else. Write <c>Ready &amp;&amp; !IsLocal</c> for "a remote that has finished
+        /// initializing" specifically.
+        /// </summary>
+        public AsyncSyncRecipeBuilder Ready()
+        {
+            _request.ready = true;
+            return Record("Ready");
         }
 
         /// <summary>

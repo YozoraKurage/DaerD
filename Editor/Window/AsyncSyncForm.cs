@@ -47,6 +47,9 @@ namespace Yozolab.DaerD
         /// <summary>Let a step send what the step before it sent, paid for with a clock
         /// phase in the index (<see cref="AsyncSyncBuilder.Request.allowRepeatSteps"/>).</summary>
         bool _allowRepeatSteps;
+        /// <summary>Generate the remote-initialized flag
+        /// (<see cref="AsyncSyncBuilder.Request.ready"/>).</summary>
+        bool _ready;
         bool _addToStore = true;
         bool _assignEmptyClip = true;
         string _search = string.Empty;
@@ -162,6 +165,7 @@ namespace Yozolab.DaerD
             _floatChannels = Mathf.Clamp(config.FloatChannelsOrDefault, 1, 8);
             _boolChannels = Mathf.Clamp(config.BoolChannelsOrDefault, 1, 8);
             _allowRepeatSteps = config.allowRepeatSteps;
+            _ready = config.ready;
             _steps.Clear();
             if (config.steps != null)
                 foreach (var step in config.steps)
@@ -209,6 +213,7 @@ namespace Yozolab.DaerD
                 floatChannels = _floatChannels,
                 boolChannels = _boolChannels,
                 allowRepeatSteps = _allowRepeatSteps,
+                ready = _ready,
                 store = ParameterStore.Of(_controller),
                 addToStore = _addToStore,
                 assignEmptyClip = _assignEmptyClip,
@@ -305,6 +310,11 @@ namespace Yozolab.DaerD
                     L.Tr("Let a step send what the step before it sent. A clock phase folded into the index tells the two apart, at one more decoder state per parameter set that actually repeats — and, under a Bool index, sometimes one more synced bit.")),
                 _allowRepeatSteps);
             if (EditorGUI.EndChangeCheck()) _stepsStale = true;
+
+            _ready = EditorGUILayout.Toggle(
+                new GUIContent(L.Tr("Remote Initialized Flag"),
+                    L.Tr("Generate a local Bool that turns on once this client has decoded every slot at least once — what a remote has instead of a way to ask. The wearer reads it as on from the start, so a remote that has finished initializing is Ready && !IsLocal. Costs one local Bool per slot and a second layer; nothing synced.")),
+                _ready);
 
             // The generated states are machinery, but Unity (and the analyzer) still want a
             // motion on them; the controller's Empty clip is exactly what that is for. Offered
@@ -954,6 +964,12 @@ namespace Yozolab.DaerD
             if (requests > 0)
                 EditorGUILayout.LabelField(
                     L.Tr("Sync requests: {0} local Bool flag(s) and one Int, nothing synced.", requests),
+                    EditorStyles.miniLabel);
+
+            if (request.ready)
+                EditorGUILayout.LabelField(
+                    L.Tr("Remote initialized flag: {0} local Bool(s) and one layer, nothing synced.",
+                        slots.Count + 1),
                     EditorStyles.miniLabel);
 
             // The pass actually being built, not the one the rates would lay out — the seconds

@@ -41,6 +41,10 @@ namespace Yozolab.DaerD
                 var clock = BuildClock(r, slots, schedule);
                 var indexBits = IndexBitNames(r, encoding, clock);
 
+                // Read before anything is saved over it: it is what says whether a previous
+                // run left a Ready layer, which this one either regenerates or takes away.
+                var previous = FindConfig(controller, stateMachine);
+
                 var sendStates = BuildSendRing(stateMachine, r, slots, schedule, clock, encoding,
                     indexBits, empty);
                 var idle = BuildDecoder(stateMachine, r, slots, clock, encoding, indexBits, empty);
@@ -50,8 +54,10 @@ namespace Yozolab.DaerD
                 var entry = stateMachine.AddEntryTransition(idle);
                 entry.AddCondition(AnimatorConditionMode.IfNot, 0f, NetworkSyncBuilder.IsLocalParameter);
 
+                var readyLayer = BuildReadyLayer(controller, r, slots, previous, empty);
+
                 SyncGeneratedParameters(r, generated);
-                SaveConfig(controller, stateMachine, r);
+                SaveConfig(controller, stateMachine, readyLayer, r);
 
                 EditorUtility.SetDirty(stateMachine);
                 EditorUtility.SetDirty(controller);
@@ -71,6 +77,9 @@ namespace Yozolab.DaerD
                 DbtBuilder.EnsureParameter(controller, name, type);
             // The request flags are animator-local machinery: created, never synced.
             foreach (var (name, type) in RequestParameters(r))
+                DbtBuilder.EnsureParameter(controller, name, type);
+            // Ready and its per-slot bits, on the same terms and for the same reason.
+            foreach (var (name, type) in ReadyParameters(r))
                 DbtBuilder.EnsureParameter(controller, name, type);
             return generated;
         }
@@ -336,6 +345,12 @@ namespace Yozolab.DaerD
                             Undo.RegisterCompleteObjectUndo(driver, "Async Sync");
                             VrcParameterDriver.SetLocalOnly(driver, false);
                             AddChannelCopies(driver, r, slot, toChannels: false);
+                            // This client has decoded the slot at least once, and nothing
+                            // ever clears it — see AsyncSyncBuilder.ReadyParameters for why
+                            // the bits accumulate instead of being a per-pass reading.
+                            if (r.ready)
+                                VrcParameterDriver.AddSetEntry(driver,
+                                    SeenParameter(r.baseName, slotNames[i]), 1f);
                         }
                     }
 
@@ -361,6 +376,148 @@ namespace Yozolab.DaerD
             return idle;
         }
 
+        /// <summary>
+        /// The Ready watcher: a layer of its own, because it has to be evaluated while the
+        /// sync layer is busy being a ring. Three states and no drivers on the remote path —
+        /// the bits it reads are set by the decoder, and the only thing here is the moment
+        /// they are all up.
+        ///
+        /// The bits accumulate and are never cleared, so the transition asks "has every slot
+        /// arrived by now", not "did every slot arrive this pass". That is what makes the flag
+        /// a latch with no window to size and no clearing for the check to race against, and
+        /// it means a client that starts decoding mid-pass is Ready one pass later rather than
+        /// two. Late is the only safe direction to be wrong in, and this is never early.
+        ///
+        /// Returns the layer's state machine so the saved setup can own it — or null when the
+        /// setup does not ask for the flag, in which case the layer a previous run left is
+        /// taken away rather than left holding whatever it last latched.
+        /// </summary>
+        static AnimatorStateMachine BuildReadyLayer(AnimatorController controller, Request r,
+            List<Slot> slots, GraphFrameData.AsyncSyncConfig previous, AnimationClip empty)
+        {
+            var existing = ResolveExistingReadyLayer(controller, r, previous);
+            if (!r.ready || slots.Count == 0)
+            {
+                RemoveLayer(controller, existing);
+                return null;
+            }
+
+            AnimatorStateMachine machine;
+            if (existing != null)
+            {
+                machine = existing;
+                Undo.RegisterCompleteObjectUndo(machine, "Async Sync");
+                ClearStateMachine(machine);
+            }
+            else
+            {
+                string layerName = string.IsNullOrEmpty(r.layerName) ? r.baseName : r.layerName;
+                controller.AddLayer(DbtBuilder.UniqueLayerName(controller,
+                    ReadyLayerName(layerName)));
+                var layers = controller.layers;
+                layers[layers.Length - 1].defaultWeight = 1f;
+                controller.layers = layers;
+                machine = layers[layers.Length - 1].stateMachine;
+                Undo.RegisterCompleteObjectUndo(machine, "Async Sync");
+            }
+
+            var watch = AddReadyState(machine, "Watch", empty, 260f, 60f);
+            var ready = AddReadyState(machine, "Ready", empty, 440f, 60f);
+            var local = AddReadyState(machine, "Local", empty, 260f, 140f);
+
+            // The same split the cycle's layer makes, the other way up: the wearer's own
+            // values were never anywhere else, so there is nothing for them to wait for.
+            machine.defaultState = watch;
+            var entry = machine.AddEntryTransition(local);
+            entry.AddCondition(AnimatorConditionMode.If, 0f, NetworkSyncBuilder.IsLocalParameter);
+
+            var transition = watch.AddTransition(ready);
+            transition.hasExitTime = false;
+            transition.hasFixedDuration = true;
+            transition.duration = 0f;
+            foreach (var slotName in SlotNames(slots))
+                transition.AddCondition(AnimatorConditionMode.If, 0f,
+                    SeenParameter(r.baseName, slotName));
+            EditorUtility.SetDirty(transition);
+
+            // Ready and Local have no way out, which is the latch: whatever the wire does
+            // afterwards, a client that has once seen everything has seen everything.
+            if (!r.skipDrivers)
+            {
+                AddReadyDriver(ready, r);
+                AddReadyDriver(local, r);
+            }
+            EditorUtility.SetDirty(machine);
+            return machine;
+        }
+
+        /// <summary>
+        /// The Ready layer a previous run left, or null. The saved setup's, and failing that
+        /// the layer answering to the name this run would create — a fresh checkout or an
+        /// in-memory controller has no saved setup to ask, and the alternative is stacking a
+        /// second watcher on every run. Same fallback the recipe makes for the cycle's layer.
+        /// </summary>
+        static AnimatorStateMachine ResolveExistingReadyLayer(AnimatorController controller,
+            Request r, GraphFrameData.AsyncSyncConfig previous)
+        {
+            if (previous != null && previous.readyLayer != null
+                && LayerIndexOf(controller, previous.readyLayer) >= 0)
+                return previous.readyLayer;
+            string layerName = string.IsNullOrEmpty(r.layerName) ? r.baseName : r.layerName;
+            string expected = ReadyLayerName(layerName);
+            foreach (var layer in controller.layers)
+                if (layer.name == expected)
+                    return layer.stateMachine;
+            return null;
+        }
+
+        static AnimatorState AddReadyState(AnimatorStateMachine machine, string name,
+            AnimationClip empty, float x, float y)
+        {
+            var state = machine.AddState(name, new Vector3(x, y, 0f));
+            state.writeDefaultValues = true;
+            state.motion = empty;
+            return state;
+        }
+
+        /// <summary>Raises the flag. Not localOnly: this runs on every client's copy of the
+        /// avatar, which is the whole point — each of them is answering for itself.</summary>
+        static void AddReadyDriver(AnimatorState state, Request r)
+        {
+            var driver = VrcParameterDriver.AddTo(state, "Async Ready");
+            if (driver == null) return;
+            Undo.RegisterCompleteObjectUndo(driver, "Async Sync");
+            VrcParameterDriver.SetLocalOnly(driver, false);
+            VrcParameterDriver.AddSetEntry(driver, ReadyParameter(r.baseName), 1f);
+        }
+
+        /// <summary>The saved setup that owns this layer, matched by reference rather than by
+        /// base name — the wizard can rename a setup, and the layer it is regenerating is
+        /// still the one whose Ready layer this run inherits.</summary>
+        static GraphFrameData.AsyncSyncConfig FindConfig(AnimatorController controller,
+            AnimatorStateMachine machine)
+        {
+            foreach (var config in GraphFrameData.GetAsyncSyncs(controller))
+                if (config.layer == machine)
+                    return config;
+            return null;
+        }
+
+        static int LayerIndexOf(AnimatorController controller, AnimatorStateMachine machine)
+        {
+            var layers = controller.layers;
+            for (int i = 0; i < layers.Length; i++)
+                if (layers[i].stateMachine == machine)
+                    return i;
+            return -1;
+        }
+
+        static void RemoveLayer(AnimatorController controller, AnimatorStateMachine machine)
+        {
+            int index = machine != null ? LayerIndexOf(controller, machine) : -1;
+            if (index >= 0) controller.RemoveLayer(index);
+        }
+
         static void SyncGeneratedParameters(Request r,
             List<(string name, AnimatorControllerParameterType type)> generated)
         {
@@ -382,7 +539,7 @@ namespace Yozolab.DaerD
         }
 
         static void SaveConfig(AnimatorController controller,
-            AnimatorStateMachine stateMachine, Request r)
+            AnimatorStateMachine stateMachine, AnimatorStateMachine readyLayer, Request r)
         {
             // Remember the setup with the controller so the wizard can re-open and
             // regenerate this layer later (same pattern as the DBT layer choice).
@@ -403,6 +560,8 @@ namespace Yozolab.DaerD
                     ? new List<string>(r.slotBreaks) : new List<string>(),
                 steps = CopySteps(r.steps),
                 allowRepeatSteps = r.allowRepeatSteps,
+                ready = r.ready,
+                readyLayer = readyLayer,
             });
         }
 
@@ -476,7 +635,7 @@ namespace Yozolab.DaerD
         /// setup whose slots do partition (every one built before grids existed) keeps the
         /// names it has, and the export can still recognise it.
         /// </summary>
-        static List<string> SlotNames(List<Slot> slots)
+        internal static List<string> SlotNames(List<Slot> slots)
         {
             var names = new List<string>();
             var taken = new HashSet<string>();

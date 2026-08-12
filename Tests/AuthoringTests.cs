@@ -434,6 +434,43 @@ namespace Yozolab.DaerD.Tests
         }
 
         [Test]
+        public void AsyncSync_Ready_BuildsTheWatcherAndRegeneratesItInPlace()
+        {
+            var controller = Track(new AnimatorController());
+            var recipe = NewRecipe(controller, c =>
+            {
+                c.FloatParameter("Hue");
+                c.IntParameter("Outfit");
+                c.BoolParameter("Tail");
+                c.Layer("Base").NewState("S");
+                c.AsyncSync("Zip")
+                    .Targets("Hue", "Outfit", "Tail")
+                    .Ready()
+                    .SkipDriversForTest();
+            });
+
+            var warnings = recipe.Generate();
+            Assert.IsFalse(warnings.Exists(w => w.Contains("Async Sync 'Zip':")),
+                string.Join("\n", warnings));
+
+            Assert.IsNotNull(DbtBuilder.FindParameter(controller, "Zip/Ready"));
+            Assert.IsNotNull(DbtBuilder.FindParameter(controller, "Zip/Seen/Hue"));
+
+            AnimatorStateMachine watcher = null;
+            foreach (var layer in controller.layers)
+                if (layer.name == "Zip Ready")
+                    watcher = layer.stateMachine;
+            Assert.IsNotNull(watcher);
+            Assert.AreEqual(3, watcher.states.Length);
+
+            // The watcher belongs to the same call, so a second Generate rebuilds it rather
+            // than adding another one beside it.
+            int layersAfterFirst = controller.layers.Length;
+            recipe.Generate();
+            Assert.AreEqual(layersAfterFirst, controller.layers.Length);
+        }
+
+        [Test]
         public void AsyncSync_AllowRepeats_LetsOneSlotHoldTwoStepsRunning()
         {
             var controller = Track(new AnimatorController());
