@@ -218,12 +218,80 @@ namespace Yozolab.DaerD.DynamicAnalyze
                 _view.Fit(position.width);
             _view.movedOnly = GUILayout.Toggle(_view.movedOnly, L.Tr("Moved"),
                 EditorStyles.toolbarButton, GUILayout.Width(52f));
+            DrawClipMenu(has);
             if (!_live)
                 _inputsOpen = GUILayout.Toggle(_inputsOpen, L.Tr("Timed"),
                     EditorStyles.toolbarButton, GUILayout.Width(52f));
             _settingsOpen = GUILayout.Toggle(_settingsOpen, L.Tr("Settings"),
                 EditorStyles.toolbarButton, GUILayout.Width(60f));
             EditorGUILayout.EndHorizontal();
+        }
+
+        /// <summary>
+        /// A run is a set of values over time, which is what an AnimationClip is, so that is
+        /// what it saves as: openable in the Animation window, diffable, and — the point —
+        /// loadable again either as a run to look at or as the input to the next one.
+        /// </summary>
+        void DrawClipMenu(bool has)
+        {
+            if (!GUILayout.Button(L.Tr("Clip"), EditorStyles.toolbarDropDown, GUILayout.Width(48f)))
+                return;
+            var menu = new GenericMenu();
+            if (has)
+                menu.AddItem(new GUIContent(L.Tr("Save Run…")), false, SaveClip);
+            else menu.AddDisabledItem(new GUIContent(L.Tr("Save Run…")));
+            menu.AddItem(new GUIContent(L.Tr("Open Run…")), false, OpenClip);
+            menu.AddItem(new GUIContent(L.Tr("Load As Timed Inputs…")), false, LoadAsInputs);
+            menu.ShowAsContext();
+        }
+
+        void SaveClip()
+        {
+            string path = EditorUtility.SaveFilePanelInProject(L.Tr("Save Run"),
+                "DD Run", "anim", L.Tr("Where to keep this run."));
+            if (string.IsNullOrEmpty(path)) return;
+            TraceClip.Save(_view.trace, path);
+        }
+
+        void OpenClip()
+        {
+            var clip = PickClip(L.Tr("Open Run"));
+            if (clip == null) return;
+            _playing = false;
+            _live = false;
+            DropSession();
+            _view.trace = TraceClip.Load(clip);
+            _view.cursorFrame = 0;
+            _view.Invalidate();
+            _view.Fit(position.width);
+        }
+
+        /// <summary>The other direction: what one run recorded becomes what the next one is
+        /// told to do.</summary>
+        void LoadAsInputs()
+        {
+            var clip = PickClip(L.Tr("Load As Timed Inputs"));
+            if (clip == null) return;
+            var stimulus = TraceClip.ToStimulus(clip, string.Empty, ParameterNames());
+            _pokes.Clear();
+            foreach (var entry in stimulus.InOrder())
+                _pokes.Add(new Poke
+                {
+                    at = entry.atSeconds,
+                    parameter = entry.parameter,
+                    value = entry.value,
+                    scope = entry.scope,
+                });
+            _inputsOpen = true;
+        }
+
+        static AnimationClip PickClip(string title)
+        {
+            string path = EditorUtility.OpenFilePanel(title, "Assets", "anim");
+            if (string.IsNullOrEmpty(path)) return null;
+            string relative = FileUtil.GetProjectRelativePath(path);
+            return AssetDatabase.LoadAssetAtPath<AnimationClip>(
+                string.IsNullOrEmpty(relative) ? path : relative);
         }
 
         // ---- settings -------------------------------------------------------

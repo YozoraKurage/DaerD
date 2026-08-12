@@ -1,4 +1,5 @@
 using NUnit.Framework;
+using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
 using Yozolab.DaerD.DynamicAnalyze;
@@ -568,6 +569,80 @@ namespace Yozolab.DaerD.Tests
             Assert.AreEqual(0, view.Frames);
             view.Fit(800f);
             Assert.AreEqual(0, view.firstFrame, "fitting nothing is not an error");
+        }
+
+        // ---- a run as a clip ------------------------------------------------
+
+        [Test]
+        public void Clip_CarriesTheRunBackOutOfItself()
+        {
+            var wire = new SyncWire { intervalSeconds = 0.1f }.Syncs("X");
+            var stimulus = new Stimulus().At(0.05f, "Go", true).At(0.05f, "X", 0.5f);
+            var trace = Simulation.Run(NewController(), Wired(0.5f, wire, stimulus));
+
+            const string path = "Assets/DDTraceClipTest.anim";
+            try
+            {
+                var clip = TraceClip.Save(trace, path);
+                Assert.IsNotNull(clip);
+                Assert.IsNotNull(TraceClip.ManifestOf(clip), "the signal list rides along");
+
+                var reloaded = TraceClip.Load(clip);
+                Assert.AreEqual(trace.Frames, reloaded.Frames);
+                Assert.AreEqual(trace.Signals.Count, reloaded.Signals.Count);
+                for (int i = 0; i < trace.Signals.Count; i++)
+                {
+                    var before = trace.Signals[i];
+                    var after = reloaded.Signals[i];
+                    Assert.AreEqual(before.scope, after.scope);
+                    Assert.AreEqual(before.name, after.name);
+                    Assert.AreEqual(before.kind, after.kind);
+                    for (int frame = 0; frame < trace.Frames; frame += 5)
+                        Assert.AreEqual(before.At(frame), after.At(frame), 1e-3f,
+                            before.Path + " at " + frame);
+                }
+                // A state keeps its names, which is the one thing a curve cannot say.
+                var state = reloaded.Find(Simulation.LocalScope, "Base/state");
+                CollectionAssert.AreEqual(new[] { "Idle", "On" }, state.labels);
+                Assert.AreEqual("On", state.TextAt(reloaded.Frames - 1));
+            }
+            finally
+            {
+                AssetDatabase.DeleteAsset(path);
+            }
+        }
+
+        [Test]
+        public void Clip_ReadsBackAsInput_AndDrivesTheSameRunAgain()
+        {
+            var first = Simulation.Run(NewController(), Clock(0.5f),
+                new Stimulus().At(0.1f, "Go", true).At(0.2f, "N", 4f));
+
+            const string path = "Assets/DDTraceInputTest.anim";
+            try
+            {
+                var clip = TraceClip.Save(first, path);
+                var stimulus = TraceClip.ToStimulus(clip, string.Empty,
+                    new[] { "Go", "N", "X" });
+
+                // One poke where the value started, and one at each change — not one per
+                // frame, which would be a recording rather than a stimulus.
+                Assert.Less(stimulus.entries.Count, 12, "far too many pokes");
+                var again = Simulation.Run(NewController(), Clock(0.5f), stimulus);
+                for (int frame = 0; frame < again.Frames; frame++)
+                {
+                    Assert.AreEqual(first.Find(Simulation.LocalScope, "Go").At(frame),
+                        again.Find(Simulation.LocalScope, "Go").At(frame), "Go at " + frame);
+                    Assert.AreEqual(first.Find(Simulation.LocalScope, "N").At(frame),
+                        again.Find(Simulation.LocalScope, "N").At(frame), "N at " + frame);
+                }
+                Assert.AreEqual("On",
+                    again.Find(Simulation.LocalScope, "Base/state").TextAt(again.Frames - 1));
+            }
+            finally
+            {
+                AssetDatabase.DeleteAsset(path);
+            }
         }
 
         static AnimatorState FindState(AnimatorController controller, string name)

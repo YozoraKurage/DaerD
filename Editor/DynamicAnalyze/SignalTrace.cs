@@ -113,6 +113,13 @@ namespace Yozolab.DaerD.DynamicAnalyze
         public float TimeAt(int frame) =>
             frame >= 0 && frame < _time.Count ? _time[frame] : 0f;
 
+        /// <summary>
+        /// When this frame BEGAN. The samples are taken at the end of a frame, so a value that
+        /// first reads differently at frame k was caused by something that was true when k
+        /// started — which is the moment to say it again if the run is to be repeated.
+        /// </summary>
+        public float StartOfFrame(int frame) => TimeAt(frame) - StepAt(frame);
+
         /// <summary>How long this frame was — the jitter, visible.</summary>
         public float StepAt(int frame) =>
             frame >= 0 && frame < _step.Count ? _step[frame] : 0f;

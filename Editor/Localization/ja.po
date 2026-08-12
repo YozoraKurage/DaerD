@@ -3014,3 +3014,24 @@ msgstr "変化あり"
 
 msgid "Timed"
 msgstr "時刻指定"
+
+msgid "Save Run…"
+msgstr "実行を保存…"
+
+msgid "Open Run…"
+msgstr "実行を開く…"
+
+msgid "Load As Timed Inputs…"
+msgstr "時刻指定の入力として読み込む…"
+
+msgid "Save Run"
+msgstr "実行を保存"
+
+msgid "Where to keep this run."
+msgstr "この実行の保存先です。"
+
+msgid "Open Run"
+msgstr "実行を開く"
+
+msgid "Load As Timed Inputs"
+msgstr "時刻指定の入力として読み込む"
