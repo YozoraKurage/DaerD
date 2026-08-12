@@ -159,10 +159,10 @@ namespace Yozolab.DaerD.Tests
 
             Object.DestroyImmediate(controller);
         }
-        /// <summary>The flag has a control, but it is still a field the round trip can
-        /// drop — and dropping it takes the watcher layer away on the next Apply.</summary>
+        /// <summary>The flags have controls, but they are still fields the round trip can
+        /// drop — and dropping one takes its watcher layer away on the next Apply.</summary>
         [Test]
-        public void Ready_SurvivesTheRoundTrip()
+        public void ReadyAndStale_SurviveTheRoundTrip()
         {
             var controller = NewController();
             var config = Config();
@@ -171,6 +171,11 @@ namespace Yozolab.DaerD.Tests
 
             config.ready = false;
             Assert.IsFalse(Rebuild(controller, config).ready);
+
+            config.stale = true;
+            Assert.IsTrue(Rebuild(controller, config).stale);
+            config.stale = false;
+            Assert.IsFalse(Rebuild(controller, config).stale);
         }
 
     }

@@ -55,9 +55,11 @@ namespace Yozolab.DaerD
                 entry.AddCondition(AnimatorConditionMode.IfNot, 0f, NetworkSyncBuilder.IsLocalParameter);
 
                 var readyLayer = BuildReadyLayer(controller, r, slots, previous, empty);
+                var staleLayer = BuildStaleLayer(controller, r, slots, clock, encoding,
+                    indexBits, previous, empty);
 
                 SyncGeneratedParameters(r, generated);
-                SaveConfig(controller, stateMachine, readyLayer, r);
+                SaveConfig(controller, stateMachine, readyLayer, staleLayer, r);
 
                 EditorUtility.SetDirty(stateMachine);
                 EditorUtility.SetDirty(controller);
@@ -80,6 +82,8 @@ namespace Yozolab.DaerD
                 DbtBuilder.EnsureParameter(controller, name, type);
             // Ready and its per-slot bits, on the same terms and for the same reason.
             foreach (var (name, type) in ReadyParameters(r))
+                DbtBuilder.EnsureParameter(controller, name, type);
+            foreach (var (name, type) in StaleParameters(r))
                 DbtBuilder.EnsureParameter(controller, name, type);
             return generated;
         }
@@ -351,6 +355,11 @@ namespace Yozolab.DaerD
                             if (r.ready)
                                 VrcParameterDriver.AddSetEntry(driver,
                                     SeenParameter(r.baseName, slotNames[i]), 1f);
+                            // The same arrival, read as "this lap" rather than "ever": the
+                            // Stale watcher puts these down once a lap. See BuildStaleLayer.
+                            if (r.stale)
+                                VrcParameterDriver.AddSetEntry(driver,
+                                    FreshParameter(r.baseName, slotNames[i]), 1f);
                         }
                     }
 
@@ -395,31 +404,15 @@ namespace Yozolab.DaerD
         static AnimatorStateMachine BuildReadyLayer(AnimatorController controller, Request r,
             List<Slot> slots, GraphFrameData.AsyncSyncConfig previous, AnimationClip empty)
         {
-            var existing = ResolveExistingReadyLayer(controller, r, previous);
+            string wanted = ReadyLayerName(MainLayerName(r));
+            var existing = ResolveExistingLayer(controller,
+                previous != null ? previous.readyLayer : null, wanted);
             if (!r.ready || slots.Count == 0)
             {
                 RemoveLayer(controller, existing);
                 return null;
             }
-
-            AnimatorStateMachine machine;
-            if (existing != null)
-            {
-                machine = existing;
-                Undo.RegisterCompleteObjectUndo(machine, "Async Sync");
-                ClearStateMachine(machine);
-            }
-            else
-            {
-                string layerName = string.IsNullOrEmpty(r.layerName) ? r.baseName : r.layerName;
-                controller.AddLayer(DbtBuilder.UniqueLayerName(controller,
-                    ReadyLayerName(layerName)));
-                var layers = controller.layers;
-                layers[layers.Length - 1].defaultWeight = 1f;
-                controller.layers = layers;
-                machine = layers[layers.Length - 1].stateMachine;
-                Undo.RegisterCompleteObjectUndo(machine, "Async Sync");
-            }
+            var machine = ResolveWatcherLayer(controller, existing, wanted);
 
             var watch = AddReadyState(machine, "Watch", empty, 260f, 60f);
             var ready = AddReadyState(machine, "Ready", empty, 440f, 60f);
@@ -451,24 +444,174 @@ namespace Yozolab.DaerD
             return machine;
         }
 
+        /// <summary>The name the cycle's own layer answers to, which the watchers derive
+        /// theirs from.</summary>
+        static string MainLayerName(Request r) =>
+            string.IsNullOrEmpty(r.layerName) ? r.baseName : r.layerName;
+
         /// <summary>
-        /// The Ready layer a previous run left, or null. The saved setup's, and failing that
+        /// A watcher layer a previous run left, or null. The saved setup's, and failing that
         /// the layer answering to the name this run would create — a fresh checkout or an
         /// in-memory controller has no saved setup to ask, and the alternative is stacking a
         /// second watcher on every run. Same fallback the recipe makes for the cycle's layer.
         /// </summary>
-        static AnimatorStateMachine ResolveExistingReadyLayer(AnimatorController controller,
-            Request r, GraphFrameData.AsyncSyncConfig previous)
+        static AnimatorStateMachine ResolveExistingLayer(AnimatorController controller,
+            AnimatorStateMachine saved, string expected)
         {
-            if (previous != null && previous.readyLayer != null
-                && LayerIndexOf(controller, previous.readyLayer) >= 0)
-                return previous.readyLayer;
-            string layerName = string.IsNullOrEmpty(r.layerName) ? r.baseName : r.layerName;
-            string expected = ReadyLayerName(layerName);
+            if (saved != null && LayerIndexOf(controller, saved) >= 0) return saved;
             foreach (var layer in controller.layers)
                 if (layer.name == expected)
                     return layer.stateMachine;
             return null;
+        }
+
+        /// <summary>The watcher's layer, emptied for regeneration or freshly added.</summary>
+        static AnimatorStateMachine ResolveWatcherLayer(AnimatorController controller,
+            AnimatorStateMachine existing, string layerName)
+        {
+            if (existing != null)
+            {
+                Undo.RegisterCompleteObjectUndo(existing, "Async Sync");
+                ClearStateMachine(existing);
+                return existing;
+            }
+            controller.AddLayer(DbtBuilder.UniqueLayerName(controller, layerName));
+            var layers = controller.layers;
+            layers[layers.Length - 1].defaultWeight = 1f;
+            controller.layers = layers;
+            var machine = layers[layers.Length - 1].stateMachine;
+            Undo.RegisterCompleteObjectUndo(machine, "Async Sync");
+            return machine;
+        }
+
+        /// <summary>A transition that fires the moment its conditions hold, with no blend —
+        /// what every route inside a watcher is.</summary>
+        static AnimatorStateTransition Instant(AnimatorState from, AnimatorState to)
+        {
+            var transition = from.AddTransition(to);
+            transition.hasExitTime = false;
+            transition.hasFixedDuration = true;
+            transition.duration = 0f;
+            EditorUtility.SetDirty(transition);
+            return transition;
+        }
+
+        /// <summary>"The index is this value", as conditions on one transition.</summary>
+        static void AddIndexEquals(AnimatorStateTransition transition, Request r,
+            IndexEncoding encoding, string[] indexBits, int index)
+        {
+            if (encoding == IndexEncoding.Int)
+            {
+                transition.AddCondition(AnimatorConditionMode.Equals, index,
+                    IndexParameter(r.baseName));
+                return;
+            }
+            for (int bit = 0; bit < indexBits.Length; bit++)
+                transition.AddCondition(((index >> bit) & 1) == 1
+                        ? AnimatorConditionMode.If : AnimatorConditionMode.IfNot,
+                    0f, indexBits[bit]);
+        }
+
+        /// <summary>"The index is no longer this value", as routes rather than conditions: an
+        /// Int says it in one, and a Bool index differs exactly when SOME bit does, which is a
+        /// disjunction — and the conditions on one transition are all ANDed.</summary>
+        static void AddIndexLeaves(AnimatorState from, AnimatorState to, Request r,
+            IndexEncoding encoding, string[] indexBits, int index)
+        {
+            if (encoding == IndexEncoding.Int)
+            {
+                Instant(from, to).AddCondition(AnimatorConditionMode.NotEqual, index,
+                    IndexParameter(r.baseName));
+                return;
+            }
+            for (int bit = 0; bit < indexBits.Length; bit++)
+                Instant(from, to).AddCondition(((index >> bit) & 1) == 1
+                        ? AnimatorConditionMode.IfNot : AnimatorConditionMode.If,
+                    0f, indexBits[bit]);
+        }
+
+        /// <summary>
+        /// The Stale watcher: judged once a lap, at the moment the marker slot arrives.
+        ///
+        /// Watching a slot the pass sends exactly once is what spares this a timer — there is
+        /// no window to size, no margin to guess, and a lap stretched by a request cannot make
+        /// it wrong, because the measure is the lap itself rather than a number of seconds.
+        ///
+        /// The bits are cleared HERE and not by the decoder, which is what keeps the reading
+        /// and the clearing in one layer with nothing to race: the marker's own step has a
+        /// full dwell still to run when the judgement lands, so the next slot is hundreds of
+        /// frames away from the clear. The marker is left out of the check for the same
+        /// reason from the other side — being here IS its arrival, so whether its own bit is
+        /// up yet this frame must not matter.
+        ///
+        /// Not an Any-State route: the index sits on the marker for the whole dwell, and an
+        /// Any-State transition would re-enter the judgement on every frame of it. The
+        /// watcher arms itself again only once the index has moved on.
+        /// </summary>
+        static AnimatorStateMachine BuildStaleLayer(AnimatorController controller, Request r,
+            List<Slot> slots, Clock clock, IndexEncoding encoding, string[] indexBits,
+            GraphFrameData.AsyncSyncConfig previous, AnimationClip empty)
+        {
+            string wanted = StaleLayerName(MainLayerName(r));
+            var existing = ResolveExistingLayer(controller,
+                previous != null ? previous.staleLayer : null, wanted);
+            int marker = LapMarkerSlot(r);
+            if (!r.stale || marker < 0)
+            {
+                RemoveLayer(controller, existing);
+                return null;
+            }
+            var machine = ResolveWatcherLayer(controller, existing, wanted);
+
+            var idle = AddReadyState(machine, "Idle", empty, 260f, 60f);
+            var judge = AddReadyState(machine, "Judge", empty, 440f, 60f);
+            var dirty = AddReadyState(machine, "Dirty", empty, 620f, 60f);
+            var clean = AddReadyState(machine, "Clean", empty, 620f, 140f);
+            machine.defaultState = idle;
+
+            // A slot the pass sends once, so this fires once a lap. Remotes only: the wearer
+            // has nothing to be behind on, and the flag stays at its default for them.
+            var arm = Instant(idle, judge);
+            arm.AddCondition(AnimatorConditionMode.IfNot, 0f, NetworkSyncBuilder.IsLocalParameter);
+            AddIndexEquals(arm, r, encoding, indexBits, clock.Index(marker, 0));
+
+            // One route per slot that did not arrive, then the fall-through. Conditions on one
+            // transition are ANDed, so "any of them is missing" has to be spread over routes —
+            // and they are tried in order, which makes the last one the else.
+            var slotNames = SlotNames(slots);
+            for (int i = 0; i < slots.Count; i++)
+            {
+                if (i == marker) continue;
+                Instant(judge, dirty).AddCondition(AnimatorConditionMode.IfNot, 0f,
+                    FreshParameter(r.baseName, slotNames[i]));
+            }
+            Instant(judge, clean);
+
+            AddIndexLeaves(dirty, idle, r, encoding, indexBits, clock.Index(marker, 0));
+            AddIndexLeaves(clean, idle, r, encoding, indexBits, clock.Index(marker, 0));
+
+            if (!r.skipDrivers)
+            {
+                AddJudgementDriver(dirty, r, slotNames, 1f);
+                AddJudgementDriver(clean, r, slotNames, 0f);
+            }
+            EditorUtility.SetDirty(machine);
+            return machine;
+        }
+
+        /// <summary>Says what the lap was, then opens the next one. Not localOnly: every
+        /// client judges its own decoding, exactly like the Ready watcher.</summary>
+        static void AddJudgementDriver(AnimatorState state, Request r, List<string> slotNames,
+            float verdict)
+        {
+            var driver = VrcParameterDriver.AddTo(state, "Async Stale");
+            if (driver == null) return;
+            Undo.RegisterCompleteObjectUndo(driver, "Async Sync");
+            VrcParameterDriver.SetLocalOnly(driver, false);
+            VrcParameterDriver.AddSetEntry(driver, StaleParameter(r.baseName), verdict);
+            foreach (var slotName in slotNames)
+                VrcParameterDriver.AddSetEntry(driver,
+                    FreshParameter(r.baseName, slotName), 0f);
         }
 
         static AnimatorState AddReadyState(AnimatorStateMachine machine, string name,
@@ -539,7 +682,8 @@ namespace Yozolab.DaerD
         }
 
         static void SaveConfig(AnimatorController controller,
-            AnimatorStateMachine stateMachine, AnimatorStateMachine readyLayer, Request r)
+            AnimatorStateMachine stateMachine, AnimatorStateMachine readyLayer,
+            AnimatorStateMachine staleLayer, Request r)
         {
             // Remember the setup with the controller so the wizard can re-open and
             // regenerate this layer later (same pattern as the DBT layer choice).
@@ -562,6 +706,8 @@ namespace Yozolab.DaerD
                 allowRepeatSteps = r.allowRepeatSteps,
                 ready = r.ready,
                 readyLayer = readyLayer,
+                stale = r.stale,
+                staleLayer = staleLayer,
             });
         }
 

@@ -134,6 +134,19 @@ namespace Yozolab.DaerD
             public bool ready;
 
             /// <summary>
+            /// Generate the drift-suspicion flag: a local, unsynced Bool ("base/Stale") that
+            /// reads 1 when the lap that just closed did not bring every slot, and 0 when it
+            /// did. Unlike <see cref="ready"/> it falls again — it is a reading of the last
+            /// lap, not of the whole session.
+            ///
+            /// Measured by watching the lap marker (a slot the pass sends exactly once) rather
+            /// than by timing anything: no window to size, no margin to guess, and a pass
+            /// stretched by a request cannot make it wrong. A pass with no such slot cannot
+            /// carry the flag, and <see cref="Validate"/> says so.
+            /// </summary>
+            public bool stale;
+
+            /// <summary>
             /// Targets that start a slot of their own instead of joining the batch the target
             /// before them opened. Batched targets ride one Parameter Driver copy in one step,
             /// so they are sent together by construction and no schedule can separate them —
@@ -292,6 +305,15 @@ namespace Yozolab.DaerD
 
         public static string ReadyLayerName(string layerName) =>
             AsyncSyncNaming.ReadyLayerName(layerName);
+
+        public static string StaleParameter(string baseName) =>
+            AsyncSyncNaming.StaleParameter(baseName);
+
+        public static string FreshParameter(string baseName, string slotName) =>
+            AsyncSyncNaming.FreshParameter(baseName, slotName);
+
+        public static string StaleLayerName(string layerName) =>
+            AsyncSyncNaming.StaleLayerName(layerName);
 
         public static string DefaultBaseName(AnimatorController controller) =>
             AsyncSyncNaming.DefaultBaseName(controller);
@@ -496,6 +518,12 @@ namespace Yozolab.DaerD
                     return errors[0];
             }
 
+            // The flag is measured by watching a slot the pass sends exactly once. Refused
+            // rather than quietly dropped: a Stale that never falls is worse than none, and
+            // the two ways out are worth naming.
+            if (r.stale && LapMarkerSlot(r) < 0)
+                return L.Tr("No slot closes a lap on its own, so there is nothing to measure a lap against: every slot is either sent more than once or open to requests. Send one of them once per pass, or take its request away.");
+
             var isLocal = DbtBuilder.FindParameter(controller, NetworkSyncBuilder.IsLocalParameter);
             if (isLocal != null && isLocal.type != AnimatorControllerParameterType.Bool)
                 return L.Tr("Parameter '{0}' exists but is not a Bool.", NetworkSyncBuilder.IsLocalParameter);
@@ -503,6 +531,7 @@ namespace Yozolab.DaerD
             var machineParameters = GeneratedParameters(r);
             machineParameters.AddRange(RequestParameters(r));
             machineParameters.AddRange(ReadyParameters(r));
+            machineParameters.AddRange(StaleParameters(r));
             foreach (var (name, type) in machineParameters)
             {
                 if (seen.Contains(name))
@@ -743,6 +772,18 @@ namespace Yozolab.DaerD
                     "'{0}' turns on once a remote has decoded every slot — within {1:0.#} s of arriving when nothing is lost, and later when something is. It never turns off again, and the wearer reads it as on from the start.",
                     ReadyParameter(r.baseName), WorstCycleSeconds(r)));
 
+            // What the flag reads on a remote that has only just arrived, said here rather
+            // than left to be discovered in an instance with someone else in it.
+            if (r.stale)
+            {
+                var staleSlots = BuildSlots(r);
+                int marker = LapMarkerSlot(r);
+                if (marker >= 0)
+                    warnings.Add(L.Tr(
+                        "'{0}' is judged every time '{1}' comes round, which is once per pass. A remote that arrives mid-pass reads it as on for the rest of that pass — pair it with the remote initialized flag to tell that apart from a cycle that has actually started dropping steps.",
+                        StaleParameter(r.baseName), staleSlots[marker].targets[0]));
+            }
+
             if (r.stepSeconds < 0.3f)
                 warnings.Add(L.Tr("Steps shorter than VRChat's ~0.3 s sync cadence risk remotes skipping slots."));
             foreach (var type in ChannelTypes(r))
@@ -838,6 +879,44 @@ namespace Yozolab.DaerD
             return generated;
         }
 
+        /// <summary>
+        /// The Stale flag and the per-lap bits behind it, or nothing when the setup does not
+        /// ask for it. Local, like everything else the remote reads about its own decoding.
+        ///
+        /// Its own bits rather than <see cref="ReadyParameters"/>'s: those accumulate and
+        /// these are cleared every lap, and one set cannot be both. Bools cost nothing on the
+        /// wire, which is the only reason that trade is cheap.
+        /// </summary>
+        public static List<(string name, AnimatorControllerParameterType type)> StaleParameters(Request r)
+        {
+            var generated = new List<(string, AnimatorControllerParameterType)>();
+            if (r == null || !r.stale) return generated;
+            var slots = BuildSlots(r);
+            if (slots.Count == 0) return generated;
+            generated.Add((StaleParameter(r.baseName), AnimatorControllerParameterType.Bool));
+            foreach (var slotName in AsyncSyncApplier.SlotNames(slots))
+                generated.Add((FreshParameter(r.baseName, slotName),
+                    AnimatorControllerParameterType.Bool));
+            return generated;
+        }
+
+        /// <summary>
+        /// The slot whose arrival closes a lap, or -1 when the pass has none. Rates always
+        /// leave one; a cycle written by hand need not, and a slot anything can request is no
+        /// use as one however rarely the pass sends it.
+        /// </summary>
+        public static int LapMarkerSlot(Request r)
+        {
+            var slots = BuildSlots(r);
+            if (slots.Count == 0) return -1;
+            var requested = new HashSet<int>();
+            var requestable = RequestableTargets(r);
+            for (int i = 0; i < slots.Count; i++)
+                foreach (var name in slots[i].targets)
+                    if (requestable.Contains(name)) requested.Add(i);
+            return AsyncSyncSchedule.LapMarker(EffectiveSchedule(r, slots), requested);
+        }
+
         /// <summary>Request targets in cycle order, deduplicated, restricted to actual
         /// targets — a stale saved entry must not block regeneration (same contract as
         /// <see cref="Request.rates"/>).</summary>
@@ -874,6 +953,7 @@ namespace Yozolab.DaerD
                 boolChannels = Mathf.Clamp(config.BoolChannelsOrDefault, 1, 8),
                 allowRepeatSteps = config.allowRepeatSteps,
                 ready = config.ready,
+                stale = config.stale,
                 store = ParameterStore.Of(controller),
                 emptyClip = GraphFrameData.GetEmptyClip(controller),
                 layerIndex = LayerIndexOf(controller, config),

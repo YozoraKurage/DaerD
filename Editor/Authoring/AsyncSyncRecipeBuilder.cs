@@ -83,26 +83,27 @@ namespace Yozolab.DaerD.Authoring
                 // The Ready watcher is the same call's output and is rebuilt with it. Read
                 // back off the saved setup rather than derived from the name, which the
                 // builder may have had to make unique.
-                string readyLayer = ReadyLayerName(controller, _request.baseName);
-                if (readyLayer != null && !root.PostLayers.Contains(readyLayer))
-                    root.PostLayers.Add(readyLayer);
+                foreach (var watcher in WatcherLayerNames(controller, _request.baseName))
+                    if (!root.PostLayers.Contains(watcher)) root.PostLayers.Add(watcher);
 
                 warnings.AddRange(AsyncSyncBuilder.Warnings(_request));
                 return warnings;
             });
         }
 
-        /// <summary>The layer name the setup's Ready watcher ended up with, or null when it
-        /// has none — the builder uniquifies the name it creates, so only the saved setup
-        /// knows it.</summary>
-        static string ReadyLayerName(AnimatorController controller, string baseName)
+        /// <summary>The layer names the setup's watchers ended up with — the builder
+        /// uniquifies the names it creates, so only the saved setup knows them.</summary>
+        static List<string> WatcherLayerNames(AnimatorController controller, string baseName)
         {
+            var names = new List<string>();
             var config = GraphFrameData.FindAsyncSync(controller, baseName);
-            if (config == null || config.readyLayer == null) return null;
+            if (config == null) return names;
             foreach (var layer in controller.layers)
-                if (layer.stateMachine == config.readyLayer)
-                    return layer.name;
-            return null;
+                if (layer.stateMachine != null
+                    && (layer.stateMachine == config.readyLayer
+                        || layer.stateMachine == config.staleLayer))
+                    names.Add(layer.name);
+            return names;
         }
 
         /// <summary>
@@ -182,6 +183,25 @@ namespace Yozolab.DaerD.Authoring
         {
             _request.ready = true;
             return Record("Ready");
+        }
+
+        /// <summary>
+        /// Generate the drift-suspicion flag: a local, unsynced Bool ("base/Stale") that turns
+        /// on when a lap did not bring every slot and off again when one does. Read it to hold
+        /// back anything that would look wrong on values that may have stopped arriving.
+        ///
+        /// Judged when a slot the pass sends exactly once comes round, so it needs no timer
+        /// and no margin, and a pass stretched by a request cannot make it wrong. A pass with
+        /// no such slot — every slot sent more than once, or open to requests — cannot carry
+        /// the flag, and Generate says so instead of applying.
+        ///
+        /// A remote that arrives mid-pass reads it as on for the rest of that pass; pair it
+        /// with <see cref="Ready"/> to tell that apart from a cycle that has started dropping.
+        /// </summary>
+        public AsyncSyncRecipeBuilder Stale()
+        {
+            _request.stale = true;
+            return Record("Stale");
         }
 
         /// <summary>

@@ -68,6 +68,23 @@ namespace Yozolab.DaerD
         public static string ReadyLayerName(string layerName) => layerName + " Ready";
 
         /// <summary>
+        /// The drift-suspicion flag: 1 when the lap that just closed did not bring every slot,
+        /// 0 when it did. Local and never synced, and unlike <see cref="ReadyParameter"/> it
+        /// falls again — the question it answers is about the last lap, not about ever.
+        /// </summary>
+        public static string StaleParameter(string baseName) => baseName + "/Stale";
+
+        /// <summary>One slot's "arrived during this lap" bit: set by that slot's Recv driver
+        /// and cleared once a lap by the watcher that reads them.</summary>
+        public static string FreshParameter(string baseName, string slotName) =>
+            baseName + "/Fresh/" + slotName;
+
+        /// <summary>The layer the Stale watcher gets. Its own for the same reason Ready's
+        /// is — and its own rather than shared with Ready's, because this one is a cycle of
+        /// states and that one is a latch.</summary>
+        public static string StaleLayerName(string layerName) => layerName + " Stale";
+
+        /// <summary>
         /// The base name a new setup on this controller starts from: "DD" plus the first six
         /// hex digits of the controller's asset GUID. A fixed default collides as soon as two
         /// distributions that each bring a cycle meet on one avatar — both would own

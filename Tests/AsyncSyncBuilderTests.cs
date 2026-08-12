@@ -2357,6 +2357,11 @@ namespace Yozolab.DaerD.Tests
             Assert.IsTrue(AsyncSyncBuilder.FromConfig(controller, config).ready);
             config.ready = false;
             Assert.IsFalse(AsyncSyncBuilder.FromConfig(controller, config).ready);
+
+            config.stale = true;
+            Assert.IsTrue(AsyncSyncBuilder.FromConfig(controller, config).stale);
+            config.stale = false;
+            Assert.IsFalse(AsyncSyncBuilder.FromConfig(controller, config).stale);
         }
 
         [Test]
@@ -2370,6 +2375,217 @@ namespace Yozolab.DaerD.Tests
             request.ready = true;
             Assert.IsTrue(AsyncSyncBuilder.Warnings(request)
                 .Exists(w => w.Contains("Async/Ready") && w.Contains("0.9")));
+        }
+
+        // ---- drift suspicion flag -------------------------------------------
+
+        [Test]
+        public void LapMarker_IsASlotSentOnce_AndNeverOneAnythingCanRequest()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            Assert.AreEqual(0, AsyncSyncBuilder.LapMarkerSlot(request), "first in cycle order");
+
+            // Sent twice a pass, so its arrival says nothing about where the pass is.
+            request.rates["F"] = 2;
+            Assert.AreEqual(1, AsyncSyncBuilder.LapMarkerSlot(request));
+
+            // Sent once, but a detour can send it again inside the same pass.
+            request.rates.Remove("F");
+            request.requestTargets.Add("F");
+            Assert.AreEqual(1, AsyncSyncBuilder.LapMarkerSlot(request));
+
+            request.requestTargets.AddRange(new[] { "B", "I" });
+            Assert.AreEqual(-1, AsyncSyncBuilder.LapMarkerSlot(request));
+        }
+
+        [Test]
+        public void Validate_RefusesStale_WhenNothingClosesALap()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.stale = true;
+            Assert.IsNull(AsyncSyncBuilder.Validate(request));
+
+            request.requestTargets.AddRange(new[] { "F", "B", "I" });
+            var error = AsyncSyncBuilder.Validate(request);
+            Assert.IsNotNull(error);
+            StringAssert.Contains("closes a lap", error);
+
+            // ...and the same setup without the flag is fine, which is the point of refusing
+            // rather than dropping it: nothing else about the pass is wrong.
+            request.stale = false;
+            Assert.IsNull(AsyncSyncBuilder.Validate(request));
+        }
+
+        [Test]
+        public void Apply_WithStale_JudgesOnceALapAndArmsAgainOnTheWayOut()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.stale = true;
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var watcher = FindLayer(controller, "Async Stale");
+            Assert.IsNotNull(watcher);
+            Assert.AreEqual(4, watcher.states.Length);
+
+            var idle = FindState(watcher, "Idle");
+            Assert.AreEqual(idle, watcher.defaultState);
+            // Armed by the marker's own index, and only on a remote.
+            Assert.AreEqual(1, idle.transitions.Length);
+            Assert.AreEqual("Judge", idle.transitions[0].destinationState.name);
+            Assert.IsTrue(HasCondition(idle.transitions[0], "IsLocal",
+                AnimatorConditionMode.IfNot, 0f));
+            Assert.IsTrue(HasCondition(idle.transitions[0], "Async/Index",
+                AnimatorConditionMode.Equals, 0f));
+
+            // One route per slot that could be missing, then the fall-through. The marker is
+            // not among them: being here is its arrival.
+            var judge = FindState(watcher, "Judge");
+            Assert.AreEqual(3, judge.transitions.Length);
+            Assert.AreEqual("Dirty", judge.transitions[0].destinationState.name);
+            Assert.IsTrue(HasCondition(judge.transitions[0], "Async/Fresh/B",
+                AnimatorConditionMode.IfNot, 0f));
+            Assert.IsTrue(HasCondition(judge.transitions[1], "Async/Fresh/I",
+                AnimatorConditionMode.IfNot, 0f));
+            Assert.AreEqual("Clean", judge.transitions[2].destinationState.name);
+            Assert.AreEqual(0, judge.transitions[2].conditions.Length, "the last one is the else");
+            foreach (var transition in judge.transitions)
+                Assert.IsFalse(HasCondition(transition, "Async/Fresh/F",
+                    AnimatorConditionMode.IfNot, 0f), "the marker judges nobody but the rest");
+
+            // Both verdicts wait for the index to move on — the marker holds it for a whole
+            // dwell, and re-judging every frame of that would read a lap that isn't over.
+            foreach (var name in new[] { "Dirty", "Clean" })
+            {
+                var verdict = FindState(watcher, name);
+                Assert.AreEqual(1, verdict.transitions.Length, "on " + name);
+                Assert.AreEqual("Idle", verdict.transitions[0].destinationState.name);
+                Assert.IsTrue(HasCondition(verdict.transitions[0], "Async/Index",
+                    AnimatorConditionMode.NotEqual, 0f));
+            }
+            Assert.AreEqual(0, watcher.anyStateTransitions.Length,
+                "an Any-State route would re-judge on every frame of the marker's dwell");
+        }
+
+        [Test]
+        public void Apply_WithStale_AndABoolIndex_SpellsTheMarkerLeavingOverTheBits()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.encoding = AsyncSyncBuilder.IndexEncoding.Bool;   // 3 slots -> 2 bits
+            request.stale = true;
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var watcher = FindLayer(controller, "Async Stale");
+            // Index 0 is both bits down, so arming wants both down...
+            var arm = FindState(watcher, "Idle").transitions[0];
+            Assert.IsTrue(HasCondition(arm, "Async/Index/b0", AnimatorConditionMode.IfNot, 0f));
+            Assert.IsTrue(HasCondition(arm, "Async/Index/b1", AnimatorConditionMode.IfNot, 0f));
+
+            // ...and leaving wants EITHER up, which is a disjunction and so a route each.
+            var dirty = FindState(watcher, "Dirty");
+            Assert.AreEqual(2, dirty.transitions.Length);
+            Assert.IsTrue(HasCondition(dirty.transitions[0], "Async/Index/b0",
+                AnimatorConditionMode.If, 0f));
+            Assert.IsTrue(HasCondition(dirty.transitions[1], "Async/Index/b1",
+                AnimatorConditionMode.If, 0f));
+        }
+
+        [Test]
+        public void Apply_WithStaleAndDrivers_EveryVerdictOpensTheNextLap()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.stale = true;
+            request.skipDrivers = false;
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var watcher = FindLayer(controller, "Async Stale");
+            foreach (var (name, verdict) in new[] { ("Dirty", 1f), ("Clean", 0f) })
+            {
+                var driver = DriverOn(FindState(watcher, name));
+                Assert.IsFalse(driver.localOnly, "on " + name);
+                Assert.AreEqual(4, driver.entries.Count, "on " + name);
+                Assert.AreEqual("Async/Stale", driver.entries[0].name);
+                Assert.AreEqual(verdict, driver.entries[0].value);
+                // Every bit, the marker's included: the next lap has to start from nothing.
+                for (int i = 1; i < 4; i++)
+                    Assert.AreEqual(0f, driver.entries[i].value, "on " + name);
+                Assert.AreEqual("Async/Fresh/F", driver.entries[1].name);
+            }
+            Assert.AreEqual(0, FindState(watcher, "Idle").behaviours.Length);
+            Assert.AreEqual(0, FindState(watcher, "Judge").behaviours.Length);
+        }
+
+        [Test]
+        public void Apply_WithStaleAndDrivers_EachRecvRaisesItsFreshBit()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.stale = true;
+            request.skipDrivers = false;
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var sm = controller.layers[1].stateMachine;
+            foreach (var slot in new[] { "F", "B", "I" })
+            {
+                var entries = DriverOn(FindState(sm, "Recv " + slot)).entries;
+                var fresh = entries[entries.Count - 1];
+                Assert.AreEqual("Async/Fresh/" + slot, fresh.name);
+                Assert.AreEqual(1f, fresh.value);
+            }
+        }
+
+        [Test]
+        public void Apply_WithReadyAndStale_KeepsTwoBitSetsAndTwoWatchers()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.ready = true;
+            request.stale = true;
+            request.skipDrivers = false;
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            // One accumulates and one is cleared every lap, so one set cannot be both.
+            Assert.IsNotNull(DbtBuilder.FindParameter(controller, "Async/Seen/F"));
+            Assert.IsNotNull(DbtBuilder.FindParameter(controller, "Async/Fresh/F"));
+            Assert.AreEqual(4, controller.layers.Length);
+
+            var entries = DriverOn(FindState(controller.layers[1].stateMachine, "Recv F")).entries;
+            Assert.AreEqual("Async/Seen/F", entries[entries.Count - 2].name);
+            Assert.AreEqual("Async/Fresh/F", entries[entries.Count - 1].name);
+        }
+
+        [Test]
+        public void Apply_WithoutStale_BuildsNoWatcher_AndTurningItOffTakesItAway()
+        {
+            var controller = NewController();
+            Assert.IsTrue(AsyncSyncBuilder.Apply(NewRequest(controller, "F", "B", "I")));
+            Assert.IsNull(FindLayer(controller, "Async Stale"));
+
+            var on = NewRequest(controller, "F", "B", "I");
+            on.stale = true;
+            on.layerIndex = 1;
+            Assert.IsTrue(AsyncSyncBuilder.Apply(on));
+            Assert.AreEqual(3, controller.layers.Length);
+
+            var off = NewRequest(controller, "F", "B", "I");
+            off.layerIndex = 1;
+            Assert.IsTrue(AsyncSyncBuilder.Apply(off));
+            Assert.AreEqual(2, controller.layers.Length);
+            Assert.IsNull(FindLayer(controller, "Async Stale"));
+        }
+
+        [Test]
+        public void Warnings_WithStale_NameTheSlotThatClosesTheLap()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.stale = true;
+            Assert.IsTrue(AsyncSyncBuilder.Warnings(request)
+                .Exists(w => w.Contains("Async/Stale") && w.Contains("'F'")));
         }
     }
 }

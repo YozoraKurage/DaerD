@@ -992,6 +992,24 @@ msgstr "そのクライアントが全スロットを 1 度以上受信し終え
 msgid "'{0}' turns on once a remote has decoded every slot — within {1:0.#} s of arriving when nothing is lost, and later when something is. It never turns off again, and the wearer reads it as on from the start."
 msgstr "'{0}' はリモートが全スロットを受信し終えると 1 になります。取りこぼしが無ければ入室から {1:0.#} 秒以内、あれば その後です。一度 1 になったら戻りません。装着者は最初から 1 です。"
 
+msgid "Drift Suspicion Flag"
+msgstr "同期ズレ疑いフラグ"
+
+msgid "Generate a local Bool that turns on when a lap did not bring every slot, and off again when one does. Judged when a slot the pass sends exactly once comes round, so it needs no timer and no margin — and a pass with no such slot cannot carry it. Costs one local Bool per slot and a third layer; nothing synced."
+msgstr "1 周のあいだに全スロットが届かなかったとき 1 になり、届いた周で 0 に戻るローカル Bool を生成します。判定は「1 周に 1 回だけ送られるスロット」が回ってきた瞬間なので、タイマーもマージンも要りません（そのようなスロットが無い巡回では作れません）。コストはスロット数ぶんのローカル Bool とレイヤー 1 枚で、同期は増えません。"
+
+msgid "Drift suspicion flag: judged once a pass, when '{0}' comes round."
+msgstr "同期ズレ疑いフラグ: 1 周に 1 回、'{0}' が回ってきたときに判定します。"
+
+msgid "Drift suspicion flag: no slot closes a pass on its own, so it can't be built."
+msgstr "同期ズレ疑いフラグ: 1 周を閉じるスロットが無いため作れません。"
+
+msgid "No slot closes a lap on its own, so there is nothing to measure a lap against: every slot is either sent more than once or open to requests. Send one of them once per pass, or take its request away."
+msgstr "1 周を単独で閉じるスロットが無いため、1 周を測る基準がありません（どのスロットも複数回送られるか、リクエスト対象になっています）。どれか 1 つを 1 周に 1 回だけ送るか、そのリクエストを外してください。"
+
+msgid "'{0}' is judged every time '{1}' comes round, which is once per pass. A remote that arrives mid-pass reads it as on for the rest of that pass — pair it with the remote initialized flag to tell that apart from a cycle that has actually started dropping steps."
+msgstr "'{0}' は '{1}' が回ってくるたび、つまり 1 周に 1 回判定されます。周の途中で入ったリモートはその周のあいだ 1 のままになるので、本当に取りこぼし始めた場合と区別したいときはリモート初期化フラグと組み合わせてください。"
+
 msgid "With requests running: up to {0:0.#} s per pass."
 msgstr "リクエストが動いているとき: 1 周あたり最大 {0:0.#} 秒"
 

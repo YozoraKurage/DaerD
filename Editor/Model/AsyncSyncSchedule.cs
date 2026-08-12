@@ -291,6 +291,35 @@ namespace Yozolab.DaerD
         /// Compared as index values rather than as slots, because a clock can give two visits
         /// of one slot different indices — and then the successor is decodable after all.
         /// </summary>
+        /// <summary>
+        /// A slot the pass visits exactly once, and so an event that happens exactly once per
+        /// lap — which is all a lap needs to be measurable. Read off the schedule rather than
+        /// off the weights, so a pass laid out by rates, by an explicit cycle or by a grid are
+        /// all answered the same way.
+        ///
+        /// <paramref name="excluded"/> keeps out the slots anything can request: a detour
+        /// sends one a second time in the same lap, and a marker that comes round twice would
+        /// call the lap over while half of it is still to come. Returns -1 when the pass has
+        /// no such slot — rates always leave one (their common factor is divided out, so some
+        /// slot is left at ×1), a cycle written by hand need not.
+        /// </summary>
+        public static int LapMarker(List<int> schedule, ICollection<int> excluded)
+        {
+            if (schedule == null || schedule.Count == 0) return -1;
+            var visits = new Dictionary<int, int>();
+            foreach (int slot in schedule)
+            {
+                visits.TryGetValue(slot, out int count);
+                visits[slot] = count + 1;
+            }
+            // In cycle order, so the answer is the same on every rebuild and reads as the
+            // first candidate rather than as whichever the dictionary happened to hold.
+            foreach (int slot in schedule)
+                if (visits[slot] == 1 && (excluded == null || !excluded.Contains(slot)))
+                    return slot;
+            return -1;
+        }
+
         public static List<int> RequestOrigins(List<int> schedule, Clock clock, int slot)
         {
             var origins = new List<int>();

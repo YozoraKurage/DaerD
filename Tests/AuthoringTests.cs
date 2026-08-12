@@ -434,7 +434,7 @@ namespace Yozolab.DaerD.Tests
         }
 
         [Test]
-        public void AsyncSync_Ready_BuildsTheWatcherAndRegeneratesItInPlace()
+        public void AsyncSync_ReadyAndStale_BuildTheWatchersAndRegenerateThemInPlace()
         {
             var controller = Track(new AnimatorController());
             var recipe = NewRecipe(controller, c =>
@@ -446,6 +446,7 @@ namespace Yozolab.DaerD.Tests
                 c.AsyncSync("Zip")
                     .Targets("Hue", "Outfit", "Tail")
                     .Ready()
+                    .Stale()
                     .SkipDriversForTest();
             });
 
@@ -455,16 +456,20 @@ namespace Yozolab.DaerD.Tests
 
             Assert.IsNotNull(DbtBuilder.FindParameter(controller, "Zip/Ready"));
             Assert.IsNotNull(DbtBuilder.FindParameter(controller, "Zip/Seen/Hue"));
+            Assert.IsNotNull(DbtBuilder.FindParameter(controller, "Zip/Stale"));
+            Assert.IsNotNull(DbtBuilder.FindParameter(controller, "Zip/Fresh/Hue"));
 
-            AnimatorStateMachine watcher = null;
-            foreach (var layer in controller.layers)
-                if (layer.name == "Zip Ready")
-                    watcher = layer.stateMachine;
-            Assert.IsNotNull(watcher);
-            Assert.AreEqual(3, watcher.states.Length);
+            AnimatorStateMachine Watcher(string name)
+            {
+                foreach (var layer in controller.layers)
+                    if (layer.name == name) return layer.stateMachine;
+                return null;
+            }
+            Assert.AreEqual(3, Watcher("Zip Ready")?.states.Length);
+            Assert.AreEqual(4, Watcher("Zip Stale")?.states.Length);
 
-            // The watcher belongs to the same call, so a second Generate rebuilds it rather
-            // than adding another one beside it.
+            // The watchers belong to the same call, so a second Generate rebuilds them rather
+            // than adding more beside them.
             int layersAfterFirst = controller.layers.Length;
             recipe.Generate();
             Assert.AreEqual(layersAfterFirst, controller.layers.Length);

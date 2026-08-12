@@ -50,6 +50,9 @@ namespace Yozolab.DaerD
         /// <summary>Generate the remote-initialized flag
         /// (<see cref="AsyncSyncBuilder.Request.ready"/>).</summary>
         bool _ready;
+        /// <summary>Generate the drift-suspicion flag
+        /// (<see cref="AsyncSyncBuilder.Request.stale"/>).</summary>
+        bool _stale;
         bool _addToStore = true;
         bool _assignEmptyClip = true;
         string _search = string.Empty;
@@ -166,6 +169,7 @@ namespace Yozolab.DaerD
             _boolChannels = Mathf.Clamp(config.BoolChannelsOrDefault, 1, 8);
             _allowRepeatSteps = config.allowRepeatSteps;
             _ready = config.ready;
+            _stale = config.stale;
             _steps.Clear();
             if (config.steps != null)
                 foreach (var step in config.steps)
@@ -214,6 +218,7 @@ namespace Yozolab.DaerD
                 boolChannels = _boolChannels,
                 allowRepeatSteps = _allowRepeatSteps,
                 ready = _ready,
+                stale = _stale,
                 store = ParameterStore.Of(_controller),
                 addToStore = _addToStore,
                 assignEmptyClip = _assignEmptyClip,
@@ -315,6 +320,11 @@ namespace Yozolab.DaerD
                 new GUIContent(L.Tr("Remote Initialized Flag"),
                     L.Tr("Generate a local Bool that turns on once this client has decoded every slot at least once — what a remote has instead of a way to ask. The wearer reads it as on from the start, so a remote that has finished initializing is Ready && !IsLocal. Costs one local Bool per slot and a second layer; nothing synced.")),
                 _ready);
+
+            _stale = EditorGUILayout.Toggle(
+                new GUIContent(L.Tr("Drift Suspicion Flag"),
+                    L.Tr("Generate a local Bool that turns on when a lap did not bring every slot, and off again when one does. Judged when a slot the pass sends exactly once comes round, so it needs no timer and no margin — and a pass with no such slot cannot carry it. Costs one local Bool per slot and a third layer; nothing synced.")),
+                _stale);
 
             // The generated states are machinery, but Unity (and the analyzer) still want a
             // motion on them; the controller's Empty clip is exactly what that is for. Offered
@@ -971,6 +981,17 @@ namespace Yozolab.DaerD
                     L.Tr("Remote initialized flag: {0} local Bool(s) and one layer, nothing synced.",
                         slots.Count + 1),
                     EditorStyles.miniLabel);
+
+            if (request.stale)
+            {
+                int marker = AsyncSyncBuilder.LapMarkerSlot(request);
+                EditorGUILayout.LabelField(
+                    marker >= 0
+                        ? L.Tr("Drift suspicion flag: judged once a pass, when '{0}' comes round.",
+                            slots[marker].targets[0])
+                        : L.Tr("Drift suspicion flag: no slot closes a pass on its own, so it can't be built."),
+                    EditorStyles.miniLabel);
+            }
 
             // The pass actually being built, not the one the rates would lay out — the seconds
             // beside it come from the same place, and the two disagreeing read as a bug.

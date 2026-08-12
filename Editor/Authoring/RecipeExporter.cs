@@ -300,10 +300,11 @@ namespace Yozolab.DaerD.Authoring
                     continue;
                 }
                 plan.layers[layer.name] = request;
-                if (config.readyLayer != null)
-                    foreach (var other in controller.layers)
-                        if (other.stateMachine == config.readyLayer)
-                            plan.supporting.Add(other.name);
+                foreach (var other in controller.layers)
+                    if (other.stateMachine != null
+                        && (other.stateMachine == config.readyLayer
+                            || other.stateMachine == config.staleLayer))
+                        plan.supporting.Add(other.name);
             }
 
             // Same post-step caveat the gadget layers carry: this one is rebuilt at the end of
