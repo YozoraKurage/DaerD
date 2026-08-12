@@ -480,7 +480,7 @@ namespace Yozolab.DaerD
             if (r.rates != null)
                 foreach (var rate in r.rates)
                     if (rate.Value < 1 || rate.Value > MaxRate)
-                        return L.Tr("Sync rates must be between 1 and {0} ('{1}').", MaxRate, rate.Key);
+                        return L.Tr("Sync weights must be between 1 and {0} ('{1}').", MaxRate, rate.Key);
 
             if (r.steps != null && r.steps.Count > 0)
             {
@@ -674,7 +674,7 @@ namespace Yozolab.DaerD
                     if (occurrences[i] < asked)
                     {
                         warnings.Add(L.Tr(
-                            "The ×{0} rate on '{1}' can't be separated by the other slots; it effectively runs at ×{2}. Add parameters or lower the rate.",
+                            "The ×{0} weight on '{1}' can't be separated by the other slots; it effectively runs at ×{2}. Add parameters or lower the weight.",
                             slots[i].rate, slots[i].targets[0], Mathf.Max(1, occurrences[i])));
                         break;
                     }

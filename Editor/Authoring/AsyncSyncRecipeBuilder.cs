@@ -13,8 +13,8 @@ namespace Yozolab.DaerD.Authoring
     ///
     ///   c.AsyncSync()
     ///    .Targets("Hue", "Outfit", "TailState")
-    ///    .Rate("Hue", 2)                      // or spell the cycle out yourself:
-    ///    .Schedule("Hue", "Outfit", "Hue", "TailState")
+    ///    .Rate("Hue", 2)                      // weight: two of the pass's places. Or spell
+    ///    .Schedule("Hue", "Outfit", "Hue", "TailState")   // the cycle out yourself:
     ///    .FloatChannels(2).Step(0.3f);
     ///
     /// Sends() goes one deeper still, saying what each step carries rather than which slot it
@@ -148,8 +148,16 @@ namespace Yozolab.DaerD.Authoring
             return Record("Targets", Names(parameters));
         }
 
-        /// <summary>Sync this parameter <paramref name="timesPerPass"/> times per pass
-        /// (spread as evenly as the other slots allow). Ignored under an explicit Schedule.</summary>
+        /// <summary>
+        /// Give this parameter <paramref name="timesPerPass"/> of the pass's places, spread as
+        /// evenly as the other slots allow. A weight rather than a speed: the pass is however
+        /// many places it has, so raising one target's share lengthens the pass for everyone
+        /// else, and raising every target's changes nothing at all (a common factor is divided
+        /// out). Ignored under an explicit <see cref="Schedule"/>.
+        ///
+        /// For "send this the moment it changes" reach for <see cref="Requestable"/> instead —
+        /// a weight buys a target places in every pass, whether or not anything moved.
+        /// </summary>
         public AsyncSyncRecipeBuilder Rate(string parameter, int timesPerPass)
         {
             _request.rates[parameter] = timesPerPass;
@@ -220,7 +228,7 @@ namespace Yozolab.DaerD.Authoring
 
         /// <summary>
         /// Spell one step out as the set of targets it sends, and call it once per step. This
-        /// replaces the batching, the rates and <see cref="Schedule"/> together: the slots
+        /// replaces the batching, the weights and <see cref="Schedule"/> together: the slots
         /// become the distinct sets, so the call says which targets share a step as well as
         /// when each step comes round.
         ///

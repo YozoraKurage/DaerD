@@ -434,7 +434,7 @@ namespace Yozolab.DaerD
         /// </summary>
         public void DrawOrderSection(AsyncSyncBuilder.Request request)
         {
-            EditorGUILayout.LabelField(L.Tr("Sync Order & Rates"), EditorStyles.boldLabel);
+            EditorGUILayout.LabelField(L.Tr("Cycle Order & Weights"), EditorStyles.boldLabel);
             if (_order.Count == 0)
             {
                 EditorGUILayout.LabelField(
@@ -450,7 +450,7 @@ namespace Yozolab.DaerD
                         // the cycle's, but BuildSlots still groups by (type, rate), so the ×N
                         // popup goes on deciding which parameters share a step.
                         ? L.Tr("This setup carries an explicit cycle written in C#, so top to bottom is only the listing order and ×N only decides which parameters share a step. The pass itself is the timeline below.")
-                        : L.Tr("Top to bottom is the cycle order. ×N syncs a parameter N times per pass; everything else shares the steps in between."),
+                        : L.Tr("Top to bottom is the cycle order. ×N gives a parameter N places in the pass, and everything else shares the steps in between — a share of the pass rather than a speed, so raising everyone's changes nothing and raising one lengthens the pass for the rest."),
                 EditorStyles.miniLabel);
 
             var intervals = AsyncSyncBuilder.RefreshIntervals(request);
@@ -511,7 +511,7 @@ namespace Yozolab.DaerD
                     visits.TryGetValue(row.name, out int times);
                     EditorGUILayout.LabelField(
                         new GUIContent("×" + times,
-                            L.Tr("Steps in the pass that send this parameter. Set it by clicking the timeline; go back to rates to have it worked out for you.")),
+                            L.Tr("Steps in the pass that send this parameter. Set it by clicking the timeline; go back to the weights to have it worked out for you.")),
                         EditorStyles.miniLabel, GUILayout.Width(48));
                 }
                 else
@@ -803,7 +803,7 @@ namespace Yozolab.DaerD
             if (!Manual)
             {
                 if (GUILayout.Button(new GUIContent(L.Tr("Set Timing By Hand"),
-                        L.Tr("Write the pass out step by step instead of deriving it from the rates. It starts as the pass shown here, so nothing changes until you move something.")),
+                        L.Tr("Write the pass out step by step instead of deriving it from the weights. It starts as the pass shown here, so nothing changes until you move something.")),
                         EditorStyles.miniButton, GUILayout.Width(150)))
                 {
                     foreach (var column in columns) _steps.Add(StepOf(column));
@@ -821,8 +821,8 @@ namespace Yozolab.DaerD
                 // The wizard has no editor for a cycle written in C#, so the one thing it can
                 // offer is the way out of it — without which the rate controls above would sit
                 // there overridden by something nothing on screen can reach.
-                if (_schedule.Count > 0 && GUILayout.Button(new GUIContent(L.Tr("Back To Rates"),
-                        L.Tr("Discard the explicit cycle this setup carries and let the ×N rates lay the pass out again.")),
+                if (_schedule.Count > 0 && GUILayout.Button(new GUIContent(L.Tr("Back To Weights"),
+                        L.Tr("Discard the explicit cycle this setup carries and let the ×N weights lay the pass out again.")),
                         EditorStyles.miniButton, GUILayout.Width(110)))
                 {
                     // Nothing to snapshot: the cycle reaches the request through
@@ -839,8 +839,8 @@ namespace Yozolab.DaerD
                 // worth of targets at once.
                 int steps = EditorGUILayout.IntSlider(L.Tr("Steps"), _steps.Count, 2, max);
                 if (steps != _steps.Count) SetStepCount(request, steps);
-                if (GUILayout.Button(new GUIContent(L.Tr("Back To Rates"),
-                        L.Tr("Discard the hand-written pass and let the ×N rates lay the cycle out again.")),
+                if (GUILayout.Button(new GUIContent(L.Tr("Back To Weights"),
+                        L.Tr("Discard the hand-written pass and let the ×N weights lay the cycle out again.")),
                         EditorStyles.miniButton, GUILayout.Width(110)))
                 {
                     _steps.Clear();
