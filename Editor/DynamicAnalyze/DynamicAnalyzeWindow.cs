@@ -54,6 +54,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
         [SerializeField] bool _live;
         [SerializeField] bool _settingsOpen = true;
         [SerializeField] bool _inputsOpen = true;
+        [SerializeField] bool _notesOpen = true;
 
         readonly WaveformView _view = new WaveformView();
         SimSession _session;
@@ -129,6 +130,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
 
             DrawToolbar();
             if (_settingsOpen) DrawSettings();
+            DrawNotes();
             if (_inputsOpen && !_live) DrawStimulus();
             var rect = GUILayoutUtility.GetRect(0f, 100000f, 0f, 100000f);
             _view.Draw(rect);
@@ -292,6 +294,25 @@ namespace Yozolab.DaerD.DynamicAnalyze
             string relative = FileUtil.GetProjectRelativePath(path);
             return AssetDatabase.LoadAssetAtPath<AnimationClip>(
                 string.IsNullOrEmpty(relative) ? path : relative);
+        }
+
+        /// <summary>
+        /// What this run cannot promise about this controller, above the result rather than
+        /// buried under it. A simulator that is silently wrong is worth less than none, so the
+        /// places it is known to part company with a headset are stated where the answer is
+        /// read — and the count stays visible even when the list is folded away.
+        /// </summary>
+        void DrawNotes()
+        {
+            var notes = SimNotes.For(_controller);
+            if (notes.Count == 0) return;
+            EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+            _notesOpen = EditorGUILayout.Foldout(_notesOpen,
+                L.Tr("What this run does not promise ({0})", notes.Count), true);
+            if (_notesOpen)
+                foreach (var note in notes)
+                    EditorGUILayout.LabelField("• " + note, EditorStyles.wordWrappedMiniLabel);
+            EditorGUILayout.EndVertical();
         }
 
         // ---- settings -------------------------------------------------------

@@ -599,6 +599,92 @@ namespace Yozolab.DaerD.Tests
             }
         }
 
+        // ---- what a run does not promise ------------------------------------
+
+        static bool Mentions(System.Collections.Generic.List<string> notes, string fragment)
+        {
+            foreach (var note in notes)
+                if (note.Contains(fragment)) return true;
+            return false;
+        }
+
+        [Test]
+        public void Notes_AreEmptyForAControllerNothingDivergesOn()
+        {
+            CollectionAssert.IsEmpty(SimNotes.For(NewController()));
+        }
+
+        [Test]
+        public void Notes_SayWhenALayerChoosesWhereToBeginWithACondition()
+        {
+            var controller = NewController();
+            var machine = controller.layers[0].stateMachine;
+            var entry = machine.AddEntryTransition(FindState(controller, "On"));
+
+            // No conditions yet: an unconditional entry route goes where the default would.
+            CollectionAssert.IsEmpty(SimNotes.For(controller));
+
+            entry.AddCondition(AnimatorConditionMode.If, 0f, "Go");
+            var notes = SimNotes.For(controller);
+            Assert.AreEqual(1, notes.Count);
+            Assert.IsTrue(Mentions(notes, "Entry"), notes[0]);
+            Assert.IsTrue(Mentions(notes, "Base"), "it names the layer");
+        }
+
+        [Test]
+        public void Notes_SayWhenADriversStateCanBeEnteredFromItself()
+        {
+            var controller = NewController();
+            var on = FindState(controller, "On");
+            var driver = VrcParameterDriver.AddTo(on, "Test");
+            VrcParameterDriver.AddSetEntry(driver, "N", 1f);
+            CollectionAssert.IsEmpty(SimNotes.For(controller), "not yet — nothing re-enters it");
+
+            var self = on.AddTransition(on);
+            self.hasExitTime = true;
+            self.exitTime = 1f;
+            Assert.IsTrue(Mentions(SimNotes.For(controller), "re-entered"));
+        }
+
+        [Test]
+        public void Notes_SayWhenADriverInOneLayerIsReadByAnother()
+        {
+            var controller = NewController();
+            var driver = VrcParameterDriver.AddTo(FindState(controller, "On"), "Test");
+            VrcParameterDriver.AddSetEntry(driver, "N", 1f);
+            // Written in layer 0 and read nowhere else yet.
+            CollectionAssert.IsEmpty(SimNotes.For(controller));
+
+            controller.AddLayer("Other");
+            var other = controller.layers[1].stateMachine;
+            var a = other.AddState("A");
+            var b = other.AddState("B");
+            a.AddTransition(b).AddCondition(AnimatorConditionMode.Greater, 0f, "N");
+
+            var notes = SimNotes.For(controller);
+            Assert.IsTrue(Mentions(notes, "next frame"), string.Join(" / ", notes.ToArray()));
+            Assert.IsTrue(Mentions(notes, "N"));
+        }
+
+        [Test]
+        public void Notes_TellALayerWeightApartFromTheBehavioursThatChangeNothing()
+        {
+            var controller = NewController();
+            var on = FindState(controller, "On");
+            if (VrcBehaviours.Find(VrcBehaviours.LayerControl) == null)
+                Assert.Ignore("needs the SDK's own behaviour types");
+
+            on.AddStateMachineBehaviour(VrcBehaviours.Find(VrcBehaviours.LayerControl));
+            var notes = SimNotes.For(controller);
+            Assert.IsTrue(Mentions(notes, "weight"),
+                "the one unrun behaviour that changes what a run records");
+
+            on.AddStateMachineBehaviour(VrcBehaviours.Find(VrcBehaviours.TrackingControl));
+            notes = SimNotes.For(controller);
+            Assert.AreEqual(2, notes.Count, "and the rest, said separately");
+            Assert.IsTrue(Mentions(notes, "nothing recorded depends on them"));
+        }
+
         // ---- a run as a clip ------------------------------------------------
 
         [Test]

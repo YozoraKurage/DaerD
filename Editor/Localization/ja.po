@@ -3035,3 +3035,24 @@ msgstr "実行を開く"
 
 msgid "Load As Timed Inputs"
 msgstr "時刻指定の入力として読み込む"
+
+msgid "{0} layer(s) choose where to begin with a condition on Entry ({1}). This run does not take those routes — each of those layers starts in its default state, whatever the condition says."
+msgstr "{0} 個のレイヤーが Entry の条件で開始位置を選んでいます（{1}）。この実行はその経路を通らないので、条件が何を言っていても、それらのレイヤーは既定ステートから始まります。"
+
+msgid "{0} state(s) with a Parameter Driver can be entered from themselves ({1}). This run cannot see a state re-entered, so those drivers fire once instead of every time."
+msgstr "Parameter Driver を持つ {0} 個のステートが、自分自身から入り直せる形になっています（{1}）。この実行は再入場を検出できないので、それらのドライバは毎回ではなく 1 回だけ走ります。"
+
+msgid "{0} parameter(s) are driven in one layer and read by another's transitions ({1}). A driver's write reaches the other layer on the next frame here, and inside the same one on a headset."
+msgstr "{0} 個のパラメーターが、あるレイヤーのドライバで書かれて別のレイヤーの遷移で読まれています（{1}）。ここではドライバの書き込みが相手のレイヤーに届くのは次のフレームですが、実機では同じフレーム内です。"
+
+msgid "{0} Animator Layer Control(s) are not run here. A layer's weight scales everything it writes, so a run can report values a headset would not."
+msgstr "{0} 個の Animator Layer Control は実行されません。レイヤーの重みはそのレイヤーが書くものすべてを増減させるので、実機とは違う値が記録されることがあります。"
+
+msgid "Not run here, and nothing recorded depends on them: {0}. They reach the player rather than the controller — so a run cannot show tracking left off, only that it was never turned back on in the parameters."
+msgstr "実行されませんが、記録される値には影響しません: {0}。これらはコントローラーではなくプレイヤー側に効くためです（トラッキングを切ったままかどうかは、この実行では分かりません）。"
+
+msgid " and {0} more"
+msgstr " ほか {0} 件"
+
+msgid "What this run does not promise ({0})"
+msgstr "この実行が保証しないこと ({0})"
