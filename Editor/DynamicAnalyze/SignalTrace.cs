@@ -46,6 +46,21 @@ namespace Yozolab.DaerD.DynamicAnalyze
 
             internal readonly List<float> samples = new List<float>();
 
+            /// <summary>Whether this signal ever moved. Kept as it is written rather than
+            /// worked out afterwards, because it is asked once per row per repaint and a run
+            /// has hundreds of rows — and because a live session would have to answer it again
+            /// every frame. Sticky: a signal that moved and then went quiet stays listed, which
+            /// is what a reader watching it wants.</summary>
+            public bool Moved { get; private set; }
+
+            internal void Push(float value)
+            {
+                if (!Moved && samples.Count > 0
+                    && !Mathf.Approximately(samples[samples.Count - 1], value))
+                    Moved = true;
+                samples.Add(value);
+            }
+
             public int Frames => samples.Count;
 
             public float At(int frame) =>

@@ -3008,3 +3008,9 @@ msgstr "時刻指定の入力"
 
 msgid "s"
 msgstr "秒"
+
+msgid "Moved"
+msgstr "変化あり"
+
+msgid "Timed"
+msgstr "時刻指定"

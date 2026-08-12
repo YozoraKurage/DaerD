@@ -494,29 +494,71 @@ namespace Yozolab.DaerD.Tests
         // ---- the viewer's model side ----------------------------------------
 
         [Test]
-        public void View_FiltersByPath_AndFitsTheWholeRunAcrossTheWidth()
+        public void View_GroupsByScope_FiltersByPath_AndFitsTheRunAcrossTheWidth()
         {
             var wire = new SyncWire { intervalSeconds = 0.1f }.Syncs("X");
             var view = new WaveformView
             {
                 trace = Simulation.Run(NewController(), Wired(1f, wire)),
+                movedOnly = false,
             };
             Assert.AreEqual(60, view.Frames);
 
+            // A header per scope, and its rows under it.
+            var scopes = new System.Collections.Generic.List<string>();
+            foreach (var row in view.Visible())
+                if (row.IsHeader) scopes.Add(row.scope);
+            CollectionAssert.AreEqual(
+                new[]
+                {
+                    Simulation.LocalScope, Simulation.RemoteScope,
+                    Simulation.WireScope, Simulation.LagScope,
+                },
+                scopes);
+
             // Everything is recorded, and the filter is how a reader narrows it — which is why
             // a run does not need to be told in advance what it will be asked.
-            int all = view.Visible().Count;
-            view.filter = Simulation.RemoteScope;
-            Assert.Less(view.Visible().Count, all);
-            foreach (var signal in view.Visible())
-                Assert.AreEqual(Simulation.RemoteScope, signal.scope);
             view.filter = "Base/state";
-            Assert.AreEqual(2, view.Visible().Count, "one per client");
+            int rows = 0, headers = 0;
+            foreach (var row in view.Visible())
+                if (row.IsHeader) headers++; else rows++;
+            Assert.AreEqual(2, rows, "one per client");
+            Assert.AreEqual(2, headers, "and a header each; the wire and lag drop out");
 
+            view.filter = string.Empty;
             view.Fit(800f);
             Assert.AreEqual(0, view.firstFrame);
             // The whole run across the plot, which is the width less the two name columns.
-            Assert.AreEqual((800f - 284f) / 60f, view.pixelsPerFrame, 0.01f);
+            Assert.AreEqual((800f - 288f) / 60f, view.pixelsPerFrame, 0.01f);
+        }
+
+        [Test]
+        public void View_HidesWhatNeverMoved_ButStillCountsIt()
+        {
+            var stimulus = new Stimulus().At(0.05f, "Go", true);
+            var view = new WaveformView
+            {
+                trace = Simulation.Run(NewController(), Clock(0.3f), stimulus),
+            };
+
+            // "N" and "X" are never touched in this run; "Go" and the layer are.
+            var shown = new System.Collections.Generic.List<string>();
+            int localCount = 0;
+            foreach (var row in view.Visible())
+                if (row.IsHeader) localCount = row.count;
+                else shown.Add(row.signal.name);
+            CollectionAssert.Contains(shown, "Go");
+            CollectionAssert.Contains(shown, "Base/state");
+            CollectionAssert.DoesNotContain(shown, "N");
+            CollectionAssert.DoesNotContain(shown, "X");
+            // The header still counts the quiet ones, so a reader can tell "not shown" from
+            // "not there".
+            Assert.Greater(localCount, shown.Count);
+
+            view.movedOnly = false;
+            int all = 0;
+            foreach (var row in view.Visible()) if (!row.IsHeader) all++;
+            Assert.AreEqual(localCount, all);
         }
 
         [Test]

@@ -18,11 +18,24 @@ namespace Yozolab.DaerD.DynamicAnalyze
     {
         public const float RowHeight = 18f;
         const float RulerHeight = 18f;
-        const float NameWidth = 210f;
-        const float ValueWidth = 74f;
+        const float NameWidth = 200f;
+        const float ValueWidth = 88f;
         const float ScrollbarHeight = 14f;
 
         public SignalTrace trace;
+
+        /// <summary>Hide signals that never moved. On by default: a real avatar declares
+        /// hundreds of parameters and a given run touches a dozen of them, and a list where
+        /// the dozen are lost among the rest is a list nobody reads.</summary>
+        public bool movedOnly = true;
+
+        /// <summary>Whether this row's value can be typed into — true in a live session for a
+        /// parameter of a running client. The row's own scope says whose value it is, which is
+        /// why poking does not need a control of its own anywhere else.</summary>
+        public System.Func<SignalTrace.Signal, bool> editable;
+
+        /// <summary>Where a typed value goes.</summary>
+        public System.Action<SignalTrace.Signal, float> write;
         /// <summary>Where the reader is. Every value shown beside a name is this frame's.</summary>
         public int cursorFrame;
         /// <summary>Horizontal zoom. Frames narrower than a pixel are still drawn — the
@@ -37,9 +50,21 @@ namespace Yozolab.DaerD.DynamicAnalyze
         SignalTrace _rangedFor;
         // The filtered row list, kept rather than rebuilt: OnGUI runs at least twice a frame
         // and this is walked by both of them.
-        readonly List<SignalTrace.Signal> _visible = new List<SignalTrace.Signal>();
+        readonly List<Row> _visible = new List<Row>();
         SignalTrace _visibleFor;
         string _visibleFilter;
+        bool _visibleMovedOnly;
+        int _visibleSignals;
+        readonly HashSet<string> _collapsed = new HashSet<string>();
+
+        /// <summary>A line of the list: a scope's header, or one signal under it.</summary>
+        public struct Row
+        {
+            public string scope;
+            public SignalTrace.Signal signal;
+            public int count;
+            public bool IsHeader => signal == null;
+        }
 
         public int Frames => trace != null ? trace.Frames : 0;
 
@@ -81,9 +106,13 @@ namespace Yozolab.DaerD.DynamicAnalyze
                 Mathf.CeilToInt((_rowScroll.y + plot.height) / RowHeight));
             for (int i = firstRow; i <= lastRow; i++)
             {
-                var row = new Rect(0f, i * RowHeight, rect.width - 16f, RowHeight);
-                if (i % 2 == 1) EditorGUI.DrawRect(row, WaveformColors.RowTint);
-                DrawSignal(visible[i], row);
+                var area = new Rect(0f, i * RowHeight, rect.width - 16f, RowHeight);
+                if (visible[i].IsHeader) DrawHeader(visible[i], area);
+                else
+                {
+                    if (i % 2 == 1) EditorGUI.DrawRect(area, WaveformColors.RowTint);
+                    DrawSignal(visible[i].signal, area);
+                }
             }
             GUI.EndScrollView();
 
@@ -94,12 +123,30 @@ namespace Yozolab.DaerD.DynamicAnalyze
 
         // ---- rows -----------------------------------------------------------
 
+        /// <summary>A scope's line: how many of its rows there are, and whether they show.</summary>
+        void DrawHeader(Row row, Rect area)
+        {
+            EditorGUI.DrawRect(area, WaveformColors.Header);
+            bool open = !_collapsed.Contains(row.scope);
+            var fold = new Rect(area.x + 4f, area.y, NameWidth + ValueWidth - 8f, area.height);
+            bool wanted = EditorGUI.Foldout(fold, open, row.scope + "  (" + row.count + ")", true);
+            if (wanted == open) return;
+            if (wanted) _collapsed.Remove(row.scope);
+            else _collapsed.Add(row.scope);
+            Invalidate();
+        }
+
         void DrawSignal(SignalTrace.Signal signal, Rect row)
         {
-            var name = new Rect(row.x + 4f, row.y, NameWidth - 8f, row.height);
-            EditorGUI.LabelField(name, signal.Path, EditorStyles.miniLabel);
-            var value = new Rect(row.x + NameWidth, row.y, ValueWidth - 6f, row.height);
-            EditorGUI.LabelField(value, signal.TextAt(cursorFrame), EditorStyles.miniLabel);
+            var name = new Rect(row.x + 14f, row.y, NameWidth - 18f, row.height);
+            EditorGUI.LabelField(name, signal.name, EditorStyles.miniLabel);
+
+            // The value at the cursor, and in a live session the way to change it. Beside its
+            // own waveform rather than in a panel of its own, so pushing on something and
+            // watching what it does are the same glance.
+            var value = new Rect(row.x + NameWidth, row.y + 1f, ValueWidth - 8f, row.height - 2f);
+            if (editable != null && editable(signal)) DrawEditor(signal, value);
+            else EditorGUI.LabelField(value, signal.TextAt(cursorFrame), EditorStyles.miniLabel);
 
             // The waveform is pixels and nothing else — no control, no layout — so the Layout
             // pass has no business computing it.
@@ -166,6 +213,25 @@ namespace Yozolab.DaerD.DynamicAnalyze
                 runY = y;
             }
             Hold(plot, ink, runStart, last + 1, runY);
+        }
+
+        void DrawEditor(SignalTrace.Signal signal, Rect rect)
+        {
+            float current = signal.At(signal.Frames - 1);
+            float next = current;
+            switch (signal.kind)
+            {
+                case SignalKind.Bool:
+                    next = EditorGUI.Toggle(rect, current != 0f) ? 1f : 0f;
+                    break;
+                case SignalKind.Int:
+                    next = EditorGUI.IntField(rect, Mathf.RoundToInt(current));
+                    break;
+                default:
+                    next = EditorGUI.FloatField(rect, current);
+                    break;
+            }
+            if (!Mathf.Approximately(next, current) && write != null) write(signal, next);
         }
 
         void Hold(Rect plot, Color ink, int from, int to, float y)
@@ -280,24 +346,60 @@ namespace Yozolab.DaerD.DynamicAnalyze
             }
         }
 
-        public List<SignalTrace.Signal> Visible()
+        /// <summary>
+        /// The list as drawn: a header per scope, and under it the signals that survived the
+        /// filter, the moved-only rule and the fold. Rebuilt only when one of those changed —
+        /// it is walked twice a frame, and a live run answers "did anything new move" by the
+        /// signal count rather than by looking again.
+        /// </summary>
+        public List<Row> Visible()
         {
+            int signals = trace != null ? trace.Signals.Count : 0;
             if (_visibleFor == trace && _visibleFilter == filter
-                && (trace == null || _visible.Count <= trace.Signals.Count))
+                && _visibleMovedOnly == movedOnly && _visibleSignals == signals
+                && !_dirty)
                 return _visible;
             _visibleFor = trace;
             _visibleFilter = filter;
+            _visibleMovedOnly = movedOnly;
+            _visibleSignals = signals;
+            _dirty = false;
             _visible.Clear();
             if (trace == null) return _visible;
+
+            string scope = null;
+            int headerAt = -1;
             foreach (var signal in trace.Signals)
-                if (string.IsNullOrEmpty(filter)
-                    || signal.Path.IndexOf(filter, System.StringComparison.OrdinalIgnoreCase) >= 0)
-                    _visible.Add(signal);
+            {
+                if (signal.scope != scope)
+                {
+                    scope = signal.scope;
+                    headerAt = _visible.Count;
+                    _visible.Add(new Row { scope = scope, count = 0 });
+                }
+                if (!string.IsNullOrEmpty(filter)
+                    && signal.Path.IndexOf(filter, System.StringComparison.OrdinalIgnoreCase) < 0)
+                    continue;
+                // A row that never moved is still counted — the header saying "3 of 214" is
+                // how a reader knows the rest are there and quiet rather than missing.
+                var header = _visible[headerAt];
+                header.count++;
+                _visible[headerAt] = header;
+                if (movedOnly && !signal.Moved) continue;
+                if (_collapsed.Contains(scope)) continue;
+                _visible.Add(new Row { scope = scope, signal = signal });
+            }
+            // A scope whose every row was filtered out has nothing left to head.
+            for (int i = _visible.Count - 1; i >= 0; i--)
+                if (_visible[i].IsHeader && _visible[i].count == 0)
+                    _visible.RemoveAt(i);
             return _visible;
         }
 
-        /// <summary>Drops the cached row list — for a trace that grew since it was built, which
-        /// is every frame of a live session.</summary>
-        public void Invalidate() => _visibleFor = null;
+        bool _dirty;
+
+        /// <summary>Drops the cached row list — after a fold, or when a live run has moved
+        /// something that was quiet until now.</summary>
+        public void Invalidate() => _dirty = true;
     }
 }

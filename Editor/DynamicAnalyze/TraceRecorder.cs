@@ -98,9 +98,9 @@ namespace Yozolab.DaerD.DynamicAnalyze
         public void Record(float time, float step, bool sampled, bool dropped)
         {
             Trace.Frame(time, step);
-            foreach (var reader in _readers) reader.signal.samples.Add(reader.read());
-            if (_sent != null) _sent.samples.Add(sampled ? 1f : 0f);
-            if (_lost != null) _lost.samples.Add(dropped ? 1f : 0f);
+            foreach (var reader in _readers) reader.signal.Push(reader.read());
+            if (_sent != null) _sent.Push(sampled ? 1f : 0f);
+            if (_lost != null) _lost.Push(dropped ? 1f : 0f);
 
             foreach (var lag in _lags)
             {
@@ -110,7 +110,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
                 if (Mathf.Abs(_local.Read(lag.parameter) - _remote.Read(lag.parameter))
                     <= SameEnough)
                     lag.lastAgreed = time;
-                lag.signal.samples.Add(time - lag.lastAgreed);
+                lag.signal.Push(time - lag.lastAgreed);
             }
         }
 

@@ -62,7 +62,6 @@ namespace Yozolab.DaerD.DynamicAnalyze
         bool _follow = true;
         double _lastTick;
         float _speed = 1f;
-        Vector2 _inputScroll;
         static readonly float[] Speeds = { 0.25f, 0.5f, 1f, 2f, 4f };
         static readonly string[] SpeedLabels = { "0.25x", "0.5x", "1x", "2x", "4x" };
 
@@ -92,6 +91,8 @@ namespace Yozolab.DaerD.DynamicAnalyze
                 if (_session == null) { _playing = false; return; }
                 if (_session.Advance(elapsed * _speed) == 0) return;
                 _view.trace = _session.Trace;
+                // Something quiet may have just moved, and the list is built from what has.
+                _view.Invalidate();
                 if (_follow) _view.cursorFrame = _view.Frames - 1;
                 Repaint();
                 return;
@@ -112,9 +113,23 @@ namespace Yozolab.DaerD.DynamicAnalyze
 
         void OnGUI()
         {
+            // A live row's value cell IS the way to poke it: the row already says whose value
+            // it is and already shows what it did, so a panel repeating the same parameters
+            // somewhere else was one list too many.
+            _view.editable = _live && _session != null ? (System.Func<SignalTrace.Signal, bool>)
+                (signal => signal.kind != SignalKind.State
+                    && (signal.scope == Simulation.LocalScope
+                        || signal.scope == Simulation.RemoteScope)
+                    && _session.Has(signal.name))
+                : null;
+            _view.write = (signal, value) =>
+            {
+                if (_session != null) _session.Write(signal.scope, signal.name, value);
+            };
+
             DrawToolbar();
             if (_settingsOpen) DrawSettings();
-            if (_inputsOpen) { if (_live) DrawLiveInputs(); else DrawStimulus(); }
+            if (_inputsOpen && !_live) DrawStimulus();
             var rect = GUILayoutUtility.GetRect(0f, 100000f, 0f, 100000f);
             _view.Draw(rect);
             if (GUI.changed) Repaint();
@@ -172,6 +187,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
                     if (_session == null) StartSession();
                     _session.StepOnce();
                     _view.trace = _session.Trace;
+                    _view.Invalidate();
                     if (_follow) _view.cursorFrame = _view.Frames - 1;
                 }
                 else _view.cursorFrame = Mathf.Max(0, _view.Frames - 1);
@@ -200,8 +216,11 @@ namespace Yozolab.DaerD.DynamicAnalyze
                 EditorStyles.toolbarSearchField, GUILayout.Width(140f));
             if (GUILayout.Button(L.Tr("Fit"), EditorStyles.toolbarButton, GUILayout.Width(32f)))
                 _view.Fit(position.width);
-            _inputsOpen = GUILayout.Toggle(_inputsOpen, L.Tr("Inputs"),
+            _view.movedOnly = GUILayout.Toggle(_view.movedOnly, L.Tr("Moved"),
                 EditorStyles.toolbarButton, GUILayout.Width(52f));
+            if (!_live)
+                _inputsOpen = GUILayout.Toggle(_inputsOpen, L.Tr("Timed"),
+                    EditorStyles.toolbarButton, GUILayout.Width(52f));
             _settingsOpen = GUILayout.Toggle(_settingsOpen, L.Tr("Settings"),
                 EditorStyles.toolbarButton, GUILayout.Width(60f));
             EditorGUILayout.EndHorizontal();
@@ -263,65 +282,6 @@ namespace Yozolab.DaerD.DynamicAnalyze
         }
 
         // ---- inputs ---------------------------------------------------------
-
-        /// <summary>
-        /// The wearer's hands, live. Every parameter the controller has, editable, writing
-        /// straight into the running client — which is the difference between reading a
-        /// controller and using one.
-        /// </summary>
-        void DrawLiveInputs()
-        {
-            EditorGUILayout.BeginVertical(EditorStyles.helpBox);
-            if (_session == null)
-            {
-                EditorGUILayout.LabelField(
-                    L.Tr("Press Play or Restart to open a live session."),
-                    EditorStyles.miniLabel);
-                EditorGUILayout.EndVertical();
-                return;
-            }
-
-            string scope = Simulation.LocalScope;
-            if (_session.HasRemote)
-            {
-                EditorGUILayout.BeginHorizontal();
-                EditorGUILayout.LabelField(L.Tr("Poke"), GUILayout.Width(38f));
-                int which = GUILayout.Toolbar(_pokeRemote ? 1 : 0,
-                    new[] { L.Tr("Wearer"), L.Tr("Remote") }, GUILayout.Width(160f));
-                _pokeRemote = which == 1;
-                GUILayout.FlexibleSpace();
-                EditorGUILayout.EndHorizontal();
-                if (_pokeRemote) scope = Simulation.RemoteScope;
-            }
-
-            _inputScroll = EditorGUILayout.BeginScrollView(_inputScroll, GUILayout.Height(116f));
-            foreach (var name in _session.Parameters(_controller))
-            {
-                if (!string.IsNullOrEmpty(_view.filter)
-                    && name.IndexOf(_view.filter, System.StringComparison.OrdinalIgnoreCase) < 0)
-                    continue;
-                float current = _session.Read(scope, name);
-                float next = current;
-                switch (_session.TypeOf(name))
-                {
-                    case AnimatorControllerParameterType.Bool:
-                    case AnimatorControllerParameterType.Trigger:
-                        next = EditorGUILayout.Toggle(name, current != 0f) ? 1f : 0f;
-                        break;
-                    case AnimatorControllerParameterType.Int:
-                        next = EditorGUILayout.IntField(name, Mathf.RoundToInt(current));
-                        break;
-                    default:
-                        next = EditorGUILayout.FloatField(name, current);
-                        break;
-                }
-                if (!Mathf.Approximately(next, current)) _session.Write(scope, name, next);
-            }
-            EditorGUILayout.EndScrollView();
-            EditorGUILayout.EndVertical();
-        }
-
-        bool _pokeRemote;
 
         /// <summary>
         /// The same pokes, written down in advance. What a run has instead of hands — and what

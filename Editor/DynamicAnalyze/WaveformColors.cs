@@ -27,6 +27,11 @@ namespace Yozolab.DaerD.DynamicAnalyze
         public static Color Ruler =>
             Dark ? new Color(0.20f, 0.20f, 0.21f) : new Color(0.70f, 0.70f, 0.72f);
 
+        /// <summary>A scope's own line, dividing the list into the wearer's rows, the other
+        /// person's, and the wire's.</summary>
+        public static Color Header =>
+            Dark ? new Color(1f, 1f, 1f, 0.07f) : new Color(0f, 0f, 0f, 0.08f);
+
         /// <summary>Every other row, so a wide window can still be read across.</summary>
         public static Color RowTint =>
             Dark ? new Color(1f, 1f, 1f, 0.025f) : new Color(0f, 0f, 0f, 0.03f);
