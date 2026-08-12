@@ -1,0 +1,145 @@
+using System.Collections.Generic;
+using UnityEngine;
+
+namespace Yozolab.DaerD.DynamicAnalyze
+{
+    /// <summary>What a signal's numbers mean, which is what a viewer needs to draw them.</summary>
+    enum SignalKind
+    {
+        /// <summary>A continuous value — drawn as a line.</summary>
+        Float,
+        /// <summary>A whole number — drawn as a line, labelled without a fraction.</summary>
+        Int,
+        /// <summary>0 or 1 — drawn as a square wave.</summary>
+        Bool,
+        /// <summary>An index into <see cref="SignalTrace.Signal.labels"/> — drawn as a named
+        /// band, the way a waveform viewer draws a bus.</summary>
+        State,
+    }
+
+    /// <summary>
+    /// One run, recorded: every signal's value at every frame, and the clock that produced
+    /// them. This is the product — the window is a viewer over it, and a test is a viewer over
+    /// it too, which is what lets the hard part be checked without a UI.
+    ///
+    /// Column-oriented, one array per signal, because everything asked of it is asked down a
+    /// column: draw this signal across the run, find where it changed, compare two runs of the
+    /// same signal. A row per frame would be the wrong shape for all three and a much larger
+    /// number of objects for a run of any length.
+    ///
+    /// Signals are namespaced by <see cref="Signal.scope"/> — one client today, and the
+    /// wearer's and a remote's copies of the same parameter tomorrow, which have to sit side by
+    /// side under the same name to be worth looking at.
+    /// </summary>
+    sealed class SignalTrace
+    {
+        public sealed class Signal
+        {
+            /// <summary>Which client this came from ("Local"). Empty for the run's own signals.</summary>
+            public string scope = string.Empty;
+            /// <summary>Parameter name, or "layer/state" for a layer's current state.</summary>
+            public string name = string.Empty;
+            public SignalKind kind;
+            /// <summary>The names a <see cref="SignalKind.State"/> signal's values index into.
+            /// Null for every other kind.</summary>
+            public string[] labels;
+
+            internal readonly List<float> samples = new List<float>();
+
+            public int Frames => samples.Count;
+
+            public float At(int frame) =>
+                frame >= 0 && frame < samples.Count ? samples[frame] : 0f;
+
+            /// <summary>The value as the viewer should print it — the label behind a state
+            /// index, a whole number for an Int, "on"/"off" for a Bool.</summary>
+            public string TextAt(int frame)
+            {
+                float value = At(frame);
+                switch (kind)
+                {
+                    case SignalKind.State:
+                        int at = Mathf.RoundToInt(value);
+                        return labels != null && at >= 0 && at < labels.Length
+                            ? labels[at] : "—";
+                    case SignalKind.Bool:
+                        return value != 0f ? "1" : "0";
+                    case SignalKind.Int:
+                        return Mathf.RoundToInt(value).ToString();
+                    default:
+                        return value.ToString("0.###");
+                }
+            }
+
+            /// <summary>Whether this frame differs from the one before it — every edge a
+            /// viewer draws and every "when did this change" a test asks.</summary>
+            public bool ChangedAt(int frame) =>
+                frame > 0 && frame < samples.Count
+                    && !Mathf.Approximately(samples[frame], samples[frame - 1]);
+
+            public string Path =>
+                string.IsNullOrEmpty(scope) ? name : scope + "/" + name;
+        }
+
+        readonly List<Signal> _signals = new List<Signal>();
+        readonly List<float> _time = new List<float>();
+        readonly List<float> _step = new List<float>();
+
+        public IReadOnlyList<Signal> Signals => _signals;
+
+        /// <summary>Frames recorded. Every signal has exactly this many samples — a signal is
+        /// declared before the run and written once per frame, so there are no gaps to
+        /// interpolate across.</summary>
+        public int Frames => _time.Count;
+
+        /// <summary>Simulated seconds elapsed at the END of this frame. The end rather than the
+        /// start because the sample is taken after the frame ran, and a cursor over a waveform
+        /// is asking what the value became.</summary>
+        public float TimeAt(int frame) =>
+            frame >= 0 && frame < _time.Count ? _time[frame] : 0f;
+
+        /// <summary>How long this frame was — the jitter, visible.</summary>
+        public float StepAt(int frame) =>
+            frame >= 0 && frame < _step.Count ? _step[frame] : 0f;
+
+        public float Duration => Frames > 0 ? _time[_time.Count - 1] : 0f;
+
+        public Signal Find(string scope, string name)
+        {
+            foreach (var signal in _signals)
+                if (signal.scope == scope && signal.name == name)
+                    return signal;
+            return null;
+        }
+
+        /// <summary>The frame whose end is at or after this time — what a viewer's cursor and
+        /// a "what did it look like at 3.2 s" question both resolve to.</summary>
+        public int FrameAt(float seconds)
+        {
+            for (int i = 0; i < _time.Count; i++)
+                if (_time[i] >= seconds) return i;
+            return Mathf.Max(0, Frames - 1);
+        }
+
+        // ---- recording ------------------------------------------------------
+
+        internal Signal Declare(string scope, string name, SignalKind kind, string[] labels = null)
+        {
+            var signal = new Signal
+            {
+                scope = scope ?? string.Empty,
+                name = name ?? string.Empty,
+                kind = kind,
+                labels = labels,
+            };
+            _signals.Add(signal);
+            return signal;
+        }
+
+        internal void Frame(float time, float step)
+        {
+            _time.Add(time);
+            _step.Add(step);
+        }
+    }
+}

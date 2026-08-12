@@ -20,7 +20,7 @@ GraphView ベースの AnimatorController エディタ。パラメーターの�
   （Can Transition To Self の付けっぱなしで遷移先が頭から再生し直される定番の罠）、
   モーション未設定、Write Defaults 混在などを検出。多くの問題はワンクリックで修正可能。
   結果は独立した解析ウィンドウに表示され、グラフを編集しながら確認できる
-  （ツールバーの「解析」または YozoLab > DaerD Analyzer から）
+  （ツールバーの「解析」または YozoLab > DD StaticAnalyze から）
 - クリップ一覧 — 参照している AnimationClip を独立ウィンドウで使用ステートつきに一覧表示
   （クリップ名で絞り込み・ステートへジャンプ・一括差し替え可能）
 - クリーンアップ — .controller 内に残った未参照のサブアセット（ゴミ）を検出してワンクリックで削除。

@@ -318,8 +318,8 @@ msgstr "未使用パラメーター・壊れた条件・到達不能 State な�
 msgid "No issues found."
 msgstr "問題は見つかりませんでした。"
 
-msgid "DaerD Analyzer"
-msgstr "DaerD 解析"
+msgid "DD StaticAnalyze"
+msgstr "DD 静的解析"
 
 msgid "Assign an Animator Controller to analyze."
 msgstr "解析する Animator Controller を指定してください。"
