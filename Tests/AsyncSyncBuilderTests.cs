@@ -2194,17 +2194,19 @@ namespace Yozolab.DaerD.Tests
             Assert.IsNotNull(watcher, "the flag gets a layer of its own");
             Assert.AreEqual(3, watcher.states.Length);
 
-            // Remotes start watching; the wearer is taken aside on the way in.
+            // Everyone starts watching; the wearer leaves on its first frame. A route out of
+            // the default state rather than a condition on Entry, which is evaluated at a
+            // moment nothing here controls and is observed not to be taken at all.
             var watch = FindState(watcher, "Watch");
             Assert.AreEqual(watch, watcher.defaultState);
-            Assert.AreEqual(1, watcher.entryTransitions.Length);
-            Assert.AreEqual("Local", watcher.entryTransitions[0].destinationState.name);
-            Assert.IsTrue(HasCondition(watcher.entryTransitions[0], "IsLocal",
+            Assert.AreEqual(0, watcher.entryTransitions.Length);
+            Assert.AreEqual(2, watch.transitions.Length);
+            Assert.AreEqual("Local", watch.transitions[0].destinationState.name);
+            Assert.IsTrue(HasCondition(watch.transitions[0], "IsLocal",
                 AnimatorConditionMode.If, 0f));
 
             // One condition per slot, all on the same transition: they are read together.
-            Assert.AreEqual(1, watch.transitions.Length);
-            var toReady = watch.transitions[0];
+            var toReady = watch.transitions[1];
             Assert.AreEqual("Ready", toReady.destinationState.name);
             Assert.IsFalse(toReady.hasExitTime);
             Assert.AreEqual(3, toReady.conditions.Length);
@@ -2338,9 +2340,10 @@ namespace Yozolab.DaerD.Tests
                 var entries = DriverOn(FindState(sm, name)).entries;
                 Assert.AreEqual("Async/Seen/F", entries[entries.Count - 1].name);
             }
-            // Three slots, so three conditions — the repeat costs an index value, not a bit.
+            // Three slots, so three conditions on the route to Ready — the repeat costs an
+            // index value, not a bit. (transitions[0] is the wearer's way out.)
             Assert.AreEqual(3, FindState(FindLayer(controller, "Async Ready"), "Watch")
-                .transitions[0].conditions.Length);
+                .transitions[1].conditions.Length);
         }
 
         [Test]

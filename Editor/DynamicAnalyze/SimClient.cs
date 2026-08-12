@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
 
@@ -39,6 +40,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
         readonly Dictionary<int, List<ControllerIR.DriverSpec>> _drivers =
             new Dictionary<int, List<ControllerIR.DriverSpec>>();
         readonly int[] _entered;
+        readonly AnimatorController _copy;
         SimRandom _random;
 
         /// <summary>Which client this is, in the trace and in a stimulus that names one.</summary>
@@ -64,6 +66,35 @@ namespace Yozolab.DaerD.DynamicAnalyze
             // Nothing is on screen, and an Animator that only animates when it is would never
             // animate at all.
             _animator.cullingMode = AnimatorCullingMode.AlwaysAnimate;
+            // IsLocal has to be true BEFORE the animator initializes, not after. Entry
+            // transitions are resolved once, when the layer is first entered, so a controller
+            // that splits the wearer from a remote with "Entry --(IsLocal)--> …" reads the
+            // value at that instant and never again — write it afterwards and the wearer runs
+            // down the remote's side of every such layer for the whole session. VRChat sets it
+            // before the avatar's animator exists, so the faithful way to say it is as the
+            // parameter's own default.
+            //
+            // Which is why each client gets its own copy of the controller: the default is on
+            // the controller, the two clients need different ones, and editing the original
+            // would both dirty somebody's asset and re-bind the animator already running it.
+            // The copy shares the state machines it was made from, so it costs a header rather
+            // than a controller.
+            _copy = UnityEngine.Object.Instantiate(controller);
+            if (_copy != null)
+            {
+                _copy.hideFlags = HideFlags.HideAndDontSave;
+                var parameters = _copy.parameters;
+                bool found = false;
+                for (int i = 0; i < parameters.Length; i++)
+                    if (parameters[i].name == IsLocalParameter)
+                    {
+                        parameters[i].defaultBool = IsLocal;
+                        found = true;
+                    }
+                if (found) _copy.parameters = parameters;
+                controller = _copy;
+            }
+
             _animator.runtimeAnimatorController = controller;
             _animator.Rebind();
 
@@ -260,6 +291,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
         public void Dispose()
         {
             if (_host != null) UnityEngine.Object.DestroyImmediate(_host);
+            if (_copy != null) UnityEngine.Object.DestroyImmediate(_copy);
         }
     }
 }

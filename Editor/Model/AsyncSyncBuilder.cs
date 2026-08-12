@@ -160,6 +160,12 @@ namespace Yozolab.DaerD
             ///
             /// Costs nothing on the wire: a shadow parameter and a flag per member, both
             /// animator-local, and a two-state layer per group.
+            ///
+            /// Worth exactly as much as <see cref="ready"/> says it is, and no more. A client
+            /// that has just arrived decodes whatever index it finds — zero, because nothing
+            /// has reached it yet — as that slot arriving, so its first commit can carry a
+            /// value nobody sent. After the first full pass every member has been sent at
+            /// least once and the guarantee holds; before it, read Ready.
             /// </summary>
             public List<SyncGroup> groups = new List<SyncGroup>();
 

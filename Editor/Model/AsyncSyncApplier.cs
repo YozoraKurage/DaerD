@@ -423,20 +423,22 @@ namespace Yozolab.DaerD
             var ready = AddReadyState(machine, "Ready", empty, 440f, 60f);
             var local = AddReadyState(machine, "Local", empty, 260f, 140f);
 
-            // The same split the cycle's layer makes, the other way up: the wearer's own
+            // Everyone starts watching, and the wearer leaves on their first frame: their own
             // values were never anywhere else, so there is nothing for them to wait for.
+            //
+            // A route out of the default state rather than a condition on Entry. A conditional
+            // entry transition is evaluated once, at a moment nothing here controls, and a run
+            // of this layer shows it never being taken at all — the wearer would sit in Watch
+            // waiting for values that are already theirs. The default state is the one place a
+            // layer is guaranteed to begin.
             machine.defaultState = watch;
-            var entry = machine.AddEntryTransition(local);
-            entry.AddCondition(AnimatorConditionMode.If, 0f, NetworkSyncBuilder.IsLocalParameter);
+            var mine = Instant(watch, local);
+            mine.AddCondition(AnimatorConditionMode.If, 0f, NetworkSyncBuilder.IsLocalParameter);
 
-            var transition = watch.AddTransition(ready);
-            transition.hasExitTime = false;
-            transition.hasFixedDuration = true;
-            transition.duration = 0f;
+            var transition = Instant(watch, ready);
             foreach (var slotName in SlotNames(slots))
                 transition.AddCondition(AnimatorConditionMode.If, 0f,
                     SeenParameter(r.baseName, slotName));
-            EditorUtility.SetDirty(transition);
 
             // Ready and Local have no way out, which is the latch: whatever the wire does
             // afterwards, a client that has once seen everything has seen everything.
@@ -490,11 +492,31 @@ namespace Yozolab.DaerD
         }
 
         /// <summary>A transition that fires the moment its conditions hold, with no blend —
-        /// what every route inside a watcher is.</summary>
+        /// what every conditioned route inside a watcher is.</summary>
         static AnimatorStateTransition Instant(AnimatorState from, AnimatorState to)
         {
             var transition = from.AddTransition(to);
             transition.hasExitTime = false;
+            transition.hasFixedDuration = true;
+            transition.duration = 0f;
+            EditorUtility.SetDirty(transition);
+            return transition;
+        }
+
+        /// <summary>
+        /// A route with nothing to wait for: the else of a judgement, and the way back out of a
+        /// state whose whole job was the driver that ran on the way in.
+        ///
+        /// It carries an exit time of zero rather than no exit time at all. A transition with
+        /// neither a condition nor an exit time is never taken — the state machine sits in the
+        /// state forever, which reads in a run as a watcher that judged once and then went
+        /// deaf, and which nothing about the layer's SHAPE would show.
+        /// </summary>
+        static AnimatorStateTransition Immediate(AnimatorState from, AnimatorState to)
+        {
+            var transition = from.AddTransition(to);
+            transition.hasExitTime = true;
+            transition.exitTime = 0f;
             transition.hasFixedDuration = true;
             transition.duration = 0f;
             EditorUtility.SetDirty(transition);
@@ -590,7 +612,7 @@ namespace Yozolab.DaerD
                 Instant(judge, dirty).AddCondition(AnimatorConditionMode.IfNot, 0f,
                     FreshParameter(r.baseName, slotNames[i]));
             }
-            Instant(judge, clean);
+            Immediate(judge, clean);
 
             AddIndexLeaves(dirty, idle, r, encoding, indexBits, clock.Index(marker, 0));
             AddIndexLeaves(clean, idle, r, encoding, indexBits, clock.Index(marker, 0));
@@ -643,7 +665,7 @@ namespace Yozolab.DaerD
                         HeldParameter(r.baseName, name));
                 // Straight back: the flags are down by the time this is evaluated, so the
                 // guard above cannot fire again until the next member arrives.
-                Instant(commit, idle);
+                Immediate(commit, idle);
 
                 if (!r.skipDrivers) AddCommitDriver(commit, r, group);
                 EditorUtility.SetDirty(machine);
