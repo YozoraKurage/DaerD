@@ -200,6 +200,175 @@ namespace Yozolab.DaerD.Tests
             Assert.AreEqual(0.05f, trace.TimeAt(2), 1e-5f);
         }
 
+        // ---- the wire -------------------------------------------------------
+
+        static SimSettings Wired(float seconds, SyncWire wire, Stimulus stimulus = null) =>
+            new SimSettings
+            {
+                clock = new SimClock { fps = 60f, seconds = seconds, seed = 7 },
+                stimulus = stimulus ?? new Stimulus(),
+                wire = wire,
+            };
+
+        [Test]
+        public void Wire_CarriesASyncedValue_OnItsOwnCadenceAndNotBefore()
+        {
+            var wire = new SyncWire { intervalSeconds = 0.2f }.Syncs("X");
+            var stimulus = new Stimulus().At(0f, "X", 0.5f);
+            var trace = Simulation.Run(NewController(), Wired(0.5f, wire, stimulus));
+
+            var local = trace.Find(Simulation.LocalScope, "X");
+            var remote = trace.Find(Simulation.RemoteScope, "X");
+            Assert.IsNotNull(remote, "a wired run has both copies in it");
+
+            // The wearer has it from the first frame; nobody else does until a sample goes.
+            Assert.AreEqual(0.5f, local.At(0), 1e-5f);
+            Assert.AreEqual(0f, remote.At(0));
+            int arrived = -1;
+            for (int frame = 0; frame < trace.Frames && arrived < 0; frame++)
+                if (remote.At(frame) != 0f) arrived = frame;
+            Assert.GreaterOrEqual(trace.TimeAt(arrived), 0.2f, "not before the first sample");
+            Assert.Less(trace.TimeAt(arrived), 0.24f, "and not long after it");
+
+            // And the sample is visible as its own signal.
+            Assert.AreEqual(1f, trace.Find(Simulation.WireScope, "sample").At(arrived));
+        }
+
+        [Test]
+        public void Wire_LeavesUnsyncedParametersWhereTheyAre()
+        {
+            var wire = new SyncWire { intervalSeconds = 0.05f }.Syncs("X");
+            var stimulus = new Stimulus().At(0f, "X", 0.5f).At(0f, "Go", true);
+            var trace = Simulation.Run(NewController(), Wired(0.4f, wire, stimulus));
+
+            int last = trace.Frames - 1;
+            Assert.AreEqual(0.5f, trace.Find(Simulation.RemoteScope, "X").At(last), 1e-2f);
+            // "Go" is not on the wire, so the remote never hears it and never leaves Idle —
+            // which is the whole class of bug a two-client run is for.
+            Assert.AreEqual(0f, trace.Find(Simulation.RemoteScope, "Go").At(last));
+            Assert.AreEqual("Idle",
+                trace.Find(Simulation.RemoteScope, "Base/state").TextAt(last));
+            Assert.AreEqual("On", trace.Find(Simulation.LocalScope, "Base/state").TextAt(last));
+        }
+
+        [Test]
+        public void Wire_LosesAChangeThatCameAndWentInsideOneSample()
+        {
+            var wire = new SyncWire { intervalSeconds = 0.2f, quantize = false }.Syncs("X");
+            var stimulus = new Stimulus()
+                .At(0.02f, "X", 0.5f)     // both inside the first interval: the remote
+                .At(0.10f, "X", 0.25f);   // only ever sees where it ended up
+            var trace = Simulation.Run(NewController(), Wired(0.6f, wire, stimulus));
+
+            var remote = trace.Find(Simulation.RemoteScope, "X");
+            for (int frame = 0; frame < trace.Frames; frame++)
+                Assert.AreNotEqual(0.5f, remote.At(frame),
+                    "a value that came and went inside one sample never left the wearer");
+            Assert.AreEqual(0.25f, remote.At(trace.Frames - 1), 1e-5f);
+        }
+
+        [Test]
+        public void Wire_DropsWholeSamplesTogether()
+        {
+            var wire = new SyncWire { intervalSeconds = 0.1f, dropChance = 1f }.Syncs("X");
+            var stimulus = new Stimulus().At(0f, "X", 0.5f);
+            var trace = Simulation.Run(NewController(), Wired(0.5f, wire, stimulus));
+
+            var remote = trace.Find(Simulation.RemoteScope, "X");
+            for (int frame = 0; frame < trace.Frames; frame++)
+                Assert.AreEqual(0f, remote.At(frame), "every sample was lost");
+
+            var lost = trace.Find(Simulation.WireScope, "lost");
+            int losses = 0;
+            for (int frame = 0; frame < trace.Frames; frame++)
+                if (lost.At(frame) != 0f) losses++;
+            Assert.GreaterOrEqual(losses, 4, "a loss is visible per sample, not per parameter");
+        }
+
+        [Test]
+        public void Wire_RoundsValuesTheWayTheNetworkDoes()
+        {
+            var wire = new SyncWire { intervalSeconds = 0.05f }.Syncs("X", "N");
+            var stimulus = new Stimulus().At(0f, "X", 0.3f).At(0f, "N", 300f);
+            var trace = Simulation.Run(NewController(), Wired(0.3f, wire, stimulus));
+
+            int last = trace.Frames - 1;
+            // 8 bits over -1..1: 0.3 is not one of the 255 values the wire can hold.
+            float remote = trace.Find(Simulation.RemoteScope, "X").At(last);
+            Assert.AreNotEqual(0.3f, remote);
+            Assert.AreEqual(0.3f, remote, 0.008f);
+            // An Int is a byte, so 300 arrives as 255.
+            Assert.AreEqual(255f, trace.Find(Simulation.RemoteScope, "N").At(last));
+
+            wire.quantize = false;
+            var exact = Simulation.Run(NewController(), Wired(0.3f, wire, stimulus));
+            Assert.AreEqual(0.3f,
+                exact.Find(Simulation.RemoteScope, "X").At(exact.Frames - 1), 1e-5f);
+        }
+
+        [Test]
+        public void Wire_KeepsOneSampleTogether()
+        {
+            // An index and the channel it describes must never be read half-updated, so a
+            // sample either carries both new values or neither.
+            var wire = new SyncWire { intervalSeconds = 0.2f, quantize = false }.Syncs("X", "N");
+            var stimulus = new Stimulus().At(0.02f, "X", 0.5f).At(0.02f, "N", 3f);
+            var trace = Simulation.Run(NewController(), Wired(0.6f, wire, stimulus));
+
+            var x = trace.Find(Simulation.RemoteScope, "X");
+            var n = trace.Find(Simulation.RemoteScope, "N");
+            for (int frame = 0; frame < trace.Frames; frame++)
+                Assert.AreEqual(x.At(frame) != 0f, n.At(frame) != 0f,
+                    "one arrived without the other at frame " + frame);
+        }
+
+        [Test]
+        public void Wire_MakesTheTwoCopiesTakeDifferentBranches()
+        {
+            // The IsLocal split every VRChat controller is built around: the wearer runs the
+            // sending side and everyone else runs the receiving one.
+            var controller = NewController();
+            controller.AddParameter(SimClient.IsLocalParameter,
+                AnimatorControllerParameterType.Bool);
+            var machine = controller.layers[0].stateMachine;
+            var mine = machine.AddState("Mine");
+            var theirs = machine.AddState("Theirs");
+            foreach (var (state, mode) in new[]
+                     {
+                         (mine, AnimatorConditionMode.If),
+                         (theirs, AnimatorConditionMode.IfNot),
+                     })
+            {
+                var route = machine.AddAnyStateTransition(state);
+                route.hasExitTime = false;
+                route.hasFixedDuration = true;
+                route.duration = 0f;
+                route.canTransitionToSelf = false;
+                route.AddCondition(mode, 0f, SimClient.IsLocalParameter);
+            }
+
+            var trace = Simulation.Run(controller, Wired(0.2f, new SyncWire()));
+            int last = trace.Frames - 1;
+            Assert.AreEqual("Mine", trace.Find(Simulation.LocalScope, "Base/state").TextAt(last));
+            Assert.AreEqual("Theirs",
+                trace.Find(Simulation.RemoteScope, "Base/state").TextAt(last));
+        }
+
+        [Test]
+        public void Stimulus_ReachesTheWearerUnlessItNamesSomebody()
+        {
+            var wire = new SyncWire { intervalSeconds = 10f };   // never samples in this run
+            var stimulus = new Stimulus()
+                .At(0f, "X", 0.5f)
+                .At(0f, "N", 4f, Simulation.RemoteScope);
+            var trace = Simulation.Run(NewController(), Wired(0.2f, wire, stimulus));
+
+            Assert.AreEqual(0.5f, trace.Find(Simulation.LocalScope, "X").At(0), 1e-5f);
+            Assert.AreEqual(0f, trace.Find(Simulation.RemoteScope, "X").At(0));
+            Assert.AreEqual(4f, trace.Find(Simulation.RemoteScope, "N").At(0));
+            Assert.AreEqual(0f, trace.Find(Simulation.LocalScope, "N").At(0));
+        }
+
         static AnimatorState FindState(AnimatorController controller, string name)
         {
             foreach (var child in controller.layers[0].stateMachine.states)

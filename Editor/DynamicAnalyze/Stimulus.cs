@@ -19,10 +19,9 @@ namespace Yozolab.DaerD.DynamicAnalyze
         {
             /// <summary>Simulated seconds from the start of the run.</summary>
             public float atSeconds;
-            /// <summary>Which client to poke. Empty means every client that has the
-            /// parameter — the wearer's own input reaches nobody else's copy directly, but
-            /// telling a run "the user pressed this" should not have to know how many clients
-            /// there are.</summary>
+            /// <summary>Which client to poke, or empty for the wearer — who is the one
+            /// pressing things. A remote learns what the wearer did through the wire or not at
+            /// all, and that is the question most runs are asking.</summary>
             public string scope = string.Empty;
             public string parameter = string.Empty;
             public float value;
