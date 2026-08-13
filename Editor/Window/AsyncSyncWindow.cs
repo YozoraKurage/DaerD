@@ -87,6 +87,15 @@ namespace Yozolab.DaerD
             _form.DrawBlockingProblem(request);
             foreach (var warning in AsyncSyncBuilder.Warnings(request, _form.AnimatedParameters()))
                 EditorGUILayout.HelpBox(warning, MessageType.Warning);
+            // A split builds every ring itself, so there is nothing left for this window to
+            // create — it reports the layer it kept and gets out of the way.
+            if (_form.DrawSplitProposal(request))
+            {
+                _onApplied?.Invoke(request.layerIndex >= 0
+                    ? request.layerIndex : _controller.layers.Length - 1);
+                Close();
+                GUIUtility.ExitGUI();
+            }
             _form.DrawStoreFix(request);
 
             EditorGUILayout.Space(8);

@@ -966,6 +966,18 @@ msgstr "ストアで対象を非同期化"
 msgid "Clear the synced flag on the multiplexed targets in the parameter store. Their values travel through the generated channels instead, which is the whole point of the setup."
 msgstr "パラメーターストア側で、多重化する対象の synced を外します。値は生成されたチャンネル経由で送られるため、対象そのものを同期する必要はありません。"
 
+msgid "A step carries one type, so at every step of this pass the other {0} type(s) of channel sit idle and the values waiting in them wait behind steps that could not have carried them. One ring per type would run passes of {1} instead of one pass of {2:0.#} s, for {3} synced bit(s) instead of {4}."
+msgstr "1 つのステップが運べるのは 1 種類の型だけなので、この周回ではどのステップでも残り {0} 種類の型のチャンネルが遊んでいます（そこで待っている値は、自分を運べないステップの後ろで待たされています）。型ごとにリングを分けると、1 周 {2:0.#} 秒が {1} になり、同期ビットは {4} → {3} になります。"
+
+msgid "Split By Type"
+msgstr "型ごとに分割"
+
+msgid "Build one setup per parameter type instead of this one: each type gets its own index, its own channels and its own pass. This layer is regenerated as the first type's ring and the others are added beside it — a split cannot be undone by pressing anything, so read the numbers above first."
+msgstr "このセットアップの代わりに、パラメーターの型ごとにセットアップを作ります。型ごとに index・チャンネル・周回を持ちます。このレイヤーは最初の型のリングとして再生成され、残りはその横に追加されます。分割はボタン 1 つで元に戻せないので、上の数値を先に読んでください。"
+
+msgid "The split could not be built and nothing was changed."
+msgstr "分割を構築できなかったため、何も変更していません。"
+
 # ---- sync requests ----
 
 msgid "Sync requests are enabled for '{0}', which is not multiplexed here — the entry is ignored."

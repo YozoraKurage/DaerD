@@ -1095,6 +1095,39 @@ namespace Yozolab.DaerD
         }
 
         /// <summary>
+        /// The button behind the split-by-type advice, drawn only while the advice is up:
+        /// pressing it builds one setup per type, in one undo step. The warning says what it
+        /// would cost and gain; this is the doing of it, because the alternative is a
+        /// paragraph telling someone to untick two thirds of their parameters, apply, and then
+        /// do the whole thing again twice.
+        ///
+        /// Returns true when the controller was rewritten, which the host reads as "everything
+        /// you were showing is now a setup ago" — the wizard closes on it, and the panel
+        /// rebinds.
+        /// </summary>
+        public bool DrawSplitProposal(AsyncSyncBuilder.Request request)
+        {
+            if (request == null || request.targets.Count < 2) return false;
+            var split = AsyncSyncSplit.ByType(request);
+            if (split.Count < 2) return false;
+
+            bool applied = false;
+            EditorGUILayout.BeginHorizontal();
+            GUILayout.FlexibleSpace();
+            if (GUILayout.Button(new GUIContent(L.Tr("Split By Type"),
+                    L.Tr("Build one setup per parameter type instead of this one: each type gets its own index, its own channels and its own pass. This layer is regenerated as the first type's ring and the others are added beside it — a split cannot be undone by pressing anything, so read the numbers above first.")),
+                    EditorStyles.miniButton, GUILayout.Width(120)))
+            {
+                applied = AsyncSyncSplit.Apply(split);
+                if (!applied)
+                    EditorUtility.DisplayDialog(L.Tr("Async Sync"),
+                        L.Tr("The split could not be built and nothing was changed."), "OK");
+            }
+            EditorGUILayout.EndHorizontal();
+            return applied;
+        }
+
+        /// <summary>
         /// The fix for the "targets are still synced in the store" warning: multiplexing only
         /// saves bits once the targets stop syncing directly, and that lives in the store, not
         /// in the controller. Drawn right under the warnings, and only while there is

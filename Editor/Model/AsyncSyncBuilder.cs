@@ -696,6 +696,12 @@ namespace Yozolab.DaerD
                     "One full pass takes {0:0.#} s ({1} steps × {2:0.##} s), so a remote can be that far behind on any one value.",
                     cycle, EffectiveSchedule(r, BuildSlots(r)).Count, r.stepSeconds));
 
+            // The one structural change that shortens every pass at once, offered only when it
+            // would actually build and actually help — AsyncSyncSplit.ByType decides both, and
+            // says nothing at all otherwise.
+            var byType = AsyncSyncSplit.ByType(r);
+            if (byType.Count > 1) warnings.Add(AsyncSyncSplit.Advice(r, byType));
+
             // Say when a rate could not be honored: normalization (common factor) is
             // intentional and invisible, but a cap changes what the user asked for. An
             // explicit schedule or grid replaces rates entirely, so the check would only mislead.

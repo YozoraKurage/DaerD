@@ -99,6 +99,15 @@ namespace Yozolab.DaerD
             _form.DrawBlockingProblem(request);
             foreach (var warning in AsyncSyncBuilder.Warnings(request, _form.AnimatedParameters()))
                 EditorGUILayout.HelpBox(warning, MessageType.Warning);
+            // The split rebuilt this layer as one type's ring and added the others; the form
+            // is holding the setup that no longer exists, so it is rebound from what was saved.
+            if (_form.DrawSplitProposal(request))
+            {
+                _boundLayer = null;
+                Context.NotifyParametersChanged();
+                Context.NotifyGraphStructureChanged();
+                GUIUtility.ExitGUI();
+            }
             _form.DrawStoreFix(request);
 
             EditorGUILayout.Space(4);
