@@ -290,7 +290,8 @@ namespace Yozolab.DaerD
                 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled;
 
             evt.menu.AppendAction(
-                MenuPath(group, L.Tr("Chain in click order ({0})", selected.Count) + "  (T)"),
+                MenuPath(group, L.Tr("Chain in click order ({0})", selected.Count)
+                    + DaerDShortcuts.Hint(ShortcutScope.Graph, DaerDCommand.Connect)),
                 _ => _sync.ChainNodes(_view.GetSelectedConnectables()), chainStatus);
 
             BuildFanEntries(evt, selected, group);
@@ -376,7 +377,8 @@ namespace Yozolab.DaerD
             // Numbered, because this is the one flow in the menu that takes two passes: mark a set,
             // change the selection, then connect. Without the numbers nobody guesses the order.
             evt.menu.AppendAction(
-                MenuPath(group, L.Tr("Step 1: mark the selected {0} as sources", selected.Count) + "  (M)"),
+                MenuPath(group, L.Tr("Step 1: mark the selected {0} as sources", selected.Count)
+                    + DaerDShortcuts.Hint(ShortcutScope.Graph, DaerDCommand.MarkSources)),
                 _ =>
                 {
                     s_markedSources = ToModels(_view.GetSelectedConnectables());
@@ -384,7 +386,8 @@ namespace Yozolab.DaerD
                 },
                 selected.Count > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
             evt.menu.AppendAction(
-                MenuPath(group, L.Tr("Step 2: marked ({0}) → selected ({1})", marked, selected.Count) + "  (T)"),
+                MenuPath(group, L.Tr("Step 2: marked ({0}) → selected ({1})", marked, selected.Count)
+                    + DaerDShortcuts.Hint(ShortcutScope.Graph, DaerDCommand.Connect)),
                 _ =>
                 {
                     _sync.CrossProductNodes(ResolveMarkedSources(), _view.GetSelectedConnectables());

@@ -60,7 +60,10 @@ namespace Yozolab.DaerD
             EditorGUILayout.EndHorizontal();
             if (behaviours.Length > 0)
                 EditorGUILayout.LabelField(
-                    L.Tr("Click a title to select (Ctrl / Shift for multi-select); Ctrl+C / Ctrl+V copies and pastes the selected behaviours."),
+                    L.Tr("Click a title to select (Ctrl / Shift for multi-select).")
+                        + DaerDShortcuts.Sentence(ShortcutScope.Inspector,
+                            DaerDCommand.Copy, DaerDCommand.Paste,
+                            L.Tr("{0} / {1} copies and pastes the selected behaviours.")),
                     EditorStyles.miniLabel);
 
             for (int i = 0; i < behaviours.Length; i++)

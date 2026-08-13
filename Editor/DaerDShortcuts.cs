@@ -46,32 +46,42 @@ namespace Yozolab.DaerD
         public readonly KeyCode Key;
         public readonly bool Ctrl;
         public readonly bool Shift;
+        /// <summary>Alt (Option on a Mac). Held as a modifier of its own rather than folded
+        /// into the key, because a keystroke that is not matched exactly is matched loosely:
+        /// with Alt unread, Alt+A fired the command bound to plain A, and a binding captured
+        /// with Alt held was stored as the bare key it shared a name with.</summary>
+        public readonly bool Alt;
         /// <summary>False means the command has been switched off and no key reaches it.</summary>
         public readonly bool Enabled;
 
-        public ShortcutBinding(KeyCode key, bool ctrl = false, bool shift = false, bool enabled = true)
+        public ShortcutBinding(KeyCode key, bool ctrl = false, bool shift = false,
+            bool enabled = true, bool alt = false)
         {
             Key = key;
             Ctrl = ctrl;
             Shift = shift;
+            Alt = alt;
             Enabled = enabled;
         }
 
-        public ShortcutBinding Switched(bool enabled) => new ShortcutBinding(Key, Ctrl, Shift, enabled);
+        public ShortcutBinding Switched(bool enabled) =>
+            new ShortcutBinding(Key, Ctrl, Shift, enabled, Alt);
 
-        public bool Matches(KeyCode key, bool ctrl, bool shift) =>
-            Enabled && Key == key && Ctrl == ctrl && Shift == shift;
+        public bool Matches(KeyCode key, bool ctrl, bool shift, bool alt) =>
+            Enabled && Key == key && Ctrl == ctrl && Shift == shift && Alt == alt;
 
         public bool SameKeys(ShortcutBinding other) =>
-            Key == other.Key && Ctrl == other.Ctrl && Shift == other.Shift;
+            Key == other.Key && Ctrl == other.Ctrl && Shift == other.Shift && Alt == other.Alt;
 
-        /// <summary>"Ctrl+Shift+A" — Cmd rather than Ctrl on a Mac, where that is the key used.</summary>
+        /// <summary>"Ctrl+Alt+Shift+A" — Cmd rather than Ctrl on a Mac, where that is the key
+        /// used.</summary>
         public string Keys
         {
             get
             {
                 string text = string.Empty;
                 if (Ctrl) text += Application.platform == RuntimePlatform.OSXEditor ? "Cmd+" : "Ctrl+";
+                if (Alt) text += "Alt+";
                 if (Shift) text += "Shift+";
                 return text + KeyName(Key);
             }
@@ -92,10 +102,15 @@ namespace Yozolab.DaerD
         /// <summary>
         /// How the binding is stored. Readable rather than packed — a preference somebody may
         /// have to look at, or clear by hand, is worth being able to read.
+        ///
+        /// Modifiers are letters that are there or not, which is what makes a preference
+        /// written before Alt existed still readable: it simply has no "A" in it, and reads
+        /// back as the Alt-less binding it was.
         /// </summary>
         public string Serialize()
         {
-            string modifiers = (Ctrl ? "C" : string.Empty) + (Shift ? "S" : string.Empty);
+            string modifiers = (Ctrl ? "C" : string.Empty) + (Shift ? "S" : string.Empty)
+                + (Alt ? "A" : string.Empty);
             return (Enabled ? string.Empty : "-") + Key + ":" + modifiers;
         }
 
@@ -116,7 +131,8 @@ namespace Yozolab.DaerD
             if (!System.Enum.TryParse(text.Substring(0, split), out KeyCode key)) return false;
 
             string modifiers = text.Substring(split + 1);
-            binding = new ShortcutBinding(key, modifiers.Contains("C"), modifiers.Contains("S"), enabled);
+            binding = new ShortcutBinding(key, modifiers.Contains("C"), modifiers.Contains("S"),
+                enabled, modifiers.Contains("A"));
             return true;
         }
     }
@@ -270,19 +286,20 @@ namespace Yozolab.DaerD
         /// which one it physically was is the caller's business, not this table's.
         /// </summary>
         public static DaerDCommand Resolve(IList<DaerDShortcut> table, ShortcutScope scope,
-            KeyCode key, bool ctrl, bool shift)
+            KeyCode key, bool ctrl, bool shift, bool alt = false)
         {
             foreach (var shortcut in table)
-                if (shortcut.Scope == scope && shortcut.Binding.Matches(key, ctrl, shift))
+                if (shortcut.Scope == scope && shortcut.Binding.Matches(key, ctrl, shift, alt))
                     return shortcut.Command;
             return DaerDCommand.None;
         }
 
-        public static DaerDCommand Resolve(ShortcutScope scope, KeyCode key, bool ctrl, bool shift) =>
-            Resolve(Current, scope, key, ctrl, shift);
+        public static DaerDCommand Resolve(ShortcutScope scope, KeyCode key, bool ctrl, bool shift,
+            bool alt = false) =>
+            Resolve(Current, scope, key, ctrl, shift, alt);
 
         public static DaerDCommand Resolve(ShortcutScope scope, KeyDownEvent evt) =>
-            Resolve(scope, evt.keyCode, evt.ctrlKey || evt.commandKey, evt.shiftKey);
+            Resolve(scope, evt.keyCode, evt.ctrlKey || evt.commandKey, evt.shiftKey, evt.altKey);
 
         /// <summary>The IMGUI reading of the same question. Null and non-key events are None, so
         /// callers can ask before checking anything else.</summary>
@@ -290,8 +307,66 @@ namespace Yozolab.DaerD
         {
             if (imguiEvent == null || imguiEvent.type != EventType.KeyDown) return DaerDCommand.None;
             return Resolve(scope, imguiEvent.keyCode,
-                imguiEvent.control || imguiEvent.command, imguiEvent.shift);
+                imguiEvent.control || imguiEvent.command, imguiEvent.shift, imguiEvent.alt);
         }
+
+        /// <summary>
+        /// The keystroke that reaches a command right now, spelled the way the settings page
+        /// spells it — "T", "Ctrl+F". Empty when nothing reaches it: the command has been
+        /// switched off, or this scope does not have it.
+        ///
+        /// Every hint that names a key asks this instead of writing one down. A key can be
+        /// rebound, and a menu entry reading "(T)" beside a command the user moved to Y is
+        /// worse than no hint at all — it is the table's answer, stated wrongly.
+        /// </summary>
+        public static string KeysOf(IList<DaerDShortcut> table, ShortcutScope scope,
+            DaerDCommand command)
+        {
+            foreach (var shortcut in table)
+                if (shortcut.Scope == scope && shortcut.Command == command)
+                    return shortcut.Binding.Enabled ? shortcut.Binding.Keys : string.Empty;
+            return string.Empty;
+        }
+
+        public static string KeysOf(ShortcutScope scope, DaerDCommand command) =>
+            KeysOf(Current, scope, command);
+
+        /// <summary>
+        /// The same thing as a suffix to hang off a label — "  (T)", or nothing at all when no
+        /// key reaches the command. The brackets live here so that every caller drops the hint
+        /// the same way when there is none, rather than each showing "  ()".
+        /// </summary>
+        public static string Hint(IList<DaerDShortcut> table, ShortcutScope scope,
+            DaerDCommand command)
+        {
+            string keys = KeysOf(table, scope, command);
+            return string.IsNullOrEmpty(keys) ? string.Empty : "  (" + keys + ")";
+        }
+
+        public static string Hint(ShortcutScope scope, DaerDCommand command) =>
+            Hint(Current, scope, command);
+
+        /// <summary>
+        /// A sentence about two keys, or nothing at all. <paramref name="format"/> is an
+        /// already-translated sentence with {0} and {1} for the two keystrokes — the key names
+        /// are passed in rather than written into the msgid, so a translator never has to carry
+        /// a key name and a rebinding never has to be translated.
+        ///
+        /// The whole sentence is dropped when either command has no key, since a sentence about
+        /// a shortcut that does not exist is worse than silence. It comes back with a leading
+        /// space, so it appends to a label that reads fine on its own.
+        /// </summary>
+        public static string Sentence(IList<DaerDShortcut> table, ShortcutScope scope,
+            DaerDCommand first, DaerDCommand second, string format)
+        {
+            string a = KeysOf(table, scope, first), b = KeysOf(table, scope, second);
+            if (string.IsNullOrEmpty(a) || string.IsNullOrEmpty(b)) return string.Empty;
+            return " " + string.Format(format, a, b);
+        }
+
+        public static string Sentence(ShortcutScope scope, DaerDCommand first,
+            DaerDCommand second, string format) =>
+            Sentence(Current, scope, first, second, format);
 
         /// <summary>The shortcuts of one scope, in table order, for showing to the user.</summary>
         public static IEnumerable<DaerDShortcut> In(ShortcutScope scope)

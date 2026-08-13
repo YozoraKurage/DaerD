@@ -114,7 +114,7 @@ namespace Yozolab.DaerD
                 return;
             }
 
-            var binding = new ShortcutBinding(e.keyCode, e.control || e.command, e.shift);
+            var binding = new ShortcutBinding(e.keyCode, e.control || e.command, e.shift, alt: e.alt);
             var clash = DaerDShortcuts.Conflict(scope, shortcut.Command, binding);
             if (clash != DaerDCommand.None)
             {

@@ -107,7 +107,12 @@ namespace Yozolab.DaerD
                 _hint.style.display = DisplayStyle.None;
                 return;
             }
-            _hint.text = L.Tr("{0} marked as sources — select the destinations and press T", marked);
+            // Read off the table rather than written into the sentence: the key that connects
+            // can be rebound, and a hint naming the wrong one sends the reader nowhere.
+            string keys = DaerDShortcuts.KeysOf(ShortcutScope.Graph, DaerDCommand.Connect);
+            _hint.text = string.IsNullOrEmpty(keys)
+                ? L.Tr("{0} marked as sources — select the destinations and connect them", marked)
+                : L.Tr("{0} marked as sources — select the destinations and press {1}", marked, keys);
             _hint.style.display = DisplayStyle.Flex;
         }
 

@@ -59,7 +59,8 @@ namespace Yozolab.DaerD
         // The shortcut is appended rather than written into the message, so translating the
         // sentence never has to carry a key name that is the same in every language.
         public void RefreshTooltip() =>
-            _field.tooltip = L.Tr("Search states (name or motion)") + "  (Ctrl+F)";
+            _field.tooltip = L.Tr("Search states (name or motion)")
+                + DaerDShortcuts.Hint(ShortcutScope.Graph, DaerDCommand.FocusSearch);
 
         /// <summary>
         /// Puts the caret in the box (Ctrl+F from the graph). The inner text field is what

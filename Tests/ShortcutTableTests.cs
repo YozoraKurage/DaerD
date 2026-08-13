@@ -49,8 +49,8 @@ namespace Yozolab.DaerD.Tests
         }
 
         static DaerDCommand Resolve(KeyCode key, bool ctrl = false, bool shift = false,
-            ShortcutScope scope = ShortcutScope.Graph) =>
-            DaerDShortcuts.Resolve(DaerDShortcuts.Defaults, scope, key, ctrl, shift);
+            ShortcutScope scope = ShortcutScope.Graph, bool alt = false) =>
+            DaerDShortcuts.Resolve(DaerDShortcuts.Defaults, scope, key, ctrl, shift, alt);
 
         [Test]
         public void ModifiersAreMatchedExactly()
@@ -85,9 +85,9 @@ namespace Yozolab.DaerD.Tests
             new List<DaerDShortcut>(shortcuts);
 
         static DaerDShortcut Entry(DaerDCommand command, KeyCode key, bool ctrl = false,
-            bool shift = false, bool enabled = true) =>
+            bool shift = false, bool enabled = true, bool alt = false) =>
             new DaerDShortcut(ShortcutScope.Graph, command,
-                new ShortcutBinding(key, ctrl, shift, enabled), command.ToString());
+                new ShortcutBinding(key, ctrl, shift, enabled, alt), command.ToString());
 
         [Test]
         public void ASwitchedOffCommandHoldsNoKey()
@@ -147,6 +147,111 @@ namespace Yozolab.DaerD.Tests
             Assert.IsFalse(ShortcutBinding.TryParse(string.Empty, out _));
             Assert.IsFalse(ShortcutBinding.TryParse("A", out _), "no separator");
             Assert.IsFalse(ShortcutBinding.TryParse("NotAKey:C", out _));
+        }
+
+        // ---- Alt --------------------------------------------------------------
+
+        /// <summary>
+        /// A modifier nobody reads is a modifier nobody can require: Alt+A used to fire
+        /// FrameAll, because the resolver compared Ctrl and Shift and let anything else
+        /// through. A user who held Alt while rebinding got the bare key instead, and then
+        /// pressing the bare key did the thing they thought they had moved out of the way.
+        /// </summary>
+        [Test]
+        public void AltIsMatchedLikeEveryOtherModifier()
+        {
+            Assert.AreEqual(DaerDCommand.FrameAll, Resolve(KeyCode.A));
+            Assert.AreEqual(DaerDCommand.None, Resolve(KeyCode.A, alt: true));
+            Assert.AreEqual(DaerDCommand.None, Resolve(KeyCode.A, ctrl: true, alt: true),
+                "Ctrl+Alt+A is not Ctrl+A either");
+
+            // And a binding that does ask for Alt only answers to Alt.
+            var table = Table(Entry(DaerDCommand.FrameSelection, KeyCode.A, alt: true));
+            Assert.AreEqual(DaerDCommand.FrameSelection,
+                DaerDShortcuts.Resolve(table, ShortcutScope.Graph, KeyCode.A, false, false, true));
+            Assert.AreEqual(DaerDCommand.None,
+                DaerDShortcuts.Resolve(table, ShortcutScope.Graph, KeyCode.A, false, false, false));
+        }
+
+        [Test]
+        public void AnAltBindingIsADifferentKeystrokeFromThePlainOne()
+        {
+            var table = Table(Entry(DaerDCommand.FrameAll, KeyCode.A));
+
+            Assert.AreEqual(DaerDCommand.None, DaerDShortcuts.Conflict(table, ShortcutScope.Graph,
+                DaerDCommand.Connect, new ShortcutBinding(KeyCode.A, alt: true)),
+                "Alt+A is free while A is taken");
+            Assert.AreEqual(DaerDCommand.FrameAll, DaerDShortcuts.Conflict(table, ShortcutScope.Graph,
+                DaerDCommand.Connect, new ShortcutBinding(KeyCode.A)));
+            StringAssert.Contains("Alt+", new ShortcutBinding(KeyCode.A, alt: true).Keys);
+        }
+
+        [Test]
+        public void AnAltBindingIsStored_AndAPreferenceWrittenBeforeAltStillReads()
+        {
+            var alt = new ShortcutBinding(KeyCode.A, ctrl: true, alt: true);
+            Assert.IsTrue(ShortcutBinding.TryParse(alt.Serialize(), out var read),
+                "could not read back " + alt.Serialize());
+            Assert.IsTrue(alt.SameKeys(read), alt.Keys + " came back as " + read.Keys);
+            Assert.IsTrue(read.Alt);
+
+            // The contract 60a8660 set: a preference this build cannot make sense of falls back
+            // to the default. One written before Alt existed IS readable — it simply has no "A"
+            // among its modifiers — so it must come back as the binding it was, not be dropped.
+            Assert.IsTrue(ShortcutBinding.TryParse("V:CS", out var older));
+            Assert.IsFalse(older.Alt);
+            Assert.IsTrue(new ShortcutBinding(KeyCode.V, ctrl: true, shift: true).SameKeys(older));
+            Assert.IsTrue(older.Enabled);
+        }
+
+        // ---- what the hints say -----------------------------------------------
+
+        /// <summary>
+        /// Every "press T" in the UI is the table's answer, spelled out. They used to be
+        /// literals, so rebinding Connect left the graph's own hint telling the user to press a
+        /// key that now did something else — the table said one thing and the window another.
+        /// </summary>
+        [Test]
+        public void AKeyHintIsReadOffTheTable_AndFollowsARebinding()
+        {
+            var table = Table(
+                Entry(DaerDCommand.Connect, KeyCode.T),
+                Entry(DaerDCommand.FocusSearch, KeyCode.F, ctrl: true),
+                Entry(DaerDCommand.MarkSources, KeyCode.M, enabled: false));
+
+            Assert.AreEqual("T", DaerDShortcuts.KeysOf(table, ShortcutScope.Graph, DaerDCommand.Connect));
+            Assert.AreEqual(new ShortcutBinding(KeyCode.F, ctrl: true).Keys,
+                DaerDShortcuts.KeysOf(table, ShortcutScope.Graph, DaerDCommand.FocusSearch));
+            Assert.AreEqual("  (T)", DaerDShortcuts.Hint(table, ShortcutScope.Graph, DaerDCommand.Connect));
+
+            var rebound = Table(Entry(DaerDCommand.Connect, KeyCode.Y, shift: true));
+            Assert.AreEqual("Shift+Y",
+                DaerDShortcuts.KeysOf(rebound, ShortcutScope.Graph, DaerDCommand.Connect));
+            Assert.AreEqual("  (Shift+Y)",
+                DaerDShortcuts.Hint(rebound, ShortcutScope.Graph, DaerDCommand.Connect));
+        }
+
+        [Test]
+        public void ACommandNoKeyReaches_HasNoHintRatherThanAnEmptyOne()
+        {
+            var table = Table(
+                Entry(DaerDCommand.Connect, KeyCode.T),
+                Entry(DaerDCommand.MarkSources, KeyCode.M, enabled: false));
+
+            Assert.IsEmpty(DaerDShortcuts.KeysOf(table, ShortcutScope.Graph, DaerDCommand.MarkSources),
+                "a switched-off command holds no key to name");
+            Assert.IsEmpty(DaerDShortcuts.Hint(table, ShortcutScope.Graph, DaerDCommand.MarkSources));
+            Assert.IsEmpty(DaerDShortcuts.Hint(table, ShortcutScope.Graph, DaerDCommand.Rename),
+                "nor does one this scope does not have at all");
+
+            // A sentence built around two keys goes altogether when either is missing: half of
+            // it would name a shortcut that does not exist.
+            Assert.AreEqual(" T then M copies", DaerDShortcuts.Sentence(
+                Table(Entry(DaerDCommand.Connect, KeyCode.T), Entry(DaerDCommand.MarkSources, KeyCode.M)),
+                ShortcutScope.Graph, DaerDCommand.Connect, DaerDCommand.MarkSources,
+                "{0} then {1} copies"));
+            Assert.IsEmpty(DaerDShortcuts.Sentence(table, ShortcutScope.Graph,
+                DaerDCommand.Connect, DaerDCommand.MarkSources, "{0} then {1} copies"));
         }
     }
 }
