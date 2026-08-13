@@ -74,6 +74,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
         // Run/Restart (the moment the answer is about to be trusted).
         List<string> _notes;
         AnimatorController _notesFor;
+        bool _notesWithRemote = true;
 
         bool _playing;
         bool _follow = true;
@@ -342,10 +343,11 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// </summary>
         void DrawNotes()
         {
-            if (_notes == null || _notesFor != _controller)
+            if (_notes == null || _notesFor != _controller || _notesWithRemote != _twoClients)
             {
-                _notes = SimNotes.For(_controller);
+                _notes = SimNotes.For(_controller, _twoClients);
                 _notesFor = _controller;
+                _notesWithRemote = _twoClients;
             }
             var notes = _notes;
             if (notes.Count == 0) return;

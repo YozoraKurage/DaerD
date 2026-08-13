@@ -34,6 +34,9 @@ namespace Yozolab.DaerD.DynamicAnalyze
         readonly SimRandom[] _loss;
         readonly bool[] _arrived;
         readonly bool[] _dropped;
+        /// <summary>The built-ins VRChat keeps in step by itself, as this controller reads
+        /// them. Worked out once, like the batch run's.</summary>
+        readonly List<string> _broadcast;
         float _time;
         float _carry;
         float _nextSample;
@@ -68,6 +71,8 @@ namespace Yozolab.DaerD.DynamicAnalyze
                     Simulation.ClientSeed(clock.seed, i)));
             _recorder = new TraceRecorder(controller, _clients, wire != null, _settings.lagRows);
 
+            _broadcast = remotes > 0
+                ? Simulation.Broadcast(_clients[0]) : new List<string>();
             _loss = new SimRandom[remotes];
             _arrived = new bool[remotes];
             _dropped = new bool[remotes];
@@ -133,6 +138,10 @@ namespace Yozolab.DaerD.DynamicAnalyze
                     else Simulation.Carry(wire, _clients[0], _clients[i + 1]);
                 }
             }
+
+            // Whatever VRChat syncs on its own — see Simulation.CarryBroadcast.
+            for (int i = 0; i < _arrived.Length; i++)
+                if (_arrived[i]) Simulation.CarryBroadcast(_broadcast, _clients[0], _clients[i + 1]);
 
             for (int i = 0; i < _clients.Count; i++)
             {

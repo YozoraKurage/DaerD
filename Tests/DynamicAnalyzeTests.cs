@@ -492,6 +492,130 @@ namespace Yozolab.DaerD.Tests
                 Assert.AreNotEqual(Simulation.LagScope, signal.scope);
         }
 
+        // ---- what VRChat syncs whether or not the avatar asked ---------------
+
+        /// <summary>The base controller, plus built-ins it happens to read.</summary>
+        static AnimatorController Reading(params string[] builtIns)
+        {
+            var controller = NewController();
+            foreach (var name in builtIns)
+            {
+                Assert.IsTrue(VrcParameters.TryFind(name, out var definition),
+                    "'" + name + "' is meant to be a built-in");
+                controller.AddParameter(name,
+                    definition.type == VrcParameters.ParamType.Bool
+                        ? AnimatorControllerParameterType.Bool
+                        : definition.type == VrcParameters.ParamType.Int
+                            ? AnimatorControllerParameterType.Int
+                            : AnimatorControllerParameterType.Float);
+            }
+            return controller;
+        }
+
+        [Test]
+        public void BuiltIns_ReachTheOtherPersonWithoutAnybodySyncingThem()
+        {
+            // GestureLeft is in no store and on no wire, and it still arrives: VRChat carries
+            // its own parameters. Nearly every FX controller is built on these, so a run that
+            // waited for them to be listed showed a remote whose hand never moved.
+            // Rounding is another test's business; this one is about when things arrive.
+            var wire = new SyncWire { intervalSeconds = 0.2f, quantize = false }.Syncs("X");
+            var stimulus = new Stimulus().At(0.05f, "GestureLeft", 1f).At(0.05f, "X", 0.5f);
+            var trace = Simulation.Run(Reading("GestureLeft"), Wired(0.5f, wire, stimulus));
+
+            var here = trace.Find(Simulation.LocalScope, "GestureLeft");
+            var there = trace.Find(Simulation.RemoteScope, "GestureLeft");
+            Assert.AreEqual(1f, there.At(trace.Frames - 1), "it has to get there at all");
+
+            // And not on the sample's cadence: the expression parameter beside it waits for the
+            // next sample, and this does not.
+            int moved = FirstFrameAt(here, 1f), arrived = FirstFrameAt(there, 1f);
+            Assert.LessOrEqual(arrived - moved, 1,
+                "a built-in is a continuous stream, not a passenger on the sample");
+            Assert.Greater(FirstFrameAt(trace.Find(Simulation.RemoteScope, "X"), 0.5f), arrived,
+                "the synced parameter poked in the same breath still waits its turn");
+        }
+
+        [Test]
+        public void BuiltIns_ThatAreNotTheWearersToSend_StayWhereTheyAre()
+        {
+            // Two that must not ride along. AvatarVersion never leaves a client; IsOnFriendsList
+            // answers whether the wearer is on YOUR friends list, so the wearer's own copy of it
+            // is not an answer anybody else wants.
+            var wire = new SyncWire { intervalSeconds = 0.1f }.Syncs("X");
+            var stimulus = new Stimulus()
+                .At(0.05f, "AvatarVersion", 3f)
+                .At(0.05f, "IsOnFriendsList", 1f);
+            var trace = Simulation.Run(
+                Reading("AvatarVersion", "IsOnFriendsList", "IsLocal"),
+                Wired(0.5f, wire, stimulus));
+            int last = trace.Frames - 1;
+
+            Assert.AreEqual(3f, trace.Find(Simulation.LocalScope, "AvatarVersion").At(last));
+            Assert.AreEqual(0f, trace.Find(Simulation.RemoteScope, "AvatarVersion").At(last));
+            Assert.AreEqual(0f, trace.Find(Simulation.RemoteScope, "IsOnFriendsList").At(last));
+
+            // The one this would break loudest: IsLocal is each client's own answer, and a wire
+            // that carried it would tell the other person they are wearing the avatar.
+            Assert.AreEqual(1f, trace.Find(Simulation.LocalScope, "IsLocal").At(last));
+            Assert.AreEqual(0f, trace.Find(Simulation.RemoteScope, "IsLocal").At(last));
+        }
+
+        [Test]
+        public void ABuiltInNamedInTheStoreIsStillThePlatformsToSync()
+        {
+            // Putting a built-in in the expression parameters is a mistake people make, and
+            // honouring it would round VelocityZ into the -1..1 the expression channel allows —
+            // inventing a bug no headset has, in the values most likely to be outside it.
+            var wire = new SyncWire { intervalSeconds = 0.1f }.Syncs("VelocityZ");
+            var stimulus = new Stimulus().At(0.05f, "VelocityZ", 3.5f);
+            var trace = Simulation.Run(Reading("VelocityZ"), Wired(0.5f, wire, stimulus));
+
+            Assert.AreEqual(3.5f, trace.Find(Simulation.RemoteScope, "VelocityZ")
+                .At(trace.Frames - 1), 1e-5f, "carried by the platform, so not rounded like a sample");
+        }
+
+        [Test]
+        public void ASessionCarriesTheBuiltInsTheSameWayARunDoes()
+        {
+            var settings = Wired(1f, new SyncWire { intervalSeconds = 0.2f }.Syncs("X"));
+            using (var session = new SimSession(Reading("GestureLeft"), settings))
+            {
+                session.StepOnce();
+                session.Write(Simulation.LocalScope, "GestureLeft", 2f);
+                session.StepOnce();
+                Assert.AreEqual(2f, session.Read(Simulation.RemoteScope, "GestureLeft"),
+                    "live and batch are the same simulation or neither is worth reading");
+            }
+        }
+
+        [Test]
+        public void Notes_SayWhereTheLocomotionNumbersAreNotMeantToAgree()
+        {
+            var controller = Reading("VelocityX", "AngularY");
+            Assert.IsTrue(Says(SimNotes.For(controller), "VelocityX"),
+                "playspace movement counts on their copy and not on yours");
+            Assert.IsFalse(Says(SimNotes.For(controller, withRemote: false), "VelocityX"),
+                "a divergence about the other person is not worth saying without one");
+            Assert.IsFalse(Says(SimNotes.For(Reading("GestureLeft")), "GestureLeft"),
+                "a built-in this run does carry faithfully is not a divergence");
+        }
+
+        static bool Says(System.Collections.Generic.List<string> notes, string word)
+        {
+            foreach (var note in notes)
+                if (note.Contains(word)) return true;
+            return false;
+        }
+
+        /// <summary>The first frame this signal reads the given value, or -1.</summary>
+        static int FirstFrameAt(SignalTrace.Signal signal, float value)
+        {
+            for (int frame = 0; frame < signal.Frames; frame++)
+                if (Mathf.Approximately(signal.At(frame), value)) return frame;
+            return -1;
+        }
+
         // ---- the viewer's model side ----------------------------------------
 
         [Test]

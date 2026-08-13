@@ -36,7 +36,10 @@ namespace Yozolab.DaerD.DynamicAnalyze
         public float intervalSeconds = 0.2f;
 
         /// <summary>Chance that a whole sample is lost, 0 to 1. A whole one rather than a
-        /// parameter of one: the set travels together, so it survives or misses together.</summary>
+        /// parameter of one: the set travels together, so it survives or misses together. The
+        /// sample, and not the built-ins VRChat streams beside it — losing a tick of those
+        /// would be undone by the next frame, so a run that modelled it would show nothing but
+        /// a frame of delay.</summary>
         public float dropChance;
 
         /// <summary>
@@ -79,9 +82,16 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// </summary>
         public readonly List<float> laterJoins = new List<float>();
 
-        /// <summary>The parameters that actually travel — the avatar's synced expression
+        /// <summary>
+        /// The parameters that travel in the sample — the avatar's synced expression
         /// parameters. Taken as names rather than read out of a parameter store, so this module
-        /// stays independent of how the project stores them.</summary>
+        /// stays independent of how the project stores them.
+        ///
+        /// Not the whole of what reaches a remote, and deliberately not: VRChat's own built-ins
+        /// cross by its arrangement rather than the avatar's, on other channels and at another
+        /// cadence, and <see cref="Simulation.CarryBroadcast"/> is where that happens. A
+        /// built-in named here is ignored — see <see cref="Simulation.Carry"/>.
+        /// </summary>
         public readonly List<string> parameters = new List<string>();
 
         public SyncWire Syncs(params string[] names)

@@ -19,15 +19,38 @@ namespace Yozolab.DaerD.DynamicAnalyze
     /// </summary>
     static class SimNotes
     {
-        public static List<string> For(AnimatorController controller)
+        /// <param name="withRemote">Whether this run has somebody else in it. A divergence
+        /// about what the other person reads is not worth saying to a run that has no other
+        /// person — and a note nobody can act on is how a list of them stops being read.</param>
+        public static List<string> For(AnimatorController controller, bool withRemote = true)
         {
             var notes = new List<string>();
             if (controller == null) return notes;
             EntryConditions(controller, notes);
             SelfTransitions(controller, notes);
             CrossLayerDrivers(controller, notes);
+            if (withRemote) Playspace(controller, notes);
             Behaviours(controller, notes);
             return notes;
+        }
+
+        /// <summary>
+        /// The built-ins whose two copies are meant to disagree. VRChat broadcasts the
+        /// locomotion values — this run carries them across every frame, which is right — but
+        /// playspace movement is counted on somebody else's copy of you and not on your own, so
+        /// a headset shows the wearer and the remote reading different numbers from the same
+        /// motion. Nothing here can produce that: a wire carries a value faithfully or not at
+        /// all, and this is the one shape where carrying it faithfully is the divergence.
+        /// </summary>
+        static void Playspace(AnimatorController controller, List<string> notes)
+        {
+            var names = new List<string>();
+            foreach (var parameter in controller.parameters)
+                if (VrcParameters.PlayspaceDiffers(parameter.name)) names.Add(parameter.name);
+            if (names.Count == 0) return;
+            notes.Add(L.Tr(
+                "{0} locomotion parameter(s) read the same on both copies here ({1}). On a headset the other person's copy counts playspace movement and the wearer's own does not, so those two numbers are not meant to agree.",
+                names.Count, Join(names)));
         }
 
         /// <summary>

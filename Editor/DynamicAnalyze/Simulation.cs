@@ -114,6 +114,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
                 var pending = settings.stimulus != null
                     ? settings.stimulus.InOrder() : new List<Stimulus.Entry>();
 
+                var broadcast = remotes > 0 ? Broadcast(clients[0]) : new List<string>();
                 var loss = new SimRandom[remotes];
                 // Zero means somebody loaded with the wearer, and then there is nothing to hand
                 // over: both copies start from the same defaults and the first thing that
@@ -168,6 +169,11 @@ namespace Yozolab.DaerD.DynamicAnalyze
                         }
                     }
 
+                    // Whatever VRChat syncs on its own, before the frame that reads it. Not on
+                    // the sample and not subject to its loss — see CarryBroadcast.
+                    for (int i = 0; i < remotes; i++)
+                        if (arrived[i]) CarryBroadcast(broadcast, clients[0], clients[i + 1]);
+
                     for (int i = 0; i < clients.Count; i++)
                     {
                         // Somebody who has not arrived is not running: their copy of the avatar
@@ -200,16 +206,60 @@ namespace Yozolab.DaerD.DynamicAnalyze
                     client.Write(entry.parameter, entry.value);
         }
 
-        /// <summary>One sample: every synced parameter read off the wearer and written to the
-        /// remote, together and in the shape the wire allows.</summary>
+        /// <summary>
+        /// One sample: every synced parameter read off the wearer and written to the remote,
+        /// together and in the shape the wire allows.
+        ///
+        /// A built-in is skipped however it got into the list. VRChat feeds those itself, on
+        /// its own channels — a store that names one is a mistake people make, and honouring
+        /// it here would send AvatarVersion over a wire that never carries it and round a
+        /// Velocity into a range it does not live in.
+        /// </summary>
         internal static void Carry(SyncWire wire, SimClient from, SimClient to)
         {
             foreach (var name in wire.parameters)
             {
                 if (!from.Has(name) || !to.Has(name)) continue;
+                if (VrcParameters.IsBuiltIn(name)) continue;
                 to.Write(name, wire.Compress(from.Read(name), from.TypeOf(name)));
             }
         }
 
+        /// <summary>
+        /// The built-ins this controller reads that VRChat keeps in step by itself. Worked out
+        /// once per run rather than per frame: it is the same answer for the length of it.
+        /// </summary>
+        internal static List<string> Broadcast(SimClient client)
+        {
+            var names = new List<string>();
+            if (client == null) return names;
+            foreach (var definition in VrcParameters.All)
+                if (definition.sync == VrcParameters.Sync.Broadcast && client.Has(definition.name))
+                    names.Add(definition.name);
+            return names;
+        }
+
+        /// <summary>
+        /// What the platform syncs whether or not the avatar asked. Gesture, Viseme, Grounded,
+        /// the scale family — the values most controllers are actually built on — reach every
+        /// other client continuously, and a run that only carried the expression sample showed
+        /// a remote whose hand never moved. It is the commonest shape there is, so getting it
+        /// wrong was wrong about nearly every avatar.
+        ///
+        /// Every frame rather than on the sample, and uncompressed, because these do not ride
+        /// the expression channel: they are neither paced by its cadence nor rounded to its
+        /// eight bits over -1..1 — a rule that would clamp VelocityZ to a metre a second and
+        /// invent a bug that no headset has. For the same reason a lost sample does not take
+        /// them with it: a dropped tick of a continuous stream is replaced by the next frame's,
+        /// so modelling it would produce a one-frame delay and nothing else.
+        /// </summary>
+        internal static void CarryBroadcast(List<string> names, SimClient from, SimClient to)
+        {
+            foreach (var name in names)
+            {
+                if (!to.Has(name)) continue;
+                to.Write(name, from.Read(name));
+            }
+        }
     }
 }
