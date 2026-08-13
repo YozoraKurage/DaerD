@@ -414,6 +414,9 @@ namespace Yozolab.DaerD
         public static Dictionary<string, float> RefreshIntervals(Request r) =>
             AsyncSyncCost.RefreshIntervals(r);
 
+        public static Dictionary<string, float> RefreshWindows(Request r) =>
+            AsyncSyncCost.RefreshWindows(r);
+
         public static int FreeSlots(Request r) => AsyncSyncCost.FreeSlots(r);
 
         public static int IndexValues(Request r) => AsyncSyncCost.IndexValues(r);
@@ -749,6 +752,29 @@ namespace Yozolab.DaerD
                             slots[i].rate, slots[i].targets[0], Mathf.Max(1, occurrences[i])));
                         break;
                     }
+                }
+
+                // The other half of a weight not being honoured, and the invisible one: the
+                // places are all there and they are not evenly spaced, so the target is sent
+                // as often as it asked and is stale for longer than that suggests. A pass is
+                // exactly as long as the weights add up to, so every window is a share of a
+                // cycle with no slack in it — and a set of windows that fills a cycle
+                // completely often cannot be arranged at all. Rounding is expected; a target
+                // waiting half again as long as its share suggests is the weights asking for
+                // something no arrangement gives.
+                var windows = RefreshWindows(r);
+                var intervals = RefreshIntervals(r);
+                for (int i = 0; i < slots.Count; i++)
+                {
+                    string name = slots[i].targets[0];
+                    if (occurrences[i] < 2 || !windows.TryGetValue(name, out float window)
+                        || !intervals.TryGetValue(name, out float actual)
+                        || actual < window * 1.5f)
+                        continue;
+                    warnings.Add(L.Tr(
+                        "'{0}' is sent {1} times a pass, which reads as a value no older than {2:0.##} s — but the other weights leave nowhere evenly spaced to put those sends, so the worst wait is really {3:0.##} s. Even the weights out, or set the timing by hand.",
+                        name, occurrences[i], window, actual));
+                    break;
                 }
             }
 
