@@ -558,11 +558,14 @@ namespace Yozolab.DaerD
         }
 
         /// <summary>
-        /// The Stale watcher: judged once a lap, at the moment the marker slot arrives.
+        /// The Stale watcher: judged once a lap, at the moment the marker step arrives.
         ///
-        /// Watching a slot the pass sends exactly once is what spares this a timer — there is
-        /// no window to size, no margin to guess, and a lap stretched by a request cannot make
-        /// it wrong, because the measure is the lap itself rather than a number of seconds.
+        /// Watching one step of the pass is what spares this a timer — there is no window to
+        /// size, no margin to guess, and a lap stretched by a request cannot make it wrong,
+        /// because the measure is the lap itself rather than a number of seconds. The marker
+        /// is a slot the pass sends exactly once where there is one, and an index value bought
+        /// for one step where there is not (see <see cref="AsyncSyncSchedule.BuildClock"/>);
+        /// either way it is a value the ring writes once a pass and no detour ever writes.
         ///
         /// The bits are cleared HERE and not by the decoder, which is what keeps the reading
         /// and the clearing in one layer with nothing to race: the marker's own step has a
@@ -582,7 +585,8 @@ namespace Yozolab.DaerD
             string wanted = StaleLayerName(MainLayerName(r));
             var existing = ResolveExistingLayer(controller,
                 previous != null ? previous.staleLayer : null, wanted);
-            int marker = LapMarkerSlot(r);
+            int marker = clock.markerSlot;
+            int markerIndex = clock.MarkerIndex;
             if (!r.stale || marker < 0)
             {
                 RemoveLayer(controller, existing);
@@ -600,7 +604,7 @@ namespace Yozolab.DaerD
             // has nothing to be behind on, and the flag stays at its default for them.
             var arm = Instant(idle, judge);
             arm.AddCondition(AnimatorConditionMode.IfNot, 0f, NetworkSyncBuilder.IsLocalParameter);
-            AddIndexEquals(arm, r, encoding, indexBits, clock.Index(marker, 0));
+            AddIndexEquals(arm, r, encoding, indexBits, markerIndex);
 
             // One route per slot that did not arrive, then the fall-through. Conditions on one
             // transition are ANDed, so "any of them is missing" has to be spread over routes —
@@ -614,8 +618,8 @@ namespace Yozolab.DaerD
             }
             Immediate(judge, clean);
 
-            AddIndexLeaves(dirty, idle, r, encoding, indexBits, clock.Index(marker, 0));
-            AddIndexLeaves(clean, idle, r, encoding, indexBits, clock.Index(marker, 0));
+            AddIndexLeaves(dirty, idle, r, encoding, indexBits, markerIndex);
+            AddIndexLeaves(clean, idle, r, encoding, indexBits, markerIndex);
 
             if (!r.skipDrivers)
             {

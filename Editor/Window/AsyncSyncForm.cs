@@ -1067,12 +1067,16 @@ namespace Yozolab.DaerD
 
             if (request.stale)
             {
-                int marker = AsyncSyncBuilder.LapMarkerSlot(request);
+                var clock = AsyncSyncBuilder.BuildClock(request, slots,
+                    AsyncSyncBuilder.EffectiveSchedule(request, slots));
                 EditorGUILayout.LabelField(
-                    marker >= 0
-                        ? L.Tr("Drift suspicion flag: judged once a pass, when '{0}' comes round.",
-                            slots[marker].targets[0])
-                        : L.Tr("Drift suspicion flag: no slot closes a pass on its own, so it can't be built."),
+                    clock.markerSlot < 0
+                        ? L.Tr("Drift suspicion flag: every step sends the same slot, so there is no lap to judge.")
+                        : clock.markerDedicated
+                            ? L.Tr("Drift suspicion flag: judged once a pass, on a marker of its own — one more index value ({0} in all).",
+                                AsyncSyncBuilder.IndexValues(request))
+                            : L.Tr("Drift suspicion flag: judged once a pass, when '{0}' comes round.",
+                                slots[clock.markerSlot].targets[0]),
                     EditorStyles.miniLabel);
             }
 

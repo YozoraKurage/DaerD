@@ -969,8 +969,8 @@ msgstr "パラメーターストア側で、多重化する対象の synced を�
 msgid "A step carries one type, so at every step of this pass the other {0} type(s) of channel sit idle and the values waiting in them wait behind steps that could not have carried them. One ring per type would run passes of {1} instead of one pass of {2:0.#} s, for {3} synced bit(s) instead of {4}."
 msgstr "1 つのステップが運べるのは 1 種類の型だけなので、この周回ではどのステップでも残り {0} 種類の型のチャンネルが遊んでいます（そこで待っている値は、自分を運べないステップの後ろで待たされています）。型ごとにリングを分けると、1 周 {2:0.#} 秒が {1} になり、同期ビットは {4} → {3} になります。"
 
-msgid "'{0}' is sent {1} times a pass, which reads as a value no older than {2:0.##} s — but the other weights leave nowhere evenly spaced to put those sends, so the worst wait is really {3:0.##} s. Even the weights out, or set the timing by hand."
-msgstr "'{0}' は 1 周に {1} 回送られるので、値は古くても {2:0.##} 秒に見えます。しかし他の重みのせいで等間隔に置ける場所が無く、実際の最悪待ちは {3:0.##} 秒です。重みを揃えるか、タイミングを手動で組んでください。"
+msgid "'{0}' is sent {1} times a pass, which reads as a value no older than {2:0.##} s — but the other weights leave nowhere evenly spaced to put those sends, so the worst wait is really {3:0.##} s. Even the weights out, or let that target ask instead: a sync request puts its value on the wire at the next step boundary, which is what a heavier weight was reaching for."
+msgstr "'{0}' は 1 周に {1} 回送られるので、値は古くても {2:0.##} 秒に見えます。しかし他の重みのせいで等間隔に置ける場所が無く、実際の最悪待ちは {3:0.##} 秒です。重みを揃えるか、そのターゲットに要求させてください（同期リクエストなら次のステップ境界で値が線に乗ります。重みを上げて狙っていたのはそれです）。"
 
 msgid "'{0}' is the only {1} here, and a type with one target multiplexes nothing: its channel costs the {2} synced bit(s) that syncing '{0}' directly would, and the value reaches remotes no sooner for the trip. Sync it directly, or multiplex another {1} beside it."
 msgstr "'{0}' はここで唯一の {1} です。ターゲットが 1 つしかない型は何も多重化していません。そのチャンネルは '{0}' を直接同期するのと同じ {2} bit を使い、しかも値がリモートに届くのが早くなるわけでもありません。直接同期に戻すか、もう 1 つ {1} を多重化対象に加えてください。"
@@ -1019,11 +1019,17 @@ msgstr "1 周のあいだに全スロットが届かなかったとき 1 にな�
 msgid "Drift suspicion flag: judged once a pass, when '{0}' comes round."
 msgstr "同期ズレ疑いフラグ: 1 周に 1 回、'{0}' が回ってきたときに判定します。"
 
-msgid "Drift suspicion flag: no slot closes a pass on its own, so it can't be built."
-msgstr "同期ズレ疑いフラグ: 1 周を閉じるスロットが無いため作れません。"
+msgid "Drift suspicion flag: every step sends the same slot, so there is no lap to judge."
+msgstr "同期ズレ疑いフラグ: どのステップも同じスロットを送るため、判定できる 1 周がありません。"
 
-msgid "No slot closes a lap on its own, so there is nothing to measure a lap against: every slot is either sent more than once or open to requests. Send one of them once per pass, or take its request away."
-msgstr "1 周を単独で閉じるスロットが無いため、1 周を測る基準がありません（どのスロットも複数回送られるか、リクエスト対象になっています）。どれか 1 つを 1 周に 1 回だけ送るか、そのリクエストを外してください。"
+msgid "Drift suspicion flag: judged once a pass, on a marker of its own — one more index value ({0} in all)."
+msgstr "同期ズレ疑いフラグ: 1 周に 1 回、専用マーカーで判定します（index 値を 1 つ追加、合計 {0}）。"
+
+msgid "Every step of this pass sends the same slot, so a lap has nothing in it that could go missing and the drift flag would never come up. Give the pass a second slot, or take the flag off."
+msgstr "この周回はどのステップも同じスロットを送るため、1 周の中に欠けうるものがなく、同期ズレ疑いフラグは決して立ちません。スロットをもう 1 つ増やすか、フラグを外してください。"
+
+msgid "No slot of this pass closes a lap on its own — every one of them is either sent more than once or open to requests — so the flag is measured by giving one step an index value of its own. That costs one index value ({0} in all) and one more decoder state; the pass, the payload and the timing are unchanged."
+msgstr "この周回には 1 周を単独で閉じるスロットがありません（どのスロットも複数回送られるか、リクエスト対象です）。そのため、あるステップに専用の index 値を与えて判定します。コストは index 値 1 つ（合計 {0}）とデコーダーステート 1 つで、周回・積荷・タイミングは変わりません。"
 
 msgid "'{0}' is judged every time '{1}' comes round, which is once per pass. A remote that arrives mid-pass reads it as on for the rest of that pass — pair it with the remote initialized flag to tell that apart from a cycle that has actually started dropping steps."
 msgstr "'{0}' は '{1}' が回ってくるたび、つまり 1 周に 1 回判定されます。周の途中で入ったリモートはその周のあいだ 1 のままになるので、本当に取りこぼし始めた場合と区別したいときはリモート初期化フラグと組み合わせてください。"

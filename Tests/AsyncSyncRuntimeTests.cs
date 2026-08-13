@@ -209,6 +209,52 @@ namespace Yozolab.DaerD.Tests
             Assert.IsTrue(raised, "losing most of the wire went unnoticed");
         }
 
+        /// <summary>
+        /// The same flag on a pass with no lap marker to spare: every target is requestable,
+        /// so no slot's arrival can stand for a lap, and one step is given an index value of
+        /// its own instead. Run rather than read, because the whole question is whether a
+        /// value the ring writes once a pass — and the decoder therefore decodes once a pass —
+        /// really does arm the watcher exactly once.
+        /// </summary>
+        [Test]
+        public void Stale_WorksOnAPassThatHadToBuyItsLapMarker()
+        {
+            var clean = Multiplexed(out var request, r =>
+            {
+                r.stale = true;
+                r.requestTargets.AddRange(new[] { "F", "B", "I" });
+            });
+            var slots = AsyncSyncBuilder.BuildSlots(request);
+            Assert.IsTrue(AsyncSyncBuilder.BuildClock(request, slots,
+                AsyncSyncBuilder.EffectiveSchedule(request, slots)).markerDedicated,
+                "the pass this test is about is one with no marker of its own");
+
+            var trace = Simulation.Run(clean, Settings(request, 6f));
+            var stale = trace.Find(Simulation.RemoteScope, "Async/Stale");
+            // Judged at all: a marker nobody decodes would leave the flag at its default
+            // forever, which is the failure this test exists to catch.
+            bool judged = false;
+            for (int frame = 0; frame < trace.Frames; frame++)
+                if (stale.At(frame) != 0f) judged = true;
+            Assert.IsTrue(judged, "the bought marker never armed the watcher");
+            // ...and then settled, because the wire is clean.
+            for (int frame = trace.FrameAt(2f); frame < trace.Frames; frame++)
+                Assert.AreEqual(0f, stale.At(frame),
+                    "a clean wire read as drifting at " + trace.TimeAt(frame) + "s");
+
+            var lossy = Multiplexed(out var lossyRequest, r =>
+            {
+                r.stale = true;
+                r.requestTargets.AddRange(new[] { "F", "B", "I" });
+            });
+            var noisy = Simulation.Run(lossy, Settings(lossyRequest, 6f, loss: 0.6f));
+            var flagged = noisy.Find(Simulation.RemoteScope, "Async/Stale");
+            bool raised = false;
+            for (int frame = 0; frame < noisy.Frames; frame++)
+                if (flagged.At(frame) != 0f) raised = true;
+            Assert.IsTrue(raised, "losing most of the wire went unnoticed");
+        }
+
         // ---- somebody who turned up late --------------------------------------
 
         [Test]

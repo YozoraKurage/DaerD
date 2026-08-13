@@ -140,10 +140,14 @@ namespace Yozolab.DaerD
             /// did. Unlike <see cref="ready"/> it falls again — it is a reading of the last
             /// lap, not of the whole session.
             ///
-            /// Measured by watching the lap marker (a slot the pass sends exactly once) rather
-            /// than by timing anything: no window to size, no margin to guess, and a pass
-            /// stretched by a request cannot make it wrong. A pass with no such slot cannot
-            /// carry the flag, and <see cref="Validate"/> says so.
+            /// Measured by watching the lap marker — one step of the pass, which by definition
+            /// comes round once a lap — rather than by timing anything: no window to size, no
+            /// margin to guess, and a pass stretched by a request cannot make it wrong. A pass
+            /// that already sends some slot exactly once carries the marker for free; one that
+            /// does not has an index value bought for a step of it
+            /// (<see cref="Clock.markerDedicated"/>), which is what lets any pass carry the
+            /// flag. The exception is a pass of one slot, where a lap has nothing in it that
+            /// could go missing, and <see cref="Validate"/> says so.
             /// </summary>
             public bool stale;
 
@@ -277,14 +281,35 @@ namespace Yozolab.DaerD
             /// which two phases cannot colour. <see cref="Validate"/> refuses it.
             /// </summary>
             public readonly bool separates;
+            /// <summary>
+            /// The step of the pass whose arrival closes a lap, or -1 when the pass has none.
+            /// A STEP rather than a slot: a step happens exactly once a pass whatever its slot
+            /// does elsewhere, which is the whole of what a lap needs to be measurable, and it
+            /// is why a marker can be had on any pass at all.
+            /// </summary>
+            public readonly int markerStep;
+            /// <summary>The slot that step sends — the one the drift judgement leaves out,
+            /// because being there IS its arrival.</summary>
+            public readonly int markerSlot;
+            /// <summary>
+            /// Whether the marker is a phase bought for the purpose rather than a slot the
+            /// pass happened to send exactly once. Bought only when the setup asks for the
+            /// drift flag and the pass has no such slot, because it costs an index value —
+            /// and under a Bool index that is sometimes a synced bit.
+            /// </summary>
+            public readonly bool markerDedicated;
             /// <summary>Each slot's first index value: the phases before it, added up.</summary>
             readonly int[] _first;
 
-            internal Clock(int[] stepPhases, int[] slotPhases, bool separates)
+            internal Clock(int[] stepPhases, int[] slotPhases, bool separates,
+                int markerStep = -1, int markerSlot = -1, bool markerDedicated = false)
             {
                 this.stepPhases = stepPhases;
                 this.slotPhases = slotPhases;
                 this.separates = separates;
+                this.markerStep = markerStep;
+                this.markerSlot = markerSlot;
+                this.markerDedicated = markerDedicated;
                 _first = new int[slotPhases.Length];
                 for (int i = 0; i < slotPhases.Length; i++)
                 {
@@ -295,6 +320,13 @@ namespace Yozolab.DaerD
 
             /// <summary>The index value one slot sends in one of its phases.</summary>
             public int Index(int slot, int phase) => _first[slot] + phase;
+
+            /// <summary>The index value the lap marker puts on the wire, or -1 when the pass
+            /// has no marker. What the drift watcher waits for — and a value no detour ever
+            /// writes, since a request sends its slot in <see cref="AsyncSyncSchedule.RequestPhase"/>,
+            /// so a request cannot make a lap look over.</summary>
+            public int MarkerIndex =>
+                markerStep < 0 ? -1 : Index(markerSlot, stepPhases[markerStep]);
         }
 
         // Spelled out in AsyncSyncNaming; the facade keeps the names its callers know.
@@ -565,11 +597,13 @@ namespace Yozolab.DaerD
                             group.name);
             }
 
-            // The flag is measured by watching a slot the pass sends exactly once. Refused
-            // rather than quietly dropped: a Stale that never falls is worse than none, and
-            // the two ways out are worth naming.
+            // A pass with more than one slot can always be given a marker, bought if it has
+            // none to spare, so the only setup left that cannot carry the flag is one whose
+            // every step sends the same slot — where a lap contains nothing that could be
+            // missing. Refused rather than quietly dropped: a Stale that never comes up is
+            // worse than no flag at all.
             if (r.stale && LapMarkerSlot(r) < 0)
-                return L.Tr("No slot closes a lap on its own, so there is nothing to measure a lap against: every slot is either sent more than once or open to requests. Send one of them once per pass, or take its request away.");
+                return L.Tr("Every step of this pass sends the same slot, so a lap has nothing in it that could go missing and the drift flag would never come up. Give the pass a second slot, or take the flag off.");
 
             var isLocal = DbtBuilder.FindParameter(controller, NetworkSyncBuilder.IsLocalParameter);
             if (isLocal != null && isLocal.type != AnimatorControllerParameterType.Bool)
@@ -772,7 +806,7 @@ namespace Yozolab.DaerD
                         || actual < window * 1.5f)
                         continue;
                     warnings.Add(L.Tr(
-                        "'{0}' is sent {1} times a pass, which reads as a value no older than {2:0.##} s — but the other weights leave nowhere evenly spaced to put those sends, so the worst wait is really {3:0.##} s. Even the weights out, or set the timing by hand.",
+                        "'{0}' is sent {1} times a pass, which reads as a value no older than {2:0.##} s — but the other weights leave nowhere evenly spaced to put those sends, so the worst wait is really {3:0.##} s. Even the weights out, or let that target ask instead: a sync request puts its value on the wire at the next step boundary, which is what a heavier weight was reaching for.",
                         name, occurrences[i], window, actual));
                     break;
                 }
@@ -874,11 +908,21 @@ namespace Yozolab.DaerD
             if (r.stale)
             {
                 var staleSlots = BuildSlots(r);
-                int marker = LapMarkerSlot(r);
-                if (marker >= 0)
+                var staleClock = BuildClock(r, staleSlots,
+                    EffectiveSchedule(r, staleSlots));
+                if (staleClock.markerSlot >= 0)
                     warnings.Add(L.Tr(
                         "'{0}' is judged every time '{1}' comes round, which is once per pass. A remote that arrives mid-pass reads it as on for the rest of that pass — pair it with the remote initialized flag to tell that apart from a cycle that has actually started dropping steps.",
-                        StaleParameter(r.baseName), staleSlots[marker].targets[0]));
+                        StaleParameter(r.baseName),
+                        staleSlots[staleClock.markerSlot].targets[0]));
+                // What the flag costs when the pass had no lap marker to spare. Said because
+                // it is the one thing about this option that moves the synced bill, and it
+                // moves it as an index value — which under a Bool index is a bit only when it
+                // pushes the count past the power of two the pass was sitting under.
+                if (staleClock.markerDedicated)
+                    warnings.Add(L.Tr(
+                        "No slot of this pass closes a lap on its own — every one of them is either sent more than once or open to requests — so the flag is measured by giving one step an index value of its own. That costs one index value ({0} in all) and one more decoder state; the pass, the payload and the timing are unchanged.",
+                        IndexValues(r)));
             }
 
             // A group whose members already share a step is machinery for a guarantee the
@@ -1094,20 +1138,20 @@ namespace Yozolab.DaerD
         }
 
         /// <summary>
-        /// The slot whose arrival closes a lap, or -1 when the pass has none. Rates always
-        /// leave one; a cycle written by hand need not, and a slot anything can request is no
-        /// use as one however rarely the pass sends it.
+        /// The slot whose arrival closes a lap, or -1 when the pass has none.
+        ///
+        /// Free when the pass already sends some slot exactly once and nothing can request it
+        /// — rates always leave such a slot, a cycle written by hand need not. A setup that
+        /// asks for the drift flag and has no such slot gets a marker bought for it instead
+        /// (<see cref="Clock.markerDedicated"/>), so this is -1 for such a setup only while
+        /// the flag is off. The one pass with no marker to be had either way is one sending a
+        /// single slot from end to end, where a lap has nothing in it to be missing.
         /// </summary>
         public static int LapMarkerSlot(Request r)
         {
             var slots = BuildSlots(r);
             if (slots.Count == 0) return -1;
-            var requested = new HashSet<int>();
-            var requestable = RequestableTargets(r);
-            for (int i = 0; i < slots.Count; i++)
-                foreach (var name in slots[i].targets)
-                    if (requestable.Contains(name)) requested.Add(i);
-            return AsyncSyncSchedule.LapMarker(EffectiveSchedule(r, slots), requested);
+            return BuildClock(r, slots, EffectiveSchedule(r, slots)).markerSlot;
         }
 
         /// <summary>Request targets in cycle order, deduplicated, restricted to actual

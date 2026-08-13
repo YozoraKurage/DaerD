@@ -2435,18 +2435,87 @@ namespace Yozolab.DaerD.Tests
             Assert.AreEqual(-1, AsyncSyncBuilder.LapMarkerSlot(request));
         }
 
+        /// <summary>
+        /// A pass with no slot to spare buys a marker instead of going without the flag: one
+        /// step is given an index value of its own, which costs an index value and a decoder
+        /// state and changes nothing else about the pass.
+        /// </summary>
         [Test]
-        public void Validate_RefusesStale_WhenNothingClosesALap()
+        public void LapMarker_IsBoughtWhenThePassHasNoneToSpare()
         {
             var controller = NewController();
             var request = NewRequest(controller, "F", "B", "I");
+            request.requestTargets.AddRange(new[] { "F", "B", "I" });
+            int plain = AsyncSyncBuilder.IndexValues(request);
+
+            // Nothing marks a lap while the flag is off, and nothing is paid for either.
+            Assert.AreEqual(-1, AsyncSyncBuilder.LapMarkerSlot(request));
+            Assert.AreEqual(3, plain);
+
             request.stale = true;
+            Assert.IsNull(AsyncSyncBuilder.Validate(request),
+                "a bought marker is what lets any pass carry the flag");
+            Assert.GreaterOrEqual(AsyncSyncBuilder.LapMarkerSlot(request), 0);
+            Assert.AreEqual(plain + 1, AsyncSyncBuilder.IndexValues(request),
+                "exactly one index value, and only while the flag is on");
+
+            var slots = AsyncSyncBuilder.BuildSlots(request);
+            var clock = AsyncSyncBuilder.BuildClock(request, slots,
+                AsyncSyncBuilder.EffectiveSchedule(request, slots));
+            Assert.IsTrue(clock.markerDedicated);
+            // The value the ring writes at that step, and one no detour writes: a request
+            // sends its slot in the request phase, so it cannot make a lap look over.
+            Assert.AreNotEqual(clock.MarkerIndex,
+                clock.Index(clock.markerSlot, AsyncSyncSchedule.RequestPhase));
+
+            Assert.IsTrue(AsyncSyncBuilder.Warnings(request)
+                .Exists(w => w.Contains("an index value of its own")),
+                "what it costs is said, not discovered");
+        }
+
+        /// <summary>The marker is free where the pass already has a slot to spare, and the
+        /// index is exactly as wide as it was — regenerating an existing setup with the flag
+        /// on must not move its parameters.</summary>
+        [Test]
+        public void LapMarker_CostsNothingWhenThePassAlreadyClosesALap()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            int plain = AsyncSyncBuilder.IndexValues(request);
+
+            request.stale = true;
+            Assert.AreEqual(plain, AsyncSyncBuilder.IndexValues(request));
+            Assert.AreEqual(0, AsyncSyncBuilder.LapMarkerSlot(request));
+
+            var slots = AsyncSyncBuilder.BuildSlots(request);
+            var clock = AsyncSyncBuilder.BuildClock(request, slots,
+                AsyncSyncBuilder.EffectiveSchedule(request, slots));
+            Assert.IsFalse(clock.markerDedicated);
+            Assert.AreEqual(clock.Index(0, 0), clock.MarkerIndex);
+        }
+
+        /// <summary>The one pass that cannot carry the flag: a lap with a single slot in it
+        /// has nothing that could go missing. Refused rather than dropped, because a Stale
+        /// that never comes up is worse than no flag at all.</summary>
+        [Test]
+        public void Validate_RefusesStale_OnAPassOfOneSlot()
+        {
+            var controller = new AnimatorController();
+            controller.AddLayer("Base");
+            controller.AddParameter("F1", AnimatorControllerParameterType.Float);
+            controller.AddParameter("F2", AnimatorControllerParameterType.Float);
+
+            // Two Floats in two channels are one slot, and one slot only builds with a clock.
+            var request = NewRequest(controller, "F1", "F2");
+            request.floatChannels = 2;
+            request.allowRepeatSteps = true;
+            Assert.AreEqual(1, AsyncSyncBuilder.BuildSlots(request).Count);
             Assert.IsNull(AsyncSyncBuilder.Validate(request));
 
-            request.requestTargets.AddRange(new[] { "F", "B", "I" });
+            request.stale = true;
             var error = AsyncSyncBuilder.Validate(request);
             Assert.IsNotNull(error);
-            StringAssert.Contains("closes a lap", error);
+            StringAssert.Contains("same slot", error);
 
             // ...and the same setup without the flag is fine, which is the point of refusing
             // rather than dropping it: nothing else about the pass is wrong.

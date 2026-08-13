@@ -230,44 +230,110 @@ namespace Yozolab.DaerD
             var stepPhases = new int[steps];
             var slotPhases = new int[count];
             for (int i = 0; i < count; i++) slotPhases[i] = 1;
-            if (r == null || !r.allowRepeatSteps || steps == 0)
-                return new Clock(stepPhases, slotPhases, true);
+            bool clocked = r != null && r.allowRepeatSteps && steps > 0;
 
-            // A step whose predecessor sends another slot is where a run begins.
-            int start = -1;
-            for (int k = 0; k < steps && start < 0; k++)
-                if (schedule[k] != schedule[(k - 1 + steps) % steps]) start = k;
-            if (start < 0)
+            if (clocked)
             {
-                // No run begins anywhere, so every step sends the one slot and the alternation
-                // is the plain parity of the position — which closes on the wrap only when the
-                // pass is even. `separates` reports the odd one rather than papering over it.
-                for (int k = 0; k < steps; k++) stepPhases[k] = k % 2;
-            }
-            else
-            {
-                for (int i = 1; i < steps; i++)
+                // A step whose predecessor sends another slot is where a run begins.
+                int start = -1;
+                for (int k = 0; k < steps && start < 0; k++)
+                    if (schedule[k] != schedule[(k - 1 + steps) % steps]) start = k;
+                if (start < 0)
                 {
-                    int k = (start + i) % steps, previous = (start + i - 1) % steps;
-                    stepPhases[k] = schedule[k] == schedule[previous]
-                        ? 1 - stepPhases[previous] : 0;
+                    // No run begins anywhere, so every step sends the one slot and the
+                    // alternation is the plain parity of the position — which closes on the
+                    // wrap only when the pass is even. `separates` reports the odd one rather
+                    // than papering over it.
+                    for (int k = 0; k < steps; k++) stepPhases[k] = k % 2;
+                }
+                else
+                {
+                    for (int i = 1; i < steps; i++)
+                    {
+                        int k = (start + i) % steps, previous = (start + i - 1) % steps;
+                        stepPhases[k] = schedule[k] == schedule[previous]
+                            ? 1 - stepPhases[previous] : 0;
+                    }
                 }
             }
 
-            // Read back off the assignment rather than derived beside it: a slot needs its
-            // second decoder state exactly when some step actually sends its phase 1, and the
-            // pass is separated exactly when no neighbouring pair repeats slot AND phase.
+            int markerStep = -1, markerSlot = LapMarker(schedule, RequestedSlots(r, slots));
+            bool dedicated = false;
+            if (markerSlot >= 0)
+            {
+                markerStep = schedule.IndexOf(markerSlot);
+            }
+            else if (r != null && r.stale && count > 1)
+            {
+                // Nothing in the pass closes a lap on its own, and the setup wants the flag
+                // anyway: one step is given an index value of its own, which is exactly what a
+                // phase is. The pass, the payload and the timing are all unchanged — the step
+                // simply announces itself with a value nothing else writes, so the watcher
+                // hears that step and no other. See MarkerHost for where it goes.
+                markerStep = MarkerHost(schedule, count);
+                markerSlot = markerStep >= 0 ? schedule[markerStep] : -1;
+                if (markerSlot >= 0)
+                {
+                    int phase = 0;
+                    for (int k = 0; k < steps; k++)
+                        if (schedule[k] == markerSlot)
+                            phase = Mathf.Max(phase, stepPhases[k] + 1);
+                    stepPhases[markerStep] = phase;
+                    dedicated = true;
+                }
+            }
+
+            // Read back off the assignment rather than derived beside it: a slot needs another
+            // decoder state exactly when some step actually sends another of its phases, and
+            // the pass is separated exactly when no neighbouring pair repeats slot AND phase.
             bool separates = true;
             for (int k = 0; k < steps; k++)
             {
-                int next = (k + 1) % steps;
-                if (schedule[k] == schedule[next] && stepPhases[k] == stepPhases[next])
-                    separates = false;
                 int slot = schedule[k];
                 if (slot >= 0 && slot < count)
                     slotPhases[slot] = Mathf.Max(slotPhases[slot], stepPhases[k] + 1);
+                if (!clocked) continue;
+                int next = (k + 1) % steps;
+                if (schedule[k] == schedule[next] && stepPhases[k] == stepPhases[next])
+                    separates = false;
             }
-            return new Clock(stepPhases, slotPhases, separates);
+            return new Clock(stepPhases, slotPhases, separates, markerStep, markerSlot,
+                dedicated);
+        }
+
+        /// <summary>The slots anything can request, which cannot mark a lap: a detour sends
+        /// one a second time in the same lap.</summary>
+        static HashSet<int> RequestedSlots(Request r, List<Slot> slots)
+        {
+            var requested = new HashSet<int>();
+            if (r == null || slots == null) return requested;
+            var requestable = AsyncSyncBuilder.RequestableTargets(r);
+            if (requestable.Count == 0) return requested;
+            for (int i = 0; i < slots.Count; i++)
+                foreach (var name in slots[i].targets)
+                    if (requestable.Contains(name)) requested.Add(i);
+            return requested;
+        }
+
+        /// <summary>
+        /// The step a bought marker is put on: the first step of the slot the pass visits most
+        /// often.
+        ///
+        /// Any step would do for the measuring — each of them happens once a pass. The choice
+        /// is about what the marker costs in blindness: the judgement cannot ask about the
+        /// slot the marker is on (being there is its arrival), and a slot the pass sends
+        /// several times is the one whose arrival bit says least anyway, since any one of its
+        /// visits raises it. So the marker goes where the least is given up.
+        /// </summary>
+        static int MarkerHost(List<int> schedule, int count)
+        {
+            var visits = new int[count];
+            foreach (int slot in schedule)
+                if (slot >= 0 && slot < count) visits[slot]++;
+            int host = -1;
+            for (int i = 0; i < count; i++)
+                if (visits[i] > 0 && (host < 0 || visits[i] > visits[host])) host = i;
+            return host < 0 ? -1 : schedule.IndexOf(host);
         }
 
         /// <summary>
