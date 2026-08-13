@@ -9,9 +9,9 @@ namespace Yozolab.DaerD
     /// <summary>
     /// Wizard for <see cref="AsyncSyncBuilder"/>: tick the parameters to multiplex (with a
     /// search filter), then arrange them in the Sync Order section — drag rows to set the
-    /// cycle order, give a row a ×N rate to sync it N times per pass, mark it Req to accept
-    /// sync requests, and read the resulting refresh interval next to each row, with the
-    /// whole cycle previewed underneath. The form itself lives in <see cref="AsyncSyncForm"/>
+    /// cycle order, mark a row Req to accept sync requests, and read the resulting refresh
+    /// interval next to each row, with the whole cycle previewed underneath. The form itself
+    /// lives in <see cref="AsyncSyncForm"/>
     /// (shared with the sync layer's dedicated panel); the wizard adds the layer choice —
     /// create a new layer, or regenerate a saved setup's layer in place.
     /// </summary>

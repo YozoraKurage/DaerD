@@ -160,7 +160,11 @@ namespace Yozolab.DaerD.Authoring
         /// out). Ignored under an explicit <see cref="Schedule"/>.
         ///
         /// For "send this the moment it changes" reach for <see cref="Requestable"/> instead —
-        /// a weight buys a target places in every pass, whether or not anything moved.
+        /// a weight buys a target places in every pass, whether or not anything moved. That is
+        /// why the wizard stopped offering weights and this call did not: a recipe author is
+        /// spelling a pass out and can mean this, while a form that hands the control to
+        /// everyone mostly hands out a longer pass. Setups that carry weights are still loaded,
+        /// built and exported unchanged.
         /// </summary>
         public AsyncSyncRecipeBuilder Rate(string parameter, int timesPerPass)
         {

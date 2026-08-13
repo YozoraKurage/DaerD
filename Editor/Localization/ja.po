@@ -2094,14 +2094,10 @@ msgstr "'{0}' は同期の仕組み側のパラメーターのため、多重化
 
 # ---- async sync (order & rates) ----
 
-msgid "Cycle Order & Weights"
-msgstr "巡回の順序と重み"
 
 msgid "Tick parameters above — drag them here into the order the cycle should visit them."
 msgstr "上の一覧でパラメーターにチェックを入れると、ここに並びます。巡回する順にドラッグで並べ替えてください。"
 
-msgid "Top to bottom is the cycle order. ×N gives a parameter N places in the pass, and everything else shares the steps in between — a share of the pass rather than a speed, so raising everyone's changes nothing and raising one lengthens the pass for the rest."
-msgstr "上から下が巡回の順序です。×N を指定するとそのパラメーターは 1 周に N 個の枠を取り、残りのパラメーターはその合間のステップを分け合います。速度ではなく 1 周の配分なので、全員を上げても何も変わらず、1 つを上げると他が遅くなります。"
 
 msgid "every {0:0.##} s"
 msgstr "{0:0.##} 秒ごと"
@@ -2114,8 +2110,6 @@ msgid "Top to bottom is the cycle order. The timing itself is set by hand in the
 msgstr "上から下が巡回の順序です。タイミングそのものは下のタイムラインで手動指定しています。"
 
 
-msgid "This setup carries an explicit cycle written in C#, so top to bottom is only the listing order and ×N only decides which parameters share a step. The pass itself is the timeline below."
-msgstr "このセットアップは C# で書かれた明示スケジュールを持っているため、ここでの上下は並び順にすぎず、×N はどのパラメーターが同じステップに乗るかだけを決めます。1 周そのものは下のタイムラインです。"
 
 
 msgid "Click a row to make that step send it. Every step sends exactly one slot, so a click moves the step rather than adding one."
@@ -2135,8 +2129,6 @@ msgstr "このパラメーターが乗るステップです。同じ番号の行
 
 
 
-msgid "Back To Weights"
-msgstr "重みに戻す"
 
 
 
@@ -3075,11 +3067,24 @@ msgstr "このセットアップはステップごとに書き出された周回
 msgid "This setup carries an explicit cycle written in C#. It is shown here and still built as it stands, but a cycle is no longer written in this wizard — sync requests do what it was for."
 msgstr "このセットアップは C# で書かれた明示的な巡回順を持っています。ここに表示し、そのまま生成もしますが、巡回順の記述はこのウィザードでは行いません（同期リクエストが同じ用途を満たします）。"
 
-msgid "Discard the pass this setup carries and let the ×N weights lay the cycle out again. There is no way back to it from here."
-msgstr "このセットアップが持っている周回を破棄し、×N の重みから巡回を組み直します。ここから元に戻す手段はありません。"
 
 msgid "This setup carries a pass written out step by step, so top to bottom is only the listing order. The pass itself is the timeline below."
 msgstr "このセットアップはステップごとに書き出された周回を持っているため、上から下は並び順の表示にすぎません。周回そのものは下のタイムラインです。"
 
-msgid "Steps of the carried pass that send this parameter. Go back to the weights to have the pass worked out from ×N again."
-msgstr "このパラメーターを送る、持ち込まれた周回のステップ数です。重みに戻すと ×N から周回を組み直せます。"
+msgid "Cycle Order"
+msgstr "巡回順"
+
+msgid "Top to bottom is the cycle order, and every parameter gets one place in the pass. A value that has to reach remotes the moment it changes is marked Req instead — the cycle then sends it at the next step rather than when its turn comes."
+msgstr "上から下が巡回順で、各パラメーターは 1 周に 1 か所ずつ入ります。変わった瞬間にリモートへ届けたい値は代わりに Req を付けてください（順番を待たず、次のステップで送られます）。"
+
+msgid "This setup carries an explicit cycle written in C#, so top to bottom is only the listing order. The pass itself is the timeline below."
+msgstr "このセットアップは C# で書かれた明示的な巡回順を持っているため、上から下は並び順の表示にすぎません。周回そのものは下のタイムラインです。"
+
+msgid "Steps of the pass that send this parameter. A setup saved with per-target weights keeps them; new ones give every parameter one place and use Req for the values that cannot wait."
+msgstr "このパラメーターを送る周回のステップ数です。ターゲットごとの重みを持つ保存済みセットアップはそのまま保たれます。新規は各パラメーター 1 か所ずつで、待てない値には Req を使ってください。"
+
+msgid "Back To Cycle Order"
+msgstr "巡回順に戻す"
+
+msgid "Discard the pass this setup carries and lay the cycle out from the list above again. There is no way back to it from here."
+msgstr "このセットアップが持っている周回を破棄し、上の一覧から巡回を組み直します。ここから元に戻す手段はありません。"

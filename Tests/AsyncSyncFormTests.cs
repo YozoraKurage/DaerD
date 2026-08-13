@@ -178,6 +178,30 @@ namespace Yozolab.DaerD.Tests
             Assert.IsFalse(Rebuild(controller, config).stale);
         }
 
+        /// <summary>
+        /// Weights are no longer handed out by this form, which makes carrying them faithfully
+        /// the whole of its job with them. They used to be clamped on the way in to what the
+        /// ×N popup could show, so a recipe's <c>.Rate("F", 8)</c> came back out as a ×4 —
+        /// opening the layer's panel and pressing Apply was enough to halve it, silently, with
+        /// no control touched.
+        /// </summary>
+        [Test]
+        public void SavedWeightsSurviveTheRoundTrip_EvenAboveWhatTheFormEverOffered()
+        {
+            var controller = NewController();
+            var config = Config();
+            config.rates.Add(new GraphFrameData.AsyncSyncConfig.SyncRate { name = "F", rate = 8 });
+            config.rates.Add(new GraphFrameData.AsyncSyncConfig.SyncRate { name = "B", rate = 2 });
+
+            var rebuilt = Rebuild(controller, config);
+
+            Assert.AreEqual(8, rebuilt.RateOf("F"));
+            Assert.AreEqual(2, rebuilt.RateOf("B"));
+            Assert.AreEqual(1, rebuilt.RateOf("I"), "an unweighted target stays unweighted");
+
+            Object.DestroyImmediate(controller);
+        }
+
         /// <summary>Groups live on the rows in the form and as a list in the setup, and the
         /// translation between the two is the only place either shape is written.</summary>
         [Test]

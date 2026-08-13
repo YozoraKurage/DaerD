@@ -9,19 +9,20 @@ namespace Yozolab.DaerD
     /// <summary>
     /// The async-sync setup form, shared between the wizard (<see cref="AsyncSyncWindow"/>)
     /// and the sync layer's dedicated panel (AsyncSyncPanel): the generated-sync fields, the
-    /// tick list, the drag-to-order cycle editor with per-row ×N weights and Req(uestable)
-    /// marks, and the cost/cycle preview. The host owns the layer choice and the apply
-    /// button; the form owns every input that ends up in the
-    /// <see cref="AsyncSyncBuilder.Request"/>.
+    /// tick list, the drag-to-order cycle list with its Req(uestable) marks, and the
+    /// cost/cycle preview. The host owns the layer choice and the apply button; the form owns
+    /// every input that ends up in the <see cref="AsyncSyncBuilder.Request"/>.
     ///
-    /// One pass, laid out from the weights: that is the whole of what this form authors. A
-    /// setup can also carry a pass written out step by step — a grid from
-    /// <see cref="AsyncSyncBuilder.Request.steps"/>, or a cycle from C# — and those are DRAWN
-    /// here and no longer edited. They stay buildable, loadable and exportable; what the
-    /// wizard offers is the timeline that shows what such a pass does, and the way back to the
-    /// weights. Hand timing answered questions that sync requests now answer without a pass to
-    /// maintain, and two ways to say when a value goes out is one more than the technique
-    /// needs.
+    /// One plain round robin — every parameter once, in the order the list is in — is the
+    /// whole of what this form authors. Everything else that decides WHEN a value goes out is
+    /// drawn and not edited: a grid from <see cref="AsyncSyncBuilder.Request.steps"/>, a cycle
+    /// from C#, and the per-target weights of a setup saved before this form stopped handing
+    /// them out. All three stay buildable, loadable and exportable — what the wizard offers is
+    /// the timeline showing what such a pass does, and the way back to a plain pass.
+    ///
+    /// They went one at a time and for the same reason. Each was a second vocabulary for "this
+    /// value has to go out sooner", and a sync request says it better: at the next step
+    /// boundary, for one step of the pass, and only when it is actually raised.
     /// </summary>
     class AsyncSyncForm
     {
@@ -98,10 +99,6 @@ namespace Yozolab.DaerD
         // structural edits that can change the answer.
         HashSet<string> _animated;
         AnimatorController _animatedController;
-
-        // ×1 is "no rate" — the popup only offers meaningful multipliers beyond it.
-        static readonly int[] RateValues = { 1, 2, 3, 4 };
-        static readonly string[] RateLabels = { "×1", "×2", "×3", "×4" };
 
         // Rebuilt per draw so a language switch is picked up. Order matches the enum.
         static string[] EncodingLabels() => new[]
@@ -201,8 +198,12 @@ namespace Yozolab.DaerD
                     if (row.name == name)
                     {
                         row.selected = true;
+                        // Kept as saved, to the model's own ceiling. It used to be clamped to
+                        // what the ×N popup could show, which quietly turned a recipe's ×8 into
+                        // a ×4 the moment its layer was opened and applied — a saved setup the
+                        // form cannot author is still a saved setup it must not rewrite.
                         if (rates.TryGetValue(name, out int rate))
-                            row.rate = Mathf.Clamp(rate, 1, RateValues[RateValues.Length - 1]);
+                            row.rate = Mathf.Clamp(rate, 1, AsyncSyncBuilder.MaxRate);
                         row.request = config.requests != null && config.requests.Contains(name);
                         row.split = config.slotBreaks != null && config.slotBreaks.Contains(name);
                         _order.Add(row);
@@ -489,13 +490,19 @@ namespace Yozolab.DaerD
 
         /// <summary>
         /// The cycle editor: selected parameters in multiplex order. Drag the handle to
-        /// reorder; the ×N popup syncs a row N times per pass; Req marks the row as
-        /// requestable (states can ask for it out of turn); the label on the right is the
-        /// refresh interval the current schedule actually delivers.
+        /// reorder; Req marks the row as requestable (states can ask for it out of turn); the
+        /// label on the right is the refresh interval the current schedule actually delivers.
+        ///
+        /// The ×N column is a reading, not a control. A weight said "give this one a bigger
+        /// share of the pass", which is what a sync request says better: a request puts the
+        /// value on the wire at the next step boundary, costs the pass one step and only when
+        /// it is actually raised, while a weight lengthens the pass for everybody else
+        /// permanently — and cannot always be honoured even then. Weights already saved go on
+        /// being read, built and exported; this form simply does not hand out new ones.
         /// </summary>
         public void DrawOrderSection(AsyncSyncBuilder.Request request)
         {
-            EditorGUILayout.LabelField(L.Tr("Cycle Order & Weights"), EditorStyles.boldLabel);
+            EditorGUILayout.LabelField(L.Tr("Cycle Order"), EditorStyles.boldLabel);
             if (_order.Count == 0)
             {
                 EditorGUILayout.LabelField(
@@ -507,15 +514,14 @@ namespace Yozolab.DaerD
                 Manual
                     ? L.Tr("This setup carries a pass written out step by step, so top to bottom is only the listing order. The pass itself is the timeline below.")
                     : _schedule.Count > 0
-                        // Rates are not inert under a carried cycle, only demoted: the pass is
-                        // the cycle's, but BuildSlots still groups by (type, rate), so the ×N
-                        // popup goes on deciding which parameters share a step.
-                        ? L.Tr("This setup carries an explicit cycle written in C#, so top to bottom is only the listing order and ×N only decides which parameters share a step. The pass itself is the timeline below.")
-                        : L.Tr("Top to bottom is the cycle order. ×N gives a parameter N places in the pass, and everything else shares the steps in between — a share of the pass rather than a speed, so raising everyone's changes nothing and raising one lengthens the pass for the rest."),
+                        ? L.Tr("This setup carries an explicit cycle written in C#, so top to bottom is only the listing order. The pass itself is the timeline below.")
+                        : L.Tr("Top to bottom is the cycle order, and every parameter gets one place in the pass. A value that has to reach remotes the moment it changes is marked Req instead — the cycle then sends it at the next step rather than when its turn comes."),
                 EditorStyles.miniLabel);
 
             var intervals = AsyncSyncBuilder.RefreshIntervals(request);
-            var visits = Manual ? VisitCounts(ColumnSets(request)) : null;
+            // Read off the pass either way: for a setup carrying saved weights this is where
+            // they show up, and for one laid out here it is one apiece.
+            var visits = VisitCounts(ColumnSets(request));
             // Batching is why two rows can move as one, and until now nothing said so. The
             // slot number is shown whenever channels could group anything — a condition that
             // cannot change mid-draw, unlike "is anything actually grouped", which the Split
@@ -569,23 +575,14 @@ namespace Yozolab.DaerD
                     EditorGUI.EndDisabledGroup();
                 }
 
-                if (Manual)
-                {
-                    // A count, not a control: under a hand-written pass neither the weight nor
-                    // the batching is the model's to decide any more, so showing the weight as
-                    // an input would be a lie.
-                    visits.TryGetValue(row.name, out int times);
-                    EditorGUILayout.LabelField(
-                        new GUIContent("×" + times,
-                            L.Tr("Steps of the carried pass that send this parameter. Go back to the weights to have the pass worked out from ×N again.")),
-                        EditorStyles.miniLabel, GUILayout.Width(48));
-                }
-                else
-                {
-                    int rateIndex = Mathf.Max(0, Array.IndexOf(RateValues, row.rate));
-                    rateIndex = EditorGUILayout.Popup(rateIndex, RateLabels, GUILayout.Width(48));
-                    row.rate = RateValues[rateIndex];
-                }
+                // How often the pass sends this row, as a reading. Blank at one place, which
+                // is what every row of a setup laid out here has: a column of ×1 would be
+                // noise, and the number is only ever interesting where a saved weight put it.
+                visits.TryGetValue(row.name, out int times);
+                EditorGUILayout.LabelField(
+                    new GUIContent(times > 1 ? "×" + times : string.Empty,
+                        L.Tr("Steps of the pass that send this parameter. A setup saved with per-target weights keeps them; new ones give every parameter one place and use Req for the values that cannot wait.")),
+                    EditorStyles.miniLabel, GUILayout.Width(48));
 
                 row.request = GUILayout.Toggle(row.request,
                     new GUIContent("Req",
@@ -793,8 +790,8 @@ namespace Yozolab.DaerD
         /// that every other part of the wizard then had to speak. What was built with it goes
         /// on building: the grid and the C# cycle are still loaded, still regenerated, still
         /// exported, and the timeline below still shows exactly what they do. Only the editing
-        /// went away, which is why the way out has to stay — without it, the weights above
-        /// would sit there overridden by something nothing on screen can reach.
+        /// went away, which is why the way out has to stay — without it, the list above would
+        /// sit there overridden by something nothing on screen can reach.
         /// </summary>
         void DrawTimingMode(AsyncSyncBuilder.Request request, List<List<string>> columns)
         {
@@ -806,8 +803,8 @@ namespace Yozolab.DaerD
                     ? L.Tr("This setup carries a pass written out step by step. It is shown here and still built as it stands, but hand timing is no longer set up in this wizard — sync requests do what it was for.")
                     : L.Tr("This setup carries an explicit cycle written in C#. It is shown here and still built as it stands, but a cycle is no longer written in this wizard — sync requests do what it was for."),
                 WrappedMiniLabel());
-            if (GUILayout.Button(new GUIContent(L.Tr("Back To Weights"),
-                    L.Tr("Discard the pass this setup carries and let the ×N weights lay the cycle out again. There is no way back to it from here.")),
+            if (GUILayout.Button(new GUIContent(L.Tr("Back To Cycle Order"),
+                    L.Tr("Discard the pass this setup carries and lay the cycle out from the list above again. There is no way back to it from here.")),
                     EditorStyles.miniButton, GUILayout.Width(110)))
             {
                 // The grid reaches the request through Snapshot and the cycle through
