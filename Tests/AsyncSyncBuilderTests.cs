@@ -406,6 +406,39 @@ namespace Yozolab.DaerD.Tests
             Assert.IsFalse(AsyncSyncBuilder.Warnings(worthwhile).Exists(w => w.Contains("saves nothing")));
         }
 
+        /// <summary>
+        /// A type with one target pays for a channel and multiplexes nothing — the channel
+        /// costs what syncing that parameter directly costs, and the value now waits its turn
+        /// on top. The lone Int in an otherwise Float setup is the shape this catches.
+        /// </summary>
+        [Test]
+        public void Warnings_CallOutATypeWithOnlyOneTarget()
+        {
+            var controller = new AnimatorController();
+            controller.AddLayer("Base");
+            controller.AddParameter("F1", AnimatorControllerParameterType.Float);
+            controller.AddParameter("F2", AnimatorControllerParameterType.Float);
+            controller.AddParameter("I", AnimatorControllerParameterType.Int);
+            controller.AddParameter("B", AnimatorControllerParameterType.Bool);
+
+            var lonely = NewRequest(controller, "F1", "F2", "I");
+            Assert.IsTrue(AsyncSyncBuilder.Warnings(lonely)
+                .Exists(w => w.Contains("'I' is the only Int")), "the lone Int");
+            Assert.IsFalse(AsyncSyncBuilder.Warnings(lonely)
+                .Exists(w => w.Contains("is the only Float")), "two Floats take turns");
+
+            // One of each is every type alone, and each of them is worth its own sentence:
+            // the bits differ, and so does what to do about it.
+            var allAlone = NewRequest(controller, "F1", "I", "B");
+            Assert.AreEqual(3, AsyncSyncBuilder.Warnings(allAlone)
+                .FindAll(w => w.Contains("is the only ")).Count);
+            Assert.IsTrue(AsyncSyncBuilder.Warnings(allAlone)
+                .Exists(w => w.Contains("'B' is the only Bool") && w.Contains("1 synced bit")),
+                "a Bool channel costs one bit, not eight");
+
+            Object.DestroyImmediate(controller);
+        }
+
         [Test]
         public void Warnings_CallOutATargetAnimationWrites()
         {

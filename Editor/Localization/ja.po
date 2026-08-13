@@ -969,6 +969,9 @@ msgstr "パラメーターストア側で、多重化する対象の synced を�
 msgid "A step carries one type, so at every step of this pass the other {0} type(s) of channel sit idle and the values waiting in them wait behind steps that could not have carried them. One ring per type would run passes of {1} instead of one pass of {2:0.#} s, for {3} synced bit(s) instead of {4}."
 msgstr "1 つのステップが運べるのは 1 種類の型だけなので、この周回ではどのステップでも残り {0} 種類の型のチャンネルが遊んでいます（そこで待っている値は、自分を運べないステップの後ろで待たされています）。型ごとにリングを分けると、1 周 {2:0.#} 秒が {1} になり、同期ビットは {4} → {3} になります。"
 
+msgid "'{0}' is the only {1} here, and a type with one target multiplexes nothing: its channel costs the {2} synced bit(s) that syncing '{0}' directly would, and the value reaches remotes no sooner for the trip. Sync it directly, or multiplex another {1} beside it."
+msgstr "'{0}' はここで唯一の {1} です。ターゲットが 1 つしかない型は何も多重化していません。そのチャンネルは '{0}' を直接同期するのと同じ {2} bit を使い、しかも値がリモートに届くのが早くなるわけでもありません。直接同期に戻すか、もう 1 つ {1} を多重化対象に加えてください。"
+
 msgid "Split By Type"
 msgstr "型ごとに分割"
 

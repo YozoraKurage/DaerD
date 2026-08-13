@@ -684,6 +684,26 @@ namespace Yozolab.DaerD
                         r.targets.Count, compressed, direct));
             }
 
+            // A type with one target is not multiplexed at all. Its channel carries that one
+            // parameter and nothing else, for the bits syncing it directly would cost, and
+            // the value reaches remotes no sooner for having gone round the ring — later, if
+            // anything, since it now waits its turn. Said per type, because the bits differ
+            // and because the fix ("multiplex another one of these, or leave this one out")
+            // is a different sentence for each.
+            var lone = DbtBuilder.ParametersByName(r.controller);
+            foreach (var type in ChannelTypes(r))
+            {
+                string only = null;
+                int count = 0;
+                foreach (var name in r.targets)
+                    if (lone.Find(name)?.type == type) { count++; only = name; }
+                if (count != 1) continue;
+                warnings.Add(L.Tr(
+                    "'{0}' is the only {1} here, and a type with one target multiplexes nothing: its channel costs the {2} synced bit(s) that syncing '{0}' directly would, and the value reaches remotes no sooner for the trip. Sync it directly, or multiplex another {1} beside it.",
+                    only, type,
+                    type == AnimatorControllerParameterType.Bool ? 1 : 8));
+            }
+
             // Refused outright without a clock; with one it builds and decodes, and is still
             // every target on the wire every step — direct sync wearing a cycle.
             if (r.allowRepeatSteps && r.targets.Count >= 2 && BuildSlots(r).Count < 2)
