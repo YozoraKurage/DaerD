@@ -15,17 +15,18 @@ namespace Yozolab.DaerD.DynamicAnalyze
     /// belong to the viewer moving a cursor along a finished trace, not to the engine holding
     /// its breath between frames.
     ///
-    /// With a <see cref="SyncWire"/> it runs TWO copies of the avatar — the wearer's and one
-    /// other person's — off the same clock, and the only thing crossing between them is what
-    /// the wire carries. Everything a remote gets wrong has to come from there, which is what
-    /// makes the answers worth anything.
+    /// With a <see cref="SyncWire"/> it runs the wearer's copy of the avatar and one copy per
+    /// other person in the instance off the same clock, and the only thing crossing between them
+    /// is what the wire carries. Everything a remote gets wrong has to come from there, which is
+    /// what makes the answers worth anything.
     /// </summary>
     static class Simulation
     {
         /// <summary>The wearer's copy: IsLocal, and the only one a localOnly driver runs on.</summary>
         public const string LocalScope = "Local";
 
-        /// <summary>Somebody else's copy of the same avatar.</summary>
+        /// <summary>Somebody else's copy of the same avatar. The first one keeps this name on
+        /// its own, so a run with one remote is spelt exactly as it always was.</summary>
         public const string RemoteScope = "Remote";
 
         /// <summary>The wire's own signals — when a sample went, and when one was lost.</summary>
@@ -33,6 +34,55 @@ namespace Yozolab.DaerD.DynamicAnalyze
 
         /// <summary>How far behind the other person is, per parameter — the remote view.</summary>
         public const string LagScope = "Lag";
+
+        /// <summary>
+        /// What to call the nth other person. "Remote", then "Remote 2", "Remote 3" — the first
+        /// keeps the bare name because a single-remote run is still what most questions are, and
+        /// every trace, saved clip and test that already says "Remote" goes on meaning it.
+        /// </summary>
+        public static string RemoteScopeAt(int index) =>
+            index <= 0 ? RemoteScope : RemoteScope + " " + (index + 1);
+
+        /// <summary>The lag rows of the nth other person. Their own scope rather than their own
+        /// row names, so a reader folds away everyone they are not asking about.</summary>
+        public static string LagScopeAt(int index) =>
+            index <= 0 ? LagScope : LagScope + " " + (index + 1);
+
+        /// <summary>A wire row that exists once per remote — "lost", "lost 2".</summary>
+        public static string WireRowAt(string name, int index) =>
+            index <= 0 ? name : name + " " + (index + 1);
+
+        /// <summary>Whether this scope is somebody else's copy of the avatar, whichever of them
+        /// it is. Asked by anything that offers to poke a client rather than read one.</summary>
+        public static bool IsRemote(string scope) =>
+            scope == RemoteScope
+            || (scope != null && scope.StartsWith(RemoteScope + " ", System.StringComparison.Ordinal));
+
+        /// <summary>Whether this scope is a running copy of the avatar at all — the wearer's or
+        /// anyone else's — as opposed to the wire's own signals or a lag row.</summary>
+        public static bool IsClient(string scope) => scope == LocalScope || IsRemote(scope);
+
+        /// <summary>Whether this scope is somebody's lag rows.</summary>
+        public static bool IsLag(string scope) =>
+            scope == LagScope
+            || (scope != null && scope.StartsWith(LagScope + " ", System.StringComparison.Ordinal));
+
+        /// <summary>
+        /// A remote's own seed for whatever it rolls. Derived rather than shared, so a Random
+        /// driver does not roll the same numbers on two copies — two clients agreeing by
+        /// accident is the one result that would be read as proof of something — and derived by
+        /// MULTIPLYING the mixer, so the first remote's seed is the one it has always had and
+        /// adding a second person does not reshuffle the first one's run.
+        /// </summary>
+        internal static int ClientSeed(int seed, int index) =>
+            unchecked((int)((uint)seed ^ 0x2545F491u * (uint)(index + 1)));
+
+        /// <summary>Which of the wearer's samples this remote misses. One stream each, so a
+        /// remote losing a sample cannot shift what anybody else receives — and the first
+        /// remote's stream is the wire's own seed, unshifted, so its run is unchanged by
+        /// whoever else turned up.</summary>
+        internal static int LossSeed(int seed, int index) =>
+            unchecked((int)((uint)seed ^ 0x9E3779B9u * (uint)index));
 
         public static SignalTrace Run(AnimatorController controller, SimClock clock = null,
             Stimulus stimulus = null) =>
@@ -52,33 +102,39 @@ namespace Yozolab.DaerD.DynamicAnalyze
             var clients = new List<SimClient>();
             try
             {
+                int remotes = wire != null ? wire.Remotes : 0;
                 clients.Add(new SimClient(controller, LocalScope, true, clock.seed));
-                // A different seed, so a Random driver does not roll the same numbers on both
-                // copies — two clients agreeing by accident is the one result that would be
-                // read as proof of something.
-                if (wire != null)
-                    clients.Add(new SimClient(controller, RemoteScope, false,
-                        clock.seed ^ 0x2545F491));
+                for (int i = 0; i < remotes; i++)
+                    clients.Add(new SimClient(controller, RemoteScopeAt(i), false,
+                        ClientSeed(clock.seed, i)));
 
                 var recorder = new TraceRecorder(controller, clients, wire != null,
                     settings.lagRows);
                 var steps = clock.Steps();
                 var pending = settings.stimulus != null
                     ? settings.stimulus.InOrder() : new List<Stimulus.Entry>();
-                var random = new SimRandom(wire != null ? wire.seed : 0);
 
-                int next = 0;
-                float time = 0f;
-                float joinAt = wire != null ? Mathf.Max(0f, wire.remoteJoinsAt) : 0f;
-                // Zero means everybody loaded together, and then there is nothing to hand
+                var loss = new SimRandom[remotes];
+                // Zero means somebody loaded with the wearer, and then there is nothing to hand
                 // over: both copies start from the same defaults and the first thing that
                 // crosses is the first sample. An arrival delivery is for somebody who turned
                 // up to a session already in progress.
-                bool arrived = wire == null || joinAt <= 0f;
-                // The first sample is one interval after the other person is there, so a
+                var arrived = new bool[remotes];
+                var dropped = new bool[remotes];
+                for (int i = 0; i < remotes; i++)
+                {
+                    loss[i] = new SimRandom(LossSeed(wire.seed, i));
+                    arrived[i] = wire.JoinsAt(i) <= 0f;
+                }
+
+                int next = 0;
+                float time = 0f;
+                // The first sample is one interval after there is somebody to send it to, so a
                 // remote starts knowing nothing — which is not a limitation of the model but
-                // the situation every remote is actually in when it arrives.
-                float nextSample = wire != null ? joinAt + wire.Interval : float.MaxValue;
+                // the situation every remote is actually in when it arrives. One schedule for
+                // everyone: the wearer reads its own values once and the reading is broadcast.
+                float nextSample = remotes > 0
+                    ? wire.EarliestJoin + wire.Interval : float.MaxValue;
 
                 for (int frame = 0; frame < steps.Length; frame++)
                 {
@@ -88,29 +144,35 @@ namespace Yozolab.DaerD.DynamicAnalyze
                     while (next < pending.Count && pending[next].atSeconds <= time)
                         Poke(clients, pending[next++]);
 
-                    bool sampled = false, dropped = false;
-                    if (!arrived && time >= joinAt)
+                    bool sampled = false;
+                    for (int i = 0; i < remotes; i++) dropped[i] = false;
+                    for (int i = 0; i < remotes; i++)
                     {
+                        if (arrived[i] || time < wire.JoinsAt(i)) continue;
                         // Arriving is itself a delivery: a joiner is handed the state of every
                         // synced parameter at once, which is why they decode whatever index
                         // they land on rather than waiting for the next change.
-                        arrived = true;
+                        arrived[i] = true;
                         sampled = true;
-                        Carry(wire, clients[0], clients[1]);
+                        Carry(wire, clients[0], clients[i + 1]);
                     }
                     while (time >= nextSample)
                     {
                         nextSample += wire.Interval;
                         sampled = true;
-                        if (random.NextChance(wire.dropChance)) dropped = true;
-                        else Carry(wire, clients[0], clients[1]);
+                        for (int i = 0; i < remotes; i++)
+                        {
+                            if (!arrived[i]) continue;
+                            if (loss[i].NextChance(wire.dropChance)) dropped[i] = true;
+                            else Carry(wire, clients[0], clients[i + 1]);
+                        }
                     }
 
                     for (int i = 0; i < clients.Count; i++)
                     {
                         // Somebody who has not arrived is not running: their copy of the avatar
                         // does not exist yet, and a flat line is what that looks like.
-                        if (i > 0 && !arrived) continue;
+                        if (i > 0 && !arrived[i - 1]) continue;
                         clients[i].Step(steps[frame]);
                     }
                     time += steps[frame];

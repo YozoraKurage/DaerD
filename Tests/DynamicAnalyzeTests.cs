@@ -544,22 +544,247 @@ namespace Yozolab.DaerD.Tests
 
             // "N" and "X" are never touched in this run; "Go" and the layer are.
             var shown = new System.Collections.Generic.List<string>();
-            int localCount = 0;
+            int localCount = 0, localShown = 0;
             foreach (var row in view.Visible())
-                if (row.IsHeader) localCount = row.count;
+                if (row.IsHeader) { localCount = row.count; localShown = row.shown; }
                 else shown.Add(row.signal.name);
             CollectionAssert.Contains(shown, "Go");
             CollectionAssert.Contains(shown, "Base/state");
             CollectionAssert.DoesNotContain(shown, "N");
             CollectionAssert.DoesNotContain(shown, "X");
             // The header still counts the quiet ones, so a reader can tell "not shown" from
-            // "not there".
+            // "not there" — and says how many of them are actually on screen.
             Assert.Greater(localCount, shown.Count);
+            Assert.AreEqual(shown.Count, localShown);
 
             view.movedOnly = false;
             int all = 0;
             foreach (var row in view.Visible()) if (!row.IsHeader) all++;
             Assert.AreEqual(localCount, all);
+        }
+
+        [Test]
+        public void View_NeverHidesARowItOffersToPoke()
+        {
+            // Nothing in this run ever moves — the exact state a fresh live session starts
+            // in. The value cells are the only controls there are, so a moved-only rule that
+            // hid quiet rows hid the way to make anything move along with them.
+            var view = new WaveformView
+            {
+                trace = Simulation.Run(NewController(), Clock(0.3f)),
+                editable = signal => signal.kind != SignalKind.State,
+            };
+
+            var shown = new System.Collections.Generic.List<string>();
+            int count = 0, listed = 0;
+            foreach (var row in view.Visible())
+                if (row.IsHeader) { count = row.count; listed = row.shown; }
+                else shown.Add(row.signal.name);
+            CollectionAssert.Contains(shown, "Go");
+            CollectionAssert.Contains(shown, "N");
+            // The state band is not editable and never moved, so it alone stays hidden — and
+            // the header's pair is what says it is hidden rather than missing.
+            CollectionAssert.DoesNotContain(shown, "Base/state");
+            Assert.AreEqual(shown.Count, listed);
+            Assert.Greater(count, listed);
+        }
+
+        [Test]
+        public void View_MeasuresBetweenItsTwoCursors_AndPutsTheMarkDownAndBackUp()
+        {
+            var view = new WaveformView { trace = Simulation.Run(NewController(), Clock(1f)) };
+            Assert.IsFalse(view.HasMark);
+            Assert.AreEqual(0f, view.Span(), 1e-6f, "one cursor has nothing to measure to");
+
+            view.cursorFrame = 48;
+            view.Mark(12);
+            Assert.IsTrue(view.HasMark);
+            // Thirty-six frames of a sixtieth of a second each — the answer a reader wants is
+            // the duration, and the frame numbers are only how it was pointed at.
+            Assert.AreEqual(36f / 60f, view.Span(), 1e-3f);
+
+            // Marked after the cursor rather than before it, which is the same measurement.
+            view.Mark(56);
+            Assert.AreEqual(8f / 60f, view.Span(), 1e-3f);
+
+            // The same frame again picks it up.
+            view.Mark(56);
+            Assert.IsFalse(view.HasMark);
+            Assert.AreEqual(0f, view.Span(), 1e-6f);
+        }
+
+        [Test]
+        public void View_KeepsTheMarkInsideTheRunItIsShowing()
+        {
+            var view = new WaveformView { trace = Simulation.Run(NewController(), Clock(1f)) };
+            view.cursorFrame = 50;
+            view.Mark(55);
+
+            // A shorter run under the same reader: a mark left pointing past the end would
+            // measure to a moment that does not exist.
+            view.trace = Simulation.Run(NewController(), Clock(0.2f));
+            view.ClampCursors();
+            Assert.AreEqual(view.Frames - 1, view.markFrame);
+            Assert.AreEqual(view.Frames - 1, view.cursorFrame);
+            Assert.IsTrue(view.HasMark);
+
+            // And no run at all is nothing to measure between.
+            view.trace = null;
+            view.ClampCursors();
+            Assert.IsFalse(view.HasMark);
+            Assert.AreEqual(-1, view.markFrame);
+        }
+
+        [Test]
+        public void Ghost_LinesUpTwoRunsByTime_NotByFrameNumber()
+        {
+            // Two runs of the same length whose frames are NOT the same lengths. By frame
+            // number the second one drifts against the first from the first second on; by
+            // time they are the same moments, which is what a comparison means.
+            var stimulus = new Stimulus().At(0.25f, "Go", true);
+            var settings = Wired(1f, new SyncWire { intervalSeconds = 0.1f }.Syncs("X"), stimulus);
+            settings.clock.jitter = 0.4f;
+            var jittery = Simulation.Run(NewController(), settings);
+
+            var even = Simulation.Run(NewController(), Clock(1f), stimulus);
+            Assert.AreNotEqual(jittery.TimeAt(30), even.TimeAt(30),
+                "the two runs have to disagree about when frame 30 was, or this proves nothing");
+
+            var cursor = new GhostCursor(jittery);
+            bool everDiffered = false;
+            for (int frame = 0; frame < even.Frames; frame++)
+            {
+                int at = cursor.At(even.TimeAt(frame));
+                // The incremental walk and the trace's own search are the same answer — the
+                // point of the walk is only that it costs one pass along the ghost instead of
+                // one search per column.
+                Assert.AreEqual(jittery.FrameAt(even.TimeAt(frame)), at, "column " + frame);
+                if (at != frame) everDiffered = true;
+            }
+            Assert.IsTrue(everDiffered,
+                "aligned by time, so the column and the ghost frame under it are not the same "
+                + "number — if they always were, this would be a frame-number overlay");
+
+            // Backwards is not a walk back: a row is drawn left to right, and the cursor is
+            // only ever asked about a later moment than the last one.
+            Assert.AreEqual(jittery.Frames - 1, cursor.At(0f));
+        }
+
+        [Test]
+        public void Ghost_AddsNoRowsOfItsOwn_AndSharesTheRowsScale()
+        {
+            var stimulus = new Stimulus().At(0.05f, "X", 1f);
+            var view = new WaveformView
+            {
+                trace = Simulation.Run(NewController(), Clock(0.5f), stimulus),
+            };
+            int before = view.Visible().Count;
+            var mine = view.trace.Find(Simulation.LocalScope, "X");
+            view.Measure();
+            Assert.AreEqual(1f, view.RangeOf(mine).y, 1e-4f);
+
+            // A second run that took the same parameter much further, and that has a signal
+            // the first one has not got at all. A ghost is another reading of the same things,
+            // so it must not put a row of its own on the list.
+            var other = new SignalTrace();
+            var theirs = other.Declare(Simulation.LocalScope, "X", SignalKind.Float);
+            var extra = other.Declare(Simulation.LocalScope, "OnlyOverThere", SignalKind.Float);
+            for (int i = 0; i < 30; i++) { Record(other, theirs, i * 0.5f); extra.Push(0f); }
+            view.ghost = other;
+            view.Invalidate();
+            view.Measure();
+
+            var names = new System.Collections.Generic.List<string>();
+            foreach (var row in view.Visible())
+                if (!row.IsHeader) names.Add(row.signal.name);
+            Assert.AreEqual(before, view.Visible().Count);
+            CollectionAssert.DoesNotContain(names, "OnlyOverThere");
+
+            // One row, one scale. Drawing the two runs against ranges of their own would put
+            // 1 and 14.5 at the same height and call them the same.
+            Assert.AreEqual(14.5f, view.RangeOf(mine).y, 1e-4f);
+            Assert.AreEqual(0f, view.RangeOf(mine).x, 1e-4f);
+        }
+
+        [Test]
+        public void Lag_SummarySaysTheWorstAndWhose_AndGoesOnSayingItAsARunGrows()
+        {
+            var trace = new SignalTrace();
+            var quiet = trace.Declare(Simulation.LagScope, "X", SignalKind.Float);
+            var late = trace.Declare(Simulation.LagScope, "Go", SignalKind.Float);
+            var summary = new LagSummary();
+
+            Assert.IsFalse(summary.Known, "nothing measured is not an answer of zero");
+            for (int i = 0; i < 5; i++) { Record(trace, quiet, 0f); late.Push(i * 0.01f); }
+            summary.Update(trace);
+            Assert.IsTrue(summary.Known);
+            Assert.AreEqual("Go", summary.Parameter);
+            Assert.AreEqual(0.04f, summary.Worst, 1e-4f);
+
+            // The same trace, longer — a live session hands the viewer the same one over and
+            // over, and a summary that only measured it once would freeze at the first repaint.
+            for (int i = 0; i < 20; i++) { Record(trace, quiet, 0f); late.Push(0.5f); }
+            summary.Update(trace);
+            Assert.AreEqual(0.5f, summary.Worst, 1e-4f);
+
+            // And a trimmed session still grows, so "what is new" cannot be read off the length.
+            trace.Trim(4);
+            for (int i = 0; i < 6; i++) { Record(trace, quiet, 2f); late.Push(0.5f); }
+            trace.Trim(4);
+            summary.Update(trace);
+            Assert.AreEqual("X", summary.Parameter, "the worst moved to another parameter");
+            Assert.AreEqual(2f, summary.Worst, 1e-4f);
+
+            // A second run is a second trace and must not inherit the first one's worst.
+            summary.Update(new SignalTrace());
+            Assert.IsFalse(summary.Known);
+            Assert.AreEqual(0f, summary.Worst, 1e-4f);
+        }
+
+        [Test]
+        public void Lag_SummaryReadsARealRun_AndHasNothingToSayWithoutARemote()
+        {
+            var wire = new SyncWire { intervalSeconds = 0.2f }.Syncs("X");
+            var stimulus = new Stimulus().At(0.05f, "X", 0.5f);
+            var trace = Simulation.Run(NewController(), Wired(1f, wire, stimulus));
+
+            var summary = new LagSummary();
+            summary.Update(trace);
+            Assert.IsTrue(summary.Known);
+            // "Go" is never on the wire and never poked, so the parameter that fell furthest
+            // behind is the one that travelled and was waited for.
+            Assert.AreEqual("X", summary.Parameter);
+            float worst = 0f;
+            var lag = trace.Find(Simulation.LagScope, "X");
+            for (int frame = 0; frame < trace.Frames; frame++)
+                worst = Mathf.Max(worst, lag.At(frame));
+            Assert.AreEqual(worst, summary.Worst, 1e-4f);
+
+            // A one-client run has no Lag rows at all, and nothing to say about them.
+            var alone = new LagSummary();
+            alone.Update(Simulation.Run(NewController(), Clock(0.2f)));
+            Assert.IsFalse(alone.Known);
+        }
+
+        [Test]
+        public void Bands_TakeTheirColourFromTheStatesName()
+        {
+            // The same name is the same colour wherever it turns up, so two spans of one state
+            // read as a repeat rather than as two different things.
+            Assert.AreEqual(WaveformColors.BandFor("Idle"), WaveformColors.BandFor("Idle"));
+            Assert.AreNotEqual(WaveformColors.BandFor("Idle"), WaveformColors.BandFor("On"));
+            Assert.AreNotEqual(WaveformColors.BandFor("Idle"), WaveformColors.BandFor("Idle "));
+            // A band with no name to hash falls back to the one colour every band used to be.
+            Assert.AreEqual(WaveformColors.StateBand, WaveformColors.BandFor(string.Empty));
+
+            // Translucent, because a band is the background a label sits on — and the label has
+            // to be readable on either editor skin.
+            var band = WaveformColors.BandFor("Idle");
+            Assert.AreEqual(WaveformColors.StateBand.a, band.a, 1e-4f);
+            float high = Mathf.Max(band.r, Mathf.Max(band.g, band.b));
+            float low = Mathf.Min(band.r, Mathf.Min(band.g, band.b));
+            Assert.Greater(high, 0.6f, "dark enough to swallow dark text");
+            Assert.Less(high - low, 0.6f, "saturated enough to fight the text for attention");
         }
 
         [Test]
@@ -732,6 +957,253 @@ namespace Yozolab.DaerD.Tests
                 if (here.At(frame) == 0f)
                     Assert.AreEqual(0f, lag.At(frame),
                         "counted an absence as being behind, at frame " + frame);
+        }
+
+        // ---- more than one other person -------------------------------------
+
+        /// <summary>Two runs of the same experiment: alone with one other person, and with a
+        /// second who walks in halfway. Everything about the first person has to be untouched by
+        /// that — which is the compatibility promise (a single-remote trace is exactly what it
+        /// always was) and the modelling promise (one person's wire is not another's) in one
+        /// assertion.</summary>
+        [Test]
+        public void Remotes_LeaveTheFirstPersonsRunExactlyAsItWasAlone()
+        {
+            SyncWire Wire() => new SyncWire
+            {
+                intervalSeconds = 0.1f,
+                dropChance = 0.3f,
+                seed = 5,
+            }.Syncs("X", "N");
+            Stimulus Inputs() => new Stimulus().At(0f, "X", 0.5f).At(0.4f, "N", 3f)
+                .At(0.7f, "X", -0.25f);
+
+            var alone = Simulation.Run(NewController(), Wired(1.2f, Wire(), Inputs()));
+            // 0.55 s is deliberately off the wire's own beat, so their arrival is a delivery
+            // nothing else on the wire was going to make that frame.
+            var crowd = Simulation.Run(NewController(),
+                Wired(1.2f, Wire().Joining(0.55f), Inputs()));
+
+            foreach (var signal in alone.Signals)
+            {
+                var same = crowd.Find(signal.scope, signal.name);
+                Assert.IsNotNull(same, signal.Path + " went missing when somebody else arrived");
+                // Every row but the send: the wearer reads its values once for everybody, and
+                // handing the new arrival the state IS a delivery, so that one row is allowed
+                // to say so. It is checked below instead.
+                if (signal.Path == "Wire/sample") continue;
+                for (int frame = 0; frame < alone.Frames; frame++)
+                    Assert.AreEqual(signal.At(frame), same.At(frame), 1e-6f,
+                        signal.Path + " moved at " + alone.TimeAt(frame) + "s because somebody"
+                        + " else turned up");
+            }
+
+            var sent = alone.Find(Simulation.WireScope, "sample");
+            var alsoSent = crowd.Find(Simulation.WireScope, "sample");
+            var arrival = crowd.Find(Simulation.WireScope, "remote here 2");
+            int extra = 0;
+            for (int frame = 0; frame < alone.Frames; frame++)
+            {
+                if (sent.At(frame) != 0f)
+                    Assert.AreEqual(1f, alsoSent.At(frame), "a send went missing");
+                if (sent.At(frame) == alsoSent.At(frame)) continue;
+                extra++;
+                Assert.IsTrue(arrival.ChangedAt(frame),
+                    "the wire sent at " + crowd.TimeAt(frame) + "s for no reason");
+            }
+            Assert.AreEqual(1, extra, "exactly one extra delivery: the second person arriving");
+        }
+
+        [Test]
+        public void Remotes_ArriveOnTheirOwnTimeAndLoseTheirOwnSamples()
+        {
+            var wire = new SyncWire
+            {
+                intervalSeconds = 0.1f,
+                dropChance = 0.5f,
+                seed = 3,
+            }.Syncs("X").Joining(0.5f);
+            var trace = Simulation.Run(NewController(),
+                Wired(1.5f, wire, new Stimulus().At(0f, "X", 0.5f)));
+
+            var second = Simulation.RemoteScopeAt(1);
+            Assert.AreEqual("Remote 2", second, "the second person is named after the first");
+            Assert.IsNotNull(trace.Find(second, "X"));
+            Assert.IsNotNull(trace.Find(Simulation.LagScopeAt(1), "X"),
+                "each person has lag rows of their own");
+
+            var here = trace.Find(Simulation.WireScope, "remote here");
+            var alsoHere = trace.Find(Simulation.WireScope, "remote here 2");
+            var theirs = trace.Find(second, "X");
+            for (int frame = 0; frame < trace.Frames; frame++)
+            {
+                Assert.AreEqual(1f, here.At(frame), "the first person was there all along");
+                if (trace.TimeAt(frame) < 0.5f)
+                {
+                    Assert.AreEqual(0f, alsoHere.At(frame));
+                    Assert.AreEqual(0f, theirs.At(frame),
+                        "a value reached somebody who was not in the instance");
+                }
+            }
+            Assert.AreEqual(1f, alsoHere.At(trace.Frames - 1));
+            Assert.AreEqual(0.5f, theirs.At(trace.Frames - 1), 0.01f,
+                "the late arrival never caught up");
+
+            // Half the samples are lost, and the two of them lose different ones: a stream each,
+            // so one person's bad connection is not everybody's.
+            var lost = trace.Find(Simulation.WireScope, "lost");
+            var alsoLost = trace.Find(Simulation.WireScope, "lost 2");
+            bool apart = false;
+            for (int frame = 0; frame < trace.Frames && !apart; frame++)
+                if (alsoHere.At(frame) != 0f && lost.At(frame) != alsoLost.At(frame))
+                    apart = true;
+            Assert.IsTrue(apart, "both remotes lost exactly the same samples — one stream, not two");
+        }
+
+        [Test]
+        public void Session_RunsEverybodyTheWayARunDoes()
+        {
+            var settings = new SimSettings
+            {
+                clock = new SimClock { fps = 60f, seconds = 0.5f, seed = 5 },
+                wire = new SyncWire { intervalSeconds = 0.1f }.Syncs("X").Joining(0.2f),
+            };
+            settings.stimulus.At(0f, "X", 0.5f);
+            var batch = Simulation.Run(NewController(), settings);
+            using (var session = new SimSession(NewController(), settings))
+            {
+                // A session has hands rather than a list, so the same input is made by hand
+                // before the first frame — which is where the run's own timed one lands.
+                session.Write(Simulation.LocalScope, "X", 0.5f);
+                for (int i = 0; i < 30; i++) session.StepOnce();
+                Assert.AreEqual(batch.Signals.Count, session.Trace.Signals.Count);
+                foreach (var signal in batch.Signals)
+                {
+                    var live = session.Trace.Find(signal.scope, signal.name);
+                    Assert.IsNotNull(live, signal.Path);
+                    for (int frame = 0; frame < batch.Frames; frame++)
+                        Assert.AreEqual(signal.At(frame), live.At(frame), 1e-6f,
+                            signal.Path + " at frame " + frame);
+                }
+            }
+        }
+
+        // ---- triggers -------------------------------------------------------
+
+        /// <summary>Idle and On, and one Trigger that swaps them — something to press and
+        /// something that visibly answers.</summary>
+        static AnimatorController Pushbutton()
+        {
+            var controller = new AnimatorController();
+            controller.AddLayer("Base");
+            controller.AddParameter("Bang", AnimatorControllerParameterType.Trigger);
+
+            var machine = controller.layers[0].stateMachine;
+            var idle = machine.AddState("Idle");
+            var on = machine.AddState("On");
+            machine.defaultState = idle;
+            foreach (var pair in new[] { (from: idle, to: on), (from: on, to: idle) })
+            {
+                var transition = pair.from.AddTransition(pair.to);
+                transition.hasExitTime = false;
+                transition.hasFixedDuration = true;
+                transition.duration = 0f;
+                transition.AddCondition(AnimatorConditionMode.If, 0f, "Bang");
+            }
+            return controller;
+        }
+
+        static int Pulses(SignalTrace.Signal signal)
+        {
+            int count = 0;
+            for (int frame = 0; frame < signal.Frames; frame++)
+                if (signal.At(frame) != 0f) count++;
+            return count;
+        }
+
+        [Test]
+        public void Trigger_IsAPulseTheRunCanSee_AndTakesItsTransition()
+        {
+            var stimulus = new Stimulus().At(0.05f, "Bang", 1f);
+            var trace = Simulation.Run(Pushbutton(), Clock(0.3f), stimulus);
+
+            var bang = trace.Find(Simulation.LocalScope, "Bang");
+            // Its own kind, so a viewer knows to offer a button rather than a checkbox.
+            Assert.AreEqual(SignalKind.Trigger, bang.kind);
+
+            // Mecanim takes a trigger down in the same frame the transition consumes it, so the
+            // press would leave no mark at all if a run recorded only what was left of it.
+            Assert.AreEqual(1, Pulses(bang), "a press is one frame up and then down again");
+            int fired = -1;
+            for (int frame = 0; frame < trace.Frames && fired < 0; frame++)
+                if (bang.At(frame) != 0f) fired = frame;
+            Assert.AreEqual(3, fired, "0.05 s at 60 fps is the fourth frame");
+
+            var state = trace.Find(Simulation.LocalScope, "Base/state");
+            Assert.AreEqual("Idle", state.TextAt(fired - 1));
+            Assert.AreEqual("On", state.TextAt(trace.Frames - 1), "the press did nothing");
+        }
+
+        [Test]
+        public void Trigger_FiresOncePerPress_SoTwoPressesAreTwoTransitions()
+        {
+            var stimulus = new Stimulus().At(0.05f, "Bang", 1f).At(0.15f, "Bang", 1f);
+            var trace = Simulation.Run(Pushbutton(), Clock(0.4f), stimulus);
+
+            var bang = trace.Find(Simulation.LocalScope, "Bang");
+            Assert.AreEqual(2, Pulses(bang));
+
+            // There and back: one press each way, and no press left standing to take a third.
+            var state = trace.Find(Simulation.LocalScope, "Base/state");
+            int changes = 0;
+            for (int frame = 0; frame < trace.Frames; frame++)
+                if (state.ChangedAt(frame)) changes++;
+            Assert.AreEqual(2, changes, "two presses, two transitions");
+            Assert.AreEqual("Idle", state.TextAt(trace.Frames - 1));
+        }
+
+        [Test]
+        public void Trigger_PokedLive_IsUpForOneFrameAndDownTheNext()
+        {
+            var settings = new SimSettings { clock = new SimClock { fps = 60f, seconds = 1f } };
+            using (var session = new SimSession(Pushbutton(), settings))
+            {
+                session.StepOnce();
+                var bang = session.Trace.Find(Simulation.LocalScope, "Bang");
+                Assert.AreEqual(0f, bang.At(bang.Frames - 1));
+
+                // What the value cell's button does: set it, and let the next frame answer.
+                session.Write(Simulation.LocalScope, "Bang", 1f);
+                session.StepOnce();
+                Assert.AreEqual(1f, bang.At(bang.Frames - 1), "the press was never visible");
+                var state = session.Trace.Find(Simulation.LocalScope, "Base/state");
+                Assert.AreEqual("On", state.TextAt(state.Frames - 1));
+
+                session.StepOnce();
+                Assert.AreEqual(0f, bang.At(bang.Frames - 1),
+                    "it stayed down after being consumed — a trigger nobody can let go of");
+                Assert.AreEqual("On", state.TextAt(state.Frames - 1), "it fired twice");
+            }
+        }
+
+        /// <summary>A trigger nothing consumes stays standing, and a run says so for as long as
+        /// it does. The pulse is what Mecanim did with it, not a shape imposed on it.</summary>
+        [Test]
+        public void Trigger_NothingConsumes_StaysUpUntilItIsCleared()
+        {
+            var controller = new AnimatorController();
+            controller.AddLayer("Base");
+            controller.AddParameter("Bang", AnimatorControllerParameterType.Trigger);
+            controller.layers[0].stateMachine.AddState("Idle");
+
+            var stimulus = new Stimulus().At(0.05f, "Bang", 1f).At(0.15f, "Bang", 0f);
+            var trace = Simulation.Run(controller, Clock(0.3f), stimulus);
+            var bang = trace.Find(Simulation.LocalScope, "Bang");
+
+            Assert.AreEqual(0f, bang.At(2));
+            Assert.AreEqual(1f, bang.At(3), "nothing was there to take it");
+            Assert.AreEqual(1f, bang.At(8));
+            Assert.AreEqual(0f, bang.At(9), "a poke of zero is the way to put it back down");
         }
 
         // ---- what a run does not promise ------------------------------------

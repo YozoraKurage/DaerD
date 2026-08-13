@@ -46,6 +46,8 @@ namespace Yozolab.DaerD.DynamicAnalyze
             new Dictionary<int, List<ControllerIR.DriverSpec>>();
         readonly int[] _entered;
         readonly AnimatorController _copy;
+        readonly List<string> _triggerNames = new List<string>();
+        readonly HashSet<string> _pulsed = new HashSet<string>();
         SimRandom _random;
 
         /// <summary>Which client this is, in the trace and in a stimulus that names one.</summary>
@@ -104,7 +106,11 @@ namespace Yozolab.DaerD.DynamicAnalyze
             _animator.Rebind();
 
             foreach (var parameter in controller.parameters)
+            {
                 _types[parameter.name] = parameter.type;
+                if (parameter.type == AnimatorControllerParameterType.Trigger)
+                    _triggerNames.Add(parameter.name);
+            }
 
             var layers = controller.layers;
             _stateNames = new List<string>[layers.Length];
@@ -183,6 +189,19 @@ namespace Yozolab.DaerD.DynamicAnalyze
             }
         }
 
+        /// <summary>
+        /// The value as a run should RECORD it, which for everything but a Trigger is the value.
+        ///
+        /// A trigger is not a value, it is a press: Mecanim clears it in the same frame a
+        /// transition consumes it, so a trigger that did its job would be read back as zero on
+        /// every frame including the one it fired on, and a run would show the transition
+        /// happening for no reason anybody could see. What is recorded instead is whether it was
+        /// standing when the frame began or is standing now — one frame of 1 per press, held for
+        /// as long as nothing consumes it. A pulse, which is what a trigger is.
+        /// </summary>
+        public float Sample(string parameter) =>
+            _pulsed.Contains(parameter) ? 1f : Read(parameter);
+
         public void Write(string parameter, float value)
         {
             if (!_types.TryGetValue(parameter, out var type)) return;
@@ -231,6 +250,13 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// </summary>
         public void Step(float deltaTime)
         {
+            // Which triggers were standing when this frame began — taken before Mecanim runs,
+            // because running it is what takes them down. See Sample: this is the frame the
+            // press is visible on whether or not it was consumed on it. A trigger a driver
+            // raises later in this frame is standing at the end of it and needs no note.
+            _pulsed.Clear();
+            foreach (var name in _triggerNames)
+                if (_animator.GetBool(name)) _pulsed.Add(name);
             _animator.Update(deltaTime);
             for (int layer = 0; layer < _entered.Length; layer++)
             {

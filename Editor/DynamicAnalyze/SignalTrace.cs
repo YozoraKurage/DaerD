@@ -15,6 +15,12 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// <summary>An index into <see cref="SignalTrace.Signal.labels"/> — drawn as a named
         /// band, the way a waveform viewer draws a bus.</summary>
         State,
+        /// <summary>0 or 1 like a <see cref="Bool"/>, but a press rather than a state: it goes
+        /// up when somebody sets it and comes back down of its own accord when a transition
+        /// takes it. Written by pushing a button, never by typing a value — which is the whole
+        /// reason it is not a Bool. Last on purpose: a saved run's manifest stores these as
+        /// numbers, and every kind that existed before keeps the number it had.</summary>
+        Trigger,
     }
 
     /// <summary>
@@ -78,6 +84,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
                         return labels != null && at >= 0 && at < labels.Length
                             ? labels[at] : "—";
                     case SignalKind.Bool:
+                    case SignalKind.Trigger:
                         return value != 0f ? "1" : "0";
                     case SignalKind.Int:
                         return Mathf.RoundToInt(value).ToString();

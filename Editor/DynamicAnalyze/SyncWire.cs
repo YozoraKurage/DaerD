@@ -21,6 +21,13 @@ namespace Yozolab.DaerD.DynamicAnalyze
     /// The set arrives coherently — every parameter of one sample lands on the same frame — so
     /// an index and the channels it describes can never be read half-updated. That much VRChat
     /// does promise, and a model that broke it would invent bugs.
+    ///
+    /// With more than one remote it is ONE SAMPLE, MANY DELIVERIES. The wearer's values are read
+    /// once per interval — a broadcast, not a letter each — and what is per-person is only what
+    /// happens to that copy of it: when they turned up, and whether their copy of a given sample
+    /// arrived at all. Modelling it the other way round, with a sampling schedule per remote,
+    /// would let one remote see a change that came and went between another remote's samples,
+    /// and that is precisely the class of bug the periodic-sample model exists to expose.
     /// </summary>
     sealed class SyncWire
     {
@@ -56,6 +63,22 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// </summary>
         public float remoteJoinsAt;
 
+        /// <summary>
+        /// Everybody who turned up after the first one, in seconds, in the order the trace names
+        /// them — "Remote 2", "Remote 3", and so on. Empty is the one-remote run every question
+        /// about a wire started as.
+        ///
+        /// A second person is not a second copy of the first: they arrive at their own moment
+        /// and they lose their own samples, and the failures worth running two for are the ones
+        /// where that matters — a group that commits on a decode taken before anybody sent
+        /// anything is a hole a run with one remote in it can only find at the very first frame,
+        /// and a run with two finds in the middle of a lap.
+        ///
+        /// Each one is a real Animator running a real controller, so this costs linearly and a
+        /// number typed here is a number of avatars.
+        /// </summary>
+        public readonly List<float> laterJoins = new List<float>();
+
         /// <summary>The parameters that actually travel — the avatar's synced expression
         /// parameters. Taken as names rather than read out of a parameter store, so this module
         /// stays independent of how the project stores them.</summary>
@@ -67,6 +90,41 @@ namespace Yozolab.DaerD.DynamicAnalyze
                 if (!string.IsNullOrEmpty(name) && !parameters.Contains(name))
                     parameters.Add(name);
             return this;
+        }
+
+        /// <summary>Adds another person, arriving at the given second. Reads as what it is at a
+        /// call site: <c>wire.Joining(4f)</c> is somebody walking in four seconds in.</summary>
+        public SyncWire Joining(params float[] seconds)
+        {
+            foreach (float at in seconds) laterJoins.Add(at);
+            return this;
+        }
+
+        /// <summary>How many other people are in the instance. Never zero: a wire at all is
+        /// somebody to send to.</summary>
+        public int Remotes => 1 + laterJoins.Count;
+
+        /// <summary>When remote <paramref name="index"/> turns up. Negative times are zero —
+        /// arriving before the run began is arriving with it.</summary>
+        public float JoinsAt(int index) =>
+            Mathf.Max(0f, index <= 0 || index > laterJoins.Count
+                ? remoteJoinsAt : laterJoins[index - 1]);
+
+        /// <summary>
+        /// When the wearer's stream starts, which is when the first person is there to receive
+        /// it. The cadence is the wearer's own and everyone rides the one they find: somebody
+        /// who arrives at 3.55 s does not restart it, which is why their first regular delivery
+        /// lands wherever the existing rhythm puts it rather than politely one interval after
+        /// they knocked.
+        /// </summary>
+        public float EarliestJoin
+        {
+            get
+            {
+                float first = JoinsAt(0);
+                for (int i = 1; i < Remotes; i++) first = Mathf.Min(first, JoinsAt(i));
+                return first;
+            }
         }
 
         public float Interval => Mathf.Max(1e-4f, intervalSeconds);

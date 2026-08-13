@@ -3042,6 +3042,21 @@ msgstr "実行を開く"
 msgid "Load As Timed Inputs"
 msgstr "時刻指定の入力として読み込む"
 
+msgid "Compare With…"
+msgstr "重ねて比較…"
+
+msgid "Compare With"
+msgstr "重ねて比較"
+
+msgid "Stop Comparing"
+msgstr "比較をやめる"
+
+msgid "Δ {0:0.###} s"
+msgstr "Δ {0:0.###} 秒"
+
+msgid "worst {0:0.###} s: {1}"
+msgstr "最大 {0:0.###} 秒: {1}"
+
 msgid "{0} layer(s) choose where to begin with a condition on Entry ({1}). This run does not take those routes — each of those layers starts in its default state, whatever the condition says."
 msgstr "{0} 個のレイヤーが Entry の条件で開始位置を選んでいます（{1}）。この実行はその経路を通らないので、条件が何を言っていても、それらのレイヤーは既定ステートから始まります。"
 
@@ -3063,8 +3078,29 @@ msgstr " ほか {0} 件"
 msgid "What this run does not promise ({0})"
 msgstr "この実行が保証しないこと ({0})"
 
+msgid "Remotes"
+msgstr "リモートの人数"
+
+msgid "How many other people are in the instance. Each one is another copy of the avatar running a real Animator, so the run costs about that much more — and each of them arrives at a time of their own, which is where the failures that only happen to the second person live."
+msgstr "インスタンスにいる他人の人数です。1 人につきアバターのコピーが 1 つ増え、それぞれ本物の Animator を回すので、実行時間もその分だけ増えます。入室時刻は人ごとに別々で、「2 人目以降でだけ出る」不具合はまさにそこに潜みます。"
+
+msgid "{0} remotes is {0} more Animators stepped every frame. Nothing stops you; it will simply take about that much longer."
+msgstr "リモート {0} 人は、毎フレーム {0} 体ぶんの Animator を回すということです。止めはしません。単純にその分だけ時間がかかります。"
+
 msgid "Remote Joins At (s)"
 msgstr "リモートの入室 (秒)"
+
+msgid "Remote {0} Joins At (s)"
+msgstr "リモート {0} の入室 (秒)"
+
+msgid "When this one turns up. Somebody who walks in while a cycle is already running is the case a single remote can only ever ask about at the very first frame."
+msgstr "この人がいつ来るかです。すでに回っている巡回の途中で入ってくる状況は、リモートが 1 人だけの実行では最初のフレームでしか試せません。"
+
+msgid "Clear"
+msgstr "解除"
+
+msgid "Set this trigger on the client this row belongs to"
+msgstr "この行のクライアントでこの Trigger を立てます"
 
 msgid "When the other person turns up. Zero is everybody loading together, which is the one case that stops happening after the first minute of an instance. Somebody who arrives later is handed every synced value at once and has to work the rest out from there — which is what the flags about being caught up are for."
 msgstr "相手がいつ来るかです。0 は全員同時に読み込む場合ですが、それはインスタンスの最初の 1 分を過ぎると起きなくなります。あとから来た人は同期値を一括で受け取り、残りはそこから自力で追いつく必要があります（追いつけたかを示す各フラグはそのためのものです）。"

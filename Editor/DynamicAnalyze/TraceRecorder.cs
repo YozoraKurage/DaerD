@@ -38,9 +38,14 @@ namespace Yozolab.DaerD.DynamicAnalyze
         }
 
         readonly List<Reader> _readers = new List<Reader>();
-        readonly List<Lag> _lags = new List<Lag>();
-        readonly SimClient _local, _remote;
-        readonly SignalTrace.Signal _sent, _lost, _here;
+        /// <summary>One list per remote, because "how far behind" is a question about one
+        /// person: two of them are behind on different things at different moments, and a row
+        /// that averaged them would describe nobody.</summary>
+        readonly List<Lag>[] _lags;
+        readonly SimClient _local;
+        readonly SimClient[] _remotes;
+        readonly SignalTrace.Signal _sent;
+        readonly SignalTrace.Signal[] _lost, _here;
 
         public SignalTrace Trace { get; } = new SignalTrace();
 
@@ -49,25 +54,39 @@ namespace Yozolab.DaerD.DynamicAnalyze
         {
             foreach (var client in clients) Declare(controller, client);
             if (clients.Count > 0) _local = clients[0];
-            if (clients.Count > 1) _remote = clients[1];
+            _remotes = new SimClient[Mathf.Max(0, clients.Count - 1)];
+            for (int i = 0; i < _remotes.Length; i++) _remotes[i] = clients[i + 1];
 
             if (wire)
             {
+                // One row for the send, because there is one send: the wearer reads its values
+                // once and everybody gets that reading.
                 _sent = Trace.Declare(Simulation.WireScope, "sample", SignalKind.Bool);
-                _lost = Trace.Declare(Simulation.WireScope, "lost", SignalKind.Bool);
-                // When the other person turned up. Nothing about their copy means anything
+                _lost = new SignalTrace.Signal[_remotes.Length];
+                _here = new SignalTrace.Signal[_remotes.Length];
+                for (int i = 0; i < _remotes.Length; i++)
+                    _lost[i] = Trace.Declare(Simulation.WireScope,
+                        Simulation.WireRowAt("lost", i), SignalKind.Bool);
+                // When each other person turned up. Nothing about their copy means anything
                 // before this, and a flat line that suddenly starts is the clearest way to say
                 // so on a waveform.
-                _here = Trace.Declare(Simulation.WireScope, "remote here", SignalKind.Bool);
+                for (int i = 0; i < _remotes.Length; i++)
+                    _here[i] = Trace.Declare(Simulation.WireScope,
+                        Simulation.WireRowAt("remote here", i), SignalKind.Bool);
             }
-            if (lagRows && _remote != null)
+            if (!lagRows || _remotes.Length == 0) return;
+            _lags = new List<Lag>[_remotes.Length];
+            for (int i = 0; i < _remotes.Length; i++)
+            {
+                _lags[i] = new List<Lag>();
                 foreach (var parameter in controller.parameters)
-                    _lags.Add(new Lag
+                    _lags[i].Add(new Lag
                     {
                         parameter = parameter.name,
-                        signal = Trace.Declare(Simulation.LagScope, parameter.name,
+                        signal = Trace.Declare(Simulation.LagScopeAt(i), parameter.name,
                             SignalKind.Float),
                     });
+            }
         }
 
         void Declare(AnimatorController controller, SimClient client)
@@ -76,7 +95,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
             {
                 string name = parameter.name;
                 var signal = Trace.Declare(client.Scope, name, KindOf(parameter.type));
-                _readers.Add(new Reader { signal = signal, read = () => client.Read(name) });
+                _readers.Add(new Reader { signal = signal, read = () => client.Sample(name) });
             }
 
             var layers = controller.layers;
@@ -98,46 +117,55 @@ namespace Yozolab.DaerD.DynamicAnalyze
             }
         }
 
-        /// <summary>One frame of everything.</summary>
-        public void Record(float time, float step, bool sampled, bool dropped,
-            bool remoteHere = true)
+        /// <summary>One frame of everything. The two per-remote arrays are indexed the way the
+        /// wire indexes its remotes; null is a run with no wire at all.</summary>
+        public void Record(float time, float step, bool sampled, bool[] dropped, bool[] here)
         {
             Trace.Frame(time, step);
             foreach (var reader in _readers) reader.signal.Push(reader.read());
             if (_sent != null) _sent.Push(sampled ? 1f : 0f);
-            if (_lost != null) _lost.Push(dropped ? 1f : 0f);
-            if (_here != null) _here.Push(remoteHere ? 1f : 0f);
+            for (int i = 0; _lost != null && i < _lost.Length; i++)
+                _lost[i].Push(dropped != null && i < dropped.Length && dropped[i] ? 1f : 0f);
+            for (int i = 0; _here != null && i < _here.Length; i++)
+                _here[i].Push(Present(here, i) ? 1f : 0f);
 
-            // Nobody to be behind until they are there.
-            if (!remoteHere)
+            for (int i = 0; _lags != null && i < _lags.Length; i++)
             {
-                foreach (var lag in _lags)
+                bool present = Present(here, i);
+                foreach (var lag in _lags[i])
                 {
-                    lag.lastAgreed = time;
-                    lag.signal.Push(0f);
+                    // Nobody to be behind until they are there.
+                    if (!present)
+                    {
+                        lag.lastAgreed = time;
+                        lag.signal.Push(0f);
+                        continue;
+                    }
+                    // Agreement, not arrival: a value that never left the wearer and a value
+                    // that arrived and was overwritten are the same thing to whoever is looking
+                    // at the avatar, and this row is about them.
+                    if (Mathf.Abs(_local.Sample(lag.parameter) - _remotes[i].Sample(lag.parameter))
+                        <= SameEnough)
+                        lag.lastAgreed = time;
+                    lag.signal.Push(time - lag.lastAgreed);
                 }
-                return;
-            }
-
-            foreach (var lag in _lags)
-            {
-                // Agreement, not arrival: a value that never left the wearer and a value that
-                // arrived and was overwritten are the same thing to whoever is looking at the
-                // avatar, and this row is about them.
-                if (Mathf.Abs(_local.Read(lag.parameter) - _remote.Read(lag.parameter))
-                    <= SameEnough)
-                    lag.lastAgreed = time;
-                lag.signal.Push(time - lag.lastAgreed);
             }
         }
+
+        static bool Present(bool[] here, int index) =>
+            here == null || index >= here.Length || here[index];
 
         static SignalKind KindOf(AnimatorControllerParameterType type)
         {
             switch (type)
             {
                 case AnimatorControllerParameterType.Bool:
-                case AnimatorControllerParameterType.Trigger:
                     return SignalKind.Bool;
+                // Its own kind rather than a Bool that happens to blink: a trigger is written by
+                // pressing rather than by setting, and a row that offered a checkbox for one
+                // would be offering the wrong control.
+                case AnimatorControllerParameterType.Trigger:
+                    return SignalKind.Trigger;
                 case AnimatorControllerParameterType.Int:
                     return SignalKind.Int;
                 default:

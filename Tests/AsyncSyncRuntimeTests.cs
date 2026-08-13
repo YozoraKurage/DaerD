@@ -80,13 +80,20 @@ namespace Yozolab.DaerD.Tests
         }
 
         static float Remote(SignalTrace trace, string parameter) =>
-            trace.Find(Simulation.RemoteScope, parameter).At(trace.Frames - 1);
+            Remote(trace, Simulation.RemoteScope, parameter);
+
+        static float Remote(SignalTrace trace, string scope, string parameter) =>
+            trace.Find(scope, parameter).At(trace.Frames - 1);
 
         /// <summary>The first second at which the remote agreed, or -1.</summary>
         static float Agreed(SignalTrace trace, string parameter, float expected,
+            float tolerance = 0.01f) =>
+            Agreed(trace, Simulation.RemoteScope, parameter, expected, tolerance);
+
+        static float Agreed(SignalTrace trace, string scope, string parameter, float expected,
             float tolerance = 0.01f)
         {
-            var remote = trace.Find(Simulation.RemoteScope, parameter);
+            var remote = trace.Find(scope, parameter);
             for (int frame = 0; frame < trace.Frames; frame++)
                 if (Mathf.Abs(remote.At(frame) - expected) <= tolerance)
                     return trace.TimeAt(frame);
@@ -355,17 +362,21 @@ namespace Yozolab.DaerD.Tests
 
         /// <summary>Every frame the remote holds either nothing yet or one of the whole sets the
         /// wearer actually had — never a mixture, and never a value nobody sent.</summary>
-        static void AssertOnlyWholeSets(SignalTrace trace, params (float f, float i)[] sets)
+        static void AssertOnlyWholeSets(SignalTrace trace, params (float f, float i)[] sets) =>
+            AssertOnlyWholeSets(trace, Simulation.RemoteScope, sets);
+
+        static void AssertOnlyWholeSets(SignalTrace trace, string scope,
+            params (float f, float i)[] sets)
         {
-            var f = trace.Find(Simulation.RemoteScope, "F");
-            var i = trace.Find(Simulation.RemoteScope, "I");
+            var f = trace.Find(scope, "F");
+            var i = trace.Find(scope, "I");
             for (int frame = 0; frame < trace.Frames; frame++)
             {
                 bool untouched = f.At(frame) == 0f && i.At(frame) == 0f;
                 foreach (var set in sets)
                     if (Mathf.Abs(f.At(frame) - set.f) < 0.01f && i.At(frame) == set.i)
                         untouched = true;
-                Assert.IsTrue(untouched, "at " + trace.TimeAt(frame) + "s the remote held F="
+                Assert.IsTrue(untouched, "at " + trace.TimeAt(frame) + "s " + scope + " held F="
                     + f.At(frame) + " I=" + i.At(frame) + ", which is nothing the wearer had");
             }
         }
@@ -467,6 +478,128 @@ namespace Yozolab.DaerD.Tests
                     Assert.AreEqual(theirs.At(frame), mine.At(frame), 1e-6f,
                         name + " differs on the wearer at " + withFlag.TimeAt(frame) + "s");
             }
+        }
+
+        // ---- somebody else was already there ----------------------------------
+
+        /// <summary>
+        /// The case a run with one remote in it cannot ask about, and the reason the simulation
+        /// learnt to hold more than one: the guard's first commit, for somebody who walks in
+        /// while the cycle has been running for laps.
+        ///
+        /// With one remote, "arrives before anything was sent" and "arrives at the first frame"
+        /// are the same experiment — the wire has sent nothing to anybody, so a decode of zero
+        /// is the only thing there ever was. With somebody already watching, the wearer has been
+        /// laying down index changes for laps before the second person is handed one, and the
+        /// question becomes whether the guard is about the instance's history or about this
+        /// client's own. It has to be this client's own: Ready and the arrival flags live in
+        /// their animator and nowhere else.
+        /// </summary>
+        [Test]
+        public void AGroupsFirstCommitIsWholeForSomebodyWhoJoinedWhileAnotherWasWatching()
+        {
+            var controller = Multiplexed(out var request, r =>
+            {
+                r.groups.Add(Pair());
+                r.ready = true;
+            });
+            var settings = Settings(request, 10f);
+            // A loaded with the wearer; B walks in mid-lap, at a moment deliberately off the
+            // step boundary so the index they are handed is one they will not see change soon.
+            settings.wire.Joining(3.55f);
+            settings.stimulus.At(0f, "F", 0.5f).At(0f, "I", 3f);
+
+            var trace = Simulation.Run(controller, settings);
+            var second = Simulation.RemoteScopeAt(1);
+
+            // Neither of them ever holds half a change or a value nobody sent — the promise is
+            // per client, not per instance.
+            AssertOnlyWholeSets(trace, Simulation.RemoteScope, (0.5f, 3f));
+            AssertOnlyWholeSets(trace, second, (0.5f, 3f));
+
+            // And the late one does get it, inside the passes the guard costs.
+            float whole = Agreed(trace, second, "I", 3f);
+            Assert.Greater(whole, 3.55f, "the set reached somebody who was not there");
+            Assert.Less(whole - 3.55f, 2.5f, "later than the passes the guard costs");
+            Assert.AreEqual(0.5f, Remote(trace, second, "F"), 0.01f);
+
+            // The person who was already there is undisturbed by the arrival.
+            Assert.AreEqual(0.5f, Remote(trace, Simulation.RemoteScope, "F"), 0.01f);
+            Assert.AreEqual(3f, Remote(trace, Simulation.RemoteScope, "I"));
+            Assert.Less(Agreed(trace, Simulation.RemoteScope, "I", 3f), 3f,
+                "the first person waited for the second to turn up");
+        }
+
+        /// <summary>
+        /// Ready and Stale are animator-local, which is easy to say and easy to get wrong once
+        /// there is more than one animator. Each person's copy latches on their own arrival and
+        /// says nothing about anybody else's.
+        /// </summary>
+        [Test]
+        public void ReadyIsEachPersonsOwnAnswer_NotTheInstances()
+        {
+            var controller = Multiplexed(out var request, r => r.ready = true);
+            var settings = Settings(request, 10f);
+            settings.wire.Joining(4f);
+            settings.stimulus.At(0f, "F", 0.5f).At(0f, "B", true).At(0f, "I", 3f);
+
+            var trace = Simulation.Run(controller, settings);
+            var second = Simulation.RemoteScopeAt(1);
+            float first = Latched(trace, Simulation.RemoteScope);
+            float later = Latched(trace, second);
+
+            Assert.Greater(first, 0f, "Ready never latched for the person who was there");
+            Assert.Less(first, 4f, "the first person waited on somebody who had not arrived");
+            Assert.Greater(later, 4f, "Ready was on for somebody who was not in the instance");
+
+            // The same promise the single-remote run makes, made to the second person: never on
+            // before every value is actually theirs.
+            foreach (var (name, expected) in new[] { ("F", 0.5f), ("B", 1f), ("I", 3f) })
+            {
+                float agreed = Agreed(trace, second, name, expected);
+                Assert.Greater(agreed, 0f, name + " never reached the late arrival");
+                Assert.LessOrEqual(agreed, later + 1e-3f,
+                    "Ready was on while " + name + " was still somebody else's value");
+            }
+            Assert.Less(later - 4f, 1.3f, "later than the pass it promises");
+        }
+
+        /// <summary>
+        /// Two people, one wire, one bad afternoon each. A lost sample is lost on its way to
+        /// somebody rather than lost on the way out — so on a noisy instance the two of them are
+        /// caught out at different moments, and neither one's flag is a statement about the
+        /// other's connection.
+        /// </summary>
+        [Test]
+        public void StaleIsOnePersonsConnection_NotTheInstances()
+        {
+            var controller = Multiplexed(out var request, r => r.stale = true);
+            var settings = Settings(request, 8f, loss: 0.6f);
+            settings.wire.Joining(0f);
+            var trace = Simulation.Run(controller, settings);
+
+            var mine = trace.Find(Simulation.RemoteScope, "Async/Stale");
+            var theirs = trace.Find(Simulation.RemoteScopeAt(1), "Async/Stale");
+            Assert.IsNotNull(theirs, "the second person had no flags of their own");
+
+            bool both = false, apart = false;
+            for (int frame = 0; frame < trace.Frames; frame++)
+            {
+                if (mine.At(frame) != 0f && theirs.At(frame) != 0f) both = true;
+                if (mine.At(frame) != theirs.At(frame)) apart = true;
+            }
+            Assert.IsTrue(both, "losing most of the wire went unnoticed by both of them");
+            Assert.IsTrue(apart,
+                "the two of them drifted in lockstep — one loss stream, not one each");
+        }
+
+        /// <summary>The second at which this client's Ready first stood up, or -1.</summary>
+        static float Latched(SignalTrace trace, string scope)
+        {
+            var ready = trace.Find(scope, "Async/Ready");
+            for (int frame = 0; frame < trace.Frames; frame++)
+                if (ready.At(frame) != 0f) return trace.TimeAt(frame);
+            return -1f;
         }
 
         // ---- requests ---------------------------------------------------------

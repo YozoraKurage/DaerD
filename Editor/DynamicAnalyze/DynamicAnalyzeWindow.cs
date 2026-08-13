@@ -48,6 +48,13 @@ namespace Yozolab.DaerD.DynamicAnalyze
         [SerializeField] float _interval = 0.2f;
         [SerializeField] float _dropChance;
         [SerializeField] float _joinsAt;
+        /// <summary>How many other people are in the instance. One is the run this window has
+        /// always done; the rest turn up at times of their own.</summary>
+        [SerializeField] int _remotes = 1;
+        /// <summary>When everybody after the first arrives. Kept apart from
+        /// <see cref="_joinsAt"/> so a saved window layout from before this existed still opens
+        /// as the one-remote run it was.</summary>
+        [SerializeField] List<float> _laterJoins = new List<float>();
         [SerializeField] bool _quantize = true;
         [SerializeField] bool _lagRows = true;
         [SerializeField] List<string> _synced = new List<string>();
@@ -59,6 +66,14 @@ namespace Yozolab.DaerD.DynamicAnalyze
 
         readonly WaveformView _view = new WaveformView();
         SimSession _session;
+
+        // SimNotes.For walks every layer and opens a SerializedObject per driver, and OnGUI
+        // asks several times a frame — on a real avatar's FX that is a steady cost for an
+        // answer that only changes when the controller does. Re-read when the controller field
+        // changes, when the window regains focus (the edit happened elsewhere), and on every
+        // Run/Restart (the moment the answer is about to be trusted).
+        List<string> _notes;
+        AnimatorController _notesFor;
 
         bool _playing;
         bool _follow = true;
@@ -72,6 +87,8 @@ namespace Yozolab.DaerD.DynamicAnalyze
             EditorApplication.update += Tick;
             if (_controller == null) _controller = Selection.activeObject as AnimatorController;
         }
+
+        void OnFocus() => _notes = null;
 
         void OnDisable()
         {
@@ -120,8 +137,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
             // somewhere else was one list too many.
             _view.editable = _live && _session != null ? (System.Func<SignalTrace.Signal, bool>)
                 (signal => signal.kind != SignalKind.State
-                    && (signal.scope == Simulation.LocalScope
-                        || signal.scope == Simulation.RemoteScope)
+                    && Simulation.IsClient(signal.scope)
                     && _session.Has(signal.name))
                 : null;
             _view.write = (signal, value) =>
@@ -212,6 +228,10 @@ namespace Yozolab.DaerD.DynamicAnalyze
                         _view.cursorFrame, _view.Frames - 1,
                         _view.trace.TimeAt(_view.cursorFrame)),
                     EditorStyles.miniLabel);
+            // The measurement, beside the moment it is measured from. Only while there is a
+            // mark: a Δ of nothing reading 0 s would look like an answer.
+            if (has && _view.HasMark)
+                GUILayout.Label(L.Tr("Δ {0:0.###} s", _view.Span()), EditorStyles.miniLabel);
             EditorGUI.EndDisabledGroup();
 
             GUILayout.FlexibleSpace();
@@ -245,7 +265,24 @@ namespace Yozolab.DaerD.DynamicAnalyze
             else menu.AddDisabledItem(new GUIContent(L.Tr("Save Run…")));
             menu.AddItem(new GUIContent(L.Tr("Open Run…")), false, OpenClip);
             menu.AddItem(new GUIContent(L.Tr("Load As Timed Inputs…")), false, LoadAsInputs);
+            menu.AddSeparator(string.Empty);
+            // A saved run laid under the one in hand. "It worked yesterday" and "did that
+            // setting change anything" are both questions about two runs, and a viewer that
+            // can only hold one answers neither.
+            menu.AddItem(new GUIContent(L.Tr("Compare With…")), false, CompareWith);
+            if (_view.ghost != null)
+                menu.AddItem(new GUIContent(L.Tr("Stop Comparing")), false,
+                    () => _view.ghost = null);
+            else menu.AddDisabledItem(new GUIContent(L.Tr("Stop Comparing")));
             menu.ShowAsContext();
+        }
+
+        void CompareWith()
+        {
+            var clip = PickClip(L.Tr("Compare With"));
+            if (clip == null) return;
+            _view.ghost = TraceClip.Load(clip);
+            Repaint();
         }
 
         void SaveClip()
@@ -305,7 +342,12 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// </summary>
         void DrawNotes()
         {
-            var notes = SimNotes.For(_controller);
+            if (_notes == null || _notesFor != _controller)
+            {
+                _notes = SimNotes.For(_controller);
+                _notesFor = _controller;
+            }
+            var notes = _notes;
             if (notes.Count == 0) return;
             EditorGUILayout.BeginVertical(EditorStyles.helpBox);
             _notesOpen = EditorGUILayout.Foldout(_notesOpen,
@@ -351,9 +393,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
                 _dropChance = EditorGUILayout.Slider(L.Tr("Loss"), _dropChance, 0f, 1f);
                 EditorGUILayout.EndHorizontal();
 
-                _joinsAt = EditorGUILayout.FloatField(new GUIContent(L.Tr("Remote Joins At (s)"),
-                    L.Tr("When the other person turns up. Zero is everybody loading together, which is the one case that stops happening after the first minute of an instance. Somebody who arrives later is handed every synced value at once and has to work the rest out from there — which is what the flags about being caught up are for.")),
-                    _joinsAt);
+                DrawRemotes();
 
                 EditorGUILayout.BeginHorizontal();
                 _quantize = EditorGUILayout.Toggle(new GUIContent(L.Tr("Round Like The Wire"),
@@ -373,6 +413,40 @@ namespace Yozolab.DaerD.DynamicAnalyze
             // window would be showing a run nobody asked for.
             if (EditorGUI.EndChangeCheck() && _live) DropSession();
             EditorGUILayout.EndVertical();
+        }
+
+        /// <summary>How many other people this window will run without saying anything about it.
+        /// One remote is one more real Animator stepping a real controller, so the cost is
+        /// linear and visible; past this the run is warned about rather than refused, because
+        /// the number that finds a bug is not for this window to decide.</summary>
+        const int ComfortableRemotes = 4;
+
+        /// <summary>
+        /// The other people, and when each of them turned up. One remote is drawn exactly as it
+        /// always was — one field, the same label — because that is still what most runs are and
+        /// a list of one is a worse way to say it.
+        /// </summary>
+        void DrawRemotes()
+        {
+            _remotes = Mathf.Max(1, EditorGUILayout.IntField(new GUIContent(L.Tr("Remotes"),
+                L.Tr("How many other people are in the instance. Each one is another copy of the avatar running a real Animator, so the run costs about that much more — and each of them arrives at a time of their own, which is where the failures that only happen to the second person live.")),
+                _remotes));
+            while (_laterJoins.Count < _remotes - 1) _laterJoins.Add(0f);
+            if (_laterJoins.Count > _remotes - 1)
+                _laterJoins.RemoveRange(_remotes - 1, _laterJoins.Count - (_remotes - 1));
+            if (_remotes > ComfortableRemotes)
+                EditorGUILayout.HelpBox(
+                    L.Tr("{0} remotes is {0} more Animators stepped every frame. Nothing stops you; it will simply take about that much longer.", _remotes),
+                    MessageType.Info);
+
+            _joinsAt = EditorGUILayout.FloatField(new GUIContent(L.Tr("Remote Joins At (s)"),
+                L.Tr("When the other person turns up. Zero is everybody loading together, which is the one case that stops happening after the first minute of an instance. Somebody who arrives later is handed every synced value at once and has to work the rest out from there — which is what the flags about being caught up are for.")),
+                _joinsAt);
+            for (int i = 0; i < _laterJoins.Count; i++)
+                _laterJoins[i] = EditorGUILayout.FloatField(
+                    new GUIContent(L.Tr("Remote {0} Joins At (s)", i + 2),
+                        L.Tr("When this one turns up. Somebody who walks in while a cycle is already running is the case a single remote can only ever ask about at the very first frame.")),
+                    _laterJoins[i]);
         }
 
         // ---- inputs ---------------------------------------------------------
@@ -410,16 +484,20 @@ namespace Yozolab.DaerD.DynamicAnalyze
                     GUILayout.Width(150f));
 
                 var type = TypeOf(poke.parameter);
-                if (type == AnimatorControllerParameterType.Bool
-                    || type == AnimatorControllerParameterType.Trigger)
+                if (type == AnimatorControllerParameterType.Trigger)
+                    // A written-down trigger is the same press the live button makes: 1 sets it
+                    // and 0 takes it back down, which is all a trigger can be told. Named
+                    // rather than a checkbox, because "off" is not a state a trigger sits in.
+                    poke.value = EditorGUILayout.Popup(poke.value != 0f ? 0 : 1,
+                        new[] { L.Tr("Fire"), L.Tr("Clear") }, GUILayout.Width(60f)) == 0
+                        ? 1f : 0f;
+                else if (type == AnimatorControllerParameterType.Bool)
                     poke.value = EditorGUILayout.Toggle(poke.value != 0f,
                         GUILayout.Width(40f)) ? 1f : 0f;
                 else
                     poke.value = EditorGUILayout.FloatField(poke.value, GUILayout.Width(60f));
 
-                poke.scope = GUILayout.Toolbar(poke.scope == Simulation.RemoteScope ? 1 : 0,
-                    new[] { L.Tr("Wearer"), L.Tr("Remote") }, GUILayout.Width(120f)) == 1
-                    ? Simulation.RemoteScope : string.Empty;
+                poke.scope = PokeScope(poke.scope);
 
                 if (GUILayout.Button("-", EditorStyles.miniButton, GUILayout.Width(22f)))
                     remove = i;
@@ -428,6 +506,28 @@ namespace Yozolab.DaerD.DynamicAnalyze
             }
             if (remove >= 0) _pokes.RemoveAt(remove);
             EditorGUILayout.EndVertical();
+        }
+
+        /// <summary>
+        /// Who an input is aimed at. Two buttons while there is one other person — the shape
+        /// this row has always had — and a list once there are several, because five buttons
+        /// side by side stop being a choice and start being a wall.
+        /// </summary>
+        string PokeScope(string scope)
+        {
+            if (_remotes <= 1)
+                return GUILayout.Toolbar(scope == Simulation.RemoteScope ? 1 : 0,
+                    new[] { L.Tr("Wearer"), L.Tr("Remote") }, GUILayout.Width(120f)) == 1
+                    ? Simulation.RemoteScope : string.Empty;
+
+            var names = new string[_remotes + 1];
+            names[0] = L.Tr("Wearer");
+            for (int i = 0; i < _remotes; i++) names[i + 1] = Simulation.RemoteScopeAt(i);
+            int at = 0;
+            for (int i = 0; i < _remotes; i++)
+                if (scope == Simulation.RemoteScopeAt(i)) at = i + 1;
+            at = EditorGUILayout.Popup(at, names, GUILayout.Width(120f));
+            return at == 0 ? string.Empty : Simulation.RemoteScopeAt(at - 1);
         }
 
         List<string> ParameterNames()
@@ -484,6 +584,9 @@ namespace Yozolab.DaerD.DynamicAnalyze
                     }
                     : null,
             };
+            if (settings.wire != null)
+                for (int i = 0; i < _remotes - 1 && i < _laterJoins.Count; i++)
+                    settings.wire.Joining(_laterJoins[i]);
             foreach (var poke in _pokes)
                 if (!string.IsNullOrEmpty(poke.parameter))
                     settings.stimulus.At(poke.at, poke.parameter, poke.value, poke.scope);
@@ -498,6 +601,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
         void RunNow()
         {
             _playing = false;
+            _notes = null;
             _view.trace = Simulation.Run(_controller, BuildSettings());
             _view.cursorFrame = 0;
             _view.Fit(position.width);
@@ -507,6 +611,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
         void StartSession()
         {
             DropSession();
+            _notes = null;
             if (_controller == null) return;
             _session = new SimSession(_controller, BuildSettings());
             _view.trace = _session.Trace;

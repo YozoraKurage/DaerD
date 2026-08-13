@@ -31,11 +31,12 @@ namespace Yozolab.DaerD.DynamicAnalyze
         readonly TraceRecorder _recorder;
         readonly SimSettings _settings;
         SimRandom _jitter;
-        SimRandom _loss;
+        readonly SimRandom[] _loss;
+        readonly bool[] _arrived;
+        readonly bool[] _dropped;
         float _time;
         float _carry;
         float _nextSample;
-        bool _arrived;
 
         public SignalTrace Trace => _recorder.Trace;
 
@@ -49,26 +50,35 @@ namespace Yozolab.DaerD.DynamicAnalyze
 
         public bool HasRemote => _clients.Count > 1;
 
+        /// <summary>How many other people this session is running.</summary>
+        public int Remotes => Mathf.Max(0, _clients.Count - 1);
+
         public SimSession(AnimatorController controller, SimSettings settings)
         {
             _settings = settings ?? new SimSettings();
             var clock = _settings.clock ?? new SimClock();
+            var wire = _settings.wire;
             _jitter = new SimRandom(clock.seed);
-            _loss = new SimRandom(_settings.wire != null ? _settings.wire.seed : 0);
             Window = Mathf.Max(60, clock.Frames);
 
+            int remotes = wire != null ? wire.Remotes : 0;
             _clients.Add(new SimClient(controller, Simulation.LocalScope, true, clock.seed));
-            if (_settings.wire != null)
-                _clients.Add(new SimClient(controller, Simulation.RemoteScope, false,
-                    clock.seed ^ 0x2545F491));
-            _recorder = new TraceRecorder(controller, _clients, _settings.wire != null,
-                _settings.lagRows);
-            // See Simulation.Run: joining at zero is everybody loading together, which hands
-            // nothing over because there is nothing yet to hand.
-            _arrived = _settings.wire == null || _settings.wire.remoteJoinsAt <= 0f;
-            _nextSample = _settings.wire != null
-                ? Mathf.Max(0f, _settings.wire.remoteJoinsAt) + _settings.wire.Interval
-                : float.MaxValue;
+            for (int i = 0; i < remotes; i++)
+                _clients.Add(new SimClient(controller, Simulation.RemoteScopeAt(i), false,
+                    Simulation.ClientSeed(clock.seed, i)));
+            _recorder = new TraceRecorder(controller, _clients, wire != null, _settings.lagRows);
+
+            _loss = new SimRandom[remotes];
+            _arrived = new bool[remotes];
+            _dropped = new bool[remotes];
+            for (int i = 0; i < remotes; i++)
+            {
+                _loss[i] = new SimRandom(Simulation.LossSeed(wire.seed, i));
+                // See Simulation.Run: joining at zero is loading with the wearer, which hands
+                // nothing over because there is nothing yet to hand.
+                _arrived[i] = wire.JoinsAt(i) <= 0f;
+            }
+            _nextSample = remotes > 0 ? wire.EarliestJoin + wire.Interval : float.MaxValue;
         }
 
         /// <summary>
@@ -101,29 +111,36 @@ namespace Yozolab.DaerD.DynamicAnalyze
 
         void StepOnce(float step)
         {
-            bool sampled = false, dropped = false;
-            if (!_arrived && _time >= Mathf.Max(0f, _settings.wire.remoteJoinsAt))
+            var wire = _settings.wire;
+            bool sampled = false;
+            for (int i = 0; i < _arrived.Length; i++) _dropped[i] = false;
+            for (int i = 0; i < _arrived.Length; i++)
             {
+                if (_arrived[i] || _time < wire.JoinsAt(i)) continue;
                 // Arriving is itself a delivery — see Simulation.Run.
-                _arrived = true;
+                _arrived[i] = true;
                 sampled = true;
-                Simulation.Carry(_settings.wire, _clients[0], _clients[1]);
+                Simulation.Carry(wire, _clients[0], _clients[i + 1]);
             }
             while (_time >= _nextSample)
             {
-                _nextSample += _settings.wire.Interval;
+                _nextSample += wire.Interval;
                 sampled = true;
-                if (_loss.NextChance(_settings.wire.dropChance)) dropped = true;
-                else Simulation.Carry(_settings.wire, _clients[0], _clients[1]);
+                for (int i = 0; i < _arrived.Length; i++)
+                {
+                    if (!_arrived[i]) continue;
+                    if (_loss[i].NextChance(wire.dropChance)) _dropped[i] = true;
+                    else Simulation.Carry(wire, _clients[0], _clients[i + 1]);
+                }
             }
 
             for (int i = 0; i < _clients.Count; i++)
             {
-                if (i > 0 && !_arrived) continue;
+                if (i > 0 && !_arrived[i - 1]) continue;
                 _clients[i].Step(step);
             }
             _time += step;
-            _recorder.Record(_time, step, sampled, dropped, _arrived);
+            _recorder.Record(_time, step, sampled, _dropped, _arrived);
             _recorder.Trace.Trim(Window);
         }
 
