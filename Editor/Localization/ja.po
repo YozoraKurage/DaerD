@@ -969,8 +969,8 @@ msgstr "パラメーターストア側で、多重化する対象の synced を�
 msgid "A step carries one type, so at every step of this pass the other {0} type(s) of channel sit idle and the values waiting in them wait behind steps that could not have carried them. One ring per type would run passes of {1} instead of one pass of {2:0.#} s, for {3} synced bit(s) instead of {4}."
 msgstr "1 つのステップが運べるのは 1 種類の型だけなので、この周回ではどのステップでも残り {0} 種類の型のチャンネルが遊んでいます（そこで待っている値は、自分を運べないステップの後ろで待たされています）。型ごとにリングを分けると、1 周 {2:0.#} 秒が {1} になり、同期ビットは {4} → {3} になります。"
 
-msgid "'{0}' is sent {1} times a pass, which reads as a value no older than {2:0.##} s — but the other weights leave nowhere evenly spaced to put those sends, so the worst wait is really {3:0.##} s. Even the weights out, or let that target ask instead: a sync request puts its value on the wire at the next step boundary, which is what a heavier weight was reaching for."
-msgstr "'{0}' は 1 周に {1} 回送られるので、値は古くても {2:0.##} 秒に見えます。しかし他の重みのせいで等間隔に置ける場所が無く、実際の最悪待ちは {3:0.##} 秒です。重みを揃えるか、そのターゲットに要求させてください（同期リクエストなら次のステップ境界で値が線に乗ります。重みを上げて狙っていたのはそれです）。"
+msgid "'{0}' is sent {1} times a pass, which reads as a value no older than {2:0.##} s — but the other weights leave nowhere evenly spaced to put those sends, so the worst wait is really {3:0.##} s. Mark it Req instead: a sync request puts its value on the wire at the next step boundary, which is what a heavier weight was reaching for. Evening the weights out also works, but only from a C# recipe — .Rate() is what wrote them."
+msgstr "'{0}' は 1 周に {1} 回送られるので、値は古くても {2:0.##} 秒に見えます。しかし他の重みのせいで等間隔に置ける場所が無く、実際の最悪待ちは {3:0.##} 秒です。代わりに Req を付けてください（同期リクエストなら次のステップ境界で値が線に乗ります。重みを上げて狙っていたのはそれです）。重みを揃えるのも有効ですが、それができるのは C# レシピの .Rate() だけです — 元々そこで書かれた値です。"
 
 msgid "'{0}' is the only {1} here, and a type with one target multiplexes nothing: its channel costs the {2} synced bit(s) that syncing '{0}' directly would, and the value reaches remotes no sooner for the trip. Sync it directly, or multiplex another {1} beside it."
 msgstr "'{0}' はここで唯一の {1} です。ターゲットが 1 つしかない型は何も多重化していません。そのチャンネルは '{0}' を直接同期するのと同じ {2} bit を使い、しかも値がリモートに届くのが早くなるわけでもありません。直接同期に戻すか、もう 1 つ {1} を多重化対象に加えてください。"
@@ -1055,8 +1055,8 @@ msgstr "リクエストが動いているとき: 1 周あたり最大 {0:0.#} �
 msgid "Sync requests make a pass take up to {0:0.#} s instead of {1:0.#} s — a request spends an extra step before the cycle carries on where it left. That is the ceiling however often they are raised, but a target driven on every state change spends it."
 msgstr "同期リクエストがあると、1 周は {1:0.#} 秒ではなく最大 {0:0.#} 秒かかります。リクエストは 1 ステップぶん寄り道してから、巡回を離れた場所へ戻すためです。どれだけ頻繁に上げてもこれが上限ですが、ステートが変わるたびに叩くターゲットはこの上限を使い切ります。"
 
-msgid "'{0}' is sent so often that no step is left to request it from — the flag is built, but the cycle reaches the slot as fast as a request could. Lower its rate, or drop the request."
-msgstr "'{0}' は送信頻度が高すぎて、リクエストの起点にできるステップが残っていません。フラグは作られますが、巡回のほうがリクエストと同じ速さでこのスロットに到達します。レートを下げるか、リクエストをやめてください。"
+msgid "'{0}' is sent so often that no step is left to request it from — the flag is built, but the cycle reaches the slot as fast as a request could. Drop the request: the cycle already delivers this one as fast as asking would. Lowering the weight that sends it this often would leave a step to ask from, but the weight is only settable from a C# recipe, with .Rate()."
+msgstr "'{0}' は送信頻度が高すぎて、リクエストの起点にできるステップが残っていません。フラグは作られますが、巡回のほうがリクエストと同じ速さでこのスロットに到達します。リクエストを外してください — このパラメーターは、頼まなくても同じ速さで届いています。重みを下げれば起点になるステップが残りますが、重みを設定できるのは C# レシピの .Rate() だけです。"
 
 msgid "This controller has no saved async sync setup — create one first."
 msgstr "このコントローラーには保存された巡回同期設定がありません。先に作成してください。"
@@ -1220,8 +1220,11 @@ msgstr "選択中の Behaviour をコピーします。State の右クリック�
 msgid "Append the copied behaviours to this state."
 msgstr "コピーした Behaviour をこの State に追加します。"
 
-msgid "Click a title to select (Ctrl / Shift for multi-select); Ctrl+C / Ctrl+V copies and pastes the selected behaviours."
-msgstr "タイトルをクリックで選択（Ctrl / Shift で複数選択）。選択中は Ctrl+C / Ctrl+V で Behaviour をコピー / 貼り付けします。"
+msgid "Click a title to select (Ctrl / Shift for multi-select)."
+msgstr "タイトルをクリックで選択（Ctrl / Shift で複数選択）。"
+
+msgid "{0} / {1} copies and pastes the selected behaviours."
+msgstr "選択中は {0} / {1} で Behaviour をコピー / 貼り付けします。"
 
 msgid "Copy one instance of every behaviour found on the selected states."
 msgstr "選択中の State にある Behaviour を種類ごとに 1 つコピーします。"
@@ -1232,8 +1235,11 @@ msgstr "コピーした Behaviour を選択中の全 State に追加します。
 msgid "None of the selected states have behaviours."
 msgstr "選択中の State に Behaviour はありません。"
 
-msgid "Edits apply to every selected state that has the behaviour. Click a title to select (Ctrl / Shift for multi-select); Ctrl+C / Ctrl+V copies and pastes."
-msgstr "編集内容は、その Behaviour を持つ選択中の全 State に適用されます。タイトルをクリックで選択（Ctrl / Shift で複数選択）、Ctrl+C / Ctrl+V でコピー / 貼り付け。"
+msgid "Edits apply to every selected state that has the behaviour."
+msgstr "編集内容は、その Behaviour を持つ選択中の全 State に適用されます。"
+
+msgid "{0} / {1} copies and pastes."
+msgstr "{0} / {1} でコピー / 貼り付けします。"
 
 msgid "Copy this behaviour onto the selected states that don't have it."
 msgstr "この Behaviour を、持っていない選択中の State にコピーします。"
@@ -2092,7 +2098,7 @@ msgstr "Bool チャンネル数は 1〜8 の範囲で指定してください。
 msgid "'{0}' belongs to the sync machinery and can't be multiplexed."
 msgstr "'{0}' は同期の仕組み側のパラメーターのため、多重化の対象にできません。"
 
-# ---- async sync (order & rates) ----
+# ---- async sync (cycle order) ----
 
 
 msgid "Tick parameters above — drag them here into the order the cycle should visit them."
@@ -2106,14 +2112,10 @@ msgstr "{0:0.##} 秒ごと"
 msgid "(requestable)"
 msgstr "（リクエスト可）"
 
-msgid "Top to bottom is the cycle order. The timing itself is set by hand in the timeline below."
-msgstr "上から下が巡回の順序です。タイミングそのものは下のタイムラインで手動指定しています。"
 
 
 
 
-msgid "Click a row to make that step send it. Every step sends exactly one slot, so a click moves the step rather than adding one."
-msgstr "行をクリックすると、そのステップがその行を送るようになります。1 ステップが送るスロットは常にちょうど 1 つなので、クリックはステップの追加ではなく置き換えです。"
 
 
 
@@ -2166,8 +2168,8 @@ msgstr "すべてのステップが同じパラメーターを送るため、イ
 msgid "Every step sends the same parameters, so only the clock tells them apart — and the clock alternates, which an odd number of steps can't do. Add or drop a step."
 msgstr "すべてのステップが同じパラメーターを送るため、両者を区別できるのはクロックだけです。クロックは位相を交互に反転させるので、ステップ数が奇数だと 1 周のつなぎ目で同じ位相が並びます。ステップを 1 つ足すか減らしてください。"
 
-msgid "The ×{0} weight on '{1}' can't be separated by the other slots; it effectively runs at ×{2}. Add parameters or lower the weight."
-msgstr "'{1}' の ×{0} の重みは他のスロットでは間隔を空けきれず、実効 ×{2} で動作します。パラメーターを追加するか、重みを下げてください。"
+msgid "The ×{0} weight on '{1}' can't be separated by the other slots; it effectively runs at ×{2}. Mark it Req instead: a sync request puts the value on the wire at the next step boundary, which is what the weight was reaching for. Adding parameters gives the pass more to space it against; the weight itself is only settable from a C# recipe, with .Rate()."
+msgstr "'{1}' の ×{0} の重みは他のスロットでは間隔を空けきれず、実効 ×{2} で動作します。代わりに Req を付けてください（同期リクエストなら次のステップ境界で値が線に乗ります。重みで狙っていたのはそれです）。パラメーターを追加すれば間隔を空ける余地が増えます。重み自体を設定できるのは C# レシピの .Rate() だけです。"
 
 # ---- C# recipes ----
 
@@ -2789,8 +2791,11 @@ msgstr "オフにする"
 msgid "Clear Can Transition To Self on these transitions"
 msgstr "これらの遷移の Can Transition To Self を解除します"
 
-msgid "{0} marked as sources — select the destinations and press T"
-msgstr "{0} 個を遷移元としてマーク中 — 遷移先を選んで T キー"
+msgid "{0} marked as sources — select the destinations and press {1}"
+msgstr "{0} 個を遷移元としてマーク中 — 遷移先を選んで {1} キー"
+
+msgid "{0} marked as sources — select the destinations and connect them"
+msgstr "{0} 個を遷移元としてマーク中 — 遷移先を選んで接続してください"
 
 # ---- keyboard shortcuts ----
 

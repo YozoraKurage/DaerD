@@ -345,19 +345,6 @@ namespace Yozolab.DaerD
         public const int RequestPhase = 0;
 
         /// <summary>
-        /// The steps a request for <paramref name="slot"/> may be served from — the origins of
-        /// its detour. Two rules, both about the index actually changing:
-        ///
-        /// A step that sends the slot itself is out. Its driver has already lowered the flag,
-        /// so the route could never fire, and building it would only suggest otherwise.
-        ///
-        /// A step whose SUCCESSOR sends the same index is out too, and that is the load-bearing
-        /// one: the detour returns to that successor, and a successor repeating the index the
-        /// detour just wrote is a step the decoder never sees (it fires on the index changing).
-        /// Compared as index values rather than as slots, because a clock can give two visits
-        /// of one slot different indices — and then the successor is decodable after all.
-        /// </summary>
-        /// <summary>
         /// A slot the pass visits exactly once, and so an event that happens exactly once per
         /// lap — which is all a lap needs to be measurable. Read off the schedule rather than
         /// off the weights, so a pass laid out by rates, by an explicit cycle or by a grid are
@@ -386,6 +373,19 @@ namespace Yozolab.DaerD
             return -1;
         }
 
+        /// <summary>
+        /// The steps a request for <paramref name="slot"/> may be served from — the origins of
+        /// its detour. Two rules, both about the index actually changing:
+        ///
+        /// A step that sends the slot itself is out. Its driver has already lowered the flag,
+        /// so the route could never fire, and building it would only suggest otherwise.
+        ///
+        /// A step whose SUCCESSOR sends the same index is out too, and that is the load-bearing
+        /// one: the detour returns to that successor, and a successor repeating the index the
+        /// detour just wrote is a step the decoder never sees (it fires on the index changing).
+        /// Compared as index values rather than as slots, because a clock can give two visits
+        /// of one slot different indices — and then the successor is decodable after all.
+        /// </summary>
         public static List<int> RequestOrigins(List<int> schedule, Clock clock, int slot)
         {
             var origins = new List<int>();

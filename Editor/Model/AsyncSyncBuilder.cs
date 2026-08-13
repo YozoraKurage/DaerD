@@ -779,7 +779,7 @@ namespace Yozolab.DaerD
                     if (occurrences[i] < asked)
                     {
                         warnings.Add(L.Tr(
-                            "The ×{0} weight on '{1}' can't be separated by the other slots; it effectively runs at ×{2}. Add parameters or lower the weight.",
+                            "The ×{0} weight on '{1}' can't be separated by the other slots; it effectively runs at ×{2}. Mark it Req instead: a sync request puts the value on the wire at the next step boundary, which is what the weight was reaching for. Adding parameters gives the pass more to space it against; the weight itself is only settable from a C# recipe, with .Rate().",
                             slots[i].rate, slots[i].targets[0], Mathf.Max(1, occurrences[i])));
                         break;
                     }
@@ -803,7 +803,7 @@ namespace Yozolab.DaerD
                         || actual < window * 1.5f)
                         continue;
                     warnings.Add(L.Tr(
-                        "'{0}' is sent {1} times a pass, which reads as a value no older than {2:0.##} s — but the other weights leave nowhere evenly spaced to put those sends, so the worst wait is really {3:0.##} s. Even the weights out, or let that target ask instead: a sync request puts its value on the wire at the next step boundary, which is what a heavier weight was reaching for.",
+                        "'{0}' is sent {1} times a pass, which reads as a value no older than {2:0.##} s — but the other weights leave nowhere evenly spaced to put those sends, so the worst wait is really {3:0.##} s. Mark it Req instead: a sync request puts its value on the wire at the next step boundary, which is what a heavier weight was reaching for. Evening the weights out also works, but only from a C# recipe — .Rate() is what wrote them.",
                         name, occurrences[i], window, actual));
                     break;
                 }
@@ -886,7 +886,7 @@ namespace Yozolab.DaerD
                     if (!asked) continue;
                     if (RequestOrigins(requestSchedule, requestClock, i).Count > 0) continue;
                     warnings.Add(L.Tr(
-                        "'{0}' is sent so often that no step is left to request it from — the flag is built, but the cycle reaches the slot as fast as a request could. Lower its rate, or drop the request.",
+                        "'{0}' is sent so often that no step is left to request it from — the flag is built, but the cycle reaches the slot as fast as a request could. Drop the request: the cycle already delivers this one as fast as asking would. Lowering the weight that sends it this often would leave a step to ask from, but the weight is only settable from a C# recipe, with .Rate().",
                         requestSlots[i].targets[0]));
                     break;
                 }
