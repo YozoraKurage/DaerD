@@ -571,6 +571,79 @@ namespace Yozolab.DaerD.Tests
             Assert.AreEqual(0, view.firstFrame, "fitting nothing is not an error");
         }
 
+        /// <summary>Records one more frame on every signal of a hand-built trace.</summary>
+        static void Record(SignalTrace trace, SignalTrace.Signal signal, float value)
+        {
+            trace.Frame(trace.Frames / 60f, 1f / 60f);
+            signal.Push(value);
+        }
+
+        /// <summary>
+        /// A batch run hands the viewer a new trace each time, so measuring once per trace was
+        /// enough. A LIVE session hands it the same one over and over as it grows, and the
+        /// ranges froze at whatever the first repaint saw — every later value was then drawn
+        /// against a scale from before it existed. Lag climbs for a whole session, so this was
+        /// hit by every live run there has ever been.
+        /// </summary>
+        [Test]
+        public void Ranges_FollowATraceThatGoesOnGrowing()
+        {
+            var trace = new SignalTrace();
+            var lag = trace.Declare(Simulation.LagScope, "Go", SignalKind.Float);
+            var ranges = new SignalRanges();
+
+            for (int i = 0; i < 4; i++) Record(trace, lag, i);
+            ranges.Update(trace);
+            Assert.AreEqual(0f, ranges.Of(lag).x, 1e-4f);
+            Assert.AreEqual(3f, ranges.Of(lag).y, 1e-4f);
+
+            // The same trace, longer. This is the whole bug: nothing about the trace's identity
+            // changed, and the top of the range has to move anyway.
+            for (int i = 4; i < 40; i++) Record(trace, lag, i);
+            ranges.Update(trace);
+            Assert.AreEqual(0f, ranges.Of(lag).x, 1e-4f);
+            Assert.AreEqual(39f, ranges.Of(lag).y, 1e-4f);
+
+            // And once the session is long enough to start dropping its oldest frames, the
+            // length stops growing while the run does not — so "how much is new" cannot be
+            // read off the length.
+            trace.Trim(8);
+            for (int i = 40; i < 60; i++) Record(trace, lag, i);
+            trace.Trim(8);
+            ranges.Update(trace);
+            Assert.AreEqual(59f, ranges.Of(lag).y, 1e-4f,
+                "a trimmed session still grows; its range has to grow with it");
+        }
+
+        [Test]
+        public void Ranges_AreMeasuredAfreshForEachRun_AndPadTheSignalsThatNeverMoved()
+        {
+            var trace = new SignalTrace();
+            var flat = trace.Declare(Simulation.LocalScope, "N", SignalKind.Float);
+            var flag = trace.Declare(Simulation.LocalScope, "Go", SignalKind.Bool);
+            var ranges = new SignalRanges();
+            for (int i = 0; i < 4; i++) { Record(trace, flat, 2f); flag.Push(0f); }
+            ranges.Update(trace);
+
+            // A row of one value would be a zero-height band to draw in.
+            Assert.AreEqual(1.5f, ranges.Of(flat).x, 1e-4f);
+            Assert.AreEqual(2.5f, ranges.Of(flat).y, 1e-4f);
+            // A Bool is 0..1 whatever it happened to do, so an off-all-run row reads as off
+            // rather than as the middle of nothing.
+            Assert.AreEqual(0f, ranges.Of(flag).x, 1e-4f);
+            Assert.AreEqual(1f, ranges.Of(flag).y, 1e-4f);
+
+            // A second run is a second trace, and must not inherit the first one's scale.
+            var second = new SignalTrace();
+            var fresh = second.Declare(Simulation.LocalScope, "N", SignalKind.Float);
+            for (int i = 0; i < 4; i++) Record(second, fresh, 100f + i);
+            ranges.Update(second);
+            Assert.AreEqual(100f, ranges.Of(fresh).x, 1e-4f);
+            Assert.AreEqual(103f, ranges.Of(fresh).y, 1e-4f);
+            Assert.AreEqual(new Vector2(0f, 1f), ranges.Of(flat),
+                "a signal from the run before is not in this one's scale at all");
+        }
+
         [Test]
         public void Client_HonoursPreventRepeats_OnARandomDriver()
         {

@@ -14,6 +14,89 @@ namespace Yozolab.DaerD.DynamicAnalyze
     /// scroll, filter). Re-running replaces the trace and leaves the view where it was, which
     /// is what makes "change one setting and look at the same moment again" possible.
     /// </summary>
+    /// <summary>
+    /// Each signal's own vertical range, over the WHOLE run rather than the part on screen — a
+    /// line that rescaled itself as it was scrolled would make two moments impossible to
+    /// compare by eye.
+    ///
+    /// Held apart from the drawing because of how a live session grows. A batch run hands the
+    /// viewer a brand new trace every time, so "have I measured this one" used to be answered
+    /// by comparing the reference — but LIVE keeps appending to the SAME trace, and by that
+    /// test it was measured once, at the first repaint, and never again. Every later frame was
+    /// then drawn against a range from before it existed: Lag climbs for the whole session, so
+    /// a live run walked out of its own scale within seconds and drew over the row above.
+    ///
+    /// So the reading is kept and EXTENDED rather than rebuilt. Only the frames recorded since
+    /// the last look are read, which is what keeps a session that has been running for an hour
+    /// costing the same per repaint as one that just started.
+    /// </summary>
+    sealed class SignalRanges
+    {
+        // The measured extremes, raw. What to draw against is derived from them rather than
+        // stored, so extending a range gives exactly the numbers a measurement from scratch
+        // would — the padding a flat signal gets must not compound every time it grows.
+        readonly Dictionary<SignalTrace.Signal, Vector2> _seen =
+            new Dictionary<SignalTrace.Signal, Vector2>();
+        SignalTrace _trace;
+        int _recorded;
+
+        /// <summary>What this signal is drawn against. A signal nothing has measured yet gets
+        /// 0..1, so a row that arrived this frame draws flat rather than not at all.</summary>
+        public Vector2 Of(SignalTrace.Signal signal) =>
+            signal != null && _seen.TryGetValue(signal, out var raw)
+                ? Shown(signal, raw) : new Vector2(0f, 1f);
+
+        /// <summary>Takes in whatever has been recorded since the last call. Cheap enough to
+        /// call every repaint, which is the point of it.</summary>
+        public void Update(SignalTrace trace)
+        {
+            if (!ReferenceEquals(_trace, trace))
+            {
+                _seen.Clear();
+                _trace = trace;
+                _recorded = 0;
+            }
+            if (trace == null) return;
+
+            // Counted off the trace's own total rather than off its length: a live session
+            // trims its oldest frames away, so the length stops growing long before the run
+            // does. Trimming only ever drops from the front, which is what makes the frames
+            // still to be read the LAST few of every signal.
+            int fresh = Mathf.Max(0, trace.Recorded - _recorded);
+            _recorded = trace.Recorded;
+            foreach (var signal in trace.Signals)
+            {
+                if (signal.kind == SignalKind.State) continue;
+                bool known = _seen.TryGetValue(signal, out var raw);
+                // A signal declared since the last look has all of its samples to be read.
+                int from = known ? Mathf.Max(0, signal.Frames - fresh) : 0;
+                if (known && from >= signal.Frames) continue;
+
+                float low = known ? raw.x : float.MaxValue;
+                float high = known ? raw.y : float.MinValue;
+                for (int frame = from; frame < signal.Frames; frame++)
+                {
+                    float value = signal.At(frame);
+                    low = Mathf.Min(low, value);
+                    high = Mathf.Max(high, value);
+                }
+                _seen[signal] = new Vector2(low, high);
+            }
+        }
+
+        /// <summary>The extremes turned into something to draw against: a Bool is 0..1 whatever
+        /// it happened to do, a signal that never moved gets a band around its one value rather
+        /// than a zero-height one, and a signal with no samples at all gets 0..1.</summary>
+        static Vector2 Shown(SignalTrace.Signal signal, Vector2 raw)
+        {
+            float low = raw.x, high = raw.y;
+            if (signal.kind == SignalKind.Bool) { low = 0f; high = 1f; }
+            if (low > high) { low = 0f; high = 1f; }
+            if (Mathf.Approximately(low, high)) { low -= 0.5f; high += 0.5f; }
+            return new Vector2(low, high);
+        }
+    }
+
     sealed class WaveformView
     {
         public const float RowHeight = 18f;
@@ -45,9 +128,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
         public string filter = string.Empty;
 
         Vector2 _rowScroll;
-        readonly Dictionary<SignalTrace.Signal, Vector2> _ranges =
-            new Dictionary<SignalTrace.Signal, Vector2>();
-        SignalTrace _rangedFor;
+        readonly SignalRanges _ranges = new SignalRanges();
         // The filtered row list, kept rather than rebuilt: OnGUI runs at least twice a frame
         // and this is walked by both of them.
         readonly List<Row> _visible = new List<Row>();
@@ -84,7 +165,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
                     EditorStyles.centeredGreyMiniLabel);
                 return;
             }
-            if (_rangedFor != trace) MeasureRanges();
+            _ranges.Update(trace);
 
             var visible = Visible();
             var plot = new Rect(rect.x + NameWidth + ValueWidth, rect.y + RulerHeight,
@@ -190,7 +271,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// </summary>
         void DrawTrace(SignalTrace.Signal signal, Rect plot)
         {
-            var range = _ranges.TryGetValue(signal, out var r) ? r : new Vector2(0f, 1f);
+            var range = _ranges.Of(signal);
             var ink = signal.kind == SignalKind.Bool ? WaveformColors.BoolInk
                 : signal.kind == SignalKind.Int ? WaveformColors.IntInk : WaveformColors.FloatInk;
             if (signal.scope == Simulation.WireScope) ink = WaveformColors.EventInk;
@@ -308,10 +389,14 @@ namespace Yozolab.DaerD.DynamicAnalyze
         int LastFrame(float width) =>
             Mathf.Min(Frames - 1, firstFrame + Mathf.CeilToInt(width / Mathf.Max(0.02f, pixelsPerFrame)));
 
+        /// <summary>Where a value sits in its row's band. Clamped, so a value the range has not
+        /// caught up with yet stays on its own row instead of being drawn over the one above:
+        /// the range follows a growing trace now, but a row is one signal's and nothing that
+        /// happens to it should be readable as another's.</summary>
         static float Y(Rect plot, float value, Vector2 range)
         {
             float span = range.y - range.x;
-            float at = Mathf.Approximately(span, 0f) ? 0.5f : (value - range.x) / span;
+            float at = Mathf.Approximately(span, 0f) ? 0.5f : Mathf.Clamp01((value - range.x) / span);
             return plot.yMax - at * plot.height;
         }
 
@@ -320,30 +405,6 @@ namespace Yozolab.DaerD.DynamicAnalyze
             int span = Mathf.Max(1, Mathf.CeilToInt(width / Mathf.Max(0.02f, pixelsPerFrame)));
             firstFrame = Mathf.Clamp(firstFrame, 0, Mathf.Max(0, Frames - span));
             cursorFrame = Mathf.Clamp(cursorFrame, 0, Mathf.Max(0, Frames - 1));
-        }
-
-        /// <summary>Each signal's own vertical range, over the WHOLE run rather than the part
-        /// on screen — a line that rescaled itself as it was scrolled would make two moments
-        /// impossible to compare by eye.</summary>
-        void MeasureRanges()
-        {
-            _ranges.Clear();
-            _rangedFor = trace;
-            foreach (var signal in trace.Signals)
-            {
-                if (signal.kind == SignalKind.State) continue;
-                float low = float.MaxValue, high = float.MinValue;
-                for (int frame = 0; frame < signal.Frames; frame++)
-                {
-                    float value = signal.At(frame);
-                    low = Mathf.Min(low, value);
-                    high = Mathf.Max(high, value);
-                }
-                if (signal.kind == SignalKind.Bool) { low = 0f; high = 1f; }
-                if (low > high) { low = 0f; high = 1f; }
-                if (Mathf.Approximately(low, high)) { low -= 0.5f; high += 0.5f; }
-                _ranges[signal] = new Vector2(low, high);
-            }
         }
 
         /// <summary>

@@ -107,6 +107,15 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// interpolate across.</summary>
         public int Frames => _time.Count;
 
+        /// <summary>
+        /// Frames recorded since the trace began, counting the ones <see cref="Trim"/> has
+        /// since dropped. <see cref="Frames"/> stops climbing once a live session reaches its
+        /// cap, which makes it useless for "has anything happened since I last looked"; this
+        /// never stops, so anything caching a reading of the trace can tell how much of it it
+        /// has not seen.
+        /// </summary>
+        public int Recorded { get; private set; }
+
         /// <summary>Simulated seconds elapsed at the END of this frame. The end rather than the
         /// start because the sample is taken after the frame ran, and a cursor over a waveform
         /// is asking what the value became.</summary>
@@ -162,6 +171,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
         {
             _time.Add(time);
             _step.Add(step);
+            Recorded++;
         }
 
         /// <summary>
