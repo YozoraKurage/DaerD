@@ -346,6 +346,129 @@ namespace Yozolab.DaerD.Tests
             }
         }
 
+        static GraphFrameData.AsyncSyncConfig.SyncGroup Pair()
+        {
+            var group = new GraphFrameData.AsyncSyncConfig.SyncGroup { name = "Outfit" };
+            group.members.AddRange(new[] { "F", "I" });
+            return group;
+        }
+
+        /// <summary>Every frame the remote holds either nothing yet or one of the whole sets the
+        /// wearer actually had — never a mixture, and never a value nobody sent.</summary>
+        static void AssertOnlyWholeSets(SignalTrace trace, params (float f, float i)[] sets)
+        {
+            var f = trace.Find(Simulation.RemoteScope, "F");
+            var i = trace.Find(Simulation.RemoteScope, "I");
+            for (int frame = 0; frame < trace.Frames; frame++)
+            {
+                bool untouched = f.At(frame) == 0f && i.At(frame) == 0f;
+                foreach (var set in sets)
+                    if (Mathf.Abs(f.At(frame) - set.f) < 0.01f && i.At(frame) == set.i)
+                        untouched = true;
+                Assert.IsTrue(untouched, "at " + trace.TimeAt(frame) + "s the remote held F="
+                    + f.At(frame) + " I=" + i.At(frame) + ", which is nothing the wearer had");
+            }
+        }
+
+        /// <summary>
+        /// The hole 0e91fc3 wrote down, with the flag on: a client whose copy starts before
+        /// anything has reached it reads the index it finds — zero, which is a real slot — and
+        /// decodes the channels beside it as that slot arriving. Without the flag the group
+        /// commits that on its first pass (which is why
+        /// <see cref="AGroupNeverShowsARemoteHalfOfAChange"/> starts looking at 2 s); with it
+        /// the commit waits for Ready, and Ready puts the arrival flags down as it latches, so
+        /// the first commit is made of decodes taken after the latch.
+        ///
+        /// Asserted from the first frame, which is the whole point of the test.
+        /// </summary>
+        [Test]
+        public void AGroupsFirstCommitCarriesNothingNobodySent_WhenReadyIsOn()
+        {
+            var controller = Multiplexed(out var request, r =>
+            {
+                r.groups.Add(Pair());
+                r.ready = true;
+            });
+            var settings = Settings(request, 8f);
+            settings.stimulus.At(0f, "F", 0.5f).At(0f, "I", 3f)
+                .At(4f, "F", -0.5f).At(4f, "I", 7f);
+
+            var trace = Simulation.Run(controller, settings);
+            AssertOnlyWholeSets(trace, (0.5f, 3f), (-0.5f, 7f));
+
+            // And it does arrive: a guard that never opens would pass the check above.
+            Assert.AreEqual(-0.5f, Remote(trace, "F"), 0.01f);
+            Assert.AreEqual(7f, Remote(trace, "I"));
+            float whole = Agreed(trace, "I", 3f);
+            Assert.Greater(whole, 0f, "the first whole set never landed");
+            Assert.Less(whole, 3f, "a commit that waits for the flag still waits in passes");
+        }
+
+        [Test]
+        public void AGroupsFirstCommitIsWholeForSomebodyWhoArrivedLate()
+        {
+            var controller = Multiplexed(out var request, r =>
+            {
+                r.groups.Add(Pair());
+                r.ready = true;
+            });
+            // They were not there when either half was set, and neither is set again.
+            var settings = Settings(request, 10f, joinsAt: 3.55f);
+            settings.stimulus.At(0f, "F", 0.5f).At(0f, "I", 3f);
+
+            var trace = Simulation.Run(controller, settings);
+            AssertOnlyWholeSets(trace, (0.5f, 3f));
+
+            float whole = Agreed(trace, "I", 3f);
+            Assert.Greater(whole, 3.55f, "the set reached somebody who was not there");
+            Assert.Less(whole - 3.55f, 2.5f, "later than the passes the guard costs");
+            Assert.AreEqual(0.5f, Remote(trace, "F"), 0.01f);
+        }
+
+        /// <summary>
+        /// The wearer, twice: with the flag and without it. Everything their copy does — their
+        /// own parameters, what they put in the channels, the index they write, and the shadow
+        /// machinery that is supposed to stay untouched on their side — has to be frame for
+        /// frame identical, because the guard is behind the decoder and the decoder is behind
+        /// the cycle layer's remote branch.
+        /// </summary>
+        [Test]
+        public void AGroupWithReadyLeavesTheWearersOwnCopyExactlyAsItWas()
+        {
+            var guarded = Multiplexed(out var request, r =>
+            {
+                r.groups.Add(Pair());
+                r.ready = true;
+            });
+            var plain = Multiplexed(out var plainRequest, r => r.groups.Add(Pair()));
+
+            var settings = Settings(request, 6f);
+            settings.stimulus.At(0f, "F", 0.5f).At(0f, "I", 3f).At(3f, "F", -0.5f)
+                .At(3f, "I", 7f);
+            var plainSettings = Settings(plainRequest, 6f);
+            plainSettings.stimulus.At(0f, "F", 0.5f).At(0f, "I", 3f).At(3f, "F", -0.5f)
+                .At(3f, "I", 7f);
+
+            var withFlag = Simulation.Run(guarded, settings);
+            var without = Simulation.Run(plain, plainSettings);
+            Assert.AreEqual(without.Frames, withFlag.Frames);
+
+            foreach (var name in new[]
+            {
+                "F", "B", "I", "Async/Index", "Async/Float", "Async/Bool", "Async/Int",
+                "Async/Hold/F", "Async/Held/F", "Async/Hold/I", "Async/Held/I",
+            })
+            {
+                var mine = withFlag.Find(Simulation.LocalScope, name);
+                var theirs = without.Find(Simulation.LocalScope, name);
+                Assert.IsNotNull(mine, name);
+                Assert.IsNotNull(theirs, name);
+                for (int frame = 0; frame < withFlag.Frames; frame++)
+                    Assert.AreEqual(theirs.At(frame), mine.At(frame), 1e-6f,
+                        name + " differs on the wearer at " + withFlag.TimeAt(frame) + "s");
+            }
+        }
+
         // ---- requests ---------------------------------------------------------
 
         [Test]

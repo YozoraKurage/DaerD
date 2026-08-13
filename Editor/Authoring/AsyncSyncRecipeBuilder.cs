@@ -236,13 +236,14 @@ namespace Yozolab.DaerD.Authoring
         /// fresh half of one. Costs no synced bits — a shadow parameter and a flag per member,
         /// and a two-state layer per group.
         ///
-        /// The guarantee starts after the first full pass. Until then a client decodes the
-        /// index it arrived to — zero, because nothing has reached it yet — as that slot
-        /// arriving, so its first commit can carry a value nobody sent. <see cref="Ready"/> is
-        /// how to tell the two apart.
+        /// Pair it with <see cref="Ready"/>. Without the flag the guarantee only starts after
+        /// the first full pass: a client decodes the index it arrived to — zero, because
+        /// nothing has reached it yet — as that slot arriving, so its first commit can carry a
+        /// value nobody sent. With the flag the commit waits for it, and there is no such first
+        /// commit to distrust.
         ///
         ///   c.AsyncSync("Zip").Targets("Hue", "Mesh", "Shape")
-        ///    .Group("Outfit", "Hue", "Mesh", "Shape");
+        ///    .Group("Outfit", "Hue", "Mesh", "Shape").Ready();
         /// </summary>
         public AsyncSyncRecipeBuilder Group(string name, params string[] members)
         {

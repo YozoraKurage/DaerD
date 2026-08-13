@@ -58,7 +58,9 @@ namespace Yozolab.DaerD
                 var readyLayer = BuildReadyLayer(controller, r, slots, previous, empty);
                 var staleLayer = BuildStaleLayer(controller, r, slots, clock, encoding,
                     indexBits, previous, empty);
-                var groups = BuildGroupLayers(controller, r, previous, empty);
+                // After the Ready layer, and told whether it was built: the commit guard below
+                // is only allowed to lean on the flag when there is one.
+                var groups = BuildGroupLayers(controller, r, readyLayer != null, previous, empty);
 
                 SyncGeneratedParameters(r, generated);
                 SaveConfig(controller, stateMachine, readyLayer, staleLayer, groups, r);
@@ -442,10 +444,17 @@ namespace Yozolab.DaerD
 
             // Ready and Local have no way out, which is the latch: whatever the wire does
             // afterwards, a client that has once seen everything has seen everything.
+            //
+            // The remote side also puts every group's arrival flags down on the way in. A flag
+            // raised before this moment stands for a decode that may never have been an
+            // arrival at all — see BuildGroupLayers for the one that isn't — so the commit
+            // this layer now guards starts from nothing rather than from whatever the first
+            // frames latched. The wearer's side is left exactly as it was: nothing on their
+            // copy ever raises those flags.
             if (!r.skipDrivers)
             {
-                AddReadyDriver(ready, r);
-                AddReadyDriver(local, r);
+                AddReadyDriver(ready, r, clearHeld: true);
+                AddReadyDriver(local, r, clearHeld: false);
             }
             EditorUtility.SetDirty(machine);
             return machine;
@@ -645,9 +654,24 @@ namespace Yozolab.DaerD
         /// Nothing here runs on the wearer: the decoder that raises the flags is behind the
         /// cycle layer's remote branch, so the flags never come up and the real parameters are
         /// never written from the shadows.
+        ///
+        /// With <see cref="Request.ready"/> on, the guard also asks for the flag, and the Ready
+        /// watcher puts the arrival flags down as it latches. Together those close the one hole
+        /// a group had: a client whose copy of the avatar starts before anything has reached it
+        /// reads the index it finds — zero, which is a real slot — and decodes the channels
+        /// beside it as that slot arriving, so the very first commit could carry a value nobody
+        /// sent. The flag alone would not do it, because that first decode raises the slot's
+        /// Seen bit as readily as a real one and the latch would land in the same frame as the
+        /// commit; the flags being put down at the latch is what makes every flag the guard
+        /// then sees a decode taken AFTER it, and every decode after the first frame comes from
+        /// an index change somebody actually sent. The cost is that the first commit waits for
+        /// one more visit of each member — later, which is the safe direction.
+        ///
+        /// With the flag off there is nothing to ask for and the guard is the members alone,
+        /// exactly as before. <see cref="AsyncSyncBuilder.Warnings"/> says so.
         /// </summary>
         static List<SyncGroup> BuildGroupLayers(AnimatorController controller, Request r,
-            GraphFrameData.AsyncSyncConfig previous, AnimationClip empty)
+            bool readyGuard, GraphFrameData.AsyncSyncConfig previous, AnimationClip empty)
         {
             var built = new List<SyncGroup>();
             string main = MainLayerName(r);
@@ -664,6 +688,9 @@ namespace Yozolab.DaerD
                 machine.defaultState = idle;
 
                 var arm = Instant(idle, commit);
+                if (readyGuard)
+                    arm.AddCondition(AnimatorConditionMode.If, 0f,
+                        ReadyParameter(r.baseName));
                 foreach (var name in group.members)
                     arm.AddCondition(AnimatorConditionMode.If, 0f,
                         HeldParameter(r.baseName, name));
@@ -766,15 +793,26 @@ namespace Yozolab.DaerD
             return state;
         }
 
-        /// <summary>Raises the flag. Not localOnly: this runs on every client's copy of the
-        /// avatar, which is the whole point — each of them is answering for itself.</summary>
-        static void AddReadyDriver(AnimatorState state, Request r)
+        /// <summary>
+        /// Raises the flag. Not localOnly: this runs on every client's copy of the avatar,
+        /// which is the whole point — each of them is answering for itself.
+        ///
+        /// <paramref name="clearHeld"/> adds the group arrival flags, put down in the same
+        /// frame the flag goes up. Only on the remote path, and only where there are groups:
+        /// it is the other half of the commit guard, and the wearer has nothing to put down.
+        /// </summary>
+        static void AddReadyDriver(AnimatorState state, Request r, bool clearHeld)
         {
             var driver = VrcParameterDriver.AddTo(state, "Async Ready");
             if (driver == null) return;
             Undo.RegisterCompleteObjectUndo(driver, "Async Sync");
             VrcParameterDriver.SetLocalOnly(driver, false);
             VrcParameterDriver.AddSetEntry(driver, ReadyParameter(r.baseName), 1f);
+            if (!clearHeld) return;
+            foreach (var group in EffectiveGroups(r))
+                foreach (var name in group.members)
+                    VrcParameterDriver.AddSetEntry(driver,
+                        HeldParameter(r.baseName, name), 0f);
         }
 
         /// <summary>The saved setup that owns this layer, matched by reference rather than by

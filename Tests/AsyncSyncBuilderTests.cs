@@ -2801,6 +2801,71 @@ namespace Yozolab.DaerD.Tests
             Assert.AreEqual(0, commit.transitions[0].conditions.Length);
         }
 
+        /// <summary>
+        /// The commit guard with the remote initialized flag on: the flag as well as the
+        /// members, and the latch putting the arrival flags down as it goes. Both halves, in
+        /// one test, because either alone leaves the hole open — the flag on its own latches in
+        /// the same frame the flags a client's first frames raised complete a commit, and
+        /// putting them down on its own leaves nothing guarding the frames before the latch.
+        /// AsyncSyncRuntimeTests runs the thing the pair is for.
+        /// </summary>
+        [Test]
+        public void Apply_WithAGroupAndReady_WaitsForTheFlagAndStartsTheFlagsFromNothing()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.groups.Add(Group("Outfit", "F", "B"));
+            request.ready = true;
+            request.skipDrivers = false;
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var arm = FindState(FindLayer(controller, "Async Outfit"), "Idle").transitions[0];
+            Assert.AreEqual(3, arm.conditions.Length, "the flag on top of one per member");
+            Assert.IsTrue(HasCondition(arm, "Async/Ready", AnimatorConditionMode.If, 0f));
+            Assert.IsTrue(HasCondition(arm, "Async/Held/F", AnimatorConditionMode.If, 0f));
+            Assert.IsTrue(HasCondition(arm, "Async/Held/B", AnimatorConditionMode.If, 0f));
+
+            // One driver again, so the flag and the clears land in the same frame as each
+            // other — a commit cannot slip between them.
+            var latched = DriverOn(FindState(FindLayer(controller, "Async Ready"), "Ready"));
+            Assert.AreEqual(3, latched.entries.Count);
+            Assert.AreEqual("Async/Ready", latched.entries[0].name);
+            Assert.AreEqual(1f, latched.entries[0].value);
+            Assert.AreEqual("Async/Held/F", latched.entries[1].name);
+            Assert.AreEqual(0f, latched.entries[1].value);
+            Assert.AreEqual("Async/Held/B", latched.entries[2].name);
+            Assert.AreEqual(0f, latched.entries[2].value);
+
+            // The wearer's side of the watcher is untouched: nothing on their copy ever raises
+            // those flags, so there is nothing there to put down.
+            var wearer = DriverOn(FindState(FindLayer(controller, "Async Ready"), "Local"));
+            Assert.AreEqual(1, wearer.entries.Count);
+            Assert.AreEqual("Async/Ready", wearer.entries[0].name);
+        }
+
+        [Test]
+        public void Apply_WithAGroupAndNoReady_LeavesTheGuardAsItWas()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.groups.Add(Group("Outfit", "F", "B"));
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            // No flag to ask for, so the guard is the members alone — and the warning names the
+            // switch that would close the first commit off instead of leaving it to be read.
+            var arm = FindState(FindLayer(controller, "Async Outfit"), "Idle").transitions[0];
+            Assert.AreEqual(2, arm.conditions.Length);
+            Assert.IsFalse(HasCondition(arm, "Async/Ready", AnimatorConditionMode.If, 0f));
+            Assert.IsTrue(AsyncSyncBuilder.Warnings(request)
+                .Exists(w => w.Contains("carry a value nobody sent")
+                    && w.Contains("remote initialized flag")));
+
+            request.ready = true;
+            Assert.IsFalse(AsyncSyncBuilder.Warnings(request)
+                .Exists(w => w.Contains("carry a value nobody sent")),
+                "the flag is on — there is nothing left to warn about");
+        }
+
         [Test]
         public void Apply_WithTwoGroups_GivesEachItsOwnWait()
         {

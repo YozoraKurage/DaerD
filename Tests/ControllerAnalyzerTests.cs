@@ -875,6 +875,14 @@ namespace Yozolab.DaerD.Tests
             return controller;
         }
 
+        static GraphFrameData.AsyncSyncConfig.SyncGroup Grouped(string name,
+            params string[] members)
+        {
+            var group = new GraphFrameData.AsyncSyncConfig.SyncGroup { name = name };
+            group.members.AddRange(members);
+            return group;
+        }
+
         [Test]
         public void AsyncSync_BuildsNoTransitionThatCanNeverFire()
         {
@@ -894,6 +902,17 @@ namespace Yozolab.DaerD.Tests
                         r.ready = true;
                         r.stale = true;
                         r.requestTargets.Add("I");
+                    }
+                },
+                { "a group", r => r.groups.Add(Grouped("Outfit", "F", "I")) },
+                {
+                    // The commit guard leans on the flag here, which is a condition on a
+                    // transition that is otherwise the one route out of Idle.
+                    "a group and the remote initialized flag",
+                    r =>
+                    {
+                        r.ready = true;
+                        r.groups.Add(Grouped("Outfit", "F", "I"));
                     }
                 },
                 { "a repeat-step clock", r => r.allowRepeatSteps = true },

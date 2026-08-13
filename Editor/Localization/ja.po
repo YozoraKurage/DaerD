@@ -1049,6 +1049,9 @@ msgstr "'{0}' という名前のグループが 2 つあります。別々の名
 msgid "'{0}' groups parameters that already share a step, so they were never going to arrive apart. The group holds them back for nothing — drop it, or split the step."
 msgstr "'{0}' は既に同じステップを共有しているパラメーターをまとめています。もともと別々には届かないので、このグループは意味なく待たせるだけです。グループを外すか、ステップを分けてください。"
 
+msgid "The first commit of a session can carry a value nobody sent: a client whose copy starts before anything has reached it reads the index it finds — zero, which is a real slot — and decodes the channels beside it as that slot arriving. Turn on the remote initialized flag and the commit waits for it, which closes this off for good; leave it off and only the commits after the first full pass are whole."
+msgstr "セッション最初のコミットは、誰も送っていない値を運ぶことがあります。何も届かないうちに動き始めたクライアントは、見つけた index — 0 で、これは実在するスロットです — の隣にあるチャンネルを、そのスロットが到着したものとしてデコードするからです。リモート初期化フラグを ON にするとコミット自体がそれを待つようになり、この穴は塞がります。OFF のままなら、1 周し終えたあとのコミットだけが完全です。"
+
 msgid "With requests running: up to {0:0.#} s per pass."
 msgstr "リクエストが動いているとき: 1 周あたり最大 {0:0.#} 秒"
 

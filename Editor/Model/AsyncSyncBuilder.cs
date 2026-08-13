@@ -165,11 +165,18 @@ namespace Yozolab.DaerD
             /// Costs nothing on the wire: a shadow parameter and a flag per member, both
             /// animator-local, and a two-state layer per group.
             ///
-            /// Worth exactly as much as <see cref="ready"/> says it is, and no more. A client
-            /// that has just arrived decodes whatever index it finds — zero, because nothing
-            /// has reached it yet — as that slot arriving, so its first commit can carry a
-            /// value nobody sent. After the first full pass every member has been sent at
-            /// least once and the guarantee holds; before it, read Ready.
+            /// The first commit of a session is the one with a hole in it, and
+            /// <see cref="ready"/> is what closes it. A client whose copy starts before
+            /// anything has reached it decodes whatever index it finds — zero, because nothing
+            /// has — as that slot arriving, so without the flag its first commit can carry a
+            /// value nobody sent, and only after a full pass does the guarantee hold.
+            ///
+            /// With the flag on, the commit itself waits for it: the guard asks for Ready as
+            /// well as for the members, and the Ready watcher puts the arrival flags down as it
+            /// latches, so every flag the guard then sees stands for a decode taken after the
+            /// latch — and every decode after the first frame came from an index change
+            /// somebody actually sent. The hole is gone rather than documented, at the price of
+            /// a first commit that waits for one more visit of each member.
             /// </summary>
             public List<SyncGroup> groups = new List<SyncGroup>();
 
@@ -944,6 +951,13 @@ namespace Yozolab.DaerD
                         group.name));
                     break;
                 }
+
+                // The one commit a group cannot get right on its own, and the switch that takes
+                // it away. Said rather than left in the doc, because the setup that needs to
+                // hear it is exactly the one being built here.
+                if (!r.ready)
+                    warnings.Add(L.Tr(
+                        "The first commit of a session can carry a value nobody sent: a client whose copy starts before anything has reached it reads the index it finds — zero, which is a real slot — and decodes the channels beside it as that slot arriving. Turn on the remote initialized flag and the commit waits for it, which closes this off for good; leave it off and only the commits after the first full pass are whole."));
             }
 
             if (r.stepSeconds < 0.3f)
