@@ -2113,23 +2113,15 @@ msgstr "（リクエスト可）"
 msgid "Top to bottom is the cycle order. The timing itself is set by hand in the timeline below."
 msgstr "上から下が巡回の順序です。タイミングそのものは下のタイムラインで手動指定しています。"
 
-msgid "Top to bottom is only the listing order here — what each step sends is set cell by cell in the grid below."
-msgstr "ここでの上下は並び順にすぎません。各ステップが何を送るかは、下のグリッドでセル単位に指定します。"
 
 msgid "This setup carries an explicit cycle written in C#, so top to bottom is only the listing order and ×N only decides which parameters share a step. The pass itself is the timeline below."
 msgstr "このセットアップは C# で書かれた明示スケジュールを持っているため、ここでの上下は並び順にすぎず、×N はどのパラメーターが同じステップに乗るかだけを決めます。1 周そのものは下のタイムラインです。"
 
-msgid "Steps in the pass that send this parameter. Set it by clicking the timeline; go back to the weights to have it worked out for you."
-msgstr "1 周のうちこのパラメーターを送るステップ数です。タイムラインをクリックして決めます。自動で決めさせたい場合は重みに戻してください。"
 
 msgid "Click a row to make that step send it. Every step sends exactly one slot, so a click moves the step rather than adding one."
 msgstr "行をクリックすると、そのステップがその行を送るようになります。1 ステップが送るスロットは常にちょうど 1 つなので、クリックはステップの追加ではなく置き換えです。"
 
-msgid "Click a cell to add or remove that parameter from the step; drag along a row to paint several. Everything in one column is sent together, in one go."
-msgstr "セルをクリックすると、そのステップの送信対象にパラメーターを追加／解除します。行に沿ってドラッグすればまとめて塗れます。同じ列にあるものは 1 回でまとめて送信されます。"
 
-msgid "That step already carries as many parameters of this type as its channels allow. Raise the channel count, or use another step."
-msgstr "このステップは、この型のチャンネル数の上限までパラメーターを積んでいます。チャンネル数を増やすか、別のステップを使ってください。"
 
 msgid "Split"
 msgstr "分離"
@@ -2140,23 +2132,13 @@ msgstr "このパラメーターに専用のステップを与え、上の行と
 msgid "The step this parameter rides in. Rows sharing a number share a step, are copied by one driver, and so are always sent together."
 msgstr "このパラメーターが乗るステップです。同じ番号の行は同じステップを共有し、1 つの Parameter Driver でまとめてコピーされるため、常に同時に送信されます。"
 
-msgid "Set Timing By Hand"
-msgstr "タイミングを手動指定"
 
-msgid "Write the pass out step by step instead of deriving it from the weights. It starts as the pass shown here, so nothing changes until you move something."
-msgstr "重みから 1 周を導出するのをやめ、ステップごとに書き下します。開始時点はいま表示されている 1 周と同じなので、動かすまで何も変わりません。"
 
-msgid "Steps"
-msgstr "ステップ数"
 
 msgid "Back To Weights"
 msgstr "重みに戻す"
 
-msgid "Discard the hand-written pass and let the ×N weights lay the cycle out again."
-msgstr "手動で書いた 1 周を破棄し、×N の重みから巡回を組み直します。"
 
-msgid "Discard the explicit cycle this setup carries and let the ×N weights lay the pass out again."
-msgstr "このセットアップが持つ明示スケジュールを破棄し、×N の重みから 1 周を組み直します。"
 
 msgid "'{0}' is never sent — no step of the pass carries it."
 msgstr "'{0}' は送信されません — 1 周のどのステップもこのパラメーターを運んでいません。"
@@ -3086,3 +3068,18 @@ msgstr "リモートの入室 (秒)"
 
 msgid "When the other person turns up. Zero is everybody loading together, which is the one case that stops happening after the first minute of an instance. Somebody who arrives later is handed every synced value at once and has to work the rest out from there — which is what the flags about being caught up are for."
 msgstr "相手がいつ来るかです。0 は全員同時に読み込む場合ですが、それはインスタンスの最初の 1 分を過ぎると起きなくなります。あとから来た人は同期値を一括で受け取り、残りはそこから自力で追いつく必要があります（追いつけたかを示す各フラグはそのためのものです）。"
+
+msgid "This setup carries a pass written out step by step. It is shown here and still built as it stands, but hand timing is no longer set up in this wizard — sync requests do what it was for."
+msgstr "このセットアップはステップごとに書き出された周回を持っています。ここに表示し、そのまま生成もしますが、手動タイミングの作成はこのウィザードでは行いません（同期リクエストが同じ用途を満たします）。"
+
+msgid "This setup carries an explicit cycle written in C#. It is shown here and still built as it stands, but a cycle is no longer written in this wizard — sync requests do what it was for."
+msgstr "このセットアップは C# で書かれた明示的な巡回順を持っています。ここに表示し、そのまま生成もしますが、巡回順の記述はこのウィザードでは行いません（同期リクエストが同じ用途を満たします）。"
+
+msgid "Discard the pass this setup carries and let the ×N weights lay the cycle out again. There is no way back to it from here."
+msgstr "このセットアップが持っている周回を破棄し、×N の重みから巡回を組み直します。ここから元に戻す手段はありません。"
+
+msgid "This setup carries a pass written out step by step, so top to bottom is only the listing order. The pass itself is the timeline below."
+msgstr "このセットアップはステップごとに書き出された周回を持っているため、上から下は並び順の表示にすぎません。周回そのものは下のタイムラインです。"
+
+msgid "Steps of the carried pass that send this parameter. Go back to the weights to have the pass worked out from ×N again."
+msgstr "このパラメーターを送る、持ち込まれた周回のステップ数です。重みに戻すと ×N から周回を組み直せます。"

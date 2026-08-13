@@ -583,36 +583,6 @@ namespace Yozolab.DaerD
             return repaired;
         }
 
-        /// <summary>
-        /// The slot to hand the next step to when a cycle is lengthened by hand: the
-        /// least-visited one that touches neither end, so the step is valid where it lands.
-        /// With only two slots no such slot exists — their cycle can only be even — and the
-        /// fallback ignores the far end, leaving the wrap to
-        /// <see cref="RepairScheduleOverride"/>. -1 when even that finds nothing.
-        /// </summary>
-        public static int NextStepSlot(List<int> steps, int slotCount)
-        {
-            if (slotCount <= 0) return -1;
-            var visits = new int[slotCount];
-            foreach (var step in steps)
-                if (step >= 0 && step < slotCount) visits[step]++;
-            int last = steps.Count > 0 ? steps[steps.Count - 1] : -1;
-            int first = steps.Count > 0 ? steps[0] : -1;
-            int picked = LeastVisited(visits, last, first);
-            return picked >= 0 ? picked : LeastVisited(visits, last, -1);
-        }
-
-        static int LeastVisited(int[] visits, int avoid, int alsoAvoid)
-        {
-            int best = -1;
-            for (int i = 0; i < visits.Length; i++)
-            {
-                if (i == avoid || i == alsoAvoid) continue;
-                if (best < 0 || visits[i] < visits[best]) best = i;
-            }
-            return best;
-        }
-
         /// <summary>The schedule a request actually runs: an explicit grid first, then the
         /// explicit cycle when given (and valid), and the rate-based automatic one otherwise.</summary>
         public static List<int> EffectiveSchedule(Request r, List<Slot> slots)

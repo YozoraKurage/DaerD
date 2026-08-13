@@ -271,17 +271,6 @@ namespace Yozolab.DaerD.Tests
             Object.DestroyImmediate(controller);
         }
 
-        [Test]
-        public void NextStepSlot_PicksTheLeastVisitedSlotThatTouchesNeitherEnd()
-        {
-            // 1 and 3 are free of both ends; 3 has been visited least.
-            Assert.AreEqual(3, AsyncSyncSchedule.NextStepSlot(new List<int> { 0, 1, 0, 2 }, 4));
-            Assert.AreEqual(1, AsyncSyncSchedule.NextStepSlot(new List<int> { 0, 1, 2 }, 3));
-            // Two slots have no such slot — their cycle can only be even — so the far end is
-            // given up and the wrap is left for the repair to settle.
-            Assert.AreEqual(0, AsyncSyncSchedule.NextStepSlot(new List<int> { 0, 1 }, 2));
-        }
-
         // ---- explicit schedules ----------------------------------------------
 
         [Test]

@@ -421,9 +421,6 @@ namespace Yozolab.DaerD
             AnimatorControllerParameterType type) =>
             AsyncSyncSchedule.StepHasRoom(r, members, type);
 
-        public static int NextStepSlot(List<int> steps, int slotCount) =>
-            AsyncSyncSchedule.NextStepSlot(steps, slotCount);
-
         public static List<int> RequestOrigins(List<int> schedule, Clock clock, int slot) =>
             AsyncSyncSchedule.RequestOrigins(schedule, clock, slot);
 
