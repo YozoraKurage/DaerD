@@ -818,5 +818,147 @@ namespace Yozolab.DaerD.Tests
 
             Object.DestroyImmediate(controller);
         }
+
+        // ---- what the builders write, read back by the analyzer ----------------
+
+        /// <summary>
+        /// The one category a generator is never allowed to produce: a transition with neither
+        /// a condition nor an exit time is a transition that is never taken, so a watcher
+        /// wired that way is simply deaf — it looks right in the graph and does nothing at
+        /// runtime. 0e91fc3 fixed a handful of those by hand; this is the wiring that says so
+        /// the next time, for every setup a generator can be asked to build.
+        ///
+        /// Only this category. The rest of the analyzer's lint is about shapes an author might
+        /// mean (a motion-less machinery state, a layer at weight 0), and holding generated
+        /// output to all of it would fail on things that are correct.
+        /// </summary>
+        static void AssertNothingIsWiredDeaf(AnimatorController controller, string what)
+        {
+            var deaf = new List<string>();
+            foreach (var issue in OfKind(controller, IssueKind.DeadTransition))
+                if (issue.message.Contains("no conditions and no exit time"))
+                    deaf.Add("  " + issue.message);
+
+            Assert.IsEmpty(deaf, what + " built " + deaf.Count
+                + " transition(s) nothing can ever fire:\n" + string.Join("\n", deaf));
+        }
+
+        static AnimatorController MultiplexedController(
+            System.Action<AsyncSyncBuilder.Request> tweak)
+        {
+            var controller = new AnimatorController();
+            controller.AddLayer("Base");
+            controller.AddParameter("F", AnimatorControllerParameterType.Float);
+            controller.AddParameter("G", AnimatorControllerParameterType.Float);
+            controller.AddParameter("B", AnimatorControllerParameterType.Bool);
+            controller.AddParameter("I", AnimatorControllerParameterType.Int);
+
+            var request = new AsyncSyncBuilder.Request
+            {
+                controller = controller,
+                baseName = "Async",
+                encoding = AsyncSyncBuilder.IndexEncoding.Int,
+                stepSeconds = 0.3f,
+                assignEmptyClip = false,
+                addToStore = false,
+                // The drivers carry values, not routing — every transition this test is about
+                // is built either way, and skipping them is what lets the check run with the
+                // VRChat SDK absent as well as present.
+                skipDrivers = true,
+                layerIndex = -1,
+            };
+            request.targets.AddRange(new[] { "F", "G", "B", "I" });
+            tweak?.Invoke(request);
+
+            Assert.IsNull(AsyncSyncBuilder.Validate(request), "the setup itself is not buildable");
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+            return controller;
+        }
+
+        [Test]
+        public void AsyncSync_BuildsNoTransitionThatCanNeverFire()
+        {
+            // The plain pass, and then each of the things that add a layer or a route of their
+            // own — the watcher layers are where a deaf transition has actually happened.
+            var cases = new Dictionary<string, System.Action<AsyncSyncBuilder.Request>>
+            {
+                { "a plain cycle", null },
+                { "the remote initialized flag", r => r.ready = true },
+                { "the drift flag", r => r.stale = true },
+                { "both flags", r => { r.ready = true; r.stale = true; } },
+                { "sync requests", r => r.requestTargets.AddRange(new[] { "B", "I" }) },
+                {
+                    "requests and both flags",
+                    r =>
+                    {
+                        r.ready = true;
+                        r.stale = true;
+                        r.requestTargets.Add("I");
+                    }
+                },
+                { "a repeat-step clock", r => r.allowRepeatSteps = true },
+                { "two float channels", r => r.floatChannels = 2 },
+                { "a weight no control hands out", r => r.rates["F"] = 3 },
+            };
+
+            foreach (var pair in cases)
+            {
+                var controller = MultiplexedController(pair.Value);
+                AssertNothingIsWiredDeaf(controller, "async sync with " + pair.Key);
+                Object.DestroyImmediate(controller);
+            }
+        }
+
+        [Test]
+        public void NetworkSync_BuildsNoTransitionThatCanNeverFire()
+        {
+            var controller = new AnimatorController();
+            controller.AddLayer("Base");
+            controller.AddLayer("Target");
+            controller.AddParameter("Go", AnimatorControllerParameterType.Bool);
+            var machine = controller.layers[1].stateMachine;
+            var first = machine.AddState("S0");
+            var second = machine.AddState("S1");
+            first.AddTransition(second).AddCondition(AnimatorConditionMode.If, 0f, "Go");
+
+            var request = new NetworkSyncBuilder.Request
+            {
+                controller = controller,
+                layerIndex = 1,
+                syncParameter = "Target/Sync",
+                packIntoSubMachine = false,
+                skipDrivers = true,
+            };
+            Assert.IsNull(NetworkSyncBuilder.Validate(request));
+            Assert.IsTrue(NetworkSyncBuilder.Apply(request));
+
+            AssertNothingIsWiredDeaf(controller, "network sync");
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void ObjectToggle_BuildsNoTransitionThatCanNeverFire()
+        {
+            var controller = new AnimatorController();
+            controller.AddLayer("Base");
+
+            var request = new ToggleBuilder.Request
+            {
+                controller = controller,
+                mode = ToggleBuilder.Mode.Layer,
+                toggleName = "Hat",
+                parameter = "Hat",
+                layerIndex = -1,
+                newLayerName = "Toggles",
+            };
+            request.targets.Add(new ToggleBuilder.Target { path = "Armature/Head/Hat" });
+            Assert.IsNull(ToggleBuilder.Validate(request));
+            Assert.IsTrue(ToggleBuilder.Apply(request));
+
+            AssertNothingIsWiredDeaf(controller, "the object toggle");
+
+            Object.DestroyImmediate(controller);
+        }
     }
 }
