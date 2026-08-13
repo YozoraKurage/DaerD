@@ -470,6 +470,30 @@ namespace Yozolab.DaerD
             EditorGUILayout.EndScrollView();
         }
 
+        /// <summary>Ticks or unticks a target by name — what the pick list does to a row, from
+        /// the model's side.</summary>
+        internal void SetSelected(string name, bool selected)
+        {
+            foreach (var row in _rows)
+                if (row.name == name)
+                {
+                    SetSelected(row, selected);
+                    return;
+                }
+        }
+
+        /// <summary>
+        /// Unticking drops the row out of the cycle and clears the settings that only mean
+        /// something inside one — but NOT the weight. A weight is the one thing on this row the
+        /// form cannot hand out any more (the ×N popup went with 4fecc5d), so clearing it on the
+        /// way out is a one-way door: two mis-clicks and an Apply turned a recipe's ×8 into a
+        /// ×1 with no control touched and nothing said, which is the same thing the load path
+        /// was fixed for. Kept on the row instead, so re-ticking gives it back.
+        ///
+        /// It costs nothing to carry: <see cref="BuildRequest"/> reads the selected rows only,
+        /// so a weight sitting on an unticked row reaches neither the built layer nor the saved
+        /// setup.
+        /// </summary>
         void SetSelected(Row row, bool selected)
         {
             row.selected = selected;
@@ -480,7 +504,6 @@ namespace Yozolab.DaerD
             else
             {
                 _order.Remove(row);
-                row.rate = 1;
                 row.request = false;
                 row.split = false;
                 row.group = null;

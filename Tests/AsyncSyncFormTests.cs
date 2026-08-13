@@ -202,6 +202,40 @@ namespace Yozolab.DaerD.Tests
             Object.DestroyImmediate(controller);
         }
 
+        /// <summary>
+        /// The other half of the same promise, on the way through the form rather than into it.
+        /// Unticking a row used to reset its weight to ×1, which was recoverable while the ×N
+        /// popup existed and is not now: with no control that hands weights out, a stray click
+        /// on the tick box, a second one to put it back, and an Apply is enough to lose a
+        /// recipe's ×8 for good — silently, having touched nothing that says "weight".
+        /// </summary>
+        [Test]
+        public void SavedWeights_SurviveBeingUntickedAndTickedAgain()
+        {
+            var controller = NewController();
+            var config = Config();
+            config.rates.Add(new GraphFrameData.AsyncSyncConfig.SyncRate { name = "F", rate = 8 });
+
+            var form = new AsyncSyncForm();
+            form.SetController(controller);
+            form.LoadConfig(config);
+
+            form.SetSelected("F", false);
+            // While it is out of the cycle it is not in the setup at all — a weight held on an
+            // unticked row must not reach the built layer.
+            var without = form.BuildRequest(-1);
+            CollectionAssert.DoesNotContain(without.targets, "F");
+            Assert.AreEqual(1, without.RateOf("F"));
+
+            form.SetSelected("F", true);
+            var rebuilt = form.BuildRequest(-1);
+
+            CollectionAssert.Contains(rebuilt.targets, "F");
+            Assert.AreEqual(8, rebuilt.RateOf("F"), "the weight came back with the row");
+
+            Object.DestroyImmediate(controller);
+        }
+
         /// <summary>Groups live on the rows in the form and as a list in the setup, and the
         /// translation between the two is the only place either shape is written.</summary>
         [Test]
