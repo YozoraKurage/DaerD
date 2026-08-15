@@ -185,7 +185,11 @@ namespace Yozolab.DaerD.DynamicAnalyze
         static bool Present(bool[] here, int index) =>
             here == null || index >= here.Length || here[index];
 
-        static SignalKind KindOf(AnimatorControllerParameterType type)
+        /// <summary>What kind of row a parameter of this type gets. Shared with
+        /// <see cref="PlayRecorder"/> rather than spelt twice: a recording and a run put the
+        /// same parameter in the same kind of row, or the ghost of one over the other is two
+        /// rows that only look alike.</summary>
+        internal static SignalKind KindOf(AnimatorControllerParameterType type)
         {
             switch (type)
             {

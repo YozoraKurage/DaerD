@@ -36,6 +36,18 @@ namespace Yozolab.DaerD.DynamicAnalyze
         public const string LagScope = "Lag";
 
         /// <summary>
+        /// Rows taken off an avatar that was really running — a recording rather than a run.
+        ///
+        /// Deliberately not one of the client scopes <see cref="IsClient"/> answers for. A
+        /// client is a copy of the avatar this module MADE, and the offer that comes with being
+        /// one is that a reader may type into its cells; nothing here can reach into somebody
+        /// else's Play mode and set a parameter, so a recorded row that offered a field would be
+        /// offering a control that does nothing. A row nobody can edit is the true shape of a
+        /// recording.
+        /// </summary>
+        public const string PlayScope = "Play";
+
+        /// <summary>
         /// What to call the nth other person. "Remote", then "Remote 2", "Remote 3" — the first
         /// keeps the bare name because a single-remote run is still what most questions are, and
         /// every trace, saved clip and test that already says "Remote" goes on meaning it.
@@ -61,6 +73,13 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// <summary>Whether this scope is a running copy of the avatar at all — the wearer's or
         /// anyone else's — as opposed to the wire's own signals or a lag row.</summary>
         public static bool IsClient(string scope) => scope == LocalScope || IsRemote(scope);
+
+        /// <summary>Whether this scope's rows came off an avatar that was running a controller
+        /// — a copy this module made, or one it recorded somebody else running. Wider than
+        /// <see cref="IsClient"/> and asked by anything reading state rows rather than offering
+        /// to write to them: what a layer did is a question about any avatar, and what may be
+        /// poked is a question about ours.</summary>
+        public static bool IsAvatar(string scope) => IsClient(scope) || scope == PlayScope;
 
         /// <summary>Whether this scope is somebody's lag rows.</summary>
         public static bool IsLag(string scope) =>

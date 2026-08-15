@@ -263,11 +263,15 @@ namespace Yozolab.DaerD.DynamicAnalyze
 
         /// <summary>The layer this row belongs to, or null if it is not that kind of row. A
         /// State row with labels is the test rather than the name alone: a parameter may be
-        /// called anything, including something ending in "/state".</summary>
+        /// called anything, including something ending in "/state".
+        ///
+        /// Any avatar's rows, not only a simulated client's — a recording taken off Play mode
+        /// has states nobody entered exactly the way a run does, and the two findings that read
+        /// these rows say nothing about the wire and so nothing about how the rows were got.</summary>
         static string LayerOf(SignalTrace.Signal signal, string suffix)
         {
             if (signal.kind != SignalKind.State || signal.labels == null
-                || signal.labels.Length == 0 || !Simulation.IsClient(signal.scope))
+                || signal.labels.Length == 0 || !Simulation.IsAvatar(signal.scope))
                 return null;
             string name = signal.name ?? string.Empty;
             return name.Length > suffix.Length
