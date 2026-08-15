@@ -1,7 +1,10 @@
 {
     "name": "Yozolab.DaerD.Editor",
     "rootNamespace": "Yozolab.DaerD",
-    "references": [],
+    "references": [
+        "vrchat.blackstartx.gesture-manager",
+        "lyuma.av3emulator"
+    ],
     "includePlatforms": [
         "Editor"
     ],
@@ -13,6 +16,17 @@
     "defineConstraints": [
         "UNITY_EDITOR"
     ],
-    "versionDefines": [],
+    "versionDefines": [
+        {
+            "name": "vrchat.blackstartx.gesture-manager",
+            "expression": "",
+            "define": "DAERD_GM"
+        },
+        {
+            "name": "lyuma.av3emulator",
+            "expression": "",
+            "define": "DAERD_AV3E"
+        }
+    ],
     "noEngineReferences": false
 }

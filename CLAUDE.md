@@ -86,6 +86,24 @@ Editor イメージ）。EditMode テストはコンテナ内で完結する。
 .devcontainer/unity/add-vpm.sh --remove com.vrchat.avatars
 ```
 
+テストプロジェクトには GestureManager と Av3Emulator も埋め込みパッケージで入れてある
+（`Packages/vrchat.blackstartx.gesture-manager` と `Packages/lyuma.av3emulator`）。DD
+DynamicAnalyze の Rec がこの 2 つを型で参照する（asmdef の versionDefines `DAERD_GM` /
+`DAERD_AV3E`）ためで、どちらも VRChat SDK に依存している。**SDK を抜くときは 2 つとも
+`Packages/` の外へ先に退避する** — 順序を逆にするとツール側がコンパイルエラーになり、
+テストが 1 件も走らない（終了コード 3）。
+
+```
+mkdir -p /home/node/unity-tools-aside
+mv /home/node/unity-testproject/Packages/vrchat.blackstartx.gesture-manager \
+   /home/node/unity-testproject/Packages/lyuma.av3emulator /home/node/unity-tools-aside/
+.devcontainer/unity/add-vpm.sh --remove com.vrchat.avatars
+# 戻すときは逆順（SDK を入れてから mv で戻す）
+```
+
+ツール不在では `#if DAERD_*` の中が丸ごと消え、asmdef の参照は未解決のまま無害に残る。
+「ツールが無くても DaerD がコンパイルできる」ことは、この構成での全件実行が保証している。
+
 **ビヘイビアやドライバに触る変更は、SDK 有りと無しの両方で走らせること。**
 製品コードは型を名前で探すので、SDK があるとテスト側スタブではなく SDK の型が
 実際に付く。型でキャストするテストはこの差で「SDK 有りでだけ落ちる」ようになる

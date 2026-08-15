@@ -3216,8 +3216,8 @@ msgstr "記録する対象のアバターです。着用中のオブジェクト
 msgid "Running"
 msgstr "実行中"
 
-msgid "Every Animator some PlayableGraph is writing to right now. A tick marks the ones running this controller."
-msgstr "いずれかの PlayableGraph が現在書き込んでいる Animator の一覧です。このコントローラーを実行しているものにはチェックが付きます。"
+msgid "Every Animator some PlayableGraph is writing to right now, named after the tool holding it where a tool does. A tick marks the ones running this controller."
+msgstr "いずれかの PlayableGraph が現在書き込んでいる Animator の一覧です。ツールが掴んでいるものはツール名付きで表示され、このコントローラーを実行しているものにはチェックが付きます。"
 
 msgid "Record On Play"
 msgstr "Play 開始で記録"

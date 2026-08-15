@@ -19,7 +19,9 @@ namespace Yozolab.DaerD.DynamicAnalyze
     /// Animator for a parameter and it may answer for a layer nobody asked about, or for
     /// nothing at all. So the values are taken where they live, through Unity's own Playable
     /// API, which means this works the same for both tools and for whatever the third one turns
-    /// out to be. Neither tool's types are named anywhere here.
+    /// out to be. Neither tool's types are named anywhere here — <see cref="PlayTools"/> is
+    /// where they are named, and what it is asked is only ever which of the avatars in the
+    /// scene is meant, never what any of them is doing.
     ///
     /// The alternative was reading GestureManager's own Vrc3Param objects by reflection. It was
     /// dropped: private API, a different shape in every release, and Av3Emulator would need a
@@ -282,15 +284,29 @@ namespace Yozolab.DaerD.DynamicAnalyze
             return new PlayRecorder(animator, PlaySource.Of(animator), null, null, false);
         }
 
-        /// <summary>The Animator this window would record if nobody said which — the first one
-        /// a graph is running the controller on, or failing that the first one a graph is
-        /// running at all. What the arm toggle needs, because entering Play mode builds the
-        /// scene again and whatever was in the field is not the object that came back.</summary>
+        /// <summary>
+        /// The Animator this window would record if nobody said which. What the arm toggle
+        /// needs, because entering Play mode builds the scene again and whatever was in the
+        /// field is not the object that came back.
+        ///
+        /// Running this controller comes first and stays first, ahead of anything a tool says:
+        /// arming refuses an avatar that is not running it (see the window's StartRecording), so
+        /// a preference that could pick one over an avatar that IS running it would be a
+        /// preference for never starting. Underneath that, and only there, the tools break the
+        /// tie that used to be broken by "whichever graph Unity handed out first" — see
+        /// <see cref="PlayTools.Preferred"/> for the order and why.
+        /// </summary>
         public static Animator Likeliest(AnimatorController controller)
         {
-            var driven = Driven();
+            var driven = PlayTools.Candidates(Driven());
+            var running = new List<Animator>();
             foreach (var animator in driven)
-                if (Matching(controller, PlayablesOn(animator)) >= 0) return animator;
+                if (Matching(controller, PlayablesOn(animator)) >= 0) running.Add(animator);
+            var pick = PlayTools.Preferred(running);
+            if (pick != null) return pick;
+            if (running.Count > 0) return running[0];
+            pick = PlayTools.Preferred(driven);
+            if (pick != null) return pick;
             return driven.Count > 0 ? driven[0] : null;
         }
 

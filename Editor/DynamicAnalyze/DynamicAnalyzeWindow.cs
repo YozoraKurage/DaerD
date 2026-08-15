@@ -1046,7 +1046,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
                     L.Tr("The avatar to record. Drop the object wearing it here, or pick one out of the list beside this — the list is everything a graph is currently driving, which is what an avatar being worn looks like from outside.")),
                 _target, typeof(Animator), true);
             if (GUILayout.Button(new GUIContent(L.Tr("Running"),
-                    L.Tr("Every Animator some PlayableGraph is writing to right now. A tick marks the ones running this controller.")),
+                    L.Tr("Every Animator some PlayableGraph is writing to right now, named after the tool holding it where a tool does. A tick marks the ones running this controller.")),
                     EditorStyles.miniButton, GUILayout.Width(76f)))
                 ShowRunning();
             EditorGUILayout.EndHorizontal();
@@ -1089,13 +1089,21 @@ namespace Yozolab.DaerD.DynamicAnalyze
             return lines;
         }
 
-        /// <summary>The candidate list, which is the whole of the automatic detection: every
-        /// Animator a graph is writing to. No tool is asked and no component is looked for by
-        /// name, so an avatar worn by something nobody has heard of is in the list too.</summary>
+        /// <summary>
+        /// The candidate list: every Animator a graph is writing to. Finding them asks no tool
+        /// and looks for no component by name, so an avatar worn by something nobody has heard
+        /// of is in the list too — NAMING them does ask, because "GestureManager: Somebody" is
+        /// the difference between a list of objects and a list of avatars when a scene holds
+        /// the wearer, two other people's copies of them and a prop that happens to animate.
+        ///
+        /// Av3Emulator's mirror and shadow copies are the one thing left out (see
+        /// <see cref="PlayTools.Role.Aside"/>); its non-local clones are listed, because
+        /// recording one of those on purpose is a reasonable thing to want.
+        /// </summary>
         void ShowRunning()
         {
             var menu = new GenericMenu();
-            var driven = PlayRecorder.Driven();
+            var driven = PlayTools.Candidates(PlayRecorder.Driven());
             if (driven.Count == 0)
                 menu.AddDisabledItem(new GUIContent(
                     L.Tr("Nothing in the scene is being driven by a graph.")));
@@ -1104,7 +1112,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
                 var pick = animator;
                 bool runs = PlayRecorder.Matching(_controller,
                     PlayRecorder.PlayablesOn(pick)) >= 0;
-                menu.AddItem(new GUIContent(pick.name + (runs ? " ✓" : string.Empty)),
+                menu.AddItem(new GUIContent(PlayTools.Label(pick) + (runs ? " ✓" : string.Empty)),
                     pick == _target, () => { _target = pick; Repaint(); });
             }
             menu.ShowAsContext();

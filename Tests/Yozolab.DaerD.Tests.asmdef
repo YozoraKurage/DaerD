@@ -5,7 +5,9 @@
         "UnityEngine.TestRunner",
         "UnityEditor.TestRunner",
         "Yozolab.DaerD.Editor",
-        "Yozolab.DaerD.Tests.Stubs"
+        "Yozolab.DaerD.Tests.Stubs",
+        "vrchat.blackstartx.gesture-manager",
+        "lyuma.av3emulator"
     ],
     "includePlatforms": [
         "Editor"
@@ -20,6 +22,17 @@
     "defineConstraints": [
         "UNITY_INCLUDE_TESTS"
     ],
-    "versionDefines": [],
+    "versionDefines": [
+        {
+            "name": "vrchat.blackstartx.gesture-manager",
+            "expression": "",
+            "define": "DAERD_GM"
+        },
+        {
+            "name": "lyuma.av3emulator",
+            "expression": "",
+            "define": "DAERD_AV3E"
+        }
+    ],
     "noEngineReferences": false
 }
