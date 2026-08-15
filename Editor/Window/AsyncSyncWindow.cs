@@ -85,11 +85,14 @@ namespace Yozolab.DaerD
 
             _form.DrawPreview(request);
             _form.DrawBlockingProblem(request);
-            foreach (var warning in AsyncSyncBuilder.Warnings(request, _form.AnimatedParameters()))
+            // Worked out once and read twice: the warnings quote it and the button below acts
+            // on it, and it is the most expensive answer this draw asks for.
+            var byType = AsyncSyncSplit.ByType(request);
+            foreach (var warning in AsyncSyncBuilder.Warnings(request, _form.AnimatedParameters(), byType))
                 EditorGUILayout.HelpBox(warning, MessageType.Warning);
             // A split builds every ring itself, so there is nothing left for this window to
             // create — it reports the layer it kept and gets out of the way.
-            if (_form.DrawSplitProposal(request))
+            if (_form.DrawSplitProposal(request, byType))
             {
                 _onApplied?.Invoke(request.layerIndex >= 0
                     ? request.layerIndex : _controller.layers.Length - 1);

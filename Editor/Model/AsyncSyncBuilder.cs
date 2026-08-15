@@ -533,11 +533,14 @@ namespace Yozolab.DaerD
                 return L.Tr("The target layer no longer exists.");
 
             var seen = new HashSet<string>();
+            // The indexed lookup, not FindParameter: this loop runs on every repaint of the
+            // wizard, and the plain one rebuilds the controller's parameter array per call.
+            var byName = DbtBuilder.ParametersByName(controller);
             foreach (var name in r.targets)
             {
                 if (!seen.Add(name))
                     return L.Tr("Parameter '{0}' is listed more than once.", name);
-                var parameter = DbtBuilder.FindParameter(controller, name);
+                var parameter = byName.Find(name);
                 if (parameter == null)
                     return L.Tr("Parameter '{0}' does not exist.", name);
                 if (parameter.type == AnimatorControllerParameterType.Trigger)
@@ -609,7 +612,7 @@ namespace Yozolab.DaerD
             if (r.stale && LapMarkerSlot(r) < 0)
                 return L.Tr("Every step of this pass sends the same slot, so a lap has nothing in it that could go missing and the drift flag would never come up. Give the pass a second slot, or take the flag off.");
 
-            var isLocal = DbtBuilder.FindParameter(controller, NetworkSyncBuilder.IsLocalParameter);
+            var isLocal = byName.Find(NetworkSyncBuilder.IsLocalParameter);
             if (isLocal != null && isLocal.type != AnimatorControllerParameterType.Bool)
                 return L.Tr("Parameter '{0}' exists but is not a Bool.", NetworkSyncBuilder.IsLocalParameter);
 
@@ -622,7 +625,7 @@ namespace Yozolab.DaerD
             {
                 if (seen.Contains(name))
                     return L.Tr("Generated parameter '{0}' collides with a target.", name);
-                var existing = DbtBuilder.FindParameter(controller, name);
+                var existing = byName.Find(name);
                 if (existing != null && existing.type != type)
                     return L.Tr("Parameter '{0}' exists with a different type.", name);
             }
@@ -708,7 +711,11 @@ namespace Yozolab.DaerD
         /// Null means "work it out", which is what the one-shot callers (a recipe's build, the
         /// tests) want and what keeps this method answerable on its own.
         /// </summary>
-        public static List<string> Warnings(Request r, HashSet<string> animated = null)
+        /// <param name="split">The type split this pass would become, when the caller has
+        /// already worked it out. Both this and the wizard's button want the same answer, and
+        /// it is the most expensive thing either of them asks for.</param>
+        public static List<string> Warnings(Request r, HashSet<string> animated = null,
+            List<Request> split = null)
         {
             var warnings = new List<string>();
             if (r.controller == null || r.targets == null) return warnings;
@@ -760,7 +767,7 @@ namespace Yozolab.DaerD
             // The one structural change that shortens every pass at once, offered only when it
             // would actually build and actually help — AsyncSyncSplit.ByType decides both, and
             // says nothing at all otherwise.
-            var byType = AsyncSyncSplit.ByType(r);
+            var byType = split ?? AsyncSyncSplit.ByType(r);
             if (byType.Count > 1) warnings.Add(AsyncSyncSplit.Advice(r, byType));
 
             // Say when a rate could not be honored: normalization (common factor) is

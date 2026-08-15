@@ -182,7 +182,11 @@ namespace Yozolab.DaerD
             var byName = new Dictionary<string, AnimatorControllerParameter>();
             if (controller == null) return byName;
             foreach (var p in controller.parameters)
-                byName[p.name] = p;
+                // First wins, which is what FindParameter answers. A controller can carry the
+                // same name twice — the analyzer reports it — and the two lookups disagreeing
+                // about which one it means is the kind of difference nothing would notice.
+                if (p != null && !string.IsNullOrEmpty(p.name) && !byName.ContainsKey(p.name))
+                    byName[p.name] = p;
             return byName;
         }
 

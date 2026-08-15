@@ -1001,10 +1001,11 @@ namespace Yozolab.DaerD
         /// you were showing is now a setup ago" — the wizard closes on it, and the panel
         /// rebinds.
         /// </summary>
-        public bool DrawSplitProposal(AsyncSyncBuilder.Request request)
+        public bool DrawSplitProposal(AsyncSyncBuilder.Request request,
+            List<AsyncSyncBuilder.Request> byType = null)
         {
             if (request == null || request.targets.Count < 2) return false;
-            var split = AsyncSyncSplit.ByType(request);
+            var split = byType ?? AsyncSyncSplit.ByType(request);
             if (split.Count < 2) return false;
 
             bool applied = false;

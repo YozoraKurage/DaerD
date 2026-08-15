@@ -168,12 +168,15 @@ namespace Yozolab.DaerD
         public static bool MixesTypes(Request r)
         {
             if (r?.controller == null) return false;
-            var types = AsyncSyncCost.ChannelTypes(r);
+            // One index for the whole sweep: this is asked on every repaint of the wizard,
+            // and the per-slot form used to rebuild the controller's parameter array each time.
+            var byName = DbtBuilder.ParametersByName(r.controller);
+            var types = AsyncSyncCost.ChannelTypes(r, byName);
             foreach (var slot in AsyncSyncBuilder.BuildSlots(r))
             {
                 int kinds = 0;
                 foreach (var type in types)
-                    if (AsyncSyncCost.ChannelsInSlot(r, slot, type) > 0) kinds++;
+                    if (AsyncSyncCost.ChannelsInSlot(r, slot, type, byName) > 0) kinds++;
                 if (kinds > 1) return true;
             }
             return false;

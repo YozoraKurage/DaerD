@@ -67,11 +67,15 @@ namespace Yozolab.DaerD
             ChannelsUsed(r, AnimatorControllerParameterType.Bool);
 
         /// <summary>The widest batch of one type across the slots.</summary>
-        static int ChannelsUsed(Request r, AnimatorControllerParameterType type)
+        static int ChannelsUsed(Request r, AnimatorControllerParameterType type) =>
+            ChannelsUsed(r, type, BuildSlots(r), DbtBuilder.ParametersByName(r?.controller));
+
+        static int ChannelsUsed(Request r, AnimatorControllerParameterType type,
+            List<Slot> slots, Dictionary<string, AnimatorControllerParameter> byName)
         {
             int used = 0;
-            foreach (var slot in BuildSlots(r))
-                used = Mathf.Max(used, ChannelsInSlot(r, slot, type));
+            foreach (var slot in slots)
+                used = Mathf.Max(used, ChannelsInSlot(r, slot, type, byName));
             return used;
         }
 
@@ -86,10 +90,15 @@ namespace Yozolab.DaerD
         /// — only an explicit grid can — and this is where that rule is pinned.
         /// </summary>
         internal static int ChannelsInSlot(Request r, Slot slot,
-            AnimatorControllerParameterType type)
+            AnimatorControllerParameterType type) =>
+            ChannelsInSlot(r, slot, type, DbtBuilder.ParametersByName(r?.controller));
+
+        /// <summary>The same, against an index the caller already has.</summary>
+        internal static int ChannelsInSlot(Request r, Slot slot,
+            AnimatorControllerParameterType type,
+            Dictionary<string, AnimatorControllerParameter> byName)
         {
             int used = 0;
-            var byName = DbtBuilder.ParametersByName(r.controller);
             foreach (var name in slot.targets)
             {
                 var parameter = byName.Find(name);
@@ -218,9 +227,15 @@ namespace Yozolab.DaerD
             int bits = ResolveEncoding(r) == IndexEncoding.Int
                 ? 8
                 : NetworkSyncBuilder.BitsRequired(Mathf.Max(2, IndexValues(r)));
-            foreach (var type in ChannelTypes(r))
-                bits += type == AnimatorControllerParameterType.Bool ? BoolChannelsUsed(r)
-                    : type == AnimatorControllerParameterType.Float ? FloatChannelsUsed(r) * 8
+            // One index and one slot list for the whole tally: this runs several times per
+            // repaint of the wizard, and the per-type helpers each rebuilt both.
+            var byName = DbtBuilder.ParametersByName(r?.controller);
+            var slots = BuildSlots(r);
+            foreach (var type in ChannelTypes(r, byName))
+                bits += type == AnimatorControllerParameterType.Bool
+                        ? ChannelsUsed(r, type, slots, byName)
+                    : type == AnimatorControllerParameterType.Float
+                        ? ChannelsUsed(r, type, slots, byName) * 8
                     : 8;
             return bits;
         }
@@ -239,10 +254,16 @@ namespace Yozolab.DaerD
             return bits;
         }
 
-        internal static List<AnimatorControllerParameterType> ChannelTypes(Request r)
+        internal static List<AnimatorControllerParameterType> ChannelTypes(Request r) =>
+            ChannelTypes(r, DbtBuilder.ParametersByName(r?.controller));
+
+        /// <summary>The same, against an index the caller already has. Reading the parameters
+        /// rebuilds a native array every time, so anything looping over slots or types passes
+        /// one down rather than asking per call.</summary>
+        internal static List<AnimatorControllerParameterType> ChannelTypes(Request r,
+            Dictionary<string, AnimatorControllerParameter> byName)
         {
             var types = new List<AnimatorControllerParameterType>();
-            var byName = DbtBuilder.ParametersByName(r.controller);
             foreach (var name in r.targets)
             {
                 var parameter = byName.Find(name);

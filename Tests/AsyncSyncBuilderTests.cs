@@ -484,6 +484,32 @@ namespace Yozolab.DaerD.Tests
             Object.DestroyImmediate(controller);
         }
 
+        /// <summary>
+        /// The same for the type split, and for the same reason: the wizard quotes it in a
+        /// warning and offers it as a button in one draw, and working it out is the most
+        /// expensive thing that draw asks for. Believing the caller has to produce exactly
+        /// the warnings that looking it up would.
+        /// </summary>
+        [Test]
+        public void Warnings_TakeAPrecomputedTypeSplit()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+
+            var looked = AsyncSyncBuilder.Warnings(request, new HashSet<string>());
+            var passed = AsyncSyncBuilder.Warnings(request, new HashSet<string>(),
+                AsyncSyncSplit.ByType(request));
+            CollectionAssert.AreEqual(looked, passed);
+
+            // And an empty split is an answer ("this one does not divide"), not a request to
+            // go and look — otherwise the caller's own decision would be quietly overruled.
+            var refused = AsyncSyncBuilder.Warnings(request, new HashSet<string>(),
+                new List<AsyncSyncBuilder.Request>());
+            Assert.IsFalse(refused.Exists(w => w.Contains("Split By Type")));
+
+            Object.DestroyImmediate(controller);
+        }
+
         // ---- float channels ---------------------------------------------------
 
         [Test]
