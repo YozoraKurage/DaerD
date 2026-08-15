@@ -3027,8 +3027,8 @@ msgstr "装着者"
 msgid "Remote"
 msgstr "リモート"
 
-msgid "Timed inputs"
-msgstr "時刻指定の入力"
+msgid "Timed inputs ({0})"
+msgstr "時刻指定の入力（{0} 件）"
 
 msgid "s"
 msgstr "秒"

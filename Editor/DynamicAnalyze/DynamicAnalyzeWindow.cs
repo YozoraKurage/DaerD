@@ -30,8 +30,11 @@ namespace Yozolab.DaerD.DynamicAnalyze
             window.Show();
         }
 
+        /// <summary>One line of the Timed inputs list — written by hand, loaded from a clip, or
+        /// taken down from a live session. Internal only so the rule about which live writes
+        /// become one can be tested; nothing outside this window edits the list.</summary>
         [System.Serializable]
-        sealed class Poke
+        internal sealed class Poke
         {
             public float at;
             public string scope = string.Empty;
@@ -187,7 +190,9 @@ namespace Yozolab.DaerD.DynamicAnalyze
                 : null;
             _view.write = (signal, value) =>
             {
-                if (_session != null) _session.Write(signal.scope, signal.name, value);
+                if (_session == null) return;
+                _session.Write(signal.scope, signal.name, value);
+                Record(_pokes, _session, signal, value);
             };
 
             DrawToolbar();
@@ -728,12 +733,18 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// <summary>
         /// The same pokes, written down in advance. What a run has instead of hands — and what
         /// makes an experiment repeatable, which hands are not.
+        ///
+        /// The count is in the header because a live session adds to this list without the list
+        /// being on screen — Timed inputs are a batch mood's panel — and a number that grew
+        /// while somebody was busy pressing things is the whole of what they need to know about
+        /// it. Nothing here is ever trimmed to fit; see <see cref="Record"/>.
         /// </summary>
         void DrawStimulus()
         {
             EditorGUILayout.BeginVertical(EditorStyles.helpBox);
             EditorGUILayout.BeginHorizontal();
-            EditorGUILayout.LabelField(L.Tr("Timed inputs"), EditorStyles.boldLabel);
+            EditorGUILayout.LabelField(L.Tr("Timed inputs ({0})", _pokes.Count),
+                EditorStyles.boldLabel);
             GUILayout.FlexibleSpace();
             if (GUILayout.Button(L.Tr("Add"), EditorStyles.miniButton, GUILayout.Width(46f)))
                 _pokes.Add(new Poke { at = _pokes.Count > 0 ? _pokes[_pokes.Count - 1].at : 0f });
@@ -832,6 +843,62 @@ namespace Yozolab.DaerD.DynamicAnalyze
             foreach (var entry in store.Read())
                 if (entry != null && entry.synced && !string.IsNullOrEmpty(entry.name))
                     _synced.Add(entry.name);
+        }
+
+        /// <summary>
+        /// A poke made by hand, taken down as a timed input at the second it happened.
+        ///
+        /// Live is where a controller is understood and batch is where an understanding is
+        /// checked, and the two moods had no way from one to the other: an afternoon of pressing
+        /// things taught somebody exactly which three presses matter, and then the run that would
+        /// prove it had to be typed out again from memory. This is that walk, in the direction
+        /// people actually go.
+        ///
+        /// Only the reader's own hand reaches here — this is called from the value cell's write
+        /// callback, which is the one thing in the window a person edits directly. What a driver
+        /// wrote, what the wire carried and what a layer did are all values the run WORKED OUT,
+        /// and writing those down would produce a stimulus that replays the run's own output
+        /// back into it.
+        ///
+        /// A LAYER'S WEIGHT is a live write and is deliberately not written down: a timed input
+        /// is "at this second, set this parameter to this", and a weight is not a parameter —
+        /// see <see cref="Stimulus"/>, which says why at length. A list that quietly carried one
+        /// would replay into a different run than the one it was taken from.
+        ///
+        /// Two writes at one moment are ONE input, the later value winning. A float cell being
+        /// dragged fires on every repaint, so a paused session would otherwise take a hundred
+        /// inputs down for one drag — and they would all land on the same frame anyway, where
+        /// only the last of them can be seen. Nothing else is ever dropped: a hand is the
+        /// experiment, and an experiment that silently forgets what was done to it is the worst
+        /// surprise this window could hold. A long list says so in its header and stays.
+        ///
+        /// Static, and handed the list: the rule is worth a test and an EditorWindow is not one.
+        /// </summary>
+        internal static void Record(List<Poke> pokes, SimSession session,
+            SignalTrace.Signal signal, float value)
+        {
+            if (pokes == null || session == null || signal == null) return;
+            if (!session.Has(signal.name)) return;
+            // The wearer is the empty scope in this list, which is what the panel writes and
+            // what a run reads (see Simulation.Targets). A row says "Local" for the same client,
+            // and one list spelling it two ways would be one the reader cannot sort.
+            string scope = signal.scope == Simulation.LocalScope ? string.Empty : signal.scope;
+            float at = session.Time;
+
+            var last = pokes.Count > 0 ? pokes[pokes.Count - 1] : null;
+            if (last != null && last.parameter == signal.name && last.scope == scope
+                && Mathf.Approximately(last.at, at))
+            {
+                last.value = value;
+                return;
+            }
+            pokes.Add(new Poke
+            {
+                at = at,
+                scope = scope,
+                parameter = signal.name,
+                value = value,
+            });
         }
 
         /// <summary>The timed inputs as the engine takes them. Its own step because the panel

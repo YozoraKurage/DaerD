@@ -2717,6 +2717,115 @@ namespace Yozolab.DaerD.Tests
             }
         }
 
+        // ---- the hand, written down ------------------------------------------
+
+        static System.Collections.Generic.List<DynamicAnalyzeWindow.Poke> Hand() =>
+            new System.Collections.Generic.List<DynamicAnalyzeWindow.Poke>();
+
+        [Test]
+        public void Hand_ALiveWriteBecomesATimedInputAtTheSecondItHappened()
+        {
+            var pokes = Hand();
+            using (var session = LiveSession(NewController()))
+            {
+                StepSession(session, 6);
+                var go = session.Trace.Find(Simulation.LocalScope, "Go");
+                Assert.IsNotNull(go);
+
+                DynamicAnalyzeWindow.Record(pokes, session, go, 1f);
+                Assert.AreEqual(1, pokes.Count);
+                Assert.AreEqual("Go", pokes[0].parameter);
+                Assert.AreEqual(1f, pokes[0].value, 1e-6f);
+                Assert.AreEqual(6f / 60f, pokes[0].at, 1e-4f, "at the moment it was pressed");
+                // The wearer is the empty scope in this list, the way the panel writes one.
+                Assert.AreEqual(string.Empty, pokes[0].scope);
+
+                // And the point of taking it down: the same press, replayed as an experiment.
+                var replay = new Stimulus().At(pokes[0].at, pokes[0].parameter, pokes[0].value,
+                    pokes[0].scope);
+                var again = Simulation.Run(NewController(), Clock(0.5f), replay);
+                Assert.AreEqual("On",
+                    again.Find(Simulation.LocalScope, "Base/state").TextAt(again.Frames - 1));
+            }
+        }
+
+        [Test]
+        public void Hand_AWriteToSomebodyElsesCopyKeepsWhoseItWas()
+        {
+            var pokes = Hand();
+            var settings = new SimSettings
+            {
+                clock = new SimClock { fps = 60f, seconds = 1f },
+                wire = new SyncWire().Syncs("X"),
+            };
+            using (var session = new SimSession(NewController(), settings))
+            {
+                StepSession(session, 2);
+                var remote = session.Trace.Find(Simulation.RemoteScope, "X");
+                Assert.IsNotNull(remote, "the other person's copy of X is a row");
+
+                DynamicAnalyzeWindow.Record(pokes, session, remote, 0.5f);
+                Assert.AreEqual(1, pokes.Count);
+                Assert.AreEqual(Simulation.RemoteScope, pokes[0].scope);
+                Assert.AreEqual("X", pokes[0].parameter);
+            }
+        }
+
+        [Test]
+        public void Hand_DoesNotWriteDownALayersWeight()
+        {
+            var pokes = Hand();
+            using (var session = LiveSession(AapLayers(null)))
+            {
+                StepSession(session, 2);
+                var weight = session.Trace.Find(Simulation.LocalScope, "Over/weight");
+                Assert.IsNotNull(weight);
+                Assert.IsTrue(session.CanSetWeight(Simulation.LocalScope, "Over/weight"),
+                    "this row IS one a live session takes a value for");
+
+                // Taken live, and still not written down: a timed input cannot carry a weight
+                // (see Stimulus), so a list holding one would replay into a different run.
+                DynamicAnalyzeWindow.Record(pokes, session, weight, 0.5f);
+                CollectionAssert.IsEmpty(pokes);
+
+                // A parameter of the same session still is.
+                DynamicAnalyzeWindow.Record(pokes, session,
+                    session.Trace.Find(Simulation.LocalScope, "X"), 0.25f);
+                Assert.AreEqual(1, pokes.Count);
+            }
+        }
+
+        [Test]
+        public void Hand_TwoWritesAtOneMomentAreOneInput_AndNothingElseIsDropped()
+        {
+            var pokes = Hand();
+            using (var session = LiveSession(NewController()))
+            {
+                StepSession(session, 3);
+                var x = session.Trace.Find(Simulation.LocalScope, "X");
+
+                // A float cell being dragged writes on every repaint; the session has not moved,
+                // so all of it happened at one moment and only the last value can be seen there.
+                for (int i = 1; i <= 20; i++)
+                    DynamicAnalyzeWindow.Record(pokes, session, x, i * 0.01f);
+                Assert.AreEqual(1, pokes.Count, "one drag is one input");
+                Assert.AreEqual(0.2f, pokes[0].value, 1e-6f, "and it is where the drag ended");
+
+                // Time moving on makes the next write its own input — the values genuinely
+                // happened at different seconds, and a run replaying them has to do the same.
+                StepSession(session, 1);
+                DynamicAnalyzeWindow.Record(pokes, session, x, 0.5f);
+                Assert.AreEqual(2, pokes.Count);
+                Assert.Greater(pokes[1].at, pokes[0].at);
+
+                // A different parameter at the same moment is never a replacement either.
+                DynamicAnalyzeWindow.Record(pokes, session,
+                    session.Trace.Find(Simulation.LocalScope, "Go"), 1f);
+                Assert.AreEqual(3, pokes.Count);
+                Assert.AreEqual("Go", pokes[2].parameter);
+            }
+        }
+
         static AnimatorState FindState(AnimatorController controller, string name)
         {
             foreach (var child in controller.layers[0].stateMachine.states)
