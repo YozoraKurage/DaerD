@@ -105,7 +105,9 @@ namespace Yozolab.DaerD.DynamicAnalyze
         // dropped where the trace is replaced rather than watched for. _ranWith is the
         // experiment that produced it, kept because the settings fields go on being edited
         // after a run and a finding about what was synced has to be about what WAS synced.
-        // Null for a clip opened from disk, whose settings are not in it.
+        // It is also what a Save writes into the clip, which is why a live session sets it too
+        // even though findings never speak there. Null only when the trace in hand came from
+        // somewhere that did not say — a clip saved before settings travelled.
         List<string> _findings;
         SimSettings _ranWith;
 
@@ -358,7 +360,10 @@ namespace Yozolab.DaerD.DynamicAnalyze
             string path = EditorUtility.SaveFilePanelInProject(L.Tr("Save Run"),
                 "DD Run", "anim", L.Tr("Where to keep this run."));
             if (string.IsNullOrEmpty(path)) return;
-            TraceClip.Save(_view.trace, path);
+            // The experiment that produced this trace, not the fields as they stand: the panel
+            // goes on being edited after a run, and settings saved beside a result they did not
+            // produce would be a file that lies in the one way this one exists to prevent.
+            TraceClip.Save(_view.trace, path, _ranWith);
         }
 
         void OpenClip()
@@ -368,16 +373,73 @@ namespace Yozolab.DaerD.DynamicAnalyze
             _playing = false;
             _live = false;
             DropSession();
-            // Whatever settings the window is holding are not this clip's, and a finding about
-            // a wire that did not carry this run would be a confident lie. The findings a trace
-            // answers on its own still appear; the rest wait for a clip that carries what it
-            // was run with.
+            // The clip's own settings if it carries any, and then the findings that need to
+            // know what the wire was can speak about it. Without them the window keeps the
+            // settings it had and _ranWith stays null: the findings a trace answers on its own
+            // still appear, and a finding about a wire that did not carry this run would be a
+            // confident lie.
             _findings = null;
-            _ranWith = null;
+            _ranWith = TraceClip.SettingsOf(clip);
+            if (_ranWith != null) Restore(_ranWith);
             _view.trace = TraceClip.Load(clip);
             _view.cursorFrame = 0;
             _view.Invalidate();
             _view.Fit(position.width);
+        }
+
+        /// <summary>
+        /// The experiment a saved run was made with, back into the fields that make one.
+        ///
+        /// Quietly, and without offering not to. "The settings of the run I just opened are now
+        /// in the form" is the expectation rather than the surprise — a reader opens yesterday's
+        /// result to ask what it was, and the answer being one dialog away from the question is
+        /// only a dialog. The cost is that unsaved settings in the form are lost, which is the
+        /// same cost every Open has ever had.
+        ///
+        /// The timed inputs go with it: they are the experiment, not a preference. What a clip
+        /// without a wire does NOT do is clear the wire fields — there is nothing to restore
+        /// them to, the panel hides them anyway, and blanking a form on a run that had no
+        /// opinion about it would lose settings for no reason.
+        /// </summary>
+        void Restore(SimSettings settings)
+        {
+            var clock = settings.clock ?? new SimClock();
+            _fps = clock.fps;
+            _seconds = clock.seconds;
+            _jitter = clock.jitter;
+            _seed = clock.seed;
+            _lagRows = settings.lagRows;
+
+            _pokes.Clear();
+            if (settings.stimulus != null)
+                foreach (var entry in settings.stimulus.InOrder())
+                    _pokes.Add(new Poke
+                    {
+                        at = entry.atSeconds,
+                        scope = entry.scope,
+                        parameter = entry.parameter,
+                        value = entry.value,
+                    });
+
+            var wire = settings.wire;
+            _twoClients = wire != null;
+            if (wire == null) return;
+            _interval = wire.intervalSeconds;
+            _latency = wire.latencySeconds;
+            _dropChance = wire.dropChance;
+            _quantize = wire.quantize;
+            _joinsAt = wire.remoteJoinsAt;
+            // The tick box is worked out from the number rather than saved beside it: a wire
+            // seeded the same as the clock IS the unticked run, so a run restored this way
+            // reproduces itself either way. What it cannot restore is a number typed into the
+            // box and then unticked — which changed nothing, and is not part of the run.
+            _ownWireSeed = wire.seed != clock.seed;
+            _wireSeed = wire.seed;
+            _remotes = wire.Remotes;
+            _laterJoins.Clear();
+            _laterJoins.AddRange(wire.laterJoins);
+            _synced.Clear();
+            _synced.AddRange(wire.parameters);
         }
 
         /// <summary>The other direction: what one run recorded becomes what the next one is
@@ -866,9 +928,12 @@ namespace Yozolab.DaerD.DynamicAnalyze
             DropSession();
             _notes = null;
             _findings = null;
-            _ranWith = null;
             if (_controller == null) return;
-            _session = new SimSession(_controller, BuildSettings());
+            // Kept for the same reason a batch run keeps it — a Save has to write the settings
+            // that produced what it is saving — and unused by the findings, which never speak
+            // about a live trace at all (see DrawFindings).
+            _ranWith = BuildSettings();
+            _session = new SimSession(_controller, _ranWith);
             _view.trace = _session.Trace;
             _view.cursorFrame = 0;
             _view.Fit(position.width);

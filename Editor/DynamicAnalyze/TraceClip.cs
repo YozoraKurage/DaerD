@@ -4,8 +4,9 @@ using UnityEngine;
 
 namespace Yozolab.DaerD.DynamicAnalyze
 {
-    /// <summary>What a clip cannot say about a curve: whose it is, and what its numbers
-    /// mean. Rides along as a sub-asset so a saved run is still one file.</summary>
+    /// <summary>What a clip cannot say about a curve: whose it is, what its numbers
+    /// mean, and what was asked to produce it. Rides along as a sub-asset so a saved run is
+    /// still one file.</summary>
     sealed class TraceManifest : ScriptableObject
     {
         [System.Serializable]
@@ -18,7 +19,75 @@ namespace Yozolab.DaerD.DynamicAnalyze
             public List<string> labels = new List<string>();
         }
 
+        /// <summary>One timed input, flattened. <see cref="Stimulus.Entry"/> is the same four
+        /// numbers, and is deliberately not this type: the engine's shape is free to change
+        /// with the engine, and a file's shape is not.</summary>
+        [System.Serializable]
+        public sealed class Poke
+        {
+            public float at;
+            public string scope = string.Empty;
+            public string parameter = string.Empty;
+            public float value;
+        }
+
+        /// <summary>
+        /// The experiment that produced the run, beside the run.
+        ///
+        /// A deterministic clock was built so that two runs of the same settings could be laid
+        /// side by side — and the settings lived only in the window's fields, so a saved run
+        /// was a result whose question had been thrown away. A file that cannot say what was
+        /// asked cannot be re-asked, compared against a changed setting, or handed to anyone.
+        ///
+        /// Flat and by value rather than a serialized <see cref="SimSettings"/>: this is a file
+        /// format, and every field here is one a person could read in the .anim's YAML. The
+        /// window's own shape is derived on the way back in (see
+        /// <see cref="TraceClip.SettingsOf"/>) rather than stored, so a form that grows a
+        /// checkbox does not grow the format.
+        /// </summary>
+        [System.Serializable]
+        public sealed class Settings
+        {
+            /// <summary>What this build writes. Bumped when a field's MEANING changes, which
+            /// is the only change a reader cannot survive: adding one is already survivable,
+            /// because a clip written before it deserializes with that field's default.</summary>
+            public const int Current = 1;
+
+            /// <summary>Zero is a run saved before settings travelled at all — and, because
+            /// Unity gives a missing block its defaults rather than a null, it is also how such
+            /// a run says so. A clip with version 0 has no settings, not settings of zero.</summary>
+            public int version;
+
+            public float fps = 60f;
+            public float seconds = 10f;
+            public float jitter;
+            public int seed = 1;
+            public bool lagRows = true;
+
+            /// <summary>Whether there was a wire at all. The fields below mean nothing without
+            /// it, and a single-client run is a real answer rather than a missing one.</summary>
+            public bool wire;
+            public float interval = 0.2f;
+            public float latency;
+            public float dropChance;
+            public bool quantize = true;
+            /// <summary>The wire's own seed as the run used it — which is the clock's seed
+            /// unless the run gave the wire one of its own. Stored as the number that was
+            /// actually rolled from rather than as the window's tick box: the number is what
+            /// reproduces the run, and the box is worked out from it again on the way back.</summary>
+            public int wireSeed = 1;
+            public float remoteJoinsAt;
+            public List<float> laterJoins = new List<float>();
+            public List<string> parameters = new List<string>();
+
+            public List<Poke> stimulus = new List<Poke>();
+        }
+
         public List<Entry> signals = new List<Entry>();
+
+        /// <summary>What the run was made of, or a block at version 0 — see
+        /// <see cref="Settings.version"/>.</summary>
+        public Settings settings = new Settings();
     }
 
     /// <summary>
@@ -30,6 +99,11 @@ namespace Yozolab.DaerD.DynamicAnalyze
     /// opens as INPUT: the values one experiment recorded become the pokes the next one is
     /// driven by. Being able to write a stimulus by hand and not being able to capture one
     /// would have been a strange place to stop.
+    ///
+    /// The question travels with the answer. A file carries the settings the run was made with
+    /// (<see cref="TraceManifest.Settings"/>), so a saved run can be re-asked, asked again with
+    /// one thing changed, or read by the findings that need to know what the wire was — none of
+    /// which a bare curve can be.
     ///
     /// The curves are bound the way an animated animator parameter is bound — path "", type
     /// Animator, the signal's own name — so the Animation window shows a saved run without
@@ -72,10 +146,16 @@ namespace Yozolab.DaerD.DynamicAnalyze
             return clip;
         }
 
-        public static TraceManifest ToManifest(SignalTrace trace)
+        /// <summary><paramref name="settings"/> is the experiment that produced
+        /// <paramref name="trace"/>, or null for a trace whose provenance nobody can vouch for.
+        /// Null writes no settings block rather than a plausible one — a run saved with settings
+        /// it was not run with is worse than a run saved with none, because it reads exactly
+        /// like one that means something.</summary>
+        public static TraceManifest ToManifest(SignalTrace trace, SimSettings settings = null)
         {
             var manifest = ScriptableObject.CreateInstance<TraceManifest>();
             manifest.name = "DD Signals";
+            if (settings != null) manifest.settings = Wrote(settings);
             if (trace == null) return manifest;
             foreach (var signal in trace.Signals)
             {
@@ -91,14 +171,53 @@ namespace Yozolab.DaerD.DynamicAnalyze
             return manifest;
         }
 
-        /// <summary>Writes the run to a .anim, with its signal list beside it in the same
-        /// file. Returns the clip that is now on disk.</summary>
-        public static AnimationClip Save(SignalTrace trace, string path)
+        /// <summary>The settings as the file keeps them.</summary>
+        static TraceManifest.Settings Wrote(SimSettings settings)
+        {
+            var clock = settings.clock ?? new SimClock();
+            var wire = settings.wire;
+            var saved = new TraceManifest.Settings
+            {
+                version = TraceManifest.Settings.Current,
+                fps = clock.fps,
+                seconds = clock.seconds,
+                jitter = clock.jitter,
+                seed = clock.seed,
+                lagRows = settings.lagRows,
+                wire = wire != null,
+            };
+            if (wire != null)
+            {
+                saved.interval = wire.intervalSeconds;
+                saved.latency = wire.latencySeconds;
+                saved.dropChance = wire.dropChance;
+                saved.quantize = wire.quantize;
+                saved.wireSeed = wire.seed;
+                saved.remoteJoinsAt = wire.remoteJoinsAt;
+                saved.laterJoins.AddRange(wire.laterJoins);
+                saved.parameters.AddRange(wire.parameters);
+            }
+            if (settings.stimulus != null)
+                foreach (var entry in settings.stimulus.InOrder())
+                    saved.stimulus.Add(new TraceManifest.Poke
+                    {
+                        at = entry.atSeconds,
+                        scope = entry.scope,
+                        parameter = entry.parameter,
+                        value = entry.value,
+                    });
+            return saved;
+        }
+
+        /// <summary>Writes the run to a .anim, with its signal list and the experiment that
+        /// produced it beside it in the same file. Returns the clip that is now on disk.</summary>
+        public static AnimationClip Save(SignalTrace trace, string path,
+            SimSettings settings = null)
         {
             if (string.IsNullOrEmpty(path)) return null;
             var clip = ToClip(trace);
             AssetDatabase.CreateAsset(clip, path);
-            AssetDatabase.AddObjectToAsset(ToManifest(trace), clip);
+            AssetDatabase.AddObjectToAsset(ToManifest(trace, settings), clip);
             // Both, and in this order: a sub-asset added to a clip that has not been written
             // through stays invisible until the asset is imported again.
             AssetDatabase.SaveAssets();
@@ -188,8 +307,58 @@ namespace Yozolab.DaerD.DynamicAnalyze
             return stimulus;
         }
 
+        /// <summary>
+        /// The experiment a saved run was made with, or null when the file does not say — a
+        /// clip saved before settings travelled, or one that was never a DD run at all. Null and
+        /// a default <see cref="SimSettings"/> are different answers, and the caller is meant to
+        /// tell them apart: nothing known is a reason to leave a form alone, not a reason to
+        /// overwrite it with 60 fps.
+        ///
+        /// A version this build does not know is read anyway, for the fields it has names for.
+        /// Refusing would leave the reader holding whatever settings were already in hand, which
+        /// are nobody's; reading gives them the run as far as this build can describe it, and
+        /// the ways it falls short are the fields that did not exist here.
+        /// </summary>
+        public static SimSettings SettingsOf(AnimationClip clip)
+        {
+            var manifest = ManifestOf(clip);
+            var saved = manifest != null ? manifest.settings : null;
+            if (saved == null || saved.version <= 0) return null;
+
+            var settings = new SimSettings
+            {
+                clock = new SimClock
+                {
+                    fps = saved.fps,
+                    seconds = saved.seconds,
+                    jitter = saved.jitter,
+                    seed = saved.seed,
+                },
+                stimulus = new Stimulus(),
+                lagRows = saved.lagRows,
+                wire = saved.wire
+                    ? new SyncWire
+                    {
+                        intervalSeconds = saved.interval,
+                        latencySeconds = saved.latency,
+                        dropChance = saved.dropChance,
+                        quantize = saved.quantize,
+                        seed = saved.wireSeed,
+                        remoteJoinsAt = saved.remoteJoinsAt,
+                    }
+                    : null,
+            };
+            foreach (var poke in saved.stimulus)
+                settings.stimulus.At(poke.at, poke.parameter, poke.value, poke.scope);
+            if (settings.wire == null) return settings;
+            foreach (float join in saved.laterJoins) settings.wire.Joining(join);
+            settings.wire.Syncs(saved.parameters.ToArray());
+            return settings;
+        }
+
         public static TraceManifest ManifestOf(AnimationClip clip)
         {
+            if (clip == null) return null;
             string path = AssetDatabase.GetAssetPath(clip);
             if (string.IsNullOrEmpty(path)) return null;
             foreach (var asset in AssetDatabase.LoadAllAssetsAtPath(path))

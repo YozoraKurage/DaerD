@@ -2559,6 +2559,164 @@ namespace Yozolab.DaerD.Tests
             }
         }
 
+        // ---- the experiment a clip carries -----------------------------------
+
+        /// <summary>Every field of a run's settings set to something that is not its default, so
+        /// a round trip that quietly writes defaults back cannot pass.</summary>
+        static SimSettings Elaborate()
+        {
+            var wire = new SyncWire
+            {
+                intervalSeconds = 0.15f,
+                latencySeconds = 0.08f,
+                dropChance = 0.25f,
+                quantize = false,
+                seed = 99,
+                remoteJoinsAt = 0.2f,
+            }.Joining(0.3f, 0.4f).Syncs("X", "N");
+            return new SimSettings
+            {
+                clock = new SimClock { fps = 45f, seconds = 0.4f, jitter = 0.2f, seed = 11 },
+                stimulus = new Stimulus()
+                    .At(0.05f, "Go", true)
+                    .At(0.1f, "X", 0.25f)
+                    .At(0.15f, "N", 3f, Simulation.RemoteScope),
+                lagRows = false,
+                wire = wire,
+            };
+        }
+
+        [Test]
+        public void Clip_CarriesTheExperimentThatMadeIt()
+        {
+            var settings = Elaborate();
+            var trace = Simulation.Run(NewController(), settings);
+
+            const string path = "Assets/DDTraceSettingsTest.anim";
+            try
+            {
+                var clip = TraceClip.Save(trace, path, settings);
+                var read = TraceClip.SettingsOf(clip);
+                Assert.IsNotNull(read, "the settings ride along with the run");
+
+                Assert.AreEqual(45f, read.clock.fps, 1e-6f);
+                Assert.AreEqual(0.4f, read.clock.seconds, 1e-6f);
+                Assert.AreEqual(0.2f, read.clock.jitter, 1e-6f);
+                Assert.AreEqual(11, read.clock.seed);
+                Assert.IsFalse(read.lagRows);
+
+                Assert.IsNotNull(read.wire, "a two-client run says so");
+                Assert.AreEqual(0.15f, read.wire.intervalSeconds, 1e-6f);
+                Assert.AreEqual(0.08f, read.wire.latencySeconds, 1e-6f,
+                    "the delay is part of the run");
+                Assert.AreEqual(0.25f, read.wire.dropChance, 1e-6f);
+                Assert.IsFalse(read.wire.quantize);
+                // The wire's own seed, which is the one thing about the experiment that cannot
+                // be worked out from anything else: it differs from the clock's here, and that
+                // difference is what says the wire was given a seed of its own.
+                Assert.AreEqual(99, read.wire.seed);
+                Assert.AreNotEqual(read.clock.seed, read.wire.seed);
+                Assert.AreEqual(0.2f, read.wire.remoteJoinsAt, 1e-6f);
+                Assert.AreEqual(3, read.wire.Remotes, "and how many people were in the instance");
+                Assert.AreEqual(2, read.wire.laterJoins.Count);
+                Assert.AreEqual(0.3f, read.wire.laterJoins[0], 1e-6f);
+                Assert.AreEqual(0.4f, read.wire.laterJoins[1], 1e-6f);
+                CollectionAssert.AreEqual(new[] { "X", "N" }, read.wire.parameters);
+
+                // The hand as well as the wire: a run nobody can re-poke is not a run anybody
+                // can repeat.
+                var entries = read.stimulus.InOrder();
+                Assert.AreEqual(3, entries.Count);
+                Assert.AreEqual(0.05f, entries[0].atSeconds, 1e-6f);
+                Assert.AreEqual("Go", entries[0].parameter);
+                Assert.AreEqual(1f, entries[0].value, 1e-6f);
+                Assert.AreEqual(string.Empty, entries[0].scope);
+                Assert.AreEqual("X", entries[1].parameter);
+                Assert.AreEqual(0.25f, entries[1].value, 1e-6f);
+                Assert.AreEqual(Simulation.RemoteScope, entries[2].scope,
+                    "an input aimed at somebody else stays aimed at them");
+
+                // And the whole point of keeping them: the same settings run again the same way.
+                var again = Simulation.Run(NewController(), read);
+                Assert.AreEqual(trace.Frames, again.Frames);
+                foreach (var signal in trace.Signals)
+                {
+                    var twin = again.Find(signal.scope, signal.name);
+                    Assert.IsNotNull(twin, "row " + signal.Path + " ran again");
+                    for (int frame = 0; frame < trace.Frames; frame += 3)
+                        Assert.AreEqual(signal.At(frame), twin.At(frame), 1e-4f,
+                            signal.Path + " at " + frame);
+                }
+            }
+            finally
+            {
+                AssetDatabase.DeleteAsset(path);
+            }
+        }
+
+        [Test]
+        public void Clip_WithNoSettings_SaysNothingRatherThanSayingDefaults()
+        {
+            var trace = Simulation.Run(NewController(), Clock(0.2f), new Stimulus());
+
+            const string saved = "Assets/DDTraceNoSettingsTest.anim";
+            const string foreign = "Assets/DDTraceForeignTest.anim";
+            try
+            {
+                // A run saved the way every run was saved before the settings travelled: the
+                // signal list is there, the settings are not, and the difference has to be
+                // readable. Null is what keeps a window from overwriting a form with 60 fps.
+                var clip = TraceClip.Save(trace, saved);
+                Assert.IsNotNull(TraceClip.ManifestOf(clip), "the signal list still rides along");
+                Assert.IsNull(TraceClip.SettingsOf(clip));
+                Assert.AreEqual(trace.Frames, TraceClip.Load(clip).Frames,
+                    "and such a clip still opens as a run");
+
+                // And a clip that was never a DD run at all.
+                AssetDatabase.CreateAsset(new AnimationClip(), foreign);
+                Assert.IsNull(TraceClip.SettingsOf(
+                    AssetDatabase.LoadAssetAtPath<AnimationClip>(foreign)));
+                Assert.IsNull(TraceClip.SettingsOf(null));
+            }
+            finally
+            {
+                AssetDatabase.DeleteAsset(saved);
+                AssetDatabase.DeleteAsset(foreign);
+            }
+        }
+
+        [Test]
+        public void Clip_WithItsSettings_LetsTheFindingsSpeakAboutTheWireAgain()
+        {
+            // "Go" is pressed on the wearer and is not on the wire — a finding that cannot be
+            // reached from the trace alone, because nothing in a trace says what was pressed
+            // rather than what moved, or what the wire was carrying.
+            var wire = new SyncWire { intervalSeconds = 0.1f }.Syncs("X");
+            var settings = Wired(0.4f, wire, new Stimulus().At(0.05f, "Go", true));
+            var trace = Simulation.Run(NewController(), settings);
+
+            const string path = "Assets/DDTraceFindingsTest.anim";
+            try
+            {
+                var clip = TraceClip.Save(trace, path, settings);
+                var reloaded = TraceClip.Load(clip);
+
+                var alone = RunFindings.For(reloaded, null);
+                var told = RunFindings.For(reloaded, TraceClip.SettingsOf(clip));
+                Assert.Greater(told.Count, alone.Count,
+                    "the settings the clip carries are worth findings the trace cannot reach");
+                Assert.IsTrue(told.Exists(finding => finding.Contains("never leave the wearer")),
+                    "an input that goes nowhere is one of them:\n  "
+                    + string.Join("\n  ", told.ToArray()));
+                Assert.IsFalse(alone.Exists(finding => finding.Contains("never leave the wearer")),
+                    "and it is not guessed at when the clip does not say");
+            }
+            finally
+            {
+                AssetDatabase.DeleteAsset(path);
+            }
+        }
+
         static AnimatorState FindState(AnimatorController controller, string name)
         {
             foreach (var child in controller.layers[0].stateMachine.states)
