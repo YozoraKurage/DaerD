@@ -713,6 +713,129 @@ namespace Yozolab.DaerD.Tests
             Assert.Greater(count, listed);
         }
 
+        /// <summary>Where a named row sits in the list, or -1. The number IS what the reader
+        /// clicks on, which is why these tests compare it rather than the contents.</summary>
+        static int RowAt(System.Collections.Generic.List<WaveformView.Row> rows, string name)
+        {
+            for (int i = 0; i < rows.Count; i++)
+                if (!rows[i].IsHeader && rows[i].signal.name == name) return i;
+            return -1;
+        }
+
+        [Test]
+        public void View_HoldsTheRowListStill_WhileTheReaderIsTouchingIt()
+        {
+            // A live session grows the same trace, and the moved-only rule lets a row that has
+            // just started moving into the middle of the list. Every editable cell below it
+            // then moves down a row — between the frame the reader saw and the frame their
+            // click is processed, which is how a value ends up typed into another signal.
+            using (var session = new SimSession(NewController(), new SimSettings { clock = Clock(1f) }))
+            {
+                var view = new WaveformView
+                {
+                    trace = session.Trace,
+                    editable = signal => signal.kind != SignalKind.State,
+                };
+                session.StepOnce();
+                view.Invalidate();
+                int cell = RowAt(view.Visible(true), "Base/transition");
+                Assert.GreaterOrEqual(cell, 0, "an editable row is listed even while quiet");
+                Assert.AreEqual(-1, RowAt(view.Visible(true), "Base/state"),
+                    "the state row has not moved yet, so it is not listed yet");
+
+                session.Write(Simulation.LocalScope, "Go", 1f);
+                for (int i = 0; i < 4; i++) session.StepOnce();
+                view.Invalidate();
+
+                // Touched: the list keeps the shape the reader is pointing at.
+                Assert.AreEqual(cell, RowAt(view.Visible(false), "Base/transition"));
+                Assert.AreEqual(-1, RowAt(view.Visible(false), "Base/state"));
+                // Let go: the row that earned its place takes it, and the cell moves down one.
+                Assert.AreEqual(cell, RowAt(view.Visible(true), "Base/state"));
+                Assert.AreEqual(cell + 1, RowAt(view.Visible(true), "Base/transition"));
+
+                // The hold is against the run's own doing, not against the reader's. Typing in
+                // the filter is a text field being edited — the very state the hold watches
+                // for — and it is still answered, or the search box would do nothing until the
+                // pointer left the list.
+                view.filter = "Go";
+                var filtered = view.Visible(false);
+                Assert.GreaterOrEqual(RowAt(filtered, "Go"), 0);
+                Assert.AreEqual(-1, RowAt(filtered, "Base/transition"));
+            }
+        }
+
+        /// <summary>
+        /// The waveform draws its labels with GUI.Label, never EditorGUI.LabelField.
+        ///
+        /// The two look interchangeable and are not: EditorGUI's takes a control id, even for a
+        /// label, and the viewer draws a row's bands and range numbers on the repaint and on no
+        /// other pass. Every id allocated after those would then differ between the pass that
+        /// drew the row and the pass that carries the click — and IMGUI decides which field is
+        /// being typed into by id, not by position, so the caret lands in a row further up or
+        /// in a label, where it reads as the click having been ignored.
+        ///
+        /// Source-scanned rather than reasoned about, in the same spirit as the colour rule:
+        /// this is a mistake that compiles, runs, and looks right until somebody clicks.
+        /// </summary>
+        [Test]
+        public void TheWaveformTakesNoControlIdForALabel()
+        {
+            string folder = System.IO.Path.Combine(SourceRoot(), "DynamicAnalyze");
+            Assert.IsTrue(System.IO.Directory.Exists(folder), "could not find the module's sources");
+
+            var offenders = new System.Collections.Generic.List<string>();
+            int scanned = 0;
+            foreach (var file in System.IO.Directory.GetFiles(folder, "*.cs"))
+            {
+                scanned++;
+                var lines = System.IO.File.ReadAllLines(file);
+                for (int i = 0; i < lines.Length; i++)
+                    // EditorGUILayout's is a different call and a different problem: it is laid
+                    // out, so it runs on every pass.
+                    if (lines[i].Contains("EditorGUI.LabelField("))
+                        offenders.Add(System.IO.Path.GetFileName(file) + ":" + (i + 1)
+                            + "  " + lines[i].Trim());
+            }
+
+            Assert.Greater(scanned, 5, "found almost no sources — the scan is broken, not the code");
+            Assert.IsEmpty(offenders,
+                "these are labels, and EditorGUI's takes a control id for one:\n  "
+                + string.Join("\n  ", offenders));
+        }
+
+        /// <summary>The module's own folder, found through an asset DaerD owns — the tests run
+        /// from a package path that is not the project's. Same trick as DaerDColorsTests.</summary>
+        static string SourceRoot()
+        {
+            var anchor = ScriptableObject.CreateInstance<LocalizationAnchor>();
+            var script = MonoScript.FromScriptableObject(anchor);
+            string path = AssetDatabase.GetAssetPath(script);
+            Object.DestroyImmediate(anchor);
+            Assert.IsNotEmpty(path, "could not locate DaerD's own sources");
+            // <package>/Editor/Localization/LocalizationAnchor.cs -> <package>/Editor
+            return System.IO.Path.GetFullPath(
+                System.IO.Path.Combine(System.IO.Path.GetDirectoryName(path), ".."));
+        }
+
+        [Test]
+        public void MayReshape_SaysNoWhileTheListIsBeingTouched()
+        {
+            var rows = new Rect(0f, 0f, 200f, 100f);
+            var over = new Vector2(10f, 50f);
+            var away = new Vector2(400f, 50f);
+
+            Assert.IsTrue(WaveformView.MayReshape(true, 0, false, rows, away));
+            // The pointer is over the list: a row appearing under it moves what is being aimed at.
+            Assert.IsFalse(WaveformView.MayReshape(true, 0, false, rows, over));
+            // Something is being dragged, and a drag is a control id held across frames.
+            Assert.IsFalse(WaveformView.MayReshape(true, 17, false, rows, away));
+            // A value is being typed: the field it is going into must not become another one.
+            Assert.IsFalse(WaveformView.MayReshape(true, 0, true, rows, away));
+            // Outside a GUI there is nobody to disturb — a test, or a headless rebuild.
+            Assert.IsTrue(WaveformView.MayReshape(false, 17, true, rows, over));
+        }
+
         [Test]
         public void View_MeasuresBetweenItsTwoCursors_AndPutsTheMarkDownAndBackUp()
         {

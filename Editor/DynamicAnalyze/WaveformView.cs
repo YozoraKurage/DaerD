@@ -281,6 +281,14 @@ namespace Yozolab.DaerD.DynamicAnalyze
         public string filter = string.Empty;
 
         Vector2 _rowScroll;
+        /// <summary>Where the row list is on screen, as the last draw put it. Kept because the
+        /// list decides whether it may change shape by asking where the pointer is — see
+        /// <see cref="MayReshape"/>.</summary>
+        Rect _rowArea;
+        /// <summary>The last geometry a real pass was drawn with. The Layout pass is handed a
+        /// dummy rect, and a pass that lays the rows out differently from the pass the click
+        /// arrives in hands out different control ids.</summary>
+        Rect _lastRect;
         readonly SignalRanges _ranges = new SignalRanges();
         // The ghost's own measurements. A second reading rather than more entries in the first:
         // the two runs are replaced independently, and a range keyed by signal has no way to
@@ -362,19 +370,33 @@ namespace Yozolab.DaerD.DynamicAnalyze
 
         public void Draw(Rect rect)
         {
+            // GUILayoutUtility hands the Layout pass a dummy rect, so laying the rows out from
+            // it would put a different number of them on screen than the pass the click arrives
+            // in — and IMGUI hands out control ids in draw order, so the cell that receives a
+            // value would not be the one that was clicked. The last real geometry is the honest
+            // answer to "where are the rows" during a pass that is not being told.
+            if (Event.current != null && Event.current.type == EventType.Layout)
+            {
+                if (_lastRect.width > 1f) rect = _lastRect;
+            }
+            else if (rect.width > 1f) _lastRect = rect;
+
             ClampCursors();
             if (trace == null || trace.Frames == 0)
             {
-                EditorGUI.LabelField(rect, L.Tr("No run yet — press Run."),
+                GUI.Label(rect, L.Tr("No run yet — press Run."),
                     EditorStyles.centeredGreyMiniLabel);
                 return;
             }
             Measure();
 
-            var visible = Visible();
             var plot = new Rect(rect.x + NameWidth + ValueWidth, rect.y + RulerHeight,
                 Mathf.Max(1f, rect.width - NameWidth - ValueWidth),
                 Mathf.Max(1f, rect.height - RulerHeight - ScrollbarHeight));
+            // Before the list is asked for: whether it may change shape depends on where the
+            // pointer is, and this is where the rows are.
+            _rowArea = new Rect(rect.x, plot.y, rect.width, plot.height);
+            var visible = Visible();
             ClampScroll(plot.width);
 
             DrawRuler(new Rect(plot.x, rect.y, plot.width, RulerHeight), plot.width);
@@ -437,17 +459,30 @@ namespace Yozolab.DaerD.DynamicAnalyze
         void DrawSignal(SignalTrace.Signal signal, Rect row)
         {
             var name = new Rect(row.x + 14f, row.y, NameWidth - 18f, row.height);
-            EditorGUI.LabelField(name, signal.name, EditorStyles.miniLabel);
+            GUI.Label(name, signal.name, EditorStyles.miniLabel);
 
             // The value at the cursor, and in a live session the way to change it. Beside its
             // own waveform rather than in a panel of its own, so pushing on something and
             // watching what it does are the same glance.
-            var value = new Rect(row.x + NameWidth, row.y + 1f, ValueWidth - 8f, row.height - 2f);
+            // The whole height of the row, not the box's own. A field takes clicks over exactly
+            // the rect it is given, so insetting it left a two-pixel band between every pair of
+            // cells that belonged to neither — and a click that lands in one does nothing at
+            // all, which reads as the window having missed it. The number field draws at its
+            // own height inside this whatever it is given, so nothing looks different.
+            var value = new Rect(row.x + NameWidth, row.y, ValueWidth - 8f, row.height);
             if (editable != null && editable(signal)) DrawEditor(signal, value);
-            else EditorGUI.LabelField(value, signal.TextAt(cursorFrame), EditorStyles.miniLabel);
+            else GUI.Label(value, signal.TextAt(cursorFrame), EditorStyles.miniLabel);
 
             // The waveform is pixels and nothing else — no control, no layout — so the Layout
             // pass has no business computing it.
+            //
+            // Which is why everything past here draws with GUI.Label and never with
+            // EditorGUI.LabelField. A label reads as a thing with no behaviour, but
+            // EditorGUI's takes a control id all the same, and this branch runs on the repaint
+            // and on nothing else. Every id after it would then be one number here and another
+            // in the pass that carries the click — and IMGUI decides which field is being
+            // typed into by id, so the caret would appear in a row further up, or in a label,
+            // where it looks like the window ignored the click. GUI.Label takes no id.
             if (Event.current.type != EventType.Repaint) return;
             var plot = new Rect(row.x + NameWidth + ValueWidth, row.y + 2f,
                 Mathf.Max(1f, row.width - NameWidth - ValueWidth), row.height - 4f);
@@ -517,7 +552,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
                 // question a whole run is usually opened to answer.
                 EditorGUI.DrawRect(block, WaveformColors.BandFor(label));
                 if (block.width > 26f)
-                    EditorGUI.LabelField(new Rect(block.x + 3f, block.y - 1f,
+                    GUI.Label(new Rect(block.x + 3f, block.y - 1f,
                         block.width - 5f, block.height + 2f), label, EditorStyles.miniLabel);
                 EditorGUI.DrawRect(new Rect(x1 - 1f, plot.y, 1f, plot.height), WaveformColors.Grid);
                 start = frame + 1;
@@ -629,9 +664,9 @@ namespace Yozolab.DaerD.DynamicAnalyze
                     alignment = TextAnchor.UpperLeft,
                 };
             _rangeStyle.normal.textColor = WaveformColors.RangeLabel;
-            EditorGUI.LabelField(new Rect(row.x + 2f, row.y - 1f, 56f, 9f),
+            GUI.Label(new Rect(row.x + 2f, row.y - 1f, 56f, 9f),
                 Number(signal, range.y), _rangeStyle);
-            EditorGUI.LabelField(new Rect(row.x + 2f, row.yMax - 9f, 56f, 9f),
+            GUI.Label(new Rect(row.x + 2f, row.yMax - 9f, 56f, 9f),
                 Number(signal, range.x), _rangeStyle);
         }
 
@@ -693,7 +728,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
                 if (frame < 0) continue;
                 float x = X(rect, frame);
                 EditorGUI.DrawRect(new Rect(x, rect.y + rect.height - 5f, 1f, 5f), WaveformColors.Grid);
-                EditorGUI.LabelField(new Rect(x + 2f, rect.y - 1f, 90f, rect.height),
+                GUI.Label(new Rect(x + 2f, rect.y - 1f, 90f, rect.height),
                     trace.TimeAt(frame).ToString("0.###") + "s", EditorStyles.miniLabel);
             }
         }
@@ -788,12 +823,43 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// </summary>
         public List<Row> Visible()
         {
+            var e = Event.current;
+            return Visible(MayReshape(e != null, GUIUtility.hotControl,
+                EditorGUIUtility.editingTextField, _rowArea,
+                e != null ? e.mousePosition : Vector2.zero));
+        }
+
+        /// <summary>
+        /// Whether the row list may change shape at this moment.
+        ///
+        /// A live session appends to the SAME trace and the list is rebuilt as it grows, so a
+        /// row that has just started moving is inserted — in the middle of the list, under the
+        /// pointer, between the frame the reader saw and the frame their click is processed.
+        /// The click then lands on whatever row took that place, and because IMGUI hands out
+        /// control ids in draw order, a value being typed into a cell continues into a
+        /// different signal's cell. Neither is visible: the value simply appears somewhere else.
+        ///
+        /// So the list is held still while it is being used, and the change lands the moment it
+        /// is let go. Pure, and told the editor's state rather than reading it, so the rule can
+        /// be checked without a window.
+        /// </summary>
+        internal static bool MayReshape(bool hasEvent, int hotControl, bool editingText,
+            Rect rows, Vector2 pointer) =>
+            !hasEvent
+            || (hotControl == 0 && !editingText && !rows.Contains(pointer));
+
+        internal List<Row> Visible(bool mayReshape)
+        {
             int signals = trace != null ? trace.Signals.Count : 0;
             bool pokes = editable != null;
-            if (_visibleFor == trace && _visibleFilter == filter
-                && _visibleMovedOnly == movedOnly && _visibleSignals == signals
-                && _visiblePokes == pokes && !_dirty)
-                return _visible;
+            // What the reader asked for, as against what the run did on its own.
+            bool asked = _visibleFor != trace || _visibleFilter != filter
+                || _visibleMovedOnly != movedOnly || _visiblePokes != pokes;
+            if (!asked && _visibleSignals == signals && !_dirty) return _visible;
+            // Held still while the list is being used — see MayReshape. Only against the run's
+            // own doing: somebody typing in the filter is asking for a different list and is
+            // answered, even though typing is exactly the state the hold watches for.
+            if (!asked && !mayReshape && _visible.Count > 0) return _visible;
             _visibleFor = trace;
             _visibleFilter = filter;
             _visibleMovedOnly = movedOnly;
