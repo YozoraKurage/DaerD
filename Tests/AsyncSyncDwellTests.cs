@@ -19,11 +19,12 @@ namespace Yozolab.DaerD.Tests
     /// boundary. So the dwell of the routes that are supposed to have nothing to wait for is
     /// measured here, in frames, on a running Animator.
     ///
-    /// The two came out differently, which is the other reason this suite exists. The
-    /// judgement's else really did have nothing to wait for and now waits a millisecond. The
-    /// commit's way out kept its loop, because taking it away was measured and it makes the
-    /// group tear more often rather than less — so the wait is pinned here as a fact about the
-    /// build, next to the hole it is standing in front of.
+    /// The two came out differently, and then came out the same. The judgement's else really
+    /// did have nothing to wait for and now waits a millisecond. The commit's way out kept its
+    /// loop for one release, because taking it away was measured and it made the group tear
+    /// more often rather than less — and once the send side learnt to latch, the thing the wait
+    /// was improving the odds of stopped happening, so the wait went and the commit is prompt
+    /// too. Both are pinned here as facts about the build rather than as intentions.
     ///
     /// The sweeps below are the other half of that. A group's tear is a property of WHEN the
     /// wearer made the change, so a handful of moments cannot tell you whether it happens —
@@ -364,61 +365,96 @@ namespace Yozolab.DaerD.Tests
         /// that or does not.</summary>
         static readonly int[] LossSeeds = { 2, 3, 4, 5, 6, 7, 8, 9 };
 
-        /// <summary>
-        /// What is left of the tear when the wire drops a quarter of its samples, and the
-        /// honest edge of the promise above.
-        ///
-        /// The hole is on the receiving side and it is exactly one shape: a lap loses the
-        /// arrival that would have put the group's flags down, so the flag of a member that
-        /// arrived in the PREVIOUS lap is still standing, and a member of this lap completes
-        /// the guard against it. Both values are latched readings and neither is half of
-        /// anything — they are just two different laps' readings.
-        ///
-        /// Closing it needs the lap's identity to travel WITH the values, which is a generation
-        /// number on the wire. That is the one thing a group may not spend: a group costs no
-        /// synced bits today, and bits are the whole reason a cycle exists. A number wide
-        /// enough to be unambiguous under loss is several of them, on an avatar whose budget
-        /// the multiplexing was bought to stretch.
-        ///
-        /// Measured over eight loss seeds and the same thirteen moments: 32 of the 104 runs
-        /// tore before the latch, 7 after — and all seven are the shape above, in the one seed
-        /// that produces it. Ready is on here, so the first-commit hole 0e91fc3 closed is not
-        /// what is being counted.
-        /// </summary>
-        [Test]
-        public void AGroupUnderLossOnlyTearsWhenALapLosesItsOwnOpening()
+        /// <summary>The sweep again over eight loss seeds, and what fraction of the 104 runs
+        /// were shown torn.</summary>
+        static int TornUnderLoss(float loss, out string detail)
         {
             var totals = new System.Text.StringBuilder();
             int torn = 0;
             foreach (int seed in LossSeeds)
             {
-                torn += TornOverASweep(0.25f, seed, out string detail, ready: true);
-                if (detail.Length > 0)
-                    totals.Append("seed ").Append(seed).Append(": ").Append(detail).Append("; ");
+                torn += TornOverASweep(loss, seed, out string one, ready: true);
+                if (one.Length > 0)
+                    totals.Append("seed ").Append(seed).Append(": ").Append(one).Append("; ");
             }
-            int runs = Phases * LossSeeds.Length;
-
-            Assert.Less(torn, 32, "the latch has to be a strict improvement on the " + 32
-                + " of " + runs + " the build without it tore");
-            Assert.LessOrEqual(torn, 7, torn + " of " + runs
-                + " runs tore, which is worse than the 7 measured for this build: " + totals);
-            Assert.Greater(torn, 0,
-                "no run tore, so the hole this test describes is closed — rewrite the guarantee "
-                + "in AsyncSyncApplier.BuildGroupLayers before deleting this half");
+            detail = totals.ToString();
+            return torn;
         }
 
         /// <summary>
-        /// The commit does NOT come straight back out, and this is the test that says so on
-        /// purpose. The reading that it should is the obvious one — the driver has run and the
-        /// flags are down, so there is nothing left to wait for — and it is wrong for a reason
-        /// no shape shows: see the test below, and <c>AsyncSyncApplier.AfterALoop</c>.
+        /// A wire that loses samples, and the honest edge of the promise above.
         ///
-        /// Measured here at 61 frames, which is one loop of a motion-less state at 60 fps. On a
-        /// production setup the states carry the Empty clip and the loop is that clip's length
-        /// instead — the number is a property of the motion, not a constant.
+        /// The hole that is left is on the receiving side and it is exactly one shape: a lap
+        /// loses the arrival that would have put the group's flags down, so the flag of a
+        /// member that arrived in the PREVIOUS lap is still standing, and a member of this lap
+        /// completes the guard against it. Both values are latched readings and neither is half
+        /// of anything — they are two different laps' readings, which is a weaker thing to be
+        /// wrong about and still wrong.
+        ///
+        /// Closing it needs the lap's identity to travel WITH the values, which is a generation
+        /// number on the wire. That is the one thing a group may not spend: a group costs no
+        /// synced bits today, and bits are the whole reason a cycle exists. A counter narrow
+        /// enough to afford is ambiguous under the very loss it would exist to survive, and a
+        /// wide one is several bits off the budget the multiplexing was bought to stretch — on
+        /// every avatar with a group, whether or not its wire ever drops anything.
+        ///
+        /// Measured against the build before the latch, over the same eight seeds and thirteen
+        /// moments, at each loss the same way (Ready on, so the first-commit hole 0e91fc3
+        /// closed is not what is being counted):
+        ///
+        ///   dropped   before   after
+        ///     25%     32/104    0/104   pinned below
+        ///     50%     36/104    0/104   pinned below
+        ///     70%     29/104    6/104   pinned below
+        ///     80%     33/104   19/104   measured once, not pinned — three sweeps is already
+        ///                               most of what this suite costs to run
+        ///
+        /// The old build tore at about the same rate whatever the wire did, because its tear
+        /// was the wearer's own sends coming apart and the wire had nothing to do with it. This
+        /// one is whole until the loss is bad enough to take out a whole lap's opening, which
+        /// on this cycle takes better than half the samples going missing.
         /// </summary>
         [Test]
-        public void AGroupsCommitStandsForOneLoopOfItsOwnMotion()
+        public void AGroupUnderLossOnlyTearsWhenALapLosesItsOwnOpening()
+        {
+            int runs = Phases * LossSeeds.Length;
+
+            // The wire people actually have. The build before the latch tore at 32 and 36 of
+            // these same runs.
+            Assert.AreEqual(0, TornUnderLoss(0.25f, out string quarter),
+                "torn with a quarter of the samples dropped: " + quarter);
+            Assert.AreEqual(0, TornUnderLoss(0.5f, out string half),
+                "torn with half the samples dropped: " + half);
+
+            // And the edge, where it does still happen — far less than the 29 of these runs the
+            // build without the latch tore, and not zero.
+            int wretched = TornUnderLoss(0.7f, out string detail);
+            Assert.Less(wretched, 29, wretched + " of " + runs
+                + " runs tore with 70% of the samples dropped, which is no better than the "
+                + "build before the latch: " + detail);
+            Assert.LessOrEqual(wretched, 6, wretched + " of " + runs
+                + " runs tore, which is worse than the 6 measured for this build: " + detail);
+            Assert.Greater(wretched, 0,
+                "no run tore even at 70% loss, so the hole this test describes may be closed — "
+                + "rewrite the guarantee in AsyncSyncApplier.BuildGroupLayers before deleting "
+                + "this half");
+        }
+
+        /// <summary>
+        /// The commit comes straight back out, and this is the test that used to say the exact
+        /// opposite. It stood for a whole loop of its own motion — 61 frames on a motion-less
+        /// state at 60 fps — on purpose, because coming straight back was measured to make the
+        /// group tear MORE and the wait was the only lever anybody had over the odds. The latch
+        /// took the lever away by making a lap carry one reading, so what is left is the plain
+        /// reading the wait was hiding: a whole set reaches the far side on the frame it
+        /// completes instead of up to a second later.
+        ///
+        /// The wait is worth a test after it is gone, because it did not look like a wait. It
+        /// was written as an exit time of 0, which reads as "leave at once" and fires at the
+        /// loop boundary, and nothing about the shape of the layer would have shown it.
+        /// </summary>
+        [Test]
+        public void AGroupsCommitComesStraightBackOut()
         {
             var controller = Grouped(out var request);
             var settings = Settings(request, 6f);
@@ -441,11 +477,15 @@ namespace Yozolab.DaerD.Tests
             }
 
             Assert.Greater(commits, 1, "the group never committed twice, so nothing was measured");
-            Assert.Greater(longest, Prompt,
-                "the commit came straight back out, which is measured to tear more, not less");
-            Assert.AreEqual(60, longest, 5,
-                "Commit stood for " + longest + " frames, which is not the second a loop of a "
-                + "motion-less state is");
+            Assert.LessOrEqual(longest, Prompt,
+                "Commit stood for " + longest + " frames — an exit time is a loop boundary, "
+                + "not an instant, and the loop this used to take was 61 of them");
+
+            // And it commits often enough to be the reason: once a lap it has a whole set for,
+            // rather than once a second.
+            Assert.GreaterOrEqual(commits, 4,
+                "only " + commits + " commits in six seconds of a 0.9 s pass, so something is "
+                + "still holding the guard shut");
 
             Object.DestroyImmediate(controller);
         }

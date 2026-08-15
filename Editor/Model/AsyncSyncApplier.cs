@@ -649,8 +649,9 @@ namespace Yozolab.DaerD
         const float ImmediateSeconds = 0.001f;
 
         /// <summary>
-        /// A route with nothing to wait for: the else of a judgement, taken on the first frame
-        /// the state it leaves is evaluated at all.
+        /// A route with nothing to wait for — the else of a judgement, or the way back out of
+        /// a state whose whole job was the driver that ran on the way in — taken on the first
+        /// frame the state it leaves is evaluated at all.
         ///
         /// It carries an exit time rather than no exit time at all. A transition with neither a
         /// condition nor an exit time is never taken — the state machine sits in the state
@@ -676,6 +677,20 @@ namespace Yozolab.DaerD
         /// index can (greater than -1) the bit encoding has nothing of the sort — it would mean
         /// generating a parameter for the trick's sake, and a condition that asks nothing is one
         /// more thing for whoever opens the generated layer to work out.
+        ///
+        /// A group's commit takes this route too, and did not always. It waited a whole loop of
+        /// its own motion instead, on purpose and against the obvious reading, because coming
+        /// straight back was MEASURED to make the group tear more often rather than less: with
+        /// the guard closing the moment the last member arrived, every commit copied out each
+        /// member's first decode after the previous commit, and a change made between two
+        /// members' sends went out half-old. Over thirteen change moments a tenth of a second
+        /// apart, four tore with the wait and nine without it. What the wait was really doing
+        /// was making the odds better, and it was kept while that was the only lever there was.
+        ///
+        /// The latch took the lever away. A lap can no longer carry two readings, so there is no
+        /// longer a worse half to hold out for, and the two numbers above are both zero on this
+        /// build with the commit prompt. What is left is the plain reading the wait was hiding:
+        /// a whole set is copied out on the frame it completes rather than up to a second later.
         /// </summary>
         static AnimatorStateTransition Immediate(AnimatorState from, AnimatorState to,
             AnimationClip empty)
@@ -684,43 +699,6 @@ namespace Yozolab.DaerD
             transition.hasExitTime = true;
             transition.exitTime = empty != null
                 ? ImmediateSeconds / empty.length : ImmediateSeconds;
-            transition.hasFixedDuration = true;
-            transition.duration = 0f;
-            EditorUtility.SetDirty(transition);
-            return transition;
-        }
-
-        /// <summary>
-        /// The way back out of a state whose whole job was the driver that ran on the way in,
-        /// taken one loop of that state's motion later — a second on a motion-less state, the
-        /// clip's length on one carrying the Empty clip.
-        ///
-        /// Spelled as an exit time of 1 rather than the 0 that stood here before. The two are
-        /// the same transition to Mecanim: measured, exit time 0 fires exactly where 1 does, at
-        /// the loop boundary. The 0 was written meaning "at once" and read that way by everyone
-        /// after, which is how the commit came to stand in its own state for about a second of
-        /// every lap without anybody noticing. If the wait is going to be there, the number has
-        /// to say so.
-        ///
-        /// And the wait stays, which <see cref="Immediate"/> is the reason to say out loud. The
-        /// obvious reading is that a commit has nothing to wait for either — the driver has run,
-        /// the flags are down, and coming straight back would let the next whole set through as
-        /// soon as it lands instead of up to a second later. Measured, coming straight back
-        /// makes the group tear MORE, not less: with the commit prompt, the guard closes the
-        /// moment the last member arrives, so every commit holds each member's first decode
-        /// after the previous commit — and a change the wearer made between two members' sends
-        /// is then copied out half-old. Over thirteen change times a tenth of a second apart,
-        /// four tore with the wait and nine without it. Neither is a promise; the group's real
-        /// hole is that its members travel in different steps, and closing it is a change to the
-        /// guard (or to the schedule) rather than to this transition. Until that is decided the
-        /// dwell is what keeps most changes whole, so it is kept deliberately rather than
-        /// removed by tidying. AsyncSyncDwellTests measures both halves of this.
-        /// </summary>
-        static AnimatorStateTransition AfterALoop(AnimatorState from, AnimatorState to)
-        {
-            var transition = from.AddTransition(to);
-            transition.hasExitTime = true;
-            transition.exitTime = 1f;
             transition.hasFixedDuration = true;
             transition.duration = 0f;
             EditorUtility.SetDirty(transition);
@@ -904,12 +882,12 @@ namespace Yozolab.DaerD
                 foreach (var name in group.members)
                     arm.AddCondition(AnimatorConditionMode.If, 0f,
                         HeldParameter(r.baseName, name));
-                // Back after a loop of the state's own motion. The flags are down by the time
-                // this is evaluated, so the guard above cannot fire again until every member
-                // has arrived once more — and the dwell on top of that is what keeps a change
-                // whose members travel in different steps from being copied out half-old. See
-                // AfterALoop, which measures what taking it away does.
-                AfterALoop(commit, idle);
+                // Straight back, so the next whole set is copied out the moment it lands. The
+                // flags are down by the time this is evaluated, so the guard above cannot fire
+                // again until every member has arrived once more, and there is nothing else
+                // here to wait for. See Immediate for why the wait was here until the latch
+                // made it pointless.
+                Immediate(commit, idle, empty);
 
                 if (!r.skipDrivers) AddCommitDriver(commit, r, group);
                 EditorUtility.SetDirty(machine);

@@ -2128,16 +2128,17 @@ namespace Yozolab.DaerD.Tests
         }
 
         /// <summary>
-        /// The two unconditioned routes out of a watcher, which look alike and are not. Neither
-        /// may be left without an exit time — a transition with no condition and no exit time is
-        /// never taken at all — and neither may carry zero, which reads as "at once" and fires
-        /// at the loop boundary instead.
+        /// The two unconditioned routes out of a watcher. Neither may be left without an exit
+        /// time — a transition with no condition and no exit time is never taken at all — and
+        /// neither may carry zero, which reads as "at once" and fires at the loop boundary
+        /// instead. That is not a style rule: the commit's route was written as a zero, and
+        /// stood for a second of every lap for as long as nobody measured it.
         ///
-        /// The judgement's else takes a millisecond, written in seconds and normalized to the
-        /// motion the way the cycle's dwell is, so it stays a millisecond with or without the
-        /// Empty clip. The commit's way out keeps the loop, spelled as the 1 it always meant,
-        /// because the group leans on the dwell — AsyncSyncDwellTests measures what it is worth
-        /// and what it costs.
+        /// Both now take a millisecond, written in seconds and normalized to the motion the way
+        /// the cycle's dwell is, so both stay a millisecond with or without the Empty clip. The
+        /// commit's used to be the loop it was mistaken for, kept deliberately while the group
+        /// leaned on the odds it improved; the send-side latch is what made it pointless.
+        /// AsyncSyncDwellTests measures what each of them costs on a running Animator.
         /// </summary>
         [Test]
         public void Apply_SpellsTheTwoUnconditionedRoutesOutOfAWatcherApart()
@@ -2161,12 +2162,13 @@ namespace Yozolab.DaerD.Tests
             }
             // Motion-less states: normalized time is a second, so an exit time reads as seconds.
             Assert.AreEqual(0.001f, judged.exitTime, 1e-6f);
-            Assert.AreEqual(1f, committed.exitTime, 1e-6f, "one loop of the state's own motion");
+            Assert.AreEqual(0.001f, committed.exitTime, 1e-6f,
+                "the commit is back to waiting for the next whole set and nothing else");
             Object.DestroyImmediate(controller);
 
-            // ...and with the Empty clip on them, the millisecond becomes a fraction of it while
-            // the loop stays a loop: the two are normalized to the same motion and mean
-            // different things by it.
+            // ...and with the Empty clip on them, the millisecond becomes a fraction of it,
+            // because a route meant to be over at once has to be written as a fraction of
+            // whatever motion the state happens to carry.
             var filled = NewController();
             var clip = NewEmptyClip(0.5f);
             var withClip = NewRequest(filled, "F", "B", "I");
@@ -2178,7 +2180,7 @@ namespace Yozolab.DaerD.Tests
             Assert.AreEqual(0.001f / 0.5f,
                 FindState(FindLayer(filled, "Async Stale"), "Judge").transitions[2].exitTime,
                 1e-6f);
-            Assert.AreEqual(1f,
+            Assert.AreEqual(0.001f / 0.5f,
                 FindState(FindLayer(filled, "Async Outfit"), "Commit").transitions[0].exitTime,
                 1e-6f);
 
