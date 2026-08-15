@@ -951,9 +951,12 @@ namespace Yozolab.DaerD
             {
                 int members = 0;
                 foreach (var group in groups) members += group.members.Count;
+                // Counted from the list that is actually generated rather than from a factor
+                // written here: a member costs a latch, a shadow and a flag today, and the
+                // last time that number changed this label went on saying the old one.
                 EditorGUILayout.LabelField(
                     L.Tr("Groups: {0}, holding {1} parameter(s) — {2} local parameters and {0} layer(s), nothing synced.",
-                        groups.Count, members, members * 2),
+                        groups.Count, members, AsyncSyncBuilder.GroupParameters(request).Count),
                     EditorStyles.miniLabel);
             }
 

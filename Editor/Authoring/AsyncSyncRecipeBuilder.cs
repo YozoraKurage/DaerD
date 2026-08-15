@@ -221,20 +221,24 @@ namespace Yozolab.DaerD.Authoring
         }
 
         /// <summary>
-        /// Assign these targets together, however far apart the pass sends them: a remote holds
-        /// each of them aside as it arrives and copies the whole set into the real parameters
-        /// once the last one is in, so it never shows half a change. One driver does the copy,
-        /// which is what makes them land in the same frame rather than merely close together.
+        /// Assign these targets together, however far apart the pass sends them: the wearer
+        /// reads the whole set in one driver when the pass reaches the first of them and sends
+        /// every member from that reading, and a remote holds each one aside as it arrives and
+        /// copies the set into the real parameters once they are all in. One driver at each
+        /// end, so the values leave together and land together, and what the far side shows is
+        /// a set the wearer really held at one moment.
         ///
         /// For targets that could share a step, batching already does this and does it sooner —
         /// one driver sends them, so they were never going to arrive apart. Reach for a group
         /// when they cannot share one: different types, or more of a type than the channels
         /// carry.
         ///
-        /// A lap that loses a member commits nothing and leaves the remote on the last
-        /// complete set, which is the trade: a whole value that is one pass old, rather than a
-        /// fresh half of one. Costs no synced bits — a shadow parameter and a flag per member,
-        /// and a two-state layer per group.
+        /// The cost is freshness, both ways. A change made just after the group's reading was
+        /// taken is not sent until the pass comes round to it again, and a lap that loses a
+        /// member commits nothing and leaves the remote on the last complete set. That is the
+        /// trade in one sentence: a whole set that is up to a pass old, rather than a fresh
+        /// half of one. It costs no synced bits — a latch, a shadow and a flag per member, all
+        /// local, and a two-state layer per group.
         ///
         /// Pair it with <see cref="Ready"/>. Without the flag the guarantee only starts after
         /// the first full pass: a client decodes the index it arrived to — zero, because

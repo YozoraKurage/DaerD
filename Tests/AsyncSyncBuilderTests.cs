@@ -2821,12 +2821,68 @@ namespace Yozolab.DaerD.Tests
             request.groups.Add(Group("Outfit", "F", "I"));
             var generated = AsyncSyncBuilder.GroupParameters(request);
             CollectionAssert.AreEqual(
-                new[] { "Async/Hold/F", "Async/Held/F", "Async/Hold/I", "Async/Held/I" },
+                new[]
+                {
+                    "Async/Latch/F", "Async/Hold/F", "Async/Held/F",
+                    "Async/Latch/I", "Async/Hold/I", "Async/Held/I",
+                },
                 generated.ConvertAll(entry => entry.name));
-            // The shadow stands in for the target, so it has to be able to hold what it holds.
+            // The latch and the shadow both stand in for the target, so both have to be able
+            // to hold what it holds; the flag between them is a flag.
             Assert.AreEqual(AnimatorControllerParameterType.Float, generated[0].type);
-            Assert.AreEqual(AnimatorControllerParameterType.Bool, generated[1].type);
-            Assert.AreEqual(AnimatorControllerParameterType.Int, generated[2].type);
+            Assert.AreEqual(AnimatorControllerParameterType.Float, generated[1].type);
+            Assert.AreEqual(AnimatorControllerParameterType.Bool, generated[2].type);
+            Assert.AreEqual(AnimatorControllerParameterType.Int, generated[3].type);
+            Assert.AreEqual(AnimatorControllerParameterType.Int, generated[4].type);
+            Assert.AreEqual(AnimatorControllerParameterType.Bool, generated[5].type);
+        }
+
+        /// <summary>
+        /// None of a group's three parameters per member is ever synced, and a regenerate does
+        /// not make a second set of them. The wire is what a group must not cost — the whole
+        /// mechanism is two local pieces of reasoning about values that travel exactly as they
+        /// did — so the store gets the index and the channels and nothing else.
+        /// </summary>
+        [Test]
+        public void Apply_WithAGroup_CreatesItsLatchesLocallyAndOnlyOnce()
+        {
+            var controller = NewController();
+            var asset = ScriptableObject.CreateInstance<VRCExpressionParameters>();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.groups.Add(Group("Outfit", "F", "I"));
+            request.store = ParameterStore.TryWrap(asset);
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            foreach (var name in new[]
+            {
+                "Async/Latch/F", "Async/Latch/I", "Async/Hold/F", "Async/Hold/I",
+                "Async/Held/F", "Async/Held/I",
+            })
+            {
+                Assert.IsNotNull(DbtBuilder.FindParameter(controller, name),
+                    name + " was never created on the controller");
+                Assert.IsNull(VrcExpressionParameters.Find(asset, name),
+                    name + " reached the parameter store, so a group is costing bits");
+            }
+            Assert.AreEqual(AnimatorControllerParameterType.Float,
+                DbtBuilder.FindParameter(controller, "Async/Latch/F").type);
+            Assert.AreEqual(AnimatorControllerParameterType.Int,
+                DbtBuilder.FindParameter(controller, "Async/Latch/I").type);
+            // What DOES sync is the index and the channels, exactly as it did before groups
+            // learnt to latch anything.
+            foreach (var (name, _) in AsyncSyncBuilder.GeneratedParameters(request))
+                Assert.IsNotNull(VrcExpressionParameters.Find(asset, name),
+                    name + " should be synced");
+
+            int before = controller.parameters.Length;
+            var again = NewRequest(controller, "F", "B", "I");
+            again.groups.Add(Group("Outfit", "F", "I"));
+            again.layerIndex = 1;
+            Assert.IsTrue(AsyncSyncBuilder.Apply(again));
+            Assert.AreEqual(before, controller.parameters.Length,
+                "regenerating grew the parameter list, so something is being made twice");
+
+            Object.DestroyImmediate(asset);
         }
 
         [Test]
@@ -2838,21 +2894,47 @@ namespace Yozolab.DaerD.Tests
             request.skipDrivers = false;
             Assert.IsTrue(AsyncSyncBuilder.Apply(request));
 
-            // The arriving direction is diverted; the flag goes up after the value is in.
+            // The arriving direction is diverted; the flag goes up after the value is in. Recv F
+            // is also the group's latch point — F is the first member the ring sends — so it
+            // opens the lap window by putting every member's flag down before anything else.
             var sm = controller.layers[1].stateMachine;
             var recvF = DriverOn(FindState(sm, "Recv F")).entries;
-            Assert.AreEqual(2, recvF.Count);
-            Assert.AreEqual(3, recvF[0].kind);                       // Copy
-            Assert.AreEqual("Async/Float", recvF[0].source);
-            Assert.AreEqual("Async/Hold/F", recvF[0].name);
-            Assert.AreEqual("Async/Held/F", recvF[1].name);
-            Assert.AreEqual(1f, recvF[1].value);
+            Assert.AreEqual(4, recvF.Count);
+            Assert.AreEqual("Async/Held/F", recvF[0].name);
+            Assert.AreEqual(0f, recvF[0].value);
+            Assert.AreEqual("Async/Held/B", recvF[1].name);
+            Assert.AreEqual(0f, recvF[1].value);
+            Assert.AreEqual(3, recvF[2].kind);                       // Copy
+            Assert.AreEqual("Async/Float", recvF[2].source);
+            Assert.AreEqual("Async/Hold/F", recvF[2].name);
+            Assert.AreEqual("Async/Held/F", recvF[3].name);
+            Assert.AreEqual(1f, recvF[3].value);
+            // The other member's arrival only counts itself in — the window is opened once a
+            // lap and by one slot.
+            var recvB = DriverOn(FindState(sm, "Recv B")).entries;
+            Assert.AreEqual(2, recvB.Count);
+            Assert.AreEqual("Async/Hold/B", recvB[0].name);
+            Assert.AreEqual("Async/Held/B", recvB[1].name);
             // An ungrouped target still lands in its own parameter.
             Assert.AreEqual("I", DriverOn(FindState(sm, "Recv I")).entries[0].name);
 
-            // The cycle reads the real parameters either way: there is nothing to hold on the
-            // side that already has the values.
-            Assert.AreEqual("F", DriverOn(FindState(sm, "Send F")).entries[0].source);
+            // The leaving direction is diverted too, and at the same slot: the first member's
+            // step reads the whole group into its latches in one driver, and the channels are
+            // then filled from those rather than from the parameters.
+            var sendF = DriverOn(FindState(sm, "Send F")).entries;
+            Assert.AreEqual("F", sendF[0].source);
+            Assert.AreEqual("Async/Latch/F", sendF[0].name);
+            Assert.AreEqual("B", sendF[1].source);
+            Assert.AreEqual("Async/Latch/B", sendF[1].name);
+            Assert.AreEqual("Async/Latch/F", sendF[2].source);
+            Assert.AreEqual("Async/Float", sendF[2].name);
+            // Every later step sends its member out of the latch and takes no reading of its
+            // own, which is what makes one lap one moment.
+            var sendB = DriverOn(FindState(sm, "Send B")).entries;
+            Assert.AreEqual("Async/Latch/B", sendB[0].source);
+            Assert.AreEqual("Async/Bool", sendB[0].name);
+            // And an ungrouped target is sent from itself, as fresh as it ever was.
+            Assert.AreEqual("I", DriverOn(FindState(sm, "Send I")).entries[0].source);
 
             var commitLayer = FindLayer(controller, "Async Outfit");
             Assert.IsNotNull(commitLayer);
@@ -2949,6 +3031,79 @@ namespace Yozolab.DaerD.Tests
             Assert.IsFalse(AsyncSyncBuilder.Warnings(request)
                 .Exists(w => w.Contains("carry a value nobody sent")),
                 "the flag is on — there is nothing left to warn about");
+        }
+
+        /// <summary>
+        /// The latch point is the first member the RING sends, and it is the same slot on both
+        /// sides: the step that reads the group into its latches is the arrival that puts the
+        /// group's flags down. A group whose members start later in the pass moves both — they
+        /// are one decision, and a build where they disagreed would open the window against a
+        /// reading the wearer had already replaced.
+        /// </summary>
+        [Test]
+        public void Apply_WithAGroup_LatchesAtItsFirstMembersStep_OnBothSides()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.groups.Add(Group("Outfit", "B", "I"));   // F is not a member at all
+            request.skipDrivers = false;
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var sm = controller.layers[1].stateMachine;
+            // F is sent before either member and is nobody's latch point: no latch entries, and
+            // its own value on the wire.
+            var sendF = DriverOn(FindState(sm, "Send F")).entries;
+            Assert.AreEqual("F", sendF[0].source);
+            Assert.AreEqual("Async/Float", sendF[0].name);
+            var recvF = DriverOn(FindState(sm, "Recv F")).entries;
+            Assert.AreEqual("Async/Float", recvF[0].source);
+            Assert.AreEqual("F", recvF[0].name, "an ungrouped slot opened somebody's window");
+
+            // B is the first member the ring reaches, so the reading is taken there.
+            var sendB = DriverOn(FindState(sm, "Send B")).entries;
+            Assert.AreEqual("B", sendB[0].source);
+            Assert.AreEqual("Async/Latch/B", sendB[0].name);
+            Assert.AreEqual("I", sendB[1].source);
+            Assert.AreEqual("Async/Latch/I", sendB[1].name);
+            Assert.AreEqual("Async/Latch/B", sendB[2].source);
+            Assert.AreEqual("Async/Bool", sendB[2].name);
+
+            var recvB = DriverOn(FindState(sm, "Recv B")).entries;
+            Assert.AreEqual("Async/Held/B", recvB[0].name);
+            Assert.AreEqual(0f, recvB[0].value);
+            Assert.AreEqual("Async/Held/I", recvB[1].name);
+            Assert.AreEqual(0f, recvB[1].value);
+            Assert.AreEqual("Async/Hold/B", recvB[2].name);
+            Assert.AreEqual("Async/Held/B", recvB[3].name);
+            Assert.AreEqual(1f, recvB[3].value);
+        }
+
+        /// <summary>
+        /// A detour sends the latch and does not take one. A request is a slot sent out of
+        /// turn, so a reading taken there would be a reading half the group had already been
+        /// sent from — the tear the latch exists to close, at a moment nothing schedules. So a
+        /// requested member arrives sooner and still belongs to the lap it was read in.
+        /// </summary>
+        [Test]
+        public void Apply_WithARequestableGroupMember_SendsTheLatchFromTheDetour()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.groups.Add(Group("Outfit", "F", "I"));
+            request.requestTargets.Add("I");
+            request.skipDrivers = false;
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var sm = controller.layers[1].stateMachine;
+            var detour = DriverOn(FindState(sm, "Send I (req)")).entries;
+            Assert.AreEqual("Async/Latch/I", detour[0].source,
+                "the detour read a fresh value instead of sending the group's own");
+            Assert.AreEqual("Async/Int", detour[0].name);
+            // No latch of its own: the next entry is the index, not a copy into a latch.
+            Assert.AreEqual("Async/Index", detour[1].name);
+            Assert.AreEqual("Async/Req/I", detour[2].name);
+            Assert.AreEqual(0f, detour[2].value);
+            Assert.AreEqual(3, detour.Count);
         }
 
         [Test]

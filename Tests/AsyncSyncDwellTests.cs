@@ -24,6 +24,12 @@ namespace Yozolab.DaerD.Tests
     /// commit's way out kept its loop, because taking it away was measured and it makes the
     /// group tear more often rather than less — so the wait is pinned here as a fact about the
     /// build, next to the hole it is standing in front of.
+    ///
+    /// The sweeps below are the other half of that. A group's tear is a property of WHEN the
+    /// wearer made the change, so a handful of moments cannot tell you whether it happens —
+    /// the runtime suite's "never half of a change" held for years on a build that tore at
+    /// four of every thirteen moments, because the moments it picks are whole ones. Every
+    /// claim this repository makes about a group is quoting a sweep from here.
     /// </summary>
     public class AsyncSyncDwellTests
     {
@@ -202,21 +208,32 @@ namespace Yozolab.DaerD.Tests
         /// <summary>The cycle the group runs on, with real drivers and a wire under it — the
         /// same one the runtime suite uses, because the dwell being measured is the one a
         /// commit really has.</summary>
-        static AnimatorController Grouped(out AsyncSyncBuilder.Request request)
+        static AnimatorController Grouped(out AsyncSyncBuilder.Request request,
+            bool ready = false, bool requestable = false)
         {
             var controller = NewController();
             request = NewRequest(controller);
             var group = new GraphFrameData.AsyncSyncConfig.SyncGroup { name = "Outfit" };
             group.members.AddRange(new[] { "F", "I" });
             request.groups.Add(group);
+            request.ready = ready;
+            // The member the ring sends LAST, so a detour for it is a member arriving out of
+            // turn rather than one arriving early in its own lap.
+            if (requestable) request.requestTargets.Add("I");
             Assert.IsNull(AsyncSyncBuilder.Validate(request));
             Assert.IsTrue(AsyncSyncBuilder.Apply(request));
             return controller;
         }
 
-        static SimSettings Settings(AsyncSyncBuilder.Request request, float seconds)
+        static SimSettings Settings(AsyncSyncBuilder.Request request, float seconds,
+            float loss = 0f, int wireSeed = 4)
         {
-            var wire = new SyncWire { intervalSeconds = 0.1f, seed = 4 };
+            var wire = new SyncWire
+            {
+                intervalSeconds = 0.1f,
+                dropChance = loss,
+                seed = wireSeed,
+            };
             foreach (var (name, _) in AsyncSyncBuilder.GeneratedParameters(request))
                 wire.Syncs(name);
             return new SimSettings
@@ -247,20 +264,147 @@ namespace Yozolab.DaerD.Tests
 
         /// <summary>One run of the pair, changed from one whole set to another at
         /// <paramref name="changedAt"/>.</summary>
-        static SignalTrace ChangedAt(float changedAt)
+        static SignalTrace ChangedAt(float changedAt, float loss = 0f, int wireSeed = 4,
+            bool ready = false, bool requesting = false)
         {
-            var controller = Grouped(out var request);
+            var controller = Grouped(out var request, ready, requesting);
             try
             {
-                var settings = Settings(request, 8f);
+                var settings = Settings(request, 8f, loss, wireSeed);
                 settings.stimulus.At(0f, "F", 0.5f).At(0f, "I", 3f)
                     .At(changedAt, "F", -0.5f).At(changedAt, "I", 7f);
+                // Asked for again and again, so the ring takes a detour at almost every step
+                // boundary it is allowed to and the member is revisited out of turn all run.
+                if (requesting)
+                    for (int i = 0; i < 50; i++)
+                        settings.stimulus.At(i * 0.15f, "Async/Req/I", 1f);
                 return Simulation.Run(controller, settings);
             }
             finally
             {
                 Object.DestroyImmediate(controller);
             }
+        }
+
+        /// <summary>
+        /// The thirteen moments a change can be made at, a tenth of a second apart over one and
+        /// a bit of the 0.9 s pass — the sweep 4d7a618 measured the tear with, kept as the unit
+        /// of measurement so before and after are the same experiment. Thirteen tenths covers
+        /// every phase of the pass and then some, and the pass is not a whole number of tenths,
+        /// so the moments do not land on the same step of it twice.
+        /// </summary>
+        const int Phases = 13;
+
+        static float PhaseAt(int phase) => 3f + phase * 0.1f;
+
+        /// <summary>How many of the thirteen were shown torn, and which ones — the detail goes
+        /// into the assertion message, because a sweep that regresses is only useful if it says
+        /// where.</summary>
+        static int TornOverASweep(float loss, int wireSeed, out string detail,
+            bool ready = false, bool requesting = false)
+        {
+            var torn = new System.Text.StringBuilder();
+            int count = 0;
+            for (int phase = 0; phase < Phases; phase++)
+            {
+                float when = FirstTornAt(
+                    ChangedAt(PhaseAt(phase), loss, wireSeed, ready, requesting));
+                if (when < 0f) continue;
+                count++;
+                if (torn.Length > 0) torn.Append(", ");
+                torn.Append(PhaseAt(phase).ToString("0.0")).Append("s shown torn at ")
+                    .Append(when.ToString("0.00")).Append('s');
+            }
+            detail = torn.ToString();
+            return count;
+        }
+
+        /// <summary>
+        /// A clean line carries a group whole whenever the change is made. This is the sweep
+        /// 4d7a618 wrote down as four of thirteen, run again on the build that latches: the
+        /// members are read into their latches in one driver at the group's own step and sent
+        /// from there, so a change made between two of their sends is either wholly in the lap
+        /// or wholly in the next one, and there is no third possibility left to land on.
+        ///
+        /// The moment of the change is what is swept, and not the loss, because that was the
+        /// whole surprise of the old measurement: the tear was a property of WHEN, on a wire
+        /// that dropped nothing at all. A sweep is how a promise of this shape is stated —
+        /// "never half" cannot be shown by the handful of moments a runtime test picks.
+        /// </summary>
+        [Test]
+        public void AGroupIsWholeAtEveryMomentAChangeCanBeMadeAt()
+        {
+            int torn = TornOverASweep(0f, 4, out string detail);
+            Assert.AreEqual(0, torn, torn + " of the " + Phases
+                + " change moments reached the far side torn: " + detail);
+        }
+
+        /// <summary>
+        /// The same sweep with a request held down all run, so the ring is detouring to a
+        /// group member at nearly every step boundary and that member is sent several times a
+        /// lap, out of turn.
+        ///
+        /// A detour takes no reading of its own — it sends the current latch — and that is the
+        /// half of the design a shape test cannot show is right. The alternative reading, that
+        /// a request should carry the freshest value it can find, is exactly what tears: it
+        /// would put one member of a new reading on the wire while the rest of the group was
+        /// still travelling from the old one, and it would do it at a moment nobody scheduled.
+        /// What the request buys instead is that the group's whole reading lands sooner.
+        /// </summary>
+        [Test]
+        public void ARequestForAGroupMemberSendsTheLatchAndNotTheFreshValue()
+        {
+            int torn = TornOverASweep(0f, 4, out string detail, requesting: true);
+            Assert.AreEqual(0, torn, torn + " of the " + Phases
+                + " change moments tore while a member was being requested: " + detail);
+        }
+
+        /// <summary>The lossy sweep's seeds. Eight, because the tear that is left needs two
+        /// particular samples to go missing in two particular laps, and one seed either finds
+        /// that or does not.</summary>
+        static readonly int[] LossSeeds = { 2, 3, 4, 5, 6, 7, 8, 9 };
+
+        /// <summary>
+        /// What is left of the tear when the wire drops a quarter of its samples, and the
+        /// honest edge of the promise above.
+        ///
+        /// The hole is on the receiving side and it is exactly one shape: a lap loses the
+        /// arrival that would have put the group's flags down, so the flag of a member that
+        /// arrived in the PREVIOUS lap is still standing, and a member of this lap completes
+        /// the guard against it. Both values are latched readings and neither is half of
+        /// anything — they are just two different laps' readings.
+        ///
+        /// Closing it needs the lap's identity to travel WITH the values, which is a generation
+        /// number on the wire. That is the one thing a group may not spend: a group costs no
+        /// synced bits today, and bits are the whole reason a cycle exists. A number wide
+        /// enough to be unambiguous under loss is several of them, on an avatar whose budget
+        /// the multiplexing was bought to stretch.
+        ///
+        /// Measured over eight loss seeds and the same thirteen moments: 32 of the 104 runs
+        /// tore before the latch, 7 after — and all seven are the shape above, in the one seed
+        /// that produces it. Ready is on here, so the first-commit hole 0e91fc3 closed is not
+        /// what is being counted.
+        /// </summary>
+        [Test]
+        public void AGroupUnderLossOnlyTearsWhenALapLosesItsOwnOpening()
+        {
+            var totals = new System.Text.StringBuilder();
+            int torn = 0;
+            foreach (int seed in LossSeeds)
+            {
+                torn += TornOverASweep(0.25f, seed, out string detail, ready: true);
+                if (detail.Length > 0)
+                    totals.Append("seed ").Append(seed).Append(": ").Append(detail).Append("; ");
+            }
+            int runs = Phases * LossSeeds.Length;
+
+            Assert.Less(torn, 32, "the latch has to be a strict improvement on the " + 32
+                + " of " + runs + " the build without it tore");
+            Assert.LessOrEqual(torn, 7, torn + " of " + runs
+                + " runs tore, which is worse than the 7 measured for this build: " + totals);
+            Assert.Greater(torn, 0,
+                "no run tore, so the hole this test describes is closed — rewrite the guarantee "
+                + "in AsyncSyncApplier.BuildGroupLayers before deleting this half");
         }
 
         /// <summary>
@@ -307,31 +451,24 @@ namespace Yozolab.DaerD.Tests
         }
 
         /// <summary>
-        /// The hole the dwell above is standing in front of, and which it does not close: a
-        /// group's members travel in different steps of the cycle, so a change made between two
-        /// of their sends is in the shadows half-new, and a commit landing in between copies it
-        /// out that way. Whether it lands there is a matter of when the change was made.
+        /// The two moments 4d7a618 named, kept as themselves now that the sweep above covers
+        /// the range they were drawn from. A change at 3.0 s always reached the far side whole
+        /// — it is the moment AsyncSyncRuntimeTests picks, and the reason that suite's promise
+        /// held while the property behind it did not. One at 3.4 s fell between the group's two
+        /// sends and was shown half-old for a lap, which is what the latch closes.
         ///
-        /// Both halves are measured, on the build as it ships: a change at 3.0 s reaches the
-        /// far side whole, and one at 3.4 s is shown half-old for a lap. Sweeping the moment of
-        /// the change from 3.0 s to 4.2 s in tenths, four of the thirteen tore; with the commit
-        /// coming straight back out instead, nine did. That is the whole reason the dwell was
-        /// left alone rather than tidied away — neither number is a promise, and the promise
-        /// AsyncSyncRuntimeTests states for a group is kept by the moments it happens to pick.
-        ///
-        /// Closing this properly is a change to the guard or to the schedule. It has not been
-        /// made, so this test will start failing the day somebody makes it — which is the point.
+        /// Written out separately from the sweep because a sweep that goes from four to zero
+        /// only says the number moved. This says which moment moved, and it is the one that
+        /// used to be the counterexample.
         /// </summary>
         [Test]
-        public void AGroupShowsHalfOfAChangeMadeBetweenTwoOfItsMembersSends()
+        public void TheChangeThatFellBetweenTwoSendsIsWholeNow()
         {
             Assert.AreEqual(-1f, FirstTornAt(ChangedAt(3f)),
-                "the moment AsyncSyncRuntimeTests picks is one of the whole ones");
-
-            float torn = FirstTornAt(ChangedAt(3.4f));
-            Assert.Greater(torn, 3.4f,
-                "a change made between the group's two sends reached the far side whole — if "
-                + "the guard learnt to wait for a settled set, this test is the one to delete");
+                "the moment AsyncSyncRuntimeTests picks stopped being one of the whole ones");
+            Assert.AreEqual(-1f, FirstTornAt(ChangedAt(3.4f)),
+                "a change made between the group's two sends was shown half-old, which is the "
+                + "tear the send-side latch exists to close");
         }
     }
 }

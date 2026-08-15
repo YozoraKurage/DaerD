@@ -152,17 +152,29 @@ namespace Yozolab.DaerD
             public bool stale;
 
             /// <summary>
-            /// Sets of targets that must reach a remote's real parameters together. The pass
-            /// sends them whenever it sends them; the decoder holds each aside as it arrives,
-            /// and one driver copies the whole set across once the last one is in — so remotes
-            /// never see half a change, however many steps apart the halves were sent.
+            /// Sets of targets that must reach a remote's real parameters together, as a set
+            /// the wearer really held at one moment. The step that sends the first member
+            /// reads every member into a latch in one driver, and the pass sends them all from
+            /// there; the decoder puts the group's arrival flags down when that same step
+            /// arrives, holds each member aside as it comes, and one driver copies the whole
+            /// set across once they are all in.
             ///
-            /// A driver's entries all run in one frame, which is what makes the simultaneity
-            /// structural rather than a matter of timing. Members that share a step already
-            /// arrive together and need no group; this is for the ones that cannot share one,
-            /// because their types differ or the channels are too narrow.
+            /// It takes both ends. Holding alone makes the members CHANGE together — the far
+            /// side is never caught mid-copy — but the pair they change to can still be two
+            /// halves of two readings, because the members leave in different steps and a
+            /// change made between two of those steps is half on the wire already. Latching
+            /// alone makes each lap send one reading, but a lap that lost a member on the way
+            /// would be completed by the next lap's. A driver's entries all run in one frame,
+            /// which is what makes both halves structural rather than a matter of timing.
             ///
-            /// Costs nothing on the wire: a shadow parameter and a flag per member, both
+            /// Members that share a step already arrive together and need no group; this is
+            /// for the ones that cannot share one, because their types differ or the channels
+            /// are too narrow.
+            ///
+            /// The price is freshness, at both ends and bounded by a pass: a change made just
+            /// after a group's reading waits for the pass to come round to it, and a lap that
+            /// loses a member commits nothing and leaves the remote on the last complete set.
+            /// Costs nothing on the wire — a latch, a shadow and a flag per member, all
             /// animator-local, and a two-state layer per group.
             ///
             /// The first commit of a session is the one with a hole in it, and
@@ -376,6 +388,9 @@ namespace Yozolab.DaerD
 
         public static string StaleLayerName(string layerName) =>
             AsyncSyncNaming.StaleLayerName(layerName);
+
+        public static string LatchParameter(string baseName, string target) =>
+            AsyncSyncNaming.LatchParameter(baseName, target);
 
         public static string HoldParameter(string baseName, string target) =>
             AsyncSyncNaming.HoldParameter(baseName, target);
@@ -1134,9 +1149,13 @@ namespace Yozolab.DaerD
         }
 
         /// <summary>
-        /// A shadow and a flag per grouped member. The shadow carries the target's own type —
-        /// it stands in for it — and neither is ever synced: the whole mechanism runs on the
-        /// receiving client, out of values that already arrived.
+        /// A latch, a shadow and a flag per grouped member, in the order the value passes
+        /// through them: read into the latch on the wearer's side, sent, put in the shadow on
+        /// the far side, and flagged as waiting there. The latch and the shadow carry the
+        /// target's own type — they stand in for it — and none of the three is ever synced.
+        /// The wire carries the ordinary channels and nothing extra, which is the whole reason
+        /// a group costs no bits: both halves of the mechanism are local reasoning, one on each
+        /// client, about values that travel exactly as they did before.
         /// </summary>
         public static List<(string name, AnimatorControllerParameterType type)> GroupParameters(Request r)
         {
@@ -1148,6 +1167,7 @@ namespace Yozolab.DaerD
                 {
                     var parameter = byName.Find(name);
                     if (parameter == null) continue;
+                    generated.Add((LatchParameter(r.baseName, name), parameter.type));
                     generated.Add((HoldParameter(r.baseName, name), parameter.type));
                     generated.Add((HeldParameter(r.baseName, name),
                         AnimatorControllerParameterType.Bool));

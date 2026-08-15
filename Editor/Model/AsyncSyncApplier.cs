@@ -48,7 +48,8 @@ namespace Yozolab.DaerD
 
                 var sendStates = BuildSendRing(stateMachine, r, slots, schedule, clock, encoding,
                     indexBits, empty);
-                var idle = BuildDecoder(stateMachine, r, slots, clock, encoding, indexBits, empty);
+                var idle = BuildDecoder(stateMachine, r, slots, schedule, clock, encoding,
+                    indexBits, empty);
 
                 // Entry: locals fall through to the first send slot; remotes branch to Idle.
                 stateMachine.defaultState = sendStates[0];
@@ -168,6 +169,9 @@ namespace Yozolab.DaerD
                 foreach (var name in slots[i].targets)
                     slotOfTarget[name] = i;
 
+            var groups = EffectiveGroups(r);
+            var latchSteps = LatchSteps(r, slots, schedule);
+
             var slotNames = SlotNames(slots);
             var visits = new Dictionary<int, int>();
             var sendStates = new List<AnimatorState>(schedule.Count);
@@ -187,7 +191,8 @@ namespace Yozolab.DaerD
 
                 if (r.skipDrivers) continue;
                 var driver = AddSendDriver(state, r, slot, requestable, clock, encoding,
-                    indexBits, clock.Index(slotIndex, clock.stepPhases[k]));
+                    indexBits, clock.Index(slotIndex, clock.stepPhases[k]),
+                    LatchedAt(groups, latchSteps, k));
                 // Where a detour started, so the request state can put the ring back. Written
                 // by the ring and never by a detour, which is what makes it survive one.
                 if (driver != null && requestable.Count > 0)
@@ -251,8 +256,15 @@ namespace Yozolab.DaerD
                 // Same payload as the slot's ordinary step, in the phase the origins were
                 // computed against — and no Return entry, because the ring's place is exactly
                 // what this state is carrying back.
+                //
+                // And no latch of its own, which is the one thing a detour deliberately does
+                // NOT do. A detour is a slot sent out of turn; latching here would put a fresh
+                // reading of some members on the wire while the rest of the group was still
+                // travelling from the last one, which is the tear the latch exists to close.
+                // So a request for a grouped target is answered with the group's current
+                // reading — consistent, and at worst one lap old. See AddSendDriver.
                 AddSendDriver(state, r, slots[slotIndex], requestable, clock, encoding, indexBits,
-                    clock.Index(slotIndex, AsyncSyncSchedule.RequestPhase));
+                    clock.Index(slotIndex, AsyncSyncSchedule.RequestPhase), null);
             }
 
             foreach (var name in requestable)
@@ -291,20 +303,113 @@ namespace Yozolab.DaerD
         }
 
         /// <summary>
+        /// Which step of the ring each group latches at, parallel to
+        /// <see cref="AsyncSyncBuilder.EffectiveGroups"/>: the first step of the pass that
+        /// carries any of its members, or -1 for a group the pass does not send at all.
+        ///
+        /// A step the ring already stops at, rather than a step of its own. A step per group
+        /// would cost the whole pass a place — every other slot would come round that much
+        /// less often — to do something that has no payload of its own to send. The first
+        /// member's step is where the group's lap has to begin anyway: the values sent from
+        /// that step must be the ones the reading was taken from, and any later step would
+        /// leave the members before it sending from the previous reading.
+        /// </summary>
+        static List<int> LatchSteps(Request r, List<Slot> slots, List<int> schedule)
+        {
+            var steps = new List<int>();
+            foreach (var group in EffectiveGroups(r))
+            {
+                int found = -1;
+                for (int k = 0; k < schedule.Count && found < 0; k++)
+                    foreach (var target in slots[schedule[k]].targets)
+                        if (group.members.Contains(target))
+                        {
+                            found = k;
+                            break;
+                        }
+                steps.Add(found);
+            }
+            return steps;
+        }
+
+        /// <summary>
+        /// The groups whose lap window this decoder state opens: the ones latching at a step
+        /// that sends exactly what this state decodes.
+        ///
+        /// Matched by the (slot, phase) the step sends rather than by the step itself, because
+        /// a decoder state is what an INDEX means and several steps of the pass can mean the
+        /// same one. That is also why the window can be opened more often than the latch is
+        /// taken — see <see cref="BuildDecoder"/> for why that costs nothing but freshness.
+        /// </summary>
+        static List<SyncGroup> OpenedAt(List<SyncGroup> groups, List<int> latchSteps,
+            List<int> schedule, Clock clock, int slot, int phase)
+        {
+            var opened = new List<SyncGroup>();
+            for (int g = 0; g < groups.Count; g++)
+            {
+                int step = latchSteps[g];
+                if (step >= 0 && schedule[step] == slot && clock.stepPhases[step] == phase)
+                    opened.Add(groups[g]);
+            }
+            return opened;
+        }
+
+        /// <summary>The groups whose latch point is this step, or null for the steps — most of
+        /// them — that are nobody's.</summary>
+        static List<SyncGroup> LatchedAt(List<SyncGroup> groups, List<int> latchSteps, int step)
+        {
+            List<SyncGroup> latched = null;
+            for (int g = 0; g < groups.Count; g++)
+                if (latchSteps[g] == step)
+                {
+                    if (latched == null) latched = new List<SyncGroup>();
+                    latched.Add(groups[g]);
+                }
+            return latched;
+        }
+
+        /// <summary>
         /// What a step puts on the wire: the slot's values into the channels, then the index —
         /// remotes react to the index change, so the values have to be there first. Entering
         /// the state IS the service, so any pending request for the slot's targets is satisfied
         /// and its flag comes down. Shared by the ring and the detours, which send the same
         /// payload and differ only in the index they write and where they go next.
+        ///
+        /// <paramref name="latched"/> is the groups this step opens a lap for, and its entries
+        /// come first: every member of such a group is read into its latch here, and from then
+        /// until this step comes round again the pass sends members out of their latches rather
+        /// than out of the parameters themselves (see <see cref="AddChannelCopies"/>). The
+        /// entries of one driver run in order and in one frame, so a group's reading is one
+        /// moment's — that is the whole mechanism, and it is structural rather than a matter of
+        /// timing.
+        ///
+        /// The reason it is needed at all is that a group's members travel in DIFFERENT steps.
+        /// Without the latch, a change the wearer makes between two of those steps puts a new
+        /// value on the wire for one member and an old one for the other, and no amount of
+        /// waiting on the far side can reassemble two halves that were never a pair: over
+        /// thirteen change moments a tenth of a second apart, four arrived torn. With it, the
+        /// only values a lap can carry are the ones that were true when it started.
+        ///
+        /// The cost is freshness, and it is bounded: a change made just after a group's latch
+        /// step is not sent until the ring comes round to that step again, so a member can be
+        /// one lap behind what it would have been. A whole set one lap old rather than a fresh
+        /// half of one is the trade a group is asking for in the first place.
         /// </summary>
         static StateMachineBehaviour AddSendDriver(AnimatorState state, Request r, Slot slot,
             List<string> requestable, Clock clock, IndexEncoding encoding, string[] indexBits,
-            int index)
+            int index, List<SyncGroup> latched)
         {
             var driver = VrcParameterDriver.AddTo(state, "Async Send");
             if (driver == null) return null;
             Undo.RegisterCompleteObjectUndo(driver, "Async Sync");
             VrcParameterDriver.SetLocalOnly(driver, true);
+            // Before the channels, so this step's own members go out of the reading it just
+            // took rather than out of the previous one.
+            if (latched != null)
+                foreach (var group in latched)
+                    foreach (var name in group.members)
+                        VrcParameterDriver.AddCopyEntry(driver, name,
+                            LatchParameter(r.baseName, name));
             AddChannelCopies(driver, r, slot, toChannels: true);
             if (encoding == IndexEncoding.Int)
                 VrcParameterDriver.AddSetEntry(driver, IndexParameter(r.baseName), index);
@@ -319,11 +424,26 @@ namespace Yozolab.DaerD
             return driver;
         }
 
-        /// <summary>Builds the remote side and returns its Idle state — the one the entry
-        /// transition branches to.</summary>
+        /// <summary>
+        /// Builds the remote side and returns its Idle state — the one the entry transition
+        /// branches to.
+        ///
+        /// The decoder also opens and closes each group's lap window. The slot a group latches
+        /// at on the way out is the slot whose arrival puts every one of that group's flags
+        /// down on the way in, before the state raises its own — so the flags standing when a
+        /// commit fires all belong to decodes taken since that arrival, which is to say to one
+        /// latch. Without that, a lap that lost a member would leave its flag up and the next
+        /// lap's other member would complete a commit across two readings; the sending latch
+        /// alone cannot see that, because it is the receiving side that lost something.
+        ///
+        /// A slot the pass sends more than once in a phase the decoder cannot tell apart opens
+        /// the window on each of those arrivals. That costs the group freshness, never
+        /// correctness: the window is reopened by a value that is itself part of the current
+        /// latch, so what it waits for is the rest of that same latch coming round.
+        /// </summary>
         static AnimatorState BuildDecoder(AnimatorStateMachine stateMachine, Request r,
-            List<Slot> slots, Clock clock, IndexEncoding encoding, string[] indexBits,
-            AnimationClip empty)
+            List<Slot> slots, List<int> schedule, Clock clock, IndexEncoding encoding,
+            string[] indexBits, AnimationClip empty)
         {
             // Remote side: Any-State decoder — one state per SLOT (revisits reuse it), and one
             // per PHASE of a slot the pass repeats. The two states of such a slot copy exactly
@@ -334,6 +454,8 @@ namespace Yozolab.DaerD
             idle.writeDefaultValues = true;
             idle.motion = empty;
             var slotNames = SlotNames(slots);
+            var groups = EffectiveGroups(r);
+            var latchSteps = LatchSteps(r, slots, schedule);
             int row = 0;
             for (int i = 0; i < slots.Count; i++)
             {
@@ -355,6 +477,14 @@ namespace Yozolab.DaerD
                         {
                             Undo.RegisterCompleteObjectUndo(driver, "Async Sync");
                             VrcParameterDriver.SetLocalOnly(driver, false);
+                            // First, so a lap's window is opened before anything is counted
+                            // into it — including this state's own arrival, which belongs to
+                            // the lap it is opening and not to the one before.
+                            foreach (var group in OpenedAt(groups, latchSteps, schedule, clock,
+                                i, phase))
+                                foreach (var name in group.members)
+                                    VrcParameterDriver.AddSetEntry(driver,
+                                        HeldParameter(r.baseName, name), 0f);
                             AddChannelCopies(driver, r, slot, toChannels: false);
                             // This client has decoded the slot at least once, and nothing
                             // ever clears it — see AsyncSyncBuilder.ReadyParameters for why
@@ -716,14 +846,20 @@ namespace Yozolab.DaerD
         /// member just did", so a lap that lost one of them commits nothing and leaves the
         /// remote on the last complete set — a stale whole rather than a torn one.
         ///
-        /// What is structural is that the remote's members change together, on one frame. That
-        /// the pair they change TO is a pair the wearer held at one moment is not: the members
-        /// leave in different steps of the cycle, so a change made between two of those steps
-        /// puts one new value and one old one in the shadows, and a commit that lands in
-        /// between copies both. Measured, that happens for some of the moments a change can be
-        /// made and not for others — see <see cref="AfterALoop"/>, which is where the odds
-        /// currently live. Closing it properly is a change to the guard or to the schedule, and
-        /// it has not been made.
+        /// The set they change to is a set the wearer held at one moment, which took two more
+        /// things than this layer. The members leave in different steps of the cycle, so the
+        /// values are read into their latches in one step and sent from there
+        /// (<see cref="AddSendDriver"/>), and the flags are all put down again when the step
+        /// that took that reading arrives (<see cref="BuildDecoder"/>). This guard is then
+        /// "every member of one reading is in", and not merely "every member is in": measured
+        /// over thirteen change moments a tenth of a second apart, four of them used to reach
+        /// the far side torn and none does.
+        ///
+        /// What is still open is narrow and lives on the receiving side: a lap that loses the
+        /// arrival which would have opened the window leaves the previous lap's flags standing,
+        /// and a member of the new lap can complete a commit against them. Closing that needs a
+        /// generation number ON THE WIRE, and the wire is the one thing a group is not allowed
+        /// to spend — see <see cref="AsyncSyncBuilder.GroupParameters"/>.
         ///
         /// Nothing here runs on the wearer: the decoder that raises the flags is behind the
         /// cycle layer's remote branch, so the flags never come up and the real parameters are
@@ -1073,14 +1209,17 @@ namespace Yozolab.DaerD
         /// second behind a Float would be copied into Bool channel 1 — a parameter nothing
         /// generates. Both directions go through here, so the numbering cannot disagree
         /// between the send ring and the decoder.
+        ///
+        /// A grouped target is diverted on BOTH sides, and to different ends. Leaving, it is
+        /// sent from its latch — the reading the group's own step took, so the members of one
+        /// lap belong to one moment (see <see cref="AddSendDriver"/>). Arriving, it is put in
+        /// its shadow instead of in the parameter, so the commit can hand the set over at
+        /// once. An ungrouped target goes straight from and to itself as it always did.
         /// </summary>
         internal static void AddChannelCopies(StateMachineBehaviour driver, Request r, Slot slot,
             bool toChannels)
         {
-            // Only the arriving direction is diverted. The wearer's own parameter is what the
-            // cycle reads, group or no group — the holding is for values that came off the
-            // wire, and there is nothing to hold on the side that already has them.
-            var held = toChannels ? null : GroupMembers(r);
+            var grouped = GroupMembers(r);
             int floats = 0, bools = 0;
             foreach (var target in slot.targets)
             {
@@ -1091,8 +1230,10 @@ namespace Yozolab.DaerD
                         ? BoolChannelParameter(r.baseName, bools++)
                         : ChannelParameter(r.baseName, type);
                 if (toChannels)
-                    VrcParameterDriver.AddCopyEntry(driver, target, channel);
-                else if (held.Contains(target))
+                    VrcParameterDriver.AddCopyEntry(driver,
+                        grouped.Contains(target) ? LatchParameter(r.baseName, target) : target,
+                        channel);
+                else if (grouped.Contains(target))
                     VrcParameterDriver.AddCopyEntry(driver, channel,
                         HoldParameter(r.baseName, target));
                 else
@@ -1100,11 +1241,11 @@ namespace Yozolab.DaerD
             }
             // Raised after the values are in their shadows, so the commit this may complete
             // never runs on a Hold that has not been written yet.
-            if (held != null)
-                foreach (var target in slot.targets)
-                    if (held.Contains(target))
-                        VrcParameterDriver.AddSetEntry(driver,
-                            HeldParameter(r.baseName, target), 1f);
+            if (toChannels) return;
+            foreach (var target in slot.targets)
+                if (grouped.Contains(target))
+                    VrcParameterDriver.AddSetEntry(driver,
+                        HeldParameter(r.baseName, target), 1f);
         }
 
         /// <summary>Empties a layer for regeneration: transitions, states (and their

@@ -85,6 +85,16 @@ namespace Yozolab.DaerD
         public static string StaleLayerName(string layerName) => layerName + " Stale";
 
         /// <summary>
+        /// What a grouped target is SENT from, on the wearer's side: the step that opens the
+        /// group's lap copies every member's current value here in one driver, and every step
+        /// that carries a member puts this on the wire rather than the parameter itself. One
+        /// moment's reading of the whole group, so the values a lap sends belong together
+        /// however far apart the pass sends them. Same type as the target, local, never synced.
+        /// </summary>
+        public static string LatchParameter(string baseName, string target) =>
+            baseName + "/Latch/" + target;
+
+        /// <summary>
         /// Where a grouped target waits: the decoder writes here instead of into the parameter
         /// itself, and the group's commit copies the whole set across at once. Same type as
         /// the target, local, and never synced.
