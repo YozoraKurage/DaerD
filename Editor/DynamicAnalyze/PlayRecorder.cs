@@ -46,14 +46,41 @@ namespace Yozolab.DaerD.DynamicAnalyze
         sealed class Reader
         {
             public SignalTrace.Signal signal;
+            /// <summary>Which avatar this row comes off. Held rather than looked up, because the
+            /// question asked of it once a frame is whether that avatar is still there.</summary>
+            public Watched of;
             public System.Func<float> read;
         }
 
+        /// <summary>
+        /// One avatar being read, and the scope its rows are written under.
+        ///
+        /// There is always at least one — the avatar somebody aimed at — and there is one more
+        /// per other person's copy of it when the recording was asked for those too. Each is
+        /// matched against the controller on its own: a copy is a separate graph and could have
+        /// been left running something else, and a recording that assumed otherwise would name
+        /// one avatar's states with another's labels.
+        /// </summary>
+        sealed class Watched
+        {
+            /// <summary>The avatar this is watching. Kept for one question only — is it still
+            /// there — because the graph cannot answer it (see <see cref="Alive"/>).</summary>
+            public Animator animator;
+            public PlaySource source;
+            public string scope;
+            public bool matched;
+            public bool fromGraph;
+            /// <summary>What <see cref="Look"/> last found, asked once a frame rather than once
+            /// a row: a real avatar has hundreds of rows and they are all this one avatar's.</summary>
+            public bool alive = true;
+
+            public bool IsAlive => animator != null && source != null && source.Alive;
+
+            public void Look() { alive = IsAlive; }
+        }
+
         readonly List<Reader> _readers = new List<Reader>();
-        readonly PlaySource _source;
-        /// <summary>The avatar this is watching. Kept for one question only — is it still
-        /// there — because the graph cannot answer it (see <see cref="Alive"/>).</summary>
-        readonly Animator _animator;
+        readonly List<Watched> _watched = new List<Watched>();
         int _lastFrame;
         float _lastTime, _zero;
         bool _started;
@@ -62,14 +89,19 @@ namespace Yozolab.DaerD.DynamicAnalyze
 
         /// <summary>Whether a playable running THIS window's controller was found, which is
         /// what the state, via and weight rows need — without it a recording is the parameters
-        /// and nothing else. See <see cref="Matching"/> for what "running this controller"
-        /// is decided by.</summary>
-        public bool Matched { get; private set; }
+        /// and nothing else. Answers for the avatar that was aimed at; a copy that failed to
+        /// match while the wearer matched costs that copy its state rows and nothing else. See
+        /// <see cref="Matching"/> for what "running this controller" is decided by.</summary>
+        public bool Matched => _watched.Count > 0 && _watched[0].matched;
 
         /// <summary>Whether the values come off a PlayableGraph rather than off the Animator
         /// component directly. False is the plain-playback case, and worth showing: it means no
         /// tool has hold of this avatar, so nothing VRChat-shaped is happening to it.</summary>
-        public bool FromGraph { get; private set; }
+        public bool FromGraph => _watched.Count > 0 && _watched[0].fromGraph;
+
+        /// <summary>How many avatars are being read at once — one, plus a scope each for the
+        /// other people's copies that were found when the recording started.</summary>
+        public int Sources => _watched.Count;
 
         /// <summary>Frames the editor's update did not get a look at — the gaps in
         /// <c>Time.frameCount</c> between two samples, added up. A recording with a large
@@ -89,18 +121,15 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// graph held. What it catches is the case that actually happens: leaving Play mode
         /// takes the scene with it, and a recorder still ticking would be reading a destroyed
         /// Animator.
+        ///
+        /// Asked of the avatar that was AIMED at, not of all of them. A copy that goes away
+        /// mid-recording holds its last value and the recording carries on (see
+        /// <see cref="Sample"/>); the wearer going away is the recording being over, because
+        /// there is nothing left that the run was about.
         /// </summary>
-        public bool Alive => _animator != null && _source != null && _source.Alive;
+        public bool Alive => _watched.Count > 0 && _watched[0].IsAlive;
 
-        PlayRecorder(Animator animator, PlaySource source, StateTables tables, int[] alignment,
-            bool fromGraph)
-        {
-            _animator = animator;
-            _source = source;
-            FromGraph = fromGraph;
-            Matched = alignment != null;
-            Declare(tables, alignment);
-        }
+        PlayRecorder() { }
 
         // ---- finding something to read --------------------------------------
 
@@ -253,35 +282,89 @@ namespace Yozolab.DaerD.DynamicAnalyze
             return alignment;
         }
 
+        /// <summary>A recorder aimed at this Animator and nobody else.</summary>
+        public static PlayRecorder On(Animator animator, AnimatorController controller) =>
+            On(animator, controller, null);
+
         /// <summary>
-        /// A recorder aimed at this Animator, or null for no Animator at all.
+        /// A recorder aimed at this Animator, or null for no Animator at all — and at the other
+        /// people's copies of it beside, if any were handed in.
         ///
-        /// Three outcomes, in the order they are looked for: a graph playable whose layers are
-        /// this controller's, which is a recording with state rows; any graph playable at all,
-        /// which is a recording of parameters only and says so; and no graph, which falls back
-        /// to reading the Animator component the ordinary way.
+        /// <para>WHY THE COPIES GO IN THE SAME RECORDING.</para>
+        /// Under Av3Emulator the wearer and the copies are separate avatars running the same
+        /// controller off values that crossed a wire, and the whole question anybody records
+        /// them to ask is what the difference between them is. Two recordings taken separately
+        /// could not answer it: they would have different frame numbers and different starting
+        /// instants, and lining them up afterwards would be arithmetic nobody should have to
+        /// trust. One trace, one clock, a scope each — which is the shape a simulated run
+        /// already has, so the viewer, the findings and the saved clip all take it as they are.
         ///
-        /// The unmatched case reads the LAST playable for the same reason the matched case picks
-        /// the last — it is the newest, and there is nothing better to go on once the layer
-        /// names have already failed to say which one is meant.
+        /// <para>WHO IS IN IT IS DECIDED ONCE.</para>
+        /// The list is taken when the recording starts and never looked at again. A clone that
+        /// appears later — somebody ticking Av3Emulator's box mid-session — is not in this
+        /// recording and is caught by starting another one. Adding a scope partway through would
+        /// mean a row with fewer samples than the trace has frames, and every reader of a trace
+        /// is written on the promise that there is no such row.
+        ///
+        /// Each avatar gets the same three-way look, on its own: a graph playable whose layers
+        /// are this controller's, which is rows with states; any graph playable at all, which is
+        /// parameters only; and no graph, which falls back to the Animator component. The
+        /// unmatched case reads the LAST playable for the same reason the matched case picks the
+        /// last — it is the newest, and there is nothing better to go on once the layer names
+        /// have already failed to say which one is meant.
         /// </summary>
-        public static PlayRecorder On(Animator animator, AnimatorController controller)
+        public static PlayRecorder On(Animator animator, AnimatorController controller,
+            List<Animator> clones)
         {
             if (animator == null) return null;
+            var recorder = new PlayRecorder();
+            recorder.Watch(animator, controller, Simulation.PlayScope);
+            if (clones == null) return recorder;
+            int at = 0;
+            foreach (var clone in clones)
+            {
+                if (clone == null || clone == animator) continue;
+                recorder.Watch(clone, controller, Simulation.PlayRemoteScopeAt(at));
+                at++;
+            }
+            return recorder;
+        }
+
+        /// <summary>One more avatar to read, under a scope of its own.</summary>
+        void Watch(Animator animator, AnimatorController controller, string scope)
+        {
             var playables = PlayablesOn(animator);
             int at = Matching(controller, playables);
             if (at >= 0)
             {
                 var source = PlaySource.Of(playables[at]);
-                return new PlayRecorder(animator, source, new StateTables(controller),
-                    Align(source, controller), true);
+                Declare(Add(animator, source, scope, true, true), new StateTables(controller),
+                    Align(source, controller));
+                return;
             }
             for (int i = playables.Count - 1; i >= 0; i--)
             {
                 if (!playables[i].IsValid()) continue;
-                return new PlayRecorder(animator, PlaySource.Of(playables[i]), null, null, true);
+                Declare(Add(animator, PlaySource.Of(playables[i]), scope, false, true),
+                    null, null);
+                return;
             }
-            return new PlayRecorder(animator, PlaySource.Of(animator), null, null, false);
+            Declare(Add(animator, PlaySource.Of(animator), scope, false, false), null, null);
+        }
+
+        Watched Add(Animator animator, PlaySource source, string scope, bool matched,
+            bool fromGraph)
+        {
+            var watched = new Watched
+            {
+                animator = animator,
+                source = source,
+                scope = scope,
+                matched = matched,
+                fromGraph = fromGraph,
+            };
+            _watched.Add(watched);
+            return watched;
         }
 
         /// <summary>
@@ -322,15 +405,22 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// is what is running. A recording with no matched playable still gets them, and they
         /// are then the only thing it has.
         /// </summary>
-        void Declare(StateTables tables, int[] alignment)
+        void Declare(Watched watched, StateTables tables, int[] alignment)
         {
-            for (int i = 0; i < _source.ParameterCount; i++)
+            var source = watched.source;
+            string scope = watched.scope;
+            for (int i = 0; i < source.ParameterCount; i++)
             {
-                var parameter = _source.ParameterAt(i);
+                var parameter = source.ParameterAt(i);
                 string name = parameter.name;
                 var type = parameter.type;
-                var signal = Trace.Declare(Simulation.PlayScope, name, TraceRecorder.KindOf(type));
-                _readers.Add(new Reader { signal = signal, read = () => _source.Read(name, type) });
+                var signal = Trace.Declare(scope, name, TraceRecorder.KindOf(type));
+                _readers.Add(new Reader
+                {
+                    signal = signal,
+                    of = watched,
+                    read = () => source.Read(name, type),
+                });
             }
             if (alignment == null) return;
 
@@ -339,34 +429,36 @@ namespace Yozolab.DaerD.DynamicAnalyze
                 int layer = i, at = alignment[i];
                 if (at < 0) continue;
                 string name = tables.LayerName(at);
-                var state = Trace.Declare(Simulation.PlayScope, name + "/state",
+                var state = Trace.Declare(scope, name + "/state",
                     SignalKind.State, tables.StateLabels(at));
                 _readers.Add(new Reader
                 {
                     signal = state,
-                    read = () => tables.StateAt(at, _source.StateHash(layer)),
+                    of = watched,
+                    read = () => tables.StateAt(at, source.StateHash(layer)),
                 });
-                var moving = Trace.Declare(Simulation.PlayScope, name + "/transition",
-                    SignalKind.Bool);
+                var moving = Trace.Declare(scope, name + "/transition", SignalKind.Bool);
                 _readers.Add(new Reader
                 {
                     signal = moving,
-                    read = () => _source.InTransition(layer) ? 1f : 0f,
+                    of = watched,
+                    read = () => source.InTransition(layer) ? 1f : 0f,
                 });
-                var via = Trace.Declare(Simulation.PlayScope, name + "/via",
+                var via = Trace.Declare(scope, name + "/via",
                     SignalKind.State, tables.TransitionLabels(at));
                 _readers.Add(new Reader
                 {
                     signal = via,
-                    read = () => _source.InTransition(layer)
-                        ? tables.TransitionAt(at, _source.TransitionHash(layer)) : -1,
+                    of = watched,
+                    read = () => source.InTransition(layer)
+                        ? tables.TransitionAt(at, source.TransitionHash(layer)) : -1,
                 });
-                var weight = Trace.Declare(Simulation.PlayScope, SimClient.WeightRow(name),
-                    SignalKind.Float);
+                var weight = Trace.Declare(scope, SimClient.WeightRow(name), SignalKind.Float);
                 _readers.Add(new Reader
                 {
                     signal = weight,
-                    read = () => _source.LayerWeight(layer),
+                    of = watched,
+                    read = () => source.LayerWeight(layer),
                 });
             }
         }
@@ -409,8 +501,26 @@ namespace Yozolab.DaerD.DynamicAnalyze
             _lastTime = time;
 
             Trace.Frame(time - _zero, step);
-            foreach (var reader in _readers) reader.signal.Push(reader.read());
+            foreach (var watched in _watched) watched.Look();
+            foreach (var reader in _readers)
+                reader.signal.Push(reader.of.alive ? reader.read() : Held(reader.signal));
             return true;
         }
+
+        /// <summary>
+        /// What a row says on a frame its avatar was not there for: whatever it last said.
+        ///
+        /// Only ever one of the copies — the recording stops when the avatar it was aimed at
+        /// goes (see <see cref="Alive"/>) — and a copy CAN go on its own, because Av3Emulator
+        /// destroys a clone the moment somebody unticks it. Every signal in a trace has exactly
+        /// as many samples as the trace has frames, and every reader of one is written on that,
+        /// so the frame has to be filled with something; holding is the only filling that
+        /// cannot be read as an event. What it costs is that a row goes flat rather than
+        /// stopping, which is why <see cref="Sources"/> is on the panel: the reader is told how
+        /// many avatars a recording was of, and a flat tail is then a leaving rather than a
+        /// mystery.
+        /// </summary>
+        static float Held(SignalTrace.Signal signal) =>
+            signal.Frames > 0 ? signal.At(signal.Frames - 1) : 0f;
     }
 }

@@ -48,6 +48,32 @@ namespace Yozolab.DaerD.DynamicAnalyze
         public const string PlayScope = "Play";
 
         /// <summary>
+        /// Somebody else's copy of a recorded avatar — Av3Emulator's non-local clone, driven by
+        /// what crossed the wire rather than by the wearer.
+        ///
+        /// Its own scope rather than rows named differently, for the reason every other scope
+        /// has one: a reader folds away the people they are not asking about, and the wearer's
+        /// row and the copy's row have to sit under the same name to be worth laying over each
+        /// other. Deliberately NOT <see cref="RemoteScope"/>, which is a copy this module
+        /// simulated and can be poked; this one is a recording of somebody else's Play mode and
+        /// can only be read.
+        /// </summary>
+        public const string PlayRemoteScope = "Play Remote";
+
+        /// <summary>What to call the nth recorded copy — "Play Remote", "Play Remote 2" — spelt
+        /// by the same rule as <see cref="RemoteScopeAt"/> so a reader who has learnt one has
+        /// learnt the other.</summary>
+        public static string PlayRemoteScopeAt(int index) =>
+            index <= 0 ? PlayRemoteScope : PlayRemoteScope + " " + (index + 1);
+
+        /// <summary>Whether this scope's rows were recorded off somebody's running avatar rather
+        /// than computed — the wearer's or one of the copies beside them.</summary>
+        public static bool IsPlay(string scope) =>
+            scope == PlayScope || scope == PlayRemoteScope
+            || (scope != null
+                && scope.StartsWith(PlayRemoteScope + " ", System.StringComparison.Ordinal));
+
+        /// <summary>
         /// What to call the nth other person. "Remote", then "Remote 2", "Remote 3" — the first
         /// keeps the bare name because a single-remote run is still what most questions are, and
         /// every trace, saved clip and test that already says "Remote" goes on meaning it.
@@ -78,8 +104,10 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// — a copy this module made, or one it recorded somebody else running. Wider than
         /// <see cref="IsClient"/> and asked by anything reading state rows rather than offering
         /// to write to them: what a layer did is a question about any avatar, and what may be
-        /// poked is a question about ours.</summary>
-        public static bool IsAvatar(string scope) => IsClient(scope) || scope == PlayScope;
+        /// poked is a question about ours. Every recorded copy is in, not only the wearer — a
+        /// finding about states nobody entered is worth exactly as much about the copy, and is
+        /// the comparison a two-scope recording was taken for.</summary>
+        public static bool IsAvatar(string scope) => IsClient(scope) || IsPlay(scope);
 
         /// <summary>Whether this scope is somebody's lag rows.</summary>
         public static bool IsLag(string scope) =>

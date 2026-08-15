@@ -98,6 +98,13 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// turns up in Play mode. Serialized on purpose: entering Play mode reloads the domain,
         /// so anything that is to survive being told before the fact has to be.</summary>
         [SerializeField] bool _armed;
+        /// <summary>Whether the other people's copies of the avatar go into the same recording.
+        /// On, because a copy beside the wearer is the comparison the whole module is about and
+        /// a recording taken without one cannot be given one afterwards. A layout saved before
+        /// this existed opens with it on — the change that makes to such a window is a second
+        /// scope in a recording, on an avatar that has copies, which is what somebody who set
+        /// those copies up was after.</summary>
+        [SerializeField] bool _recordClones = true;
         [SerializeField] bool _settingsOpen = true;
         [SerializeField] bool _inputsOpen = true;
         [SerializeField] bool _notesOpen = true;
@@ -982,7 +989,11 @@ namespace Yozolab.DaerD.DynamicAnalyze
             if (waiting && PlayRecorder.Matching(_controller,
                     PlayRecorder.PlayablesOn(target)) < 0) return;
 
-            var recorder = PlayRecorder.On(target, _controller);
+            // Who else is in it is decided here and never revisited — see PlayRecorder.On. The
+            // list is asked for unconditionally: without Av3Emulator it is empty, so the toggle
+            // is a toggle over nothing rather than a control that appears and disappears.
+            var recorder = PlayRecorder.On(target, _controller,
+                _recordClones ? PlayTools.ClonesOf(target) : null);
             if (recorder == null) return;
             _target = target;
             _recorder = recorder;
@@ -1055,6 +1066,10 @@ namespace Yozolab.DaerD.DynamicAnalyze
                 L.Tr("Start recording as soon as an avatar running this controller appears in Play mode. Kept across entering Play mode, which is the only way to catch the first second of a session — by the time the window can be clicked, it has gone.")),
                 _armed);
 
+            _recordClones = EditorGUILayout.Toggle(new GUIContent(L.Tr("Record Clones"),
+                L.Tr("Record the copies of this avatar that other people in the instance are seeing — Av3Emulator's non-local clones — into the same trace, under a scope each beside the wearer's. Whoever is there when the recording starts is who is in it; one made after that is caught by starting another recording.")),
+                _recordClones);
+
             foreach (string line in RecState())
                 EditorGUILayout.LabelField("• " + line, EditorStyles.wordWrappedMiniLabel);
             EditorGUILayout.EndVertical();
@@ -1082,6 +1097,9 @@ namespace Yozolab.DaerD.DynamicAnalyze
                     lines.Add(L.Tr("Nothing in this avatar's graph is running this controller. Its parameters are recorded; nothing can be said about layers or states."));
                 else
                     lines.Add(L.Tr("No graph is driving this Animator, so it is being read directly. Nothing VRChat-shaped is happening to this avatar."));
+                if (_recorder.Sources > 1)
+                    lines.Add(L.Tr("Reading {0} more copy(s) of this avatar as other people see it — their rows are under {1} and the scopes after it.",
+                        _recorder.Sources - 1, Simulation.PlayRemoteScope));
                 if (!_recording && _recorder.Frames > 0)
                     lines.Add(L.Tr("{0} frame(s) recorded. Entering Play mode again drops them — save the run as a clip to keep it.",
                         _recorder.Frames));

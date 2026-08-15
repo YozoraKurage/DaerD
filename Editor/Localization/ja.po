@@ -3225,6 +3225,12 @@ msgstr "Play 開始で記録"
 msgid "Start recording as soon as an avatar running this controller appears in Play mode. Kept across entering Play mode, which is the only way to catch the first second of a session — by the time the window can be clicked, it has gone."
 msgstr "Play モード中にこのコントローラーを実行しているアバターが現れた時点で、自動的に記録を開始します。この設定は Play 突入をまたいで保持されます。最初の 1 秒を捉える手段はこれだけです（ウィンドウをクリックできる頃には過ぎています）。"
 
+msgid "Record Clones"
+msgstr "クローンも記録"
+
+msgid "Record the copies of this avatar that other people in the instance are seeing — Av3Emulator's non-local clones — into the same trace, under a scope each beside the wearer's. Whoever is there when the recording starts is who is in it; one made after that is caught by starting another recording."
+msgstr "インスタンス内の他人が見ているこのアバターのコピー（Av3Emulator の Non-Local クローン）を、同じトレースに、着ている側と並ぶスコープを 1 つずつ与えて記録します。記録開始の時点で居た顔ぶれが対象で、その後に増えたぶんは記録を取り直せば入ります。"
+
 msgid "Not in Play mode. Start the avatar running and press Record — or arm the toggle above and it will start on its own."
 msgstr "Play モードではありません。アバターを動かしてから「記録開始」を押してください。上のトグルを入れておけば自動で始まります。"
 
@@ -3242,6 +3248,9 @@ msgstr "このアバターのグラフには、このコントローラーを実
 
 msgid "No graph is driving this Animator, so it is being read directly. Nothing VRChat-shaped is happening to this avatar."
 msgstr "この Animator を駆動しているグラフが無いため、Animator を直接読んでいます。このアバターには VRChat 相当の仕組みは何も掛かっていません。"
+
+msgid "Reading {0} more copy(s) of this avatar as other people see it — their rows are under {1} and the scopes after it."
+msgstr "他人から見えているこのアバターのコピーを、さらに {0} 体読んでいます。その行は {1} 以降のスコープに入ります。"
 
 msgid "{0} frame(s) recorded. Entering Play mode again drops them — save the run as a clip to keep it."
 msgstr "{0} フレーム記録しました。次に Play モードへ入ると失われます。残すならクリップとして保存してください。"

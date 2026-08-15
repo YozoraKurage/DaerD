@@ -315,6 +315,45 @@ namespace Yozolab.DaerD.Tests
 #endif
         }
 
+        /// <summary>
+        /// The whole path, end to end: Av3Emulator says who the other people's copies are, and
+        /// the recorder puts them in one trace beside the wearer under a scope each.
+        ///
+        /// The graphs are built by hand, so what this proves about a REAL session is bounded and
+        /// worth saying: a copy whose graph runs the same controller matches it and gets its
+        /// state rows, which is the case Av3Emulator produces because a clone is a copy of the
+        /// avatar. A copy that somehow ran something else would fall back to parameters only,
+        /// like any unmatched avatar, rather than borrowing the wearer's labels.
+        /// </summary>
+        [Test]
+        public void Av3EmulatorsCopiesAreRecordedBesideTheWearerUnderTheirOwnScopes()
+        {
+#if DAERD_AV3E
+            var controller = Controller("Base");
+            var worn = Avatar("Worn");
+            var other = Avatar("Worn (Non-Local 1)");
+            var source = Wearer(worn);
+            var clone = Runtime(other);
+            clone.AvatarSyncSource = source;
+            source.NonLocalClones.Add(clone);
+            Drive(worn, controller);
+            Drive(other, controller);
+
+            var copies = PlayTools.ClonesOf(worn);
+            CollectionAssert.AreEqual(List(other), copies);
+
+            var recorder = PlayRecorder.On(worn, controller, copies);
+            Assert.AreEqual(2, recorder.Sources);
+            Assert.IsTrue(recorder.Matched);
+            Assert.IsTrue(recorder.Sample(1, 0f));
+            Assert.IsNotNull(recorder.Trace.Find(Simulation.PlayScope, "Base/state"));
+            Assert.IsNotNull(recorder.Trace.Find(Simulation.PlayRemoteScopeAt(0), "Base/state"),
+                "the copy was named but its rows were not recorded");
+#else
+            Assert.Ignore("Av3Emulator is not installed in this project.");
+#endif
+        }
+
         // ---- the two tools together, and the controller above both ---------------
 
         /// <summary>GestureManager wins when both have the same avatar: it holds exactly one at
@@ -420,14 +459,18 @@ namespace Yozolab.DaerD.Tests
 
         // ---- a graph to be driven by ----------------------------------------------
 
-        /// <summary>A controller with one layer of the given name and nothing in it. Only the
-        /// layer names matter here — they are what a recorder matches a running graph by.</summary>
+        /// <summary>A controller with one layer of the given name and one state to sit in. Only
+        /// the layer names matter to what is being tested — they are what a recorder matches a
+        /// running graph by — but a layer with nowhere to be is not a thing Mecanim is willing
+        /// to run.</summary>
         AnimatorController Controller(string layer)
         {
             var controller = new AnimatorController();
             controller.name = "Tools " + layer;
             controller.hideFlags = HideFlags.HideAndDontSave;
             controller.AddLayer(layer);
+            var machine = controller.layers[0].stateMachine;
+            machine.defaultState = machine.AddState("Idle");
             _rigs.Add(new Wreck(controller));
             return controller;
         }

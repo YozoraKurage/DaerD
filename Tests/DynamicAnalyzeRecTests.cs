@@ -620,6 +620,126 @@ namespace Yozolab.DaerD.Tests
             }
         }
 
+        // ---- more than one avatar in one recording ---------------------------
+
+        /// <summary>
+        /// The wearer and one other person's copy of the same avatar, in ONE trace: same frames,
+        /// same clock, a scope each. That is the whole point of recording them together — two
+        /// recordings taken separately would have different frame numbers and different starting
+        /// instants, and lining them up afterwards would be arithmetic nobody should trust.
+        ///
+        /// The copies are handed in rather than looked up, which is what lets this test exist at
+        /// all without Av3Emulator installed: who the copies ARE is the tool's question (see
+        /// DynamicAnalyzeToolsTests), and what to do with them once named is this one's.
+        /// </summary>
+        [Test]
+        public void Recorder_WithCopiesOfTheAvatar_PutsThemInOneTraceUnderAScopeEach()
+        {
+            using (var controller = Owned(Controller("Base")))
+            using (var wearer = new Rig(controller.asset))
+            using (var copy = new Rig(controller.asset))
+            {
+                var recorder = PlayRecorder.On(wearer.animator, controller.asset,
+                    new List<Animator> { copy.animator });
+                Assert.AreEqual(2, recorder.Sources);
+                Assert.IsTrue(recorder.Matched, "the wearer's own graph runs the controller");
+
+                wearer.Step();
+                copy.Step();
+                Look(recorder);
+
+                // Only the wearer is told to go, which is what makes the two scopes worth
+                // reading side by side: what crossed to the copy is what a run would model.
+                wearer.Playable(0).SetBool("Go", true);
+                wearer.Step(2);
+                copy.Step(2);
+                Look(recorder);
+
+                Assert.AreEqual(2, recorder.Frames);
+                Assert.AreEqual("On", TextAt(recorder.Trace, "Base/state", 1));
+                var theirs = recorder.Trace.Find(Simulation.PlayRemoteScopeAt(0), "Base/state");
+                Assert.IsNotNull(theirs, "the copy has no state row of its own");
+                Assert.AreEqual("Idle", theirs.TextAt(1),
+                    "nothing was pressed on the copy, so it should not have moved");
+                Assert.AreEqual(recorder.Frames, theirs.Frames,
+                    "every row of a trace has as many samples as the trace has frames");
+                Assert.IsNotNull(recorder.Trace.Find(Simulation.PlayRemoteScopeAt(0), "Go"),
+                    "the copy's parameters are recorded too");
+            }
+        }
+
+        /// <summary>Three copies are spelt the way three remotes are — the first bare, the rest
+        /// numbered — so a reader who has learnt one naming has learnt the other. The scopes are
+        /// avatars for everything that reads state rows and clients for nothing: a recorded copy
+        /// belongs to somebody else's Play mode and cannot be typed into.</summary>
+        [Test]
+        public void TheCopiesScopesAreNamedAndClassedLikeTheRunsAre()
+        {
+            using (var controller = Owned(Controller("Base")))
+            using (var wearer = new Rig(controller.asset))
+            using (var first = new Rig(controller.asset))
+            using (var second = new Rig(controller.asset))
+            {
+                var recorder = PlayRecorder.On(wearer.animator, controller.asset,
+                    new List<Animator> { first.animator, second.animator });
+                Look(recorder);
+
+                Assert.AreEqual(3, recorder.Sources);
+                Assert.AreEqual("Play Remote", Simulation.PlayRemoteScopeAt(0));
+                Assert.AreEqual("Play Remote 2", Simulation.PlayRemoteScopeAt(1));
+                foreach (string scope in new[] { Simulation.PlayScope,
+                             Simulation.PlayRemoteScopeAt(0), Simulation.PlayRemoteScopeAt(1) })
+                {
+                    Assert.IsNotNull(recorder.Trace.Find(scope, "Base/state"),
+                        "no state row under " + scope);
+                    Assert.IsTrue(Simulation.IsAvatar(scope),
+                        scope + " is not read as an avatar, so no finding will speak about it");
+                    Assert.IsFalse(Simulation.IsClient(scope),
+                        scope + " would offer a value cell that writes nowhere");
+                    Assert.IsFalse(Simulation.IsRemote(scope),
+                        scope + " reads as a simulated remote, which it is not");
+                }
+            }
+        }
+
+        /// <summary>
+        /// A copy that goes away mid-recording holds its last value and the recording carries
+        /// on; the WEARER going away ends it. Av3Emulator destroys a clone the moment somebody
+        /// unticks it, so this is the ordinary case rather than an edge one, and the two halves
+        /// have to differ: every row of a trace has exactly as many samples as the trace has
+        /// frames, and every reader is written on that.
+        /// </summary>
+        [Test]
+        public void ACopyLeavingHoldsItsLastValue_AndOnlyTheWearerLeavingStopsTheRecording()
+        {
+            using (var controller = Owned(Controller("Base")))
+            using (var wearer = new Rig(controller.asset))
+            {
+                using (var copy = new Rig(controller.asset))
+                {
+                    var recorder = PlayRecorder.On(wearer.animator, controller.asset,
+                        new List<Animator> { copy.animator });
+                    copy.Playable(0).SetBool("Go", true);
+                    copy.Step(2);
+                    Look(recorder, 2);
+                    var theirs = recorder.Trace.Find(Simulation.PlayRemoteScopeAt(0), "Go");
+                    Assert.AreEqual(1f, theirs.At(1), "the copy's own value was not recorded");
+
+                    copy.Dispose();
+                    Assert.IsTrue(recorder.Alive, "the wearer is still there");
+                    Look(recorder, 2);
+                    Assert.AreEqual(4, recorder.Frames);
+                    Assert.AreEqual(recorder.Frames, theirs.Frames);
+                    Assert.AreEqual(1f, theirs.At(3),
+                        "the held value is the last one that was read");
+
+                    wearer.Dispose();
+                    Assert.IsFalse(recorder.Alive);
+                    Assert.IsFalse(recorder.Sample(recorder.Frames + 1, 1f));
+                }
+            }
+        }
+
         // ---- the window's third mood -----------------------------------------
 
         /// <summary>
