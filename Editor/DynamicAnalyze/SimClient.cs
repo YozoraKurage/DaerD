@@ -23,12 +23,21 @@ namespace Yozolab.DaerD.DynamicAnalyze
     /// them at the same event, one step later in the frame: Mecanim runs, and every state
     /// entered by it is then served.
     ///
-    /// Where that differs from a headset, stated so it can be argued with: a driver's write is
-    /// not visible to another LAYER inside the same frame, so a chain of drivers across layers
-    /// takes a frame per link here and one frame in total there; a transition from a state to
-    /// itself is only visible while it blends, so the drivers of one written with a duration of
-    /// 0 do not fire; and layers are served in index order, which VRChat does not promise
-    /// either way.
+    /// That ordering used to be written down here as a divergence, and it is not one. Measured
+    /// (PlayModeProbeTests): a write made from a real OnStateEnter is not read by any
+    /// transition inside the step that made it — not on another layer, in either direction, and
+    /// not even on the layer that wrote it. Mecanim raises the callbacks after the frame's
+    /// transitions have been decided, which is the same place this serves drivers from, so a
+    /// chain of drivers costs a frame a link on a headset too. The layer index has nothing to
+    /// do with it; layers are served in index order here, and it makes no difference to
+    /// anything a driver writes.
+    ///
+    /// What does differ from a headset, stated so it can be argued with: a transition from a
+    /// state to itself is only visible while it blends, so the drivers of one written with a
+    /// duration of 0 do not fire — such a transition is finished inside the step it begins on
+    /// and leaves no frame carrying evidence of the re-entry. A blended self transition taken
+    /// again before its own blend ends counts as one entry rather than two, for the reason
+    /// <see cref="_served"/> gives.
     /// </summary>
     sealed class SimClient : IDisposable
     {

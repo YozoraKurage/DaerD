@@ -14,6 +14,13 @@ namespace Yozolab.DaerD.DynamicAnalyze
     /// turns a silent divergence into a stated assumption — which is the difference between a
     /// result and a guess.
     ///
+    /// A note only earns its place while it is true, and two of them turned out not to be. A
+    /// conditional Entry at the top of a layer, and a driver in one layer read by another's
+    /// transitions, are both things this run does exactly as Mecanim does them — measured in
+    /// play mode and out of it by PlayModeProbeTests, which is where the evidence lives now
+    /// that the sentences are gone. Warning about faithful behaviour is the same disservice as
+    /// staying quiet about unfaithful behaviour: it teaches a reader to discount the list.
+    ///
     /// Pure: reads the controller and writes nothing, so the window can ask on every repaint
     /// and a test can ask without running anything.
     /// </summary>
@@ -26,9 +33,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
         {
             var notes = new List<string>();
             if (controller == null) return notes;
-            EntryConditions(controller, notes);
             SelfTransitions(controller, notes);
-            CrossLayerDrivers(controller, notes);
             if (withRemote) Playspace(controller, notes);
             Behaviours(controller, notes);
             return notes;
@@ -55,35 +60,25 @@ namespace Yozolab.DaerD.DynamicAnalyze
         }
 
         /// <summary>
-        /// The big one. A conditional entry transition is not taken here — every layer that has
-        /// one begins in its default state instead — and a controller that splits the wearer
-        /// from a remote at Entry therefore runs down one side of itself for the whole session.
-        /// Nothing about the result would look wrong; it would just be answering a different
-        /// question.
+        /// A state entered from itself is entered again on a headset, drivers and all, and a
+        /// run serves those drivers too — as long as the route back has a length. What it
+        /// cannot serve is a route of no length: measured, a transition of duration 0 is over
+        /// inside the step it starts on, so the layer ends that step in the state it was
+        /// already in, aiming nowhere. No frame of the run carries any evidence that anything
+        /// happened, which is why this is a note and not a bug — there is nothing to look at.
+        ///
+        /// Hence the duration test, which is what narrows this from "every state something can
+        /// re-enter" to the shape that actually loses a drive. Only a route back to the state
+        /// itself counts, and an ordinary transition carries canTransitionToSelf too, where it
+        /// means nothing.
+        ///
+        /// One case slips past the filter in the other direction, and is left unsaid on
+        /// purpose: a blended self transition taken again before the previous blend finishes
+        /// counts as one entry rather than two (see SimClient's _served). Saying so would mean
+        /// naming every driven state with a blended self route — the whole width this note just
+        /// shed — to warn about a case that needs two presses inside one blend, and a reader
+        /// who is told about everything is being told about nothing.
         /// </summary>
-        static void EntryConditions(AnimatorController controller, List<string> notes)
-        {
-            var layers = new List<string>();
-            foreach (var layer in controller.layers)
-            {
-                if (layer.stateMachine == null) continue;
-                bool conditioned = false;
-                foreach (var machine in layer.stateMachine.SelfAndDescendants())
-                    foreach (var entry in machine.entryTransitions)
-                        if (entry != null && entry.conditions != null && entry.conditions.Length > 0)
-                            conditioned = true;
-                if (conditioned) layers.Add(layer.name);
-            }
-            if (layers.Count == 0) return;
-            notes.Add(L.Tr(
-                "{0} layer(s) choose where to begin with a condition on Entry ({1}). This run does not take those routes — each of those layers starts in its default state, whatever the condition says.",
-                layers.Count, Join(layers)));
-        }
-
-        /// <summary>A state that can be entered while it is already the current one is
-        /// re-entered on a headset, drivers and all. Here the state never changes, so nothing
-        /// notices. Only a route back to the state itself counts — an ordinary transition
-        /// carries canTransitionToSelf too, and it means nothing there.</summary>
         static void SelfTransitions(AnimatorController controller, List<string> notes)
         {
             var states = new List<string>();
@@ -96,65 +91,21 @@ namespace Yozolab.DaerD.DynamicAnalyze
             foreach (var machine in controller.AllStateMachines())
             {
                 foreach (var transition in machine.anyStateTransitions)
-                    if (transition != null && transition.canTransitionToSelf)
+                    if (transition != null && transition.canTransitionToSelf && Snaps(transition))
                         Note(transition.destinationState);
                 foreach (var child in machine.states)
                 {
                     if (child.state == null) continue;
                     foreach (var transition in child.state.transitions)
-                        if (transition != null && transition.destinationState == child.state)
+                        if (transition != null && transition.destinationState == child.state
+                            && Snaps(transition))
                             Note(child.state);
                 }
             }
             if (states.Count == 0) return;
             notes.Add(L.Tr(
-                "{0} state(s) with a Parameter Driver can be entered from themselves ({1}). This run cannot see a state re-entered, so those drivers fire once instead of every time.",
+                "{0} state(s) with a Parameter Driver can be entered from themselves by a transition of no length ({1}). A transition of no length is finished inside the frame it begins on, so this run has no frame in which to see the re-entry and those drivers fire once instead of every time.",
                 states.Count, Join(states)));
-        }
-
-        /// <summary>
-        /// The remaining timing divergence, and only when a controller actually depends on it:
-        /// a driver in one layer writing something another layer's transitions read. A headset
-        /// serves both inside one frame; here the write lands after the frame, so the chain
-        /// takes a frame per link.
-        /// </summary>
-        static void CrossLayerDrivers(AnimatorController controller, List<string> notes)
-        {
-            var written = new Dictionary<string, int>();
-            var layers = controller.layers;
-            for (int i = 0; i < layers.Length; i++)
-            {
-                if (layers[i].stateMachine == null) continue;
-                foreach (var machine in layers[i].stateMachine.SelfAndDescendants())
-                    foreach (var child in machine.states)
-                    {
-                        if (child.state == null) continue;
-                        foreach (var behaviour in child.state.behaviours)
-                        {
-                            if (!VrcParameterDriver.Is(behaviour)) continue;
-                            foreach (var entry in VrcParameterDriver.ReadSpec(behaviour).entries)
-                                if (!string.IsNullOrEmpty(entry.name))
-                                    written[entry.name] = i;
-                        }
-                    }
-            }
-            if (written.Count == 0) return;
-
-            var crossed = new List<string>();
-            for (int i = 0; i < layers.Length; i++)
-            {
-                if (layers[i].stateMachine == null) continue;
-                foreach (var machine in layers[i].stateMachine.SelfAndDescendants())
-                    foreach (var transition in Transitions(machine))
-                        foreach (var condition in transition.conditions)
-                            if (written.TryGetValue(condition.parameter, out int from)
-                                && from != i && !crossed.Contains(condition.parameter))
-                                crossed.Add(condition.parameter);
-            }
-            if (crossed.Count == 0) return;
-            notes.Add(L.Tr(
-                "{0} parameter(s) are driven in one layer and read by another's transitions ({1}). A driver's write reaches the other layer on the next frame here, and inside the same one on a headset.",
-                crossed.Count, Join(crossed)));
         }
 
         /// <summary>
@@ -191,17 +142,10 @@ namespace Yozolab.DaerD.DynamicAnalyze
                     Join(quiet)));
         }
 
-        static IEnumerable<AnimatorStateTransition> Transitions(AnimatorStateMachine machine)
-        {
-            foreach (var transition in machine.anyStateTransitions)
-                if (transition != null) yield return transition;
-            foreach (var child in machine.states)
-            {
-                if (child.state == null) continue;
-                foreach (var transition in child.state.transitions)
-                    if (transition != null) yield return transition;
-            }
-        }
+        /// <summary>Whether the transition is over the instant it is taken. The duration is
+        /// read the same way whether it is fixed or a fraction of the source clip, because no
+        /// time is no time either way.</summary>
+        static bool Snaps(AnimatorStateTransition transition) => transition.duration <= 0f;
 
         static bool HasDriver(AnimatorState state)
         {

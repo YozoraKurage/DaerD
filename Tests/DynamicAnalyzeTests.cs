@@ -2705,25 +2705,15 @@ namespace Yozolab.DaerD.Tests
             CollectionAssert.IsEmpty(SimNotes.For(NewController()));
         }
 
+        /// <summary>
+        /// A self transition with a blend is served (see the SimClient tests above), so the only
+        /// re-entry a run still cannot see is one taken by a transition of no length — and the
+        /// note is worth exactly that much. The blended route is the control: it is the same
+        /// shape, on the same driven state, and it must NOT be named, or the note is back to
+        /// warning about behaviour the run reproduces.
+        /// </summary>
         [Test]
-        public void Notes_SayWhenALayerChoosesWhereToBeginWithACondition()
-        {
-            var controller = NewController();
-            var machine = controller.layers[0].stateMachine;
-            var entry = machine.AddEntryTransition(FindState(controller, "On"));
-
-            // No conditions yet: an unconditional entry route goes where the default would.
-            CollectionAssert.IsEmpty(SimNotes.For(controller));
-
-            entry.AddCondition(AnimatorConditionMode.If, 0f, "Go");
-            var notes = SimNotes.For(controller);
-            Assert.AreEqual(1, notes.Count);
-            Assert.IsTrue(Mentions(notes, "Entry"), notes[0]);
-            Assert.IsTrue(Mentions(notes, "Base"), "it names the layer");
-        }
-
-        [Test]
-        public void Notes_SayWhenADriversStateCanBeEnteredFromItself()
+        public void Notes_SayWhenADriversStateIsReEnteredByATransitionOfNoLength()
         {
             var controller = NewController();
             var on = FindState(controller, "On");
@@ -2734,27 +2724,46 @@ namespace Yozolab.DaerD.Tests
             var self = on.AddTransition(on);
             self.hasExitTime = true;
             self.exitTime = 1f;
-            Assert.IsTrue(Mentions(SimNotes.For(controller), "re-entered"));
+            self.hasFixedDuration = true;
+            self.duration = 0.25f;
+            CollectionAssert.IsEmpty(SimNotes.For(controller),
+                "a blended self transition is served, so there is nothing to warn about");
+
+            self.duration = 0f;
+            var notes = SimNotes.For(controller);
+            Assert.IsTrue(Mentions(notes, "no length"), string.Join(" / ", notes.ToArray()));
+            Assert.IsTrue(Mentions(notes, "On"), "it names the state");
         }
 
+        /// <summary>
+        /// The two notes this list used to open with, kept as an assertion that they are gone.
+        /// Both were retired against measurements rather than opinion (PlayModeProbeTests): a
+        /// conditional Entry at the top of a layer is skipped by Mecanim itself on the way in
+        /// and read by Mecanim itself on every pass through Exit, and a driver's write reaches
+        /// another layer's transitions on the next frame on a headset exactly as it does here.
+        /// Saying either of them was telling a reader that faithful behaviour was a guess, which
+        /// is how a list of caveats stops being read.
+        /// </summary>
         [Test]
-        public void Notes_SayWhenADriverInOneLayerIsReadByAnother()
+        public void Notes_AreSilentAboutTheTwoThingsThisRunGetsRight()
         {
-            var controller = NewController();
-            var driver = VrcParameterDriver.AddTo(FindState(controller, "On"), "Test");
-            VrcParameterDriver.AddSetEntry(driver, "N", 1f);
-            // Written in layer 0 and read nowhere else yet.
-            CollectionAssert.IsEmpty(SimNotes.For(controller));
+            var entry = NewController();
+            entry.layers[0].stateMachine
+                .AddEntryTransition(FindState(entry, "On"))
+                .AddCondition(AnimatorConditionMode.If, 0f, "Go");
+            CollectionAssert.IsEmpty(SimNotes.For(entry),
+                "a conditional Entry is Mecanim's own answer, not an approximation of one");
 
-            controller.AddLayer("Other");
-            var other = controller.layers[1].stateMachine;
+            var crossing = NewController();
+            var driver = VrcParameterDriver.AddTo(FindState(crossing, "On"), "Test");
+            VrcParameterDriver.AddSetEntry(driver, "N", 1f);
+            crossing.AddLayer("Other");
+            var other = crossing.layers[1].stateMachine;
             var a = other.AddState("A");
             var b = other.AddState("B");
             a.AddTransition(b).AddCondition(AnimatorConditionMode.Greater, 0f, "N");
-
-            var notes = SimNotes.For(controller);
-            Assert.IsTrue(Mentions(notes, "next frame"), string.Join(" / ", notes.ToArray()));
-            Assert.IsTrue(Mentions(notes, "N"));
+            CollectionAssert.IsEmpty(SimNotes.For(crossing),
+                "a write crossing a layer costs a frame on a headset too");
         }
 
         [Test]

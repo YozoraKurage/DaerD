@@ -3075,14 +3075,8 @@ msgstr "Δ {0:0.###} 秒"
 msgid "worst {0:0.###} s: {1}"
 msgstr "最大 {0:0.###} 秒: {1}"
 
-msgid "{0} layer(s) choose where to begin with a condition on Entry ({1}). This run does not take those routes — each of those layers starts in its default state, whatever the condition says."
-msgstr "{0} 個のレイヤーが Entry の条件で開始位置を選んでいます（{1}）。この実行はその経路を通らないので、条件が何を言っていても、それらのレイヤーは既定ステートから始まります。"
-
-msgid "{0} state(s) with a Parameter Driver can be entered from themselves ({1}). This run cannot see a state re-entered, so those drivers fire once instead of every time."
-msgstr "Parameter Driver を持つ {0} 個のステートが、自分自身から入り直せる形になっています（{1}）。この実行は再入場を検出できないので、それらのドライバは毎回ではなく 1 回だけ走ります。"
-
-msgid "{0} parameter(s) are driven in one layer and read by another's transitions ({1}). A driver's write reaches the other layer on the next frame here, and inside the same one on a headset."
-msgstr "{0} 個のパラメーターが、あるレイヤーのドライバで書かれて別のレイヤーの遷移で読まれています（{1}）。ここではドライバの書き込みが相手のレイヤーに届くのは次のフレームですが、実機では同じフレーム内です。"
+msgid "{0} state(s) with a Parameter Driver can be entered from themselves by a transition of no length ({1}). A transition of no length is finished inside the frame it begins on, so this run has no frame in which to see the re-entry and those drivers fire once instead of every time."
+msgstr "Parameter Driver を持つ {0} 個のステートが、長さ 0 の遷移で自分自身から入り直せる形になっています（{1}）。長さ 0 の遷移は始まったフレームの内に終わっているので、この実行には再入場を見られるフレームが無く、それらのドライバは毎回ではなく 1 回だけ走ります。"
 
 msgid "{0} locomotion parameter(s) carry the wearer's own number to the other person here ({1}). On a headset the other person's copy counts playspace movement and the wearer's own does not, so those two numbers are not meant to agree."
 msgstr "{0} 個のロコモーション用パラメーターは、ここでは装着者自身の値がそのまま相手へ運ばれます（{1}）。実機では相手側のコピーだけがプレイスペース移動を勘定に入れ、装着者自身のコピーは入れないので、この 2 つの数値は本来一致しません。"

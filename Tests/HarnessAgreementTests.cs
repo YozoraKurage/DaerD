@@ -338,12 +338,16 @@ namespace Yozolab.DaerD.Tests
         /// The first of the two, and the one worth the whole exercise — stated as a measurement
         /// rather than as a comment.
         ///
-        /// A Parameter Driver is a StateMachineBehaviour, and Mecanim stepped by hand outside
-        /// play mode never calls one — so the rig runs the controller with every driver in it
-        /// inert, which is the right answer to "what does this animator do" and the wrong answer
-        /// to "what does this avatar do". The simulation reads each driver's spec off the state
-        /// and applies it itself, which is what lets it work without the SDK installed, tell the
-        /// wearer from a remote, and put a wire in between.
+        /// A Parameter Driver is a StateMachineBehaviour, and the rig runs the controller with
+        /// every driver in it inert — which is the right answer to "what does this animator do"
+        /// and the wrong answer to "what does this avatar do". The reason is not that the
+        /// callback is missing: measured in PlayModeProbeTests, a hand-stepped Animator raises
+        /// OnStateEnter in the editor exactly as it does in play mode, enabled or not. The SDK's
+        /// driver gets its callback and answers it by raising an event, and the only subscribers
+        /// to that event are the VRChat client and the emulator, neither of which is here. The
+        /// simulation reads each driver's spec off the state and applies it itself, which is what
+        /// lets it work without the SDK installed, tell the wearer from a remote, and put a wire
+        /// in between.
         ///
         /// It applies them at the moment the transition STARTS, which is where a headset's
         /// OnStateEnter fires too — so with a blend in the way the drive is visible several

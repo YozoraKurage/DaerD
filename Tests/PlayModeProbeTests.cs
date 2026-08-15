@@ -10,9 +10,16 @@ namespace Yozolab.DaerD.Tests
 {
     /// <summary>
     /// What Mecanim actually does, asked twice — once with the Editor in Play mode and once
-    /// without — because three of the things DD DynamicAnalyze says it cannot promise are
+    /// without — because three of the things DD DynamicAnalyze said it could not promise were
     /// beliefs formed by stepping an Animator by hand in the Editor, and nobody had ever
     /// checked whether Play mode answers differently.
+    ///
+    /// Play mode answers the same to every question here, and two of the three beliefs were
+    /// wrong regardless of the mode: a conditional Entry and a driver's write crossing a layer
+    /// are both handled by this run exactly as Mecanim handles them. Those notes are gone from
+    /// SimNotes and their evidence is here — which is the point of a measurement file. A
+    /// sentence in a doc comment can be argued with; a number that fails when it stops being
+    /// true cannot.
     ///
     /// Every measurement is written once, as a static method full of assertions, and run from
     /// both a <see cref="UnityTest"/> that enters Play mode and a plain <see cref="Test"/> that
@@ -185,19 +192,19 @@ namespace Yozolab.DaerD.Tests
         }
 
         /// <summary>
-        /// M1 — a conditional Entry transition at the top of a layer is never taken, and the
-        /// same shape one level down always is.
+        /// M1 — a conditional Entry transition at the top of a layer is not taken when the
+        /// layer starts, and the same shape one level down is taken on every visit.
         ///
         /// Four ways of arranging for the condition to be true when the layer starts were tried
         /// and all four land in the default state: the parameter declaring true as its default,
         /// the parameter written after Rebind but before the first step, no Rebind at all, and
         /// ten steps of waiting. The route exists on the asset — the assertion on
-        /// <c>entryTransitions</c> says so — it simply never gets a look, because a layer's root
-        /// state machine is entered before there is anything to ask.
+        /// <c>entryTransitions</c> says so — it simply gets no look on the way in, because a
+        /// layer's root state machine is entered before there is anything to ask.
         ///
-        /// The same condition on a sub state machine's Entry decides every visit, including the
-        /// second one with a different answer. So the shape DD DynamicAnalyze warns about is
-        /// really two shapes, and only one of them is dead.
+        /// It is not a dead route, though, which is what
+        /// <see cref="MeasureEntryAfterExit"/> is for: pass through Exit and the same condition
+        /// decides where the layer resumes. Only the first entry into a layer skips it.
         /// </summary>
         static void MeasureEntryConditions()
         {
@@ -326,6 +333,74 @@ namespace Yozolab.DaerD.Tests
             {
                 AssetDatabase.DeleteAsset(folder);
             }
+        }
+
+        /// <summary>The same choice at the top of a layer, with a way out of both states
+        /// through Exit — which is how a root state machine gets entered a second time without
+        /// the animator being rebuilt.</summary>
+        static AnimatorController EntryChoiceWithAWayOut()
+        {
+            var controller = new AnimatorController();
+            controller.AddLayer("L0");
+            controller.AddParameter(Bool("P", true));
+            controller.AddParameter("Out", AnimatorControllerParameterType.Trigger);
+            var machine = controller.layers[0].stateMachine;
+            var a = machine.AddState("A");
+            var b = machine.AddState("B");
+            machine.defaultState = b;
+            machine.AddEntryTransition(a).AddCondition(AnimatorConditionMode.If, 0f, "P");
+            Watch(a, "A");
+            Watch(b, "B");
+            foreach (var state in new[] { a, b })
+            {
+                var leave = state.AddExitTransition();
+                leave.hasExitTime = false;
+                leave.hasFixedDuration = true;
+                leave.duration = 0f;
+                leave.AddCondition(AnimatorConditionMode.If, 0f, "Out");
+            }
+            return controller;
+        }
+
+        /// <summary>
+        /// M1d — the condition on a layer's Entry is read every time the layer arrives at Entry.
+        /// It is only the first arrival, the one that happens before the first step, that skips
+        /// it.
+        ///
+        /// This is the half of M1 that turns "a dead route" into "a route with one blind spot",
+        /// and it decides how a run should talk about the shape. A controller that splits the
+        /// wearer from a remote at Entry does run down the default side for the whole session —
+        /// but that is Mecanim's answer, not a simulation's approximation of one, so nothing
+        /// here is a divergence to warn about. The same reading is what a headset gets.
+        ///
+        /// Read twice with different answers, because a route that happened to agree with the
+        /// default once would prove nothing.
+        /// </summary>
+        static void MeasureEntryAfterExit()
+        {
+            var controller = EntryChoiceWithAWayOut();
+            using (var rig = Start(controller))
+            {
+                rig.Step();
+                Assert.AreEqual("B", rig.State(0, "A", "B"),
+                    "the first entry into the layer walks past Entry even with P declared true");
+
+                rig.animator.SetTrigger("Out");
+                rig.Step(2);
+                Assert.AreEqual("A", rig.State(0, "A", "B"),
+                    "and the second one reads the condition it ignored");
+                Assert.AreEqual(1, PlayModeProbeBehaviour.Enters("A"));
+
+                rig.animator.SetBool("P", false);
+                rig.animator.SetTrigger("Out");
+                rig.Step(2);
+                Assert.AreEqual("B", rig.State(0, "A", "B"),
+                    "the same route, the other answer — so it is read each time and not once");
+                Assert.AreEqual(2, PlayModeProbeBehaviour.Enters("B"));
+                Assert.AreEqual(1, PlayModeProbeBehaviour.Enters("A"),
+                    "with the condition down it falls through to the default again");
+            }
+            UnityEngine.Object.DestroyImmediate(controller);
         }
 
         // ---- M2: a state entered from itself --------------------------------
@@ -515,7 +590,108 @@ namespace Yozolab.DaerD.Tests
             }
         }
 
-        // ---- M4: a chain of fall-through links ------------------------------
+        // ---- M4: what an exit time waits for --------------------------------
+
+        /// <summary>One second of nothing, or however many seconds are asked for. A state with
+        /// no motion has a length anyway — Mecanim calls it a second — but exit time is read as
+        /// a fraction of a lap, and a measurement of laps deserves laps somebody chose.</summary>
+        static AnimationClip Seconds(float length)
+        {
+            var clip = new AnimationClip { name = length + "s" };
+            clip.SetCurve("", typeof(Transform), "m_LocalPosition.x",
+                AnimationCurve.Constant(0f, length, 0f));
+            return clip;
+        }
+
+        /// <summary>A single fall-through link: A drops into B on its exit time, with no
+        /// condition and no blend. A clip length of 0 leaves A without a motion.</summary>
+        static AnimatorController FallThroughLink(float exitTime, float clipSeconds)
+        {
+            var controller = new AnimatorController();
+            controller.AddLayer("L0");
+            var machine = controller.layers[0].stateMachine;
+            var a = machine.AddState("A");
+            var b = machine.AddState("B");
+            machine.defaultState = a;
+            Watch(a, "A");
+            Watch(b, "B");
+            if (clipSeconds > 0f) a.motion = Seconds(clipSeconds);
+            var transition = a.AddTransition(b);
+            transition.hasExitTime = true;
+            transition.exitTime = exitTime;
+            transition.hasFixedDuration = true;
+            transition.duration = 0f;
+            return controller;
+        }
+
+        /// <summary>The step A was left on, or 0 if it was still there after
+        /// <paramref name="limit"/> of them. The state and the callback have to agree about
+        /// which step it was, or the number is measuring one of them rather than the link.</summary>
+        static int LeavesOn(float exitTime, float clipSeconds, int limit = 80)
+        {
+            var controller = FallThroughLink(exitTime, clipSeconds);
+            try
+            {
+                using (var rig = Start(controller))
+                {
+                    for (int step = 1; step <= limit; step++)
+                    {
+                        rig.Step();
+                        if (rig.State(0, "A", "B") != "B") continue;
+                        Assert.AreEqual(step, PlayModeProbeBehaviour.EnteredOn("B"),
+                            "the state row and OnStateEnter disagree about when the link fired");
+                        return step;
+                    }
+                    return 0;
+                }
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(controller);
+            }
+        }
+
+        /// <summary>
+        /// M4 — an exit time of 0 does not mean "leave at once". It means the same as an exit
+        /// time of 1: leave at the end of a lap of the state's own clip, or after the one
+        /// second Mecanim gives a state with no motion of its own.
+        ///
+        /// This one is here because it was measured wrong first, and the way it was measured
+        /// wrong is the lesson: four steps of watching a link that fires after sixty of them
+        /// looks exactly like a link that never fires, and "exitTime 0 never fires" is what got
+        /// written down. The window is eighty steps now, and the clip lengths are varied so the
+        /// answer has to follow the lap rather than sit on a constant — half a second fires in
+        /// half the steps, a quarter in a quarter of them.
+        ///
+        /// What it cost: the cyclic sync's Immediate route was written with exitTime 0 meaning
+        /// "nothing to wait for" and paid a whole lap at every hop until this was measured —
+        /// AsyncSyncApplier writes a millisecond now, and says why at length. The ways to leave
+        /// at once are a small positive exit time (the last case here) and a route with no exit
+        /// time whose condition is already true.
+        /// </summary>
+        static void MeasureExitTimeIsALap()
+        {
+            foreach (float clipSeconds in new[] { 0f, 1f, 0.5f, 0.25f })
+            {
+                // A state with no motion still runs for a second, so that is the lap to expect.
+                float lap = clipSeconds > 0f ? clipSeconds : 1f;
+                string what = clipSeconds > 0f ? clipSeconds + "s of clip" : "no motion";
+
+                int zero = LeavesOn(0f, clipSeconds);
+                Assert.AreNotEqual(0, zero, "exitTime 0 does fire, given a lap to wait for — " + what);
+                Assert.AreEqual(lap, zero * Dt, Dt + 1e-4f,
+                    "exitTime 0 fires at the end of the lap, within a step of it — " + what);
+
+                Assert.AreEqual(zero, LeavesOn(1f, clipSeconds),
+                    "exitTime 0 and exitTime 1 are the same instruction — " + what);
+            }
+
+            Assert.AreEqual(1, LeavesOn(0.01f, 0f),
+                "a hundredth of a lap is over inside the first sixtieth of a second: THAT is "
+                + "what 'leave at once' has to be written as");
+        }
+
+        // ---- M4b: a chain of fall-through links -----------------------------
 
         /// <summary>A → B → C, every link an exit-time fall-through with no condition.</summary>
         static AnimatorController FallThroughChain(float exitTime, bool withClip)
@@ -532,11 +708,7 @@ namespace Yozolab.DaerD.Tests
             Watch(c, "C");
             if (withClip)
             {
-                // One second of nothing. A state with no motion still has a length, but a chain
-                // measured in normalized time deserves a length somebody chose.
-                var clip = new AnimationClip { name = "OneSecond" };
-                clip.SetCurve("", typeof(Transform), "m_LocalPosition.x",
-                    AnimationCurve.Constant(0f, 1f, 0f));
+                var clip = Seconds(1f);
                 a.motion = clip;
                 b.motion = clip;
                 c.motion = clip;
@@ -553,46 +725,35 @@ namespace Yozolab.DaerD.Tests
         }
 
         /// <summary>
-        /// M4 — an exit time of exactly zero never fires, and a chain that does fire walks one
-        /// link per step.
+        /// M4b — a chain of fall-through links walks one link per step, however little each
+        /// link waits for.
         ///
-        /// Both halves matter to the cyclic sync's Immediate timing. The first is a trap with no
-        /// warning on it: exitTime 0 reads as "leave at once" and means "never leave", with or
-        /// without a clip to measure the time against — it is the same class of dead link ADR
-        /// 0008 found in Judge → Clean, wearing a different face. The second says a fall-through
-        /// chain costs a frame a link even with nothing in the way, so N states of plumbing is
-        /// N frames of latency and no amount of zero-length blending buys any of it back.
+        /// This is the half of the exit-time measurement the cyclic sync's latency is made of:
+        /// N states of plumbing is N frames, and no amount of zero-length blending buys any of
+        /// it back. Both variants are worth keeping — the one with clips because that is the
+        /// shape a generated controller has, and the one without because a state with no motion
+        /// is the shape a hand-built relay usually has, and they behave the same.
         /// </summary>
         static void MeasureFallThroughChain()
         {
             foreach (bool withClip in new[] { false, true })
             {
-                var controller = FallThroughChain(0f, withClip);
+                // A hundredth of a lap: the first step of a sixtieth is already past it, so
+                // every link is ready the moment its state is entered and only the frame
+                // boundary is in the way.
+                var controller = FallThroughChain(0.01f, withClip);
                 using (var rig = Start(controller))
                 {
-                    rig.Step(4);
-                    Assert.AreEqual("A", rig.State(0, "A", "B", "C"),
-                        "exitTime 0 never fires (clip: " + withClip + ")");
-                    Assert.AreEqual(0, PlayModeProbeBehaviour.Enters("B"));
-                }
-                UnityEngine.Object.DestroyImmediate(controller);
-            }
-
-            {
-                // 0.01 of a one-second clip is a hundredth of a second: the first step of a
-                // sixtieth is already past it, so every link is ready the moment it is entered.
-                var controller = FallThroughChain(0.01f, withClip: true);
-                using (var rig = Start(controller))
-                {
+                    string what = "clip: " + withClip;
                     rig.Step();
-                    Assert.AreEqual("B", rig.State(0, "A", "B", "C"), "one link on the first step");
+                    Assert.AreEqual("B", rig.State(0, "A", "B", "C"),
+                        "one link on the first step — " + what);
                     rig.Step();
-                    Assert.AreEqual("C", rig.State(0, "A", "B", "C"), "and one on the second");
-                    Assert.AreEqual(1, PlayModeProbeBehaviour.EnteredOn("B"));
+                    Assert.AreEqual("C", rig.State(0, "A", "B", "C"),
+                        "and one on the second — " + what);
+                    Assert.AreEqual(1, PlayModeProbeBehaviour.EnteredOn("B"), what);
                     Assert.AreEqual(2, PlayModeProbeBehaviour.EnteredOn("C"),
-                        "a step never walks two links, however short the wait");
-                    Assert.AreEqual(0, PlayModeProbeBehaviour.Enters("A"),
-                        "and A is stepped over on the way in rather than entered");
+                        "a step never walks two links, however short the wait — " + what);
                 }
                 UnityEngine.Object.DestroyImmediate(controller);
             }
@@ -706,6 +867,57 @@ namespace Yozolab.DaerD.Tests
             }
         }
 
+        /// <summary>
+        /// M0b — a layer's default state is entered on the first step, not at Rebind, and the
+        /// one shape where it is not entered at all.
+        ///
+        /// The first half is what DD DynamicAnalyze's SimClient assumes when it serves the
+        /// initial state's Parameter Drivers on the first frame of a run: Mecanim announces that
+        /// entry, so the run is agreeing with a headset rather than inventing a frame. Rebind on
+        /// its own puts the layer where it belongs without saying so, which is why nothing is
+        /// served before the first step.
+        ///
+        /// The second half is the exception, and it is narrow: a state left inside the same step
+        /// it is entered on is never announced at all. That is where an earlier reading of
+        /// "the first state gets no OnStateEnter" came from — it was measured on a chain whose
+        /// first link fires immediately, and it generalises to nothing but that. A driver on a
+        /// state nothing rests in does not fire, here or on a headset.
+        /// </summary>
+        static void MeasureTheDefaultStatesEntry()
+        {
+            {
+                var controller = Blend(0f);
+                using (var rig = Start(controller))
+                {
+                    Assert.AreEqual(0, PlayModeProbeBehaviour.Enters("A"),
+                        "Rebind puts the layer in its default state without announcing it");
+                    rig.Step();
+                    Assert.AreEqual(1, PlayModeProbeBehaviour.Enters("A"),
+                        "the first step is where the default state is entered");
+                    Assert.AreEqual(1, PlayModeProbeBehaviour.EnteredOn("A"));
+                    rig.Step(10);
+                    Assert.AreEqual(1, PlayModeProbeBehaviour.Enters("A"),
+                        "and it is entered once, not once a step");
+                }
+                UnityEngine.Object.DestroyImmediate(controller);
+            }
+
+            {
+                var controller = FallThroughLink(0.01f, 0f);
+                using (var rig = Start(controller))
+                {
+                    rig.Step();
+                    Assert.AreEqual("B", rig.State(0, "A", "B"),
+                        "the default state is gone inside the first step");
+                    Assert.AreEqual(0, PlayModeProbeBehaviour.Enters("A"),
+                        "and a state entered and left inside one step is never announced");
+                    Assert.AreEqual(1, PlayModeProbeBehaviour.Enters("B"));
+                    Assert.AreEqual(1, PlayModeProbeBehaviour.EnteredOn("B"));
+                }
+                UnityEngine.Object.DestroyImmediate(controller);
+            }
+        }
+
         // ---- in Play mode ----------------------------------------------------
 
         /// <summary>Leaves Play mode behind whatever happened, so one failed measurement does
@@ -727,11 +939,29 @@ namespace Yozolab.DaerD.Tests
         }
 
         [UnityTest]
-        public IEnumerator Play_EntryConditionsDecideOneLevelDownAndNeverAtTheTop()
+        public IEnumerator Play_TheDefaultStateIsEnteredOnTheFirstStep()
+        {
+            yield return new EnterPlayMode();
+            Assert.IsTrue(Application.isPlaying);
+            MeasureTheDefaultStatesEntry();
+            yield return new ExitPlayMode();
+        }
+
+        [UnityTest]
+        public IEnumerator Play_EntryConditionsDecideOneLevelDownButNotWhenALayerStarts()
         {
             yield return new EnterPlayMode();
             Assert.IsTrue(Application.isPlaying);
             MeasureEntryConditions();
+            yield return new ExitPlayMode();
+        }
+
+        [UnityTest]
+        public IEnumerator Play_ARootEntryIsReadAgainEveryTimeExitIsPassed()
+        {
+            yield return new EnterPlayMode();
+            Assert.IsTrue(Application.isPlaying);
+            MeasureEntryAfterExit();
             yield return new ExitPlayMode();
         }
 
@@ -763,6 +993,15 @@ namespace Yozolab.DaerD.Tests
         }
 
         [UnityTest]
+        public IEnumerator Play_AnExitTimeOfZeroWaitsForTheEndOfALap()
+        {
+            yield return new EnterPlayMode();
+            Assert.IsTrue(Application.isPlaying);
+            MeasureExitTimeIsALap();
+            yield return new ExitPlayMode();
+        }
+
+        [UnityTest]
         public IEnumerator Play_AFallThroughChainWalksOneLinkPerStep()
         {
             yield return new EnterPlayMode();
@@ -790,10 +1029,24 @@ namespace Yozolab.DaerD.Tests
         }
 
         [Test]
-        public void Edit_EntryConditionsDecideOneLevelDownAndNeverAtTheTop()
+        public void Edit_TheDefaultStateIsEnteredOnTheFirstStep()
+        {
+            Assert.IsFalse(Application.isPlaying);
+            MeasureTheDefaultStatesEntry();
+        }
+
+        [Test]
+        public void Edit_EntryConditionsDecideOneLevelDownButNotWhenALayerStarts()
         {
             Assert.IsFalse(Application.isPlaying);
             MeasureEntryConditions();
+        }
+
+        [Test]
+        public void Edit_ARootEntryIsReadAgainEveryTimeExitIsPassed()
+        {
+            Assert.IsFalse(Application.isPlaying);
+            MeasureEntryAfterExit();
         }
 
         [Test]
@@ -815,6 +1068,13 @@ namespace Yozolab.DaerD.Tests
         {
             Assert.IsFalse(Application.isPlaying);
             MeasureCrossLayerWrites();
+        }
+
+        [Test]
+        public void Edit_AnExitTimeOfZeroWaitsForTheEndOfALap()
+        {
+            Assert.IsFalse(Application.isPlaying);
+            MeasureExitTimeIsALap();
         }
 
         [Test]
