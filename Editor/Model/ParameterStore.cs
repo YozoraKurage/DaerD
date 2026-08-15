@@ -30,6 +30,32 @@ namespace Yozolab.DaerD
         /// component contributes to the avatar's total, which DaerD can't see).</summary>
         public abstract int Capacity();
         public abstract List<VrcExpressionParameters.Entry> Read();
+
+        /// <summary>
+        /// What the BUILT avatar will call these parameters, for the names where that is not
+        /// what the store calls them. Empty for a store whose names are already final, which is
+        /// every store but one.
+        ///
+        /// <para>WHY THIS IS BESIDE <see cref="Read"/> AND NOT A FIELD ON THE ENTRY.</para>
+        /// An MA Parameters component can declare a parameter INTERNAL, and an internal
+        /// parameter is renamed on the way into the avatar so that two copies of the same
+        /// gimmick do not fight over one name. The store keeps saying "Hat"; what travels is
+        /// "Hat$-8842". Everything DaerD says about a synced parameter — what to put on the
+        /// wire, what a recording will be matched against — is wrong by that difference, and
+        /// the entry shape is the wrong place to carry it: the same
+        /// <see cref="VrcExpressionParameters.Entry"/> is what the VRC asset backend reads and
+        /// writes, what the sync window diffs and what <see cref="WriteAll"/> copies field by
+        /// field, so a field only one backend can ever fill would have to be decided about at
+        /// every one of those places. A separate question, asked by the two callers that need
+        /// the answer, leaves all of them alone.
+        ///
+        /// Asked as a map rather than name by name because working the answer out means walking
+        /// the object's ancestors and asking every renaming component on the way; a caller with
+        /// a list of names should pay for that once.
+        /// </summary>
+        public virtual Dictionary<string, string> EffectiveNames() =>
+            new Dictionary<string, string>();
+
         /// <summary>Aligns the store to the given entries (used by the sync command). Order
         /// is honoured where the store is ordered; MA applies it as a diff.</summary>
         public abstract void WriteAll(IList<VrcExpressionParameters.Entry> entries);
@@ -450,6 +476,55 @@ namespace Yozolab.DaerD
                     saved = config.saved,
                     defaultValue = config.defaultValue,
                 };
+
+            /// <summary>
+            /// The renames this component's rows are subject to, asked of NDMF rather than
+            /// worked out here.
+            ///
+            /// NDMF is where the answer is: it is the framework that runs the renaming, MA is
+            /// one plugin registered with it among however many a project has installed, and
+            /// <c>ParameterInfo.ForUI</c> is the same query MA's own inspector uses to show a
+            /// person what their gimmick will really be called. Re-deriving it from
+            /// <c>internalParameter</c> and <c>remapTo</c> would be a second implementation of
+            /// somebody else's rule that agrees with it right up until the version where it
+            /// does not — and it could not see a rename applied by a component of a plugin
+            /// DaerD has never heard of, which is most of the point of asking the framework.
+            ///
+            /// Asked at the GAME OBJECT rather than at the component: NDMF resolves renames by
+            /// walking up from the object, and the component overload of that call reaches for
+            /// <c>transform.parent</c> without checking it exists, which is a null reference on
+            /// exactly the shape this is most often asked about — a gimmick prefab whose root
+            /// is not inside an avatar. The object overload checks, and includes this
+            /// component's own renames because it applies every provider on the object.
+            ///
+            /// The hole, stated: without NDMF this answers "no renames", which is what DaerD
+            /// answered before any of this existed. A project with MA but no NDMF cannot exist
+            /// (MA depends on it), so the case is theoretical — but the same is true of any
+            /// build step that renames parameters without telling NDMF, and DaerD will show
+            /// that gimmick's editor-side name and be wrong about it.
+            /// </summary>
+            public override Dictionary<string, string> EffectiveNames()
+            {
+                var renames = new Dictionary<string, string>();
+#if DAERD_NDMF && DAERD_VRC
+                if (_component == null) return renames;
+                var mappings = nadena.dev.ndmf.ParameterInfo.ForUI
+                    .GetParameterRemappingsAt(_component.gameObject);
+                foreach (var config in _component.parameters)
+                {
+                    if (config.isPrefix || string.IsNullOrEmpty(config.nameOrPrefix)) continue;
+                    if (!mappings.TryGetValue(
+                            (nadena.dev.ndmf.ParameterNamespace.Animator, config.nameOrPrefix),
+                            out var mapping))
+                        continue;
+                    if (string.IsNullOrEmpty(mapping.ParameterName)
+                        || mapping.ParameterName == config.nameOrPrefix)
+                        continue;
+                    renames[config.nameOrPrefix] = mapping.ParameterName;
+                }
+#endif
+                return renames;
+            }
 
             static VrcExpressionParameters.ValueType MapSyncType(MaSyncType syncType)
             {

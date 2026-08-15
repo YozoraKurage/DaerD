@@ -1711,6 +1711,9 @@ msgstr "プロジェクト内の Prefab から、このコントローラーを�
 msgid "No prefab in this project has an MA Merge Animator referencing this controller."
 msgstr "このコントローラーを参照する MA Merge Animator を持つ Prefab がプロジェクトにありません。"
 
+msgid "The name the built avatar gives this parameter. This row is declared internal, so it is renamed on the way in — this, not the name on the left, is what travels and what a build log will call it."
+msgstr "ビルド後のアバターがこのパラメーターに与える名前です。この行は internal 指定なので取り込み時にリネームされます。左の名前ではなくこちらが実際に同期され、ビルドログにも出ます。"
+
 msgid "{0}: {1} / {2} bit"
 msgstr "{0}: {1} / {2} bit"
 

@@ -1020,21 +1020,17 @@ namespace Yozolab.DaerD.DynamicAnalyze
             }
         }
 
-        /// <summary>What the avatar's store says travels, or null when there is no store to
-        /// ask. Null and empty are different answers: nothing to compare against is not the
-        /// same as a store that syncs nothing.</summary>
+        /// <summary>What the avatar's store says travels, under built names (see
+        /// <see cref="SyncedFromStore"/>) so that comparing a run's list against it compares
+        /// like with like. Null when there is no store to ask, and null and empty are different
+        /// answers: nothing to compare against is not the same as a store that syncs
+        /// nothing.</summary>
         List<string> StoredSynced()
         {
             if (_storedRead && _storedFor == _controller) return _stored;
             _storedRead = true;
             _storedFor = _controller;
-            var store = _controller != null ? ParameterStore.Of(_controller) : null;
-            if (store == null) return _stored = null;
-            _stored = new List<string>();
-            foreach (var entry in store.Read())
-                if (entry != null && entry.synced && !string.IsNullOrEmpty(entry.name))
-                    _stored.Add(entry.name);
-            return _stored;
+            return _stored = SyncedFromStore(_controller);
         }
 
         // ---- inputs ---------------------------------------------------------
@@ -1652,11 +1648,40 @@ namespace Yozolab.DaerD.DynamicAnalyze
         void FillFromStore()
         {
             _synced.Clear();
-            var store = _controller != null ? ParameterStore.Of(_controller) : null;
-            if (store == null) return;
+            var names = SyncedFromStore(_controller);
+            if (names != null) _synced.AddRange(names);
+        }
+
+        /// <summary>
+        /// The store's synced parameters, under the names the BUILT avatar gives them.
+        ///
+        /// A store row and a wire name are not always the same string. A gimmick that declares
+        /// its parameter internal has it renamed on the way into the avatar, so the store says
+        /// "Hat" and what crosses the wire is "Hat$-8842" — and a run whose wire carries the
+        /// first is a run in which every crossing is about a parameter that does not exist,
+        /// which looks exactly like a wire that works. Filling from the build already spoke
+        /// built names (it reads what the build made); this makes the store agree with it, so
+        /// the two ways of filling the list stop disagreeing about the same avatar.
+        ///
+        /// Null when there is no store, which is not the same answer as an empty list: nothing
+        /// to ask is not a store that syncs nothing, and the "≠ store" mark depends on the
+        /// difference.
+        ///
+        /// Static, and handed the controller: this is a rule worth a test and an EditorWindow
+        /// is not one.
+        /// </summary>
+        internal static List<string> SyncedFromStore(AnimatorController controller)
+        {
+            var store = controller != null ? ParameterStore.Of(controller) : null;
+            if (store == null) return null;
+            var built = store.EffectiveNames();
+            var names = new List<string>();
             foreach (var entry in store.Read())
-                if (entry != null && entry.synced && !string.IsNullOrEmpty(entry.name))
-                    _synced.Add(entry.name);
+            {
+                if (entry == null || !entry.synced || string.IsNullOrEmpty(entry.name)) continue;
+                names.Add(built.TryGetValue(entry.name, out var effective) ? effective : entry.name);
+            }
+            return names;
         }
 
         /// <summary>

@@ -20,6 +20,12 @@ namespace Yozolab.DaerD
         ParameterStore _store;
         bool _storeLoaded;
         Dictionary<string, VrcExpressionParameters.Entry> _exprEntries;
+        // Rebuilt beside the entry map and for the same reason: an MA row renamed in MA's own
+        // inspector has to show its new built name here without anything of DaerD's being
+        // touched first. Working it out is a walk up the object's ancestors — a handful of
+        // components, not a scan of the project — so it belongs with the read above rather than
+        // behind an invalidation of its own.
+        Dictionary<string, string> _builtNames;
 
         // Two whole-controller scans the rows need. Both walk far more than the parameter list
         // — the AAP set reads every clip, the unused set every transition condition, blend
@@ -134,11 +140,13 @@ namespace Yozolab.DaerD
                 _storeLoaded = true;
             }
             _exprEntries = null;
+            _builtNames = null;
             if (_store != null)
             {
                 _exprEntries = new Dictionary<string, VrcExpressionParameters.Entry>();
                 foreach (var entry in _store.Read())
                     _exprEntries[entry.name] = entry;
+                _builtNames = _store.EffectiveNames();
             }
 
             DrawVrcBudget();
@@ -386,6 +394,7 @@ namespace Yozolab.DaerD
         void DrawVrcFlags(AnimatorControllerParameter parameter)
         {
             if (_store == null || _exprEntries == null) return;
+            DrawBuiltName(parameter.name);
             if (_exprEntries.TryGetValue(parameter.name, out var entry))
             {
                 bool synced = GUILayout.Toggle(entry.synced,
@@ -417,6 +426,30 @@ namespace Yozolab.DaerD
                                 ? parameter.defaultInt
                                 : parameter.defaultBool ? 1f : 0f,
                     });
+        }
+
+        /// <summary>
+        /// What the avatar's build will call this row, shown only where that is not what the
+        /// row is called — which is an MA Parameters component declaring the parameter
+        /// internal, and nothing else today.
+        ///
+        /// Worth a column of its own because the difference is invisible and consequential: the
+        /// name on the left is the one every condition, driver and clip in this controller uses
+        /// and is right to use, and the name on the right is the only one that means anything
+        /// to the wire, to a menu control, or to anybody debugging the built avatar. Somebody
+        /// looking for "Hat" in a build log will never find it, and this is where they learn
+        /// what to look for instead.
+        ///
+        /// Sized to its text rather than given a column, because the ordinary row has nothing
+        /// here at all and a permanent blank column would cost every row width it needs.
+        /// </summary>
+        void DrawBuiltName(string name)
+        {
+            if (_builtNames == null || !_builtNames.TryGetValue(name, out var built)) return;
+            var content = new GUIContent("→ " + built,
+                L.Tr("The name the built avatar gives this parameter. This row is declared internal, so it is renamed on the way in — this, not the name on the left, is what travels and what a build log will call it."));
+            float width = Mathf.Min(EditorStyles.miniLabel.CalcSize(content).x, 160f);
+            GUILayout.Label(content, EditorStyles.miniLabel, GUILayout.Width(width));
         }
 
         /// <summary>PhysBone / Contact parameter families share a prefix — offer to carry a
