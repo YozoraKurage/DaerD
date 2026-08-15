@@ -63,6 +63,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
         [SerializeField] bool _settingsOpen = true;
         [SerializeField] bool _inputsOpen = true;
         [SerializeField] bool _notesOpen = true;
+        [SerializeField] bool _findingsOpen = true;
 
         readonly WaveformView _view = new WaveformView();
         SimSession _session;
@@ -75,6 +76,15 @@ namespace Yozolab.DaerD.DynamicAnalyze
         List<string> _notes;
         AnimatorController _notesFor;
         bool _notesWithRemote = true;
+
+        // The other list, read off the finished trace instead of off the controller. It cannot
+        // go stale on its own — a batch run's trace never changes once it exists — so it is
+        // dropped where the trace is replaced rather than watched for. _ranWith is the
+        // experiment that produced it, kept because the settings fields go on being edited
+        // after a run and a finding about what was synced has to be about what WAS synced.
+        // Null for a clip opened from disk, whose settings are not in it.
+        List<string> _findings;
+        SimSettings _ranWith;
 
         bool _playing;
         bool _follow = true;
@@ -149,6 +159,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
             DrawToolbar();
             if (_settingsOpen) DrawSettings();
             DrawNotes();
+            DrawFindings();
             if (_inputsOpen && !_live) DrawStimulus();
             var rect = GUILayoutUtility.GetRect(0f, 100000f, 0f, 100000f);
             _view.Draw(rect);
@@ -168,6 +179,8 @@ namespace Yozolab.DaerD.DynamicAnalyze
                 _live = live;
                 _playing = false;
                 DropSession();
+                _findings = null;
+                _ranWith = null;
                 if (!_live) _view.trace = null;
             }
 
@@ -301,6 +314,12 @@ namespace Yozolab.DaerD.DynamicAnalyze
             _playing = false;
             _live = false;
             DropSession();
+            // Whatever settings the window is holding are not this clip's, and a finding about
+            // a wire that did not carry this run would be a confident lie. The findings a trace
+            // answers on its own still appear; the rest wait for a clip that carries what it
+            // was run with.
+            _findings = null;
+            _ranWith = null;
             _view.trace = TraceClip.Load(clip);
             _view.cursorFrame = 0;
             _view.Invalidate();
@@ -357,6 +376,31 @@ namespace Yozolab.DaerD.DynamicAnalyze
             if (_notesOpen)
                 foreach (var note in notes)
                     EditorGUILayout.LabelField("• " + note, EditorStyles.wordWrappedMiniLabel);
+            EditorGUILayout.EndVertical();
+        }
+
+        /// <summary>
+        /// And what it did find, directly under what it does not promise: the two are one
+        /// thought, and a reader who has just been told what a run cannot say is the reader
+        /// ready to be told what this one did. Its own frame so either can be folded away —
+        /// the notes are about the controller and stay put, the findings change with every run.
+        ///
+        /// Never in a live session. A live trace is trimmed to the history the window keeps, so
+        /// every finding here that begins with "never" would be a claim about the last few
+        /// seconds dressed as a claim about the whole run — and a finding that is quietly about
+        /// less than it says is worse than no finding at all.
+        /// </summary>
+        void DrawFindings()
+        {
+            if (_live || _view.trace == null || _view.Frames == 0) return;
+            if (_findings == null) _findings = RunFindings.For(_view.trace, _ranWith);
+            if (_findings.Count == 0) return;
+            EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+            _findingsOpen = EditorGUILayout.Foldout(_findingsOpen,
+                L.Tr("What this run found ({0})", _findings.Count), true);
+            if (_findingsOpen)
+                foreach (var finding in _findings)
+                    EditorGUILayout.LabelField("• " + finding, EditorStyles.wordWrappedMiniLabel);
             EditorGUILayout.EndVertical();
         }
 
@@ -604,7 +648,9 @@ namespace Yozolab.DaerD.DynamicAnalyze
         {
             _playing = false;
             _notes = null;
-            _view.trace = Simulation.Run(_controller, BuildSettings());
+            _findings = null;
+            _ranWith = BuildSettings();
+            _view.trace = Simulation.Run(_controller, _ranWith);
             _view.cursorFrame = 0;
             _view.Fit(position.width);
             Repaint();
@@ -614,6 +660,8 @@ namespace Yozolab.DaerD.DynamicAnalyze
         {
             DropSession();
             _notes = null;
+            _findings = null;
+            _ranWith = null;
             if (_controller == null) return;
             _session = new SimSession(_controller, BuildSettings());
             _view.trace = _session.Trace;

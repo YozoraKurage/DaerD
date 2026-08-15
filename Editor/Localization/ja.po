@@ -3081,6 +3081,24 @@ msgstr " ほか {0} 件"
 msgid "What this run does not promise ({0})"
 msgstr "この実行が保証しないこと ({0})"
 
+msgid "{0} never enters {1} of layer {2}'s states ({3}). Nothing this run did asked for them, which is not the same as nothing being able to — only a run that entered them tells those two apart."
+msgstr "{0} はレイヤー {2} のステートのうち {1} 個に一度も入りませんでした（{3}）。この実行がやったことがそれらを求めなかっただけで、そもそも入れないのかどうかは別の話です。両者を見分けられるのは、実際に入った実行だけです。"
+
+msgid "{0} is never seen in {1} of layer {2}'s transitions ({3}). Read off the via row, which catches a transition only while it is blending — a route this run cannot name is neither counted here nor cleared."
+msgstr "{0} はレイヤー {2} の遷移のうち {1} 本を通るところが一度も見えませんでした（{3}）。via 行から読んでおり、この行はブレンド中の遷移しか捉えられません。名前を特定できない経路は、ここに数えられも除外されもしていません。"
+
+msgid "{0} change(s) came and went inside one sync period and never left the wearer ({1}). The wire reads the whole set once a period, so a value back where it started by the next reading was never sent at all."
+msgstr "{0} 件の変化が 1 同期周期の中で起きて消え、装着者の外へ出ませんでした（{1}）。同期は 1 周期に 1 回まとめて値を読むので、次の読み取りの時点で元に戻っていた値は、そもそも送られていません。"
+
+msgid "{0} synced value(s) arrive changed rather than late ({1}). A Float crosses as 8 bits over -1..1 and an Int as a byte over 0..255, so a value outside that is a different number when it lands."
+msgstr "{0} 件の同期値が、遅れてではなく変えられて届きます（{1}）。Float は -1..1 を 8 bit で、Int は 0..255 を 1 byte で渡るので、その範囲の外にある値は届いた時点で別の数値です。"
+
+msgid "{0} parameter(s) are pressed here and never leave the wearer ({1}). They are not on the wire and VRChat does not carry them by itself, so whatever they do, they do to one person."
+msgstr "{0} 個のパラメーターがここで操作されていますが、装着者の外へ出ません（{1}）。同期対象に入っておらず、VRChat が自前で運ぶものでもないので、何が起きても 1 人にしか起きません。"
+
+msgid "What this run found ({0})"
+msgstr "この実行で分かったこと ({0})"
+
 msgid "Remotes"
 msgstr "リモートの人数"
 
