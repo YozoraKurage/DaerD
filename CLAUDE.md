@@ -86,17 +86,22 @@ Editor イメージ）。EditMode テストはコンテナ内で完結する。
 .devcontainer/unity/add-vpm.sh --remove com.vrchat.avatars
 ```
 
-テストプロジェクトには GestureManager と Av3Emulator も埋め込みパッケージで入れてある
-（`Packages/vrchat.blackstartx.gesture-manager` と `Packages/lyuma.av3emulator`）。DD
-DynamicAnalyze の Rec がこの 2 つを型で参照する（asmdef の versionDefines `DAERD_GM` /
-`DAERD_AV3E`）ためで、どちらも VRChat SDK に依存している。**SDK を抜くときは 2 つとも
-`Packages/` の外へ先に退避する** — 順序を逆にするとツール側がコンパイルエラーになり、
-テストが 1 件も走らない（終了コード 3）。
+テストプロジェクトには GestureManager・Av3Emulator・NDMF・Modular Avatar も埋め込み
+パッケージで入れてある（`Packages/` 直下の `vrchat.blackstartx.gesture-manager` /
+`lyuma.av3emulator` / `nadena.dev.ndmf` / `nadena.dev.modular-avatar`）。DD DynamicAnalyze
+が前 2 つを Rec で、NDMF を BuildCapture で型参照する（asmdef の versionDefines `DAERD_GM` /
+`DAERD_AV3E` / `DAERD_NDMF` / `DAERD_VRC`）ためで、**4 つとも VRChat SDK に依存している**
+（NDMF は SDK 無しでも動く設計だが、Unity.Collections などの依存を SDK 経由で解決している
+ので、この構成では SDK と一緒に落ちる）。**SDK を抜くときは 4 つとも `Packages/` の外へ
+先に退避する** — 順序を逆にするとツール側がコンパイルエラーになり、テストが 1 件も
+走らない（終了コード 3）。MA は NDMF に依存するので単独で抜くこともできる。
 
 ```
 mkdir -p /home/node/unity-tools-aside
 mv /home/node/unity-testproject/Packages/vrchat.blackstartx.gesture-manager \
-   /home/node/unity-testproject/Packages/lyuma.av3emulator /home/node/unity-tools-aside/
+   /home/node/unity-testproject/Packages/lyuma.av3emulator \
+   /home/node/unity-testproject/Packages/nadena.dev.modular-avatar \
+   /home/node/unity-testproject/Packages/nadena.dev.ndmf /home/node/unity-tools-aside/
 .devcontainer/unity/add-vpm.sh --remove com.vrchat.avatars
 # 戻すときは逆順（SDK を入れてから mv で戻す）
 ```

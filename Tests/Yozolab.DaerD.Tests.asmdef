@@ -7,7 +7,8 @@
         "Yozolab.DaerD.Editor",
         "Yozolab.DaerD.Tests.Stubs",
         "vrchat.blackstartx.gesture-manager",
-        "lyuma.av3emulator"
+        "lyuma.av3emulator",
+        "nadena.dev.ndmf"
     ],
     "includePlatforms": [
         "Editor"
@@ -32,6 +33,16 @@
             "name": "lyuma.av3emulator",
             "expression": "",
             "define": "DAERD_AV3E"
+        },
+        {
+            "name": "nadena.dev.ndmf",
+            "expression": "",
+            "define": "DAERD_NDMF"
+        },
+        {
+            "name": "com.vrchat.avatars",
+            "expression": "",
+            "define": "DAERD_VRC"
         }
     ],
     "noEngineReferences": false
