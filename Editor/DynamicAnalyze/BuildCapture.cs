@@ -81,8 +81,8 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// Refreshed in place at every capture point rather than kept per phase: the interesting
         /// controller is the last one, and a reader asking "what is this avatar running" wants
         /// an answer rather than a history. <see cref="parametersAt"/> is the exception — that
-        /// one IS the history, and it is the material a later feature needs to say what each
-        /// phase of the build added, renamed or took away.
+        /// one IS the history, and it is what <see cref="Changed"/> reads to say what each phase
+        /// of the build added or took away.
         /// </summary>
         public sealed class Built
         {
@@ -112,8 +112,8 @@ namespace Yozolab.DaerD.DynamicAnalyze
             public readonly Dictionary<string, string> prefixRenames =
                 new Dictionary<string, string>();
             /// <summary>Phase name → every animator parameter the avatar's playable layers
-            /// declared at the end of it. Kept, not shown: a difference between two of these is
-            /// what a build did to the parameters, and showing it is a later wave's work.</summary>
+            /// declared at the end of it. One set per phase, because a difference between two of
+            /// them is what a build did to the parameters — see <see cref="Changed"/>.</summary>
             public readonly Dictionary<string, List<string>> parametersAt =
                 new Dictionary<string, List<string>>();
 
@@ -231,10 +231,11 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// Editing-time name → built name for this avatar's animator parameters, or an empty
         /// table when no build of it was watched.
         ///
-        /// Held and published rather than used: reading a row's label back through it, and
-        /// following a name the other way when a run is extracted, are both worth doing and are
-        /// both a later wave's. What this wave settles is that the table can be had at all,
-        /// which is the part that is only possible while the build is running.
+        /// Read out loud by <see cref="Changed"/> and otherwise held rather than used: relabelling
+        /// a recording's rows through it, and following a name the other way when a run is
+        /// extracted, are both worth doing and are both a later wave's. What the capture settles
+        /// is that the table can be had at all, which is the part that is only possible while the
+        /// build is running.
         /// </summary>
         public static Dictionary<string, string> RemapOf(GameObject root)
         {
@@ -251,6 +252,159 @@ namespace Yozolab.DaerD.DynamicAnalyze
             return built == null
                 ? new Dictionary<string, string>()
                 : new Dictionary<string, string>(built.prefixRenames);
+        }
+
+        // ---- what the build changed -----------------------------------------
+
+        /// <summary>The phases a capture point sits at the end of. Named here rather than
+        /// spelled at the three capture points below, because a difference between two of the
+        /// sets they leave behind is only a before-and-after if something says which is which —
+        /// and the dictionary they are kept in has an order of its own that is not the build's.
+        /// </summary>
+        internal const string Resolving = "Resolving";
+
+        internal const string Transforming = "Transforming";
+
+        internal const string Optimizing = "Optimizing";
+
+        /// <summary>Those three in the order the build runs them, which is the order a reader
+        /// is told what happened in.</summary>
+        static readonly string[] Phases = { Resolving, Transforming, Optimizing };
+
+        /// <summary>
+        /// What this build did to the avatar, as the things the material already captured can
+        /// honestly say: what was renamed — parameters and PhysBone prefixes being different
+        /// namespaces, a line each — what appeared, what went away, and what travels in the end.
+        ///
+        /// <para>WHY PHASES AND NOT PLUGINS.</para>
+        /// The grain is a build phase, so a line here reads "Transforming added these" and never
+        /// "this plugin added these". That is not a simplification, it is the resolution the
+        /// capture has: the passes stand at the END of a phase (the plugin at the foot of this
+        /// file declares where), so what is compared is the avatar before a phase against the
+        /// avatar after it, with every plugin that ran inside it summed together. Attributing a
+        /// name to the plugin that made it would mean a capture point between every pair of
+        /// passes — NDMF orders passes but offers no hook between other people's — and the
+        /// alternative, guessing from the shape of a name which plugin's convention it follows,
+        /// is a table of other people's private spellings that would be wrong on their next
+        /// release.
+        ///
+        /// <para>WHY THE RENAME LINES AND THE ADDED LINES OVERLAP.</para>
+        /// A renamed parameter shows up twice: once in the rename table, and once as a name that
+        /// appeared in the phase the rename was applied in (with the old spelling among the ones
+        /// that went away, when the avatar declared it before). Deliberate, because the two
+        /// answer different questions — "what is this called now" and "when did it turn up" —
+        /// and subtracting one from the other would make a merged-in parameter that is also
+        /// renamed, which is the ordinary case, invisible in the half that says a merge happened
+        /// at all.
+        ///
+        /// Pure and over one entry: no window, no scene, nothing asked of NDMF. Null is a
+        /// caller with no capture in hand and answers with an empty list, which is how the panel
+        /// knows to draw no frame at all rather than an empty one.
+        /// </summary>
+        public static List<string> Changed(Built built)
+        {
+            var lines = new List<string>();
+            if (built == null) return lines;
+            Renamed(built.renames, false, lines);
+            Renamed(built.prefixRenames, true, lines);
+            Between(built, lines);
+            lines.Add(L.Tr(
+                "{0} parameter(s) travel in the end. That is what the expression parameters this build produced call synced — the list VRChat really carries, rather than the one the store was written with.",
+                built.synced.Count));
+            return lines;
+        }
+
+        /// <summary>The same for the avatar this Animator belongs to, which is what the panel
+        /// has in its hand: an Animator somebody is recording. Empty when no build of it was
+        /// watched.</summary>
+        public static List<string> ChangedFor(Animator animator) => Changed(For(animator));
+
+        /// <summary>
+        /// One rename table as a line, or nothing when it is empty.
+        ///
+        /// Sorted by the name a person typed, because that is the half of each pair they are
+        /// looking for. The two tables get a line each rather than being poured together: a
+        /// prefix and a parameter can share a name and mean different things (see
+        /// <see cref="Built.prefixRenames"/>), so one list of both would be a list a reader
+        /// cannot act on.
+        /// </summary>
+        static void Renamed(Dictionary<string, string> table, bool prefixes, List<string> lines)
+        {
+            if (table.Count == 0) return;
+            var sources = new List<string>(table.Keys);
+            sources.Sort(System.StringComparer.Ordinal);
+            var pairs = new List<string>();
+            foreach (string source in sources) pairs.Add(source + " → " + table[source]);
+            lines.Add(prefixes
+                ? L.Tr(
+                    "The build renamed {0} PhysBone prefix(es) ({1}). A prefix names a group rather than a parameter, so nothing is called this on its own — what changed is the spelling every contact and physbone parameter under it now uses.",
+                    table.Count, Join(pairs))
+                : L.Tr(
+                    "The build renamed {0} parameter(s) ({1}). The name on the left is the one written in the editor; the one on the right is what the built avatar wears, and what a recording of it says.",
+                    table.Count, Join(pairs)));
+        }
+
+        /// <summary>
+        /// What each phase added and what it took away, walked in build order.
+        ///
+        /// The two are collected separately and appended in turn so that the panel reads as
+        /// everything that arrived and then everything that left, rather than alternating
+        /// between the two per phase — a reader is asking one of those questions at a time.
+        ///
+        /// A phase with no set is skipped rather than treated as an empty avatar: a capture that
+        /// never happened is not a build that declared nothing, and the difference is the
+        /// whole list appearing as "taken away".
+        /// </summary>
+        static void Between(Built built, List<string> lines)
+        {
+            var added = new List<string>();
+            var gone = new List<string>();
+            List<string> before = null;
+            foreach (string phase in Phases)
+            {
+                if (!built.parametersAt.TryGetValue(phase, out var now) || now == null) continue;
+                if (before != null)
+                {
+                    var arrived = Only(now, before);
+                    if (arrived.Count > 0)
+                        added.Add(L.Tr(
+                            "{0} added {1} parameter(s) ({2}). Read as the difference across a whole phase, so it is what everything running in it did between them — not what any one plugin did.",
+                            phase, arrived.Count, Join(arrived)));
+                    var left = Only(before, now);
+                    if (left.Count > 0)
+                        gone.Add(L.Tr(
+                            "{0} took {1} parameter(s) away ({2}). The same reading across a whole phase: a name here is one the avatar's playable layers no longer declared by the end of it, whatever removed it.",
+                            phase, left.Count, Join(left)));
+                }
+                before = now;
+            }
+            lines.AddRange(added);
+            lines.AddRange(gone);
+        }
+
+        /// <summary>The names in the first set and not the second, in the order they are held —
+        /// which is sorted, because that is how a phase's set was written down. Through a set
+        /// rather than a scan of the list: this runs on every repaint of the panel, and a real
+        /// avatar declares parameters in the hundreds.</summary>
+        static List<string> Only(List<string> names, List<string> others)
+        {
+            var without = new HashSet<string>(others);
+            var found = new List<string>();
+            foreach (string name in names)
+                if (!without.Contains(name)) found.Add(name);
+            return found;
+        }
+
+        /// <summary>Names, with a tail rather than a wall of them — the shape SimNotes and
+        /// RunFindings both use, spelled again here rather than made public in either for the
+        /// sake of five lines.</summary>
+        static string Join(List<string> names)
+        {
+            const int shown = 3;
+            if (names.Count <= shown) return string.Join(", ", names.ToArray());
+            var head = names.GetRange(0, shown);
+            return string.Join(", ", head.ToArray())
+                + L.Tr(" and {0} more", names.Count - shown);
         }
 
         /// <summary>Forgets everything. For tests, which have to be able to tell an entry this
@@ -527,19 +681,19 @@ namespace Yozolab.DaerD.DynamicAnalyze
                 .Run("DD DynamicAnalyze: renames", context =>
                 {
                     BuildCapture.CaptureRenames(context);
-                    BuildCapture.Capture(context, "Resolving");
+                    BuildCapture.Capture(context, BuildCapture.Resolving);
                 });
 
             InPhase(nadena.dev.ndmf.BuildPhase.Transforming)
                 .AfterPlugin(ModularAvatar)
                 .AfterPlugin(ModularAvatarLate)
                 .Run("DD DynamicAnalyze: what was assembled",
-                    context => BuildCapture.Capture(context, "Transforming"));
+                    context => BuildCapture.Capture(context, BuildCapture.Transforming));
 
             InPhase(nadena.dev.ndmf.BuildPhase.Optimizing)
                 .AfterPlugin(ModularAvatar)
                 .Run("DD DynamicAnalyze: what is left",
-                    context => BuildCapture.Capture(context, "Optimizing"));
+                    context => BuildCapture.Capture(context, BuildCapture.Optimizing));
         }
     }
 #endif

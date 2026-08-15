@@ -148,6 +148,11 @@ namespace Yozolab.DaerD.DynamicAnalyze
         [SerializeField] bool _inputsOpen = true;
         [SerializeField] bool _notesOpen = true;
         [SerializeField] bool _findingsOpen = true;
+        /// <summary>Whether what the build changed is showing. Open, like the other two frames
+        /// beside it: it exists only on an avatar a build was watched of, and on those it is the
+        /// first thing worth reading — a recording of one speaks names nothing in the editor
+        /// spells that way.</summary>
+        [SerializeField] bool _changedOpen = true;
         /// <summary>Whether the list of what travels is showing its names. Folded by default —
         /// the count above it is the answer most of the time, and a real avatar's list is
         /// longer than everything else on the panel put together.</summary>
@@ -327,8 +332,11 @@ namespace Yozolab.DaerD.DynamicAnalyze
             }
             // Nothing SimNotes says applies to a recording: those are the things a SIMULATION
             // of this controller cannot promise, and a recording simulates nothing — Mecanim is
-            // Mecanim and VRChat's behaviours are really running.
-            if (!_rec) DrawNotes();
+            // Mecanim and VRChat's behaviours are really running. What stands in its place there
+            // is the other thing a reader needs before they trust a row: what the build did to
+            // the avatar they are recording.
+            if (_rec) DrawBuildChanges();
+            else DrawNotes();
             DrawFindings();
             if (_inputsOpen && Batch) DrawStimulus();
             var rect = GUILayoutUtility.GetRect(0f, 100000f, 0f, 100000f);
@@ -808,6 +816,38 @@ namespace Yozolab.DaerD.DynamicAnalyze
             if (_findingsOpen)
                 foreach (var finding in _findings)
                     EditorGUILayout.LabelField("• " + finding, EditorStyles.wordWrappedMiniLabel);
+            EditorGUILayout.EndVertical();
+        }
+
+        /// <summary>
+        /// What the build made of the avatar being recorded, in the place the other two moods
+        /// keep what a run cannot promise.
+        ///
+        /// The same thought as SimNotes, about the other kind of gap. A run's notes say where a
+        /// simulation parts company with a headset; this says where the avatar in front of the
+        /// recorder parts company with the controller in the field — a parameter under a name
+        /// nobody typed, a parameter that exists only once something has been merged in, a
+        /// synced list the store has never agreed with. Both belong above the rows, because a
+        /// reader who does not know a name was rewritten reads the row it is on as a parameter
+        /// that has simply gone missing.
+        ///
+        /// Drawn only when there is a capture, frame and all: an empty box saying nothing was
+        /// seen would appear on every project that has no build framework, which is most of
+        /// them, and would be a permanent piece of furniture about a feature they do not have.
+        /// Recomputed per repaint rather than cached — it is a few set differences over lists
+        /// the capture already sorted, unlike SimNotes, which opens a SerializedObject per
+        /// driver.
+        /// </summary>
+        void DrawBuildChanges()
+        {
+            var changes = BuildCapture.ChangedFor(_target);
+            if (changes.Count == 0) return;
+            EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+            _changedOpen = EditorGUILayout.Foldout(_changedOpen,
+                L.Tr("What the build changed ({0})", changes.Count), true);
+            if (_changedOpen)
+                foreach (var change in changes)
+                    EditorGUILayout.LabelField("• " + change, EditorStyles.wordWrappedMiniLabel);
             EditorGUILayout.EndVertical();
         }
 

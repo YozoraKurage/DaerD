@@ -3344,3 +3344,21 @@ msgstr "送る入力が書かれていません。時刻付き入力は他の 2 
 
 msgid "GestureManager is not holding this avatar, so there is nowhere to press its buttons. Only its own way of setting a parameter keeps the radial menu and the avatar saying the same thing, so nothing is sent without it."
 msgstr "GestureManager がこのアバターを掴んでいないため、ボタンを押す先がありません。ラジアルメニューとアバターの表示を一致させられるのはツール自身の設定経路だけなので、それが無い場合は何も送りません。"
+
+msgid "What the build changed ({0})"
+msgstr "ビルドが変えたもの ({0})"
+
+msgid "The build renamed {0} parameter(s) ({1}). The name on the left is the one written in the editor; the one on the right is what the built avatar wears, and what a recording of it says."
+msgstr "ビルドは {0} 個のパラメーターを改名しました（{1}）。左がエディタ上で書いた名前、右がビルド後のアバターが実際に持っている名前です。記録に出てくるのは右の名前です。"
+
+msgid "The build renamed {0} PhysBone prefix(es) ({1}). A prefix names a group rather than a parameter, so nothing is called this on its own — what changed is the spelling every contact and physbone parameter under it now uses."
+msgstr "ビルドは {0} 個の PhysBone プレフィックスを改名しました（{1}）。プレフィックスはパラメーターそのものではなくグループの名前なので、この名前のパラメーターがあるわけではありません。変わったのは、その配下のコンタクトや PhysBone のパラメーターが使う綴りです。"
+
+msgid "{0} added {1} parameter(s) ({2}). Read as the difference across a whole phase, so it is what everything running in it did between them — not what any one plugin did."
+msgstr "{0} で {1} 個のパラメーターが増えました（{2}）。フェーズ 1 つぶんの差分として読んでいるので、そのフェーズで動いたものすべての合計であって、特定のプラグインがやったこととは限りません。"
+
+msgid "{0} took {1} parameter(s) away ({2}). The same reading across a whole phase: a name here is one the avatar's playable layers no longer declared by the end of it, whatever removed it."
+msgstr "{0} で {1} 個のパラメーターが無くなりました（{2}）。同じくフェーズ 1 つぶんの差分で、ここに出る名前は、そのフェーズの終わりにはアバターのプレイアブルレイヤーがもう宣言していなかったものです。何が消したのかまでは分かりません。"
+
+msgid "{0} parameter(s) travel in the end. That is what the expression parameters this build produced call synced — the list VRChat really carries, rather than the one the store was written with."
+msgstr "最終的に同期対象となるのは {0} 個です。これはこのビルドが生成した Expression Parameters が同期対象と言っている数で、VRChat が実際に運ぶ一覧です（ストアに書かれた一覧ではありません）。"

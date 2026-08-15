@@ -129,11 +129,17 @@ namespace Yozolab.DaerD.Tests
             Assert.IsEmpty(BuildCapture.PrefixRemapOf(animator.gameObject));
             Assert.AreEqual(0, BuildCapture.Count);
 
+            // Empty rather than "nothing changed": the panel draws no frame at all on an avatar
+            // no build has been seen of, and an empty list is how it is told to.
+            Assert.IsEmpty(BuildCapture.ChangedFor(animator));
+
             Assert.IsNull(BuildCapture.For(null));
             Assert.IsNull(BuildCapture.Of(null));
             Assert.IsFalse(BuildCapture.Has(null));
             Assert.IsEmpty(BuildCapture.ControllersFor(null));
             Assert.IsEmpty(BuildCapture.RemapOf(null));
+            Assert.IsEmpty(BuildCapture.ChangedFor(null));
+            Assert.IsEmpty(BuildCapture.Changed(null));
         }
 
         /// <summary>
@@ -418,6 +424,162 @@ namespace Yozolab.DaerD.Tests
 #else
             Assert.Ignore("NDMF and the VRChat avatars SDK are not both installed.");
 #endif
+        }
+
+        // ---- what a build changed, read back off the capture ---------------------
+
+        /// <summary>
+        /// The reading itself, over a capture written out by hand.
+        ///
+        /// By hand on purpose, and this is the half of the feature that has to be tested this
+        /// way: <see cref="BuildCapture.Changed"/> is a pure function of one entry, so the cases
+        /// worth pinning — a parameter that goes away again, a phase no pass reached, two rename
+        /// tables that must not be poured together — are all cases a real build of the rig below
+        /// does not produce and could not be made to produce without writing somebody else's
+        /// plugin. The end-to-end below then checks that a real build fills the entry with the
+        /// shape these assume.
+        ///
+        /// The lines are user-facing sentences, so the assertions are on their text. The
+        /// language is pinned for the whole suite (see <c>TestLanguage</c>).
+        /// </summary>
+        [Test]
+        public void WhatTheBuildChangedNamesThePhaseAParameterArrivedInAndTheOneItLeftIn()
+        {
+            var built = new BuildCapture.Built();
+            built.parametersAt[BuildCapture.Resolving] = new List<string> { "Wave" };
+            built.parametersAt[BuildCapture.Transforming] =
+                new List<string> { "Wag$1f4c2b", "Wave" };
+            built.parametersAt[BuildCapture.Optimizing] = new List<string> { "Wag$1f4c2b" };
+            built.synced.Add("Wag$1f4c2b");
+
+            var lines = BuildCapture.Changed(built);
+            Assert.AreEqual(3, lines.Count,
+                "nothing was renamed, so the three lines are one arrival, one departure and "
+                + "what travels:\n  " + string.Join("\n  ", lines.ToArray()));
+            Assert.IsTrue(Says(lines, "Transforming added 1 parameter(s) (Wag$1f4c2b)"),
+                "the phase the parameter turned up in is not named");
+            Assert.IsTrue(Says(lines, "Optimizing took 1 parameter(s) away (Wave)"),
+                "a parameter that stopped being declared is not reported, or is reported "
+                + "against the wrong phase");
+            Assert.IsTrue(Says(lines, "1 parameter(s) travel in the end"));
+            Assert.IsFalse(Says(lines, "Resolving"),
+                "the first captured phase has nothing before it to differ from, so everything "
+                + "the avatar already had would be reported as an addition");
+            Assert.Less(Index(lines, "added"), Index(lines, "took"),
+                "everything that arrived is meant to be read before everything that left");
+        }
+
+        /// <summary>
+        /// Both rename tables are read, and neither is poured into the other.
+        ///
+        /// A PhysBone prefix and a parameter are different namespaces that can share a name (see
+        /// <see cref="BuildCapture.Built.prefixRenames"/>), so one list of both would tell a
+        /// reader that a parameter they can look for in the animator was renamed when no such
+        /// parameter exists. Sorted by the editing-time name, which is the half somebody is
+        /// scanning for.
+        /// </summary>
+        [Test]
+        public void WhatTheBuildChangedKeepsTheTwoRenameTablesApart()
+        {
+            var built = new BuildCapture.Built();
+            built.renames["Wag"] = "Wag$1f4c2b";
+            built.renames["Hat"] = "Hat$8842aa";
+            built.prefixRenames["Wag"] = "Wag$99cc10";
+
+            var lines = BuildCapture.Changed(built);
+            Assert.IsTrue(Says(lines,
+                    "renamed 2 parameter(s) (Hat → Hat$8842aa, Wag → Wag$1f4c2b)"),
+                "the parameter table is not read, or is not sorted by the name a person typed");
+            Assert.IsTrue(Says(lines, "renamed 1 PhysBone prefix(es) (Wag → Wag$99cc10)"),
+                "the prefix table is not read at all");
+            Assert.IsFalse(Says(lines, "renamed 3 "),
+                "the two tables were counted as one, so a prefix is being offered as a "
+                + "parameter to look for");
+            // And nothing was declared at any phase, so there is no arrival or departure to
+            // report — what travels is still said, because zero is an answer.
+            Assert.AreEqual(3, lines.Count,
+                string.Join("\n  ", lines.ToArray()));
+            Assert.IsTrue(Says(lines, "0 parameter(s) travel in the end"));
+        }
+
+        /// <summary>
+        /// A phase no capture point reached is skipped rather than read as an avatar that
+        /// declared nothing — which would report the entire avatar as taken away and then added
+        /// straight back.
+        ///
+        /// Not hypothetical: the capture overwrites in place at each point, and a build that
+        /// fails or is cut short partway through leaves exactly this. What is compared is then
+        /// the last phase that was reached, which is the only honest before-and-after available.
+        /// </summary>
+        [Test]
+        public void WhatTheBuildChangedSkipsAPhaseNoCapturePointReached()
+        {
+            var built = new BuildCapture.Built();
+            built.parametersAt[BuildCapture.Resolving] = new List<string> { "Wave" };
+            built.parametersAt[BuildCapture.Optimizing] = new List<string> { "Extra", "Wave" };
+
+            var lines = BuildCapture.Changed(built);
+            Assert.IsTrue(Says(lines, "Optimizing added 1 parameter(s) (Extra)"),
+                "the phase that was reached is not compared against the last one that was");
+            Assert.IsFalse(Says(lines, "Transforming"),
+                "a phase nothing was captured in was read as an avatar declaring nothing");
+            Assert.IsFalse(Says(lines, "away"),
+                "and the whole avatar was reported as taken away with it");
+        }
+
+        /// <summary>
+        /// And the same reading over a capture a real build wrote: an avatar assembled by
+        /// Modular Avatar, and the two things a person looks for afterwards — what the parameter
+        /// they typed is called now, and what the merge brought with it.
+        ///
+        /// The phase is asserted by name because that is the grain of the answer and the thing
+        /// most likely to drift: the passes sit at the end of a phase, so an upgrade that moved
+        /// the assembling out of Transforming would make every line here true of the wrong one.
+        /// </summary>
+        [Test]
+        public void WhatTheBuildChangedReadsARealBuildsRenamesAndAdditions()
+        {
+#if DAERD_NDMF && DAERD_VRC
+            Skip.WithoutModularAvatar();
+            var avatar = Rig("DD Build Diff");
+            Build(avatar.root);
+
+            string became = Internal("Wag", "Gimmick");
+            var lines = BuildCapture.ChangedFor(avatar.animator);
+            Assert.IsNotEmpty(lines, "the build ran and the capture has nothing to say about it");
+            Assert.IsTrue(Says(lines, "Wag → " + became),
+                "the rename a person needs to read a recording by is not in the difference:\n  "
+                + string.Join("\n  ", lines.ToArray()));
+            Assert.IsTrue(Says(lines, "Transforming added"),
+                "the phase the merge happens in added nothing, so either the capture or the "
+                + "difference has stopped seeing what a build assembles:\n  "
+                + string.Join("\n  ", lines.ToArray()));
+            Assert.IsTrue(Says(lines, became),
+                "the name the avatar ends up wearing is nowhere in what is shown");
+
+            var built = BuildCapture.For(avatar.animator);
+            Assert.IsTrue(Says(lines, built.synced.Count + " parameter(s) travel in the end"),
+                "what travels is not the count the capture holds");
+#else
+            Assert.Ignore("NDMF and the VRChat avatars SDK are not both installed.");
+#endif
+        }
+
+        /// <summary>Whether any line says this. Substrings rather than whole lines: each line
+        /// carries a sentence explaining what it means as well as the fact, and pinning that
+        /// prose would make every reword a test failure.</summary>
+        static bool Says(List<string> lines, string fragment)
+        {
+            foreach (string line in lines)
+                if (line.Contains(fragment)) return true;
+            return false;
+        }
+
+        static int Index(List<string> lines, string fragment)
+        {
+            for (int i = 0; i < lines.Count; i++)
+                if (lines[i].Contains(fragment)) return i;
+            return -1;
         }
 
         // ---- and what a recording then reads ------------------------------------
