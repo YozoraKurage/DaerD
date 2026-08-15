@@ -1702,6 +1702,15 @@ msgstr "シーンから完全一致のみを検索します。このコントロ
 msgid "No exact match in the scene — no avatar or MA Merge Animator references this controller."
 msgstr "シーンに完全一致がありません。このコントローラーを参照するアバターや MA Merge Animator が見つかりませんでした。"
 
+msgid "In Prefabs"
+msgstr "Prefab から"
+
+msgid "Search the project's prefabs for an MA Merge Animator referencing this controller, and take the MA Parameters beside it. Only prefabs that already reference this controller are opened, and the answer is remembered until something in the project changes."
+msgstr "プロジェクト内の Prefab から、このコントローラーを参照する MA Merge Animator を検索し、その隣の MA Parameters を採用します。開くのは既にこのコントローラーを参照している Prefab だけで、結果はプロジェクトに変更があるまで記憶されます。"
+
+msgid "No prefab in this project has an MA Merge Animator referencing this controller."
+msgstr "このコントローラーを参照する MA Merge Animator を持つ Prefab がプロジェクトにありません。"
+
 msgid "{0}: {1} / {2} bit"
 msgstr "{0}: {1} / {2} bit"
 

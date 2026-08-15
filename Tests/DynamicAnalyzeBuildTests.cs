@@ -34,10 +34,12 @@ namespace Yozolab.DaerD.Tests
     /// thing that fails is this file, and the answer is to re-read the result and re-argue the
     /// design.
     ///
-    /// Nothing here names a Modular Avatar type. The components it needs are added by type name
-    /// and configured through SerializedObject, which is how the rest of DaerD reaches somebody
-    /// else's package — and it is what lets these tests be written without the product assembly
-    /// gaining a reference the design deliberately refuses.
+    /// Nothing here names a Modular Avatar type, although the parameter store now does
+    /// (<c>DAERD_MA</c>). The components these tests need are added by type name and configured
+    /// through SerializedObject on purpose: this file is about DD DynamicAnalyze, which stays
+    /// liftable and knows only NDMF — MA appears in it as a plugin qualifier in a string and
+    /// must keep appearing as one, so the rig builds MA's components the way a rig with no MA
+    /// reference would.
     /// </summary>
     public class DynamicAnalyzeBuildTests
     {

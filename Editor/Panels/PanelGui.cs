@@ -94,6 +94,25 @@ namespace Yozolab.DaerD
                 }
                 GUIUtility.ExitGUI();
             }
+            // Beside Detect rather than inside it: a gimmick that is a prefab and nothing else
+            // is invisible to the scene search, and a walk over every prefab in the project is
+            // not something to do silently on the chance that it helps. Two buttons say which
+            // search is about to run and let the cheap one stay the reflex.
+            if (GUILayout.Button(new GUIContent(L.Tr("In Prefabs"),
+                    L.Tr("Search the project's prefabs for an MA Merge Animator referencing this controller, and take the MA Parameters beside it. Only prefabs that already reference this controller are opened, and the answer is remembered until something in the project changes.")),
+                    EditorStyles.miniButton, GUILayout.Width(70)))
+            {
+                var found = ParameterStore.DetectInPrefabs(controller);
+                if (found == null)
+                    EditorUtility.DisplayDialog(L.Tr("Parameter Store"),
+                        L.Tr("No prefab in this project has an MA Merge Animator referencing this controller."), "OK");
+                else
+                {
+                    GraphFrameData.SetParameterStore(controller, found);
+                    onChanged?.Invoke();
+                }
+                GUIUtility.ExitGUI();
+            }
             EditorGUILayout.EndHorizontal();
         }
 
