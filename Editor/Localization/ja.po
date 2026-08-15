@@ -3084,8 +3084,8 @@ msgstr "Parameter Driver を持つ {0} 個のステートが、自分自身か�
 msgid "{0} parameter(s) are driven in one layer and read by another's transitions ({1}). A driver's write reaches the other layer on the next frame here, and inside the same one on a headset."
 msgstr "{0} 個のパラメーターが、あるレイヤーのドライバで書かれて別のレイヤーの遷移で読まれています（{1}）。ここではドライバの書き込みが相手のレイヤーに届くのは次のフレームですが、実機では同じフレーム内です。"
 
-msgid "{0} locomotion parameter(s) read the same on both copies here ({1}). On a headset the other person's copy counts playspace movement and the wearer's own does not, so those two numbers are not meant to agree."
-msgstr "{0} 個のロコモーション用パラメーターが、ここでは両方のコピーで同じ値になります（{1}）。実機では相手側のコピーだけがプレイスペース移動を勘定に入れ、装着者自身のコピーは入れないので、この 2 つの数値は本来一致しません。"
+msgid "{0} locomotion parameter(s) carry the wearer's own number to the other person here ({1}). On a headset the other person's copy counts playspace movement and the wearer's own does not, so those two numbers are not meant to agree."
+msgstr "{0} 個のロコモーション用パラメーターは、ここでは装着者自身の値がそのまま相手へ運ばれます（{1}）。実機では相手側のコピーだけがプレイスペース移動を勘定に入れ、装着者自身のコピーは入れないので、この 2 つの数値は本来一致しません。"
 
 msgid "{0} Animator Layer Control(s) are not run here. A layer's weight scales everything it writes, so a run can report values a headset would not."
 msgstr "{0} 個の Animator Layer Control は実行されません。レイヤーの重みはそのレイヤーが書くものすべてを増減させるので、実機とは違う値が記録されることがあります。"

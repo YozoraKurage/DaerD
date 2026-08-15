@@ -36,10 +36,11 @@ namespace Yozolab.DaerD.DynamicAnalyze
         public float intervalSeconds = 0.2f;
 
         /// <summary>Chance that a whole sample is lost, 0 to 1. A whole one rather than a
-        /// parameter of one: the set travels together, so it survives or misses together. The
-        /// sample, and not the built-ins VRChat streams beside it — losing a tick of those
-        /// would be undone by the next frame, so a run that modelled it would show nothing but
-        /// a frame of delay.</summary>
+        /// parameter of one: the set travels together, so it survives or misses together —
+        /// and that set includes the built-ins VRChat puts on the same playable channel, which
+        /// ride this sample and miss with it. Not the IK stream beside it: losing one of its
+        /// ticks would be undone by the next, so modelling it would show a tenth of a second
+        /// of delay and call it packet loss.</summary>
         public float dropChance;
 
         /// <summary>
@@ -107,9 +108,10 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// stays independent of how the project stores them.
         ///
         /// Not the whole of what reaches a remote, and deliberately not: VRChat's own built-ins
-        /// cross by its arrangement rather than the avatar's, on other channels and at another
-        /// cadence, and <see cref="Simulation.CarryBroadcast"/> is where that happens. A
-        /// built-in named here is ignored — see <see cref="Simulation.Carry"/>.
+        /// cross by its arrangement rather than the avatar's, and <see cref="Simulation.BuiltIns"/>
+        /// is where the channels each of them takes are worked out. Some of them do ride this
+        /// very sample — see <see cref="Simulation.Sample"/> — but they get there by being
+        /// built-ins and not by being listed, and a built-in named here is ignored.
         /// </summary>
         public readonly List<string> parameters = new List<string>();
 

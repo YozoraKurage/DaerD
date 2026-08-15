@@ -38,12 +38,17 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// holds them across frames the way a run does, so a wire with a latency behaves the
         /// same whether it is being watched or read afterwards.</summary>
         readonly Queue<Simulation.WireDelivery>[] _inFlight;
-        /// <summary>The built-ins VRChat keeps in step by itself, as this controller reads
-        /// them. Worked out once, like the batch run's.</summary>
-        readonly List<string> _broadcast;
+        /// <summary>The built-ins VRChat carries itself, split by channel, as this controller
+        /// reads them. Worked out once, like the batch run's.</summary>
+        readonly Simulation.BuiltIns _builtIns;
+        /// <summary>The IK channel per person — in flight and mid-interpolation. Held across
+        /// frames for the same reason the sample queue is, and made by the run's own factory
+        /// so the two engines cannot start from different shapes.</summary>
+        readonly Simulation.IkStream[] _ik;
         float _time;
         float _carry;
         float _nextSample;
+        float _nextIk;
 
         public SignalTrace Trace => _recorder.Trace;
 
@@ -75,12 +80,13 @@ namespace Yozolab.DaerD.DynamicAnalyze
                     Simulation.ClientSeed(clock.seed, i)));
             _recorder = new TraceRecorder(controller, _clients, wire != null, _settings.lagRows);
 
-            _broadcast = remotes > 0
-                ? Simulation.Broadcast(_clients[0]) : new List<string>();
+            _builtIns = remotes > 0
+                ? Simulation.BuiltIns.For(_clients[0]) : Simulation.BuiltIns.None;
             _loss = new SimRandom[remotes];
             _arrived = new bool[remotes];
             _dropped = new bool[remotes];
             _inFlight = Simulation.InFlight(remotes);
+            _ik = Simulation.IkStreams(remotes);
             for (int i = 0; i < remotes; i++)
             {
                 _loss[i] = new SimRandom(Simulation.LossSeed(wire.seed, i));
@@ -89,6 +95,8 @@ namespace Yozolab.DaerD.DynamicAnalyze
                 _arrived[i] = wire.JoinsAt(i) <= 0f;
             }
             _nextSample = remotes > 0 ? wire.EarliestJoin + wire.Interval : float.MaxValue;
+            _nextIk = remotes > 0
+                ? wire.EarliestJoin + Simulation.IkSyncInterval : float.MaxValue;
         }
 
         /// <summary>
@@ -130,22 +138,32 @@ namespace Yozolab.DaerD.DynamicAnalyze
                 // Arriving is itself a delivery — see Simulation.Run.
                 _arrived[i] = true;
                 sampled = true;
-                Simulation.Carry(wire, _clients[0], _clients[i + 1]);
+                Simulation.Carry(wire, _builtIns, _clients[0], _clients[i + 1]);
             }
             while (_time >= _nextSample)
             {
                 _nextSample += wire.Interval;
                 sampled = true;
-                Simulation.Send(wire, _clients, _loss, _arrived, _dropped, _inFlight, _time);
+                Simulation.Send(wire, _builtIns, _clients, _loss, _arrived, _dropped, _inFlight,
+                    _time);
+            }
+            // The IK stream on its own tenth of a second — see Simulation.SendIk. Its own
+            // schedule variable beside the sample's, and nothing else of its own: the queue,
+            // the interpolation and the order they run in are all the run's.
+            while (_time >= _nextIk)
+            {
+                _nextIk += Simulation.IkSyncInterval;
+                Simulation.SendIk(wire, _builtIns, _clients, _arrived, _ik, _time);
             }
             // What has finished travelling — see Simulation.Land. The queue is the run's, not
             // the session's: sending and landing live in one place so a live session cannot
             // drift away from the run it is meant to be the same simulation as.
             Simulation.Land(_clients, _inFlight, _time);
+            Simulation.CarryIk(_clients, _ik, _arrived, _time);
 
-            // Whatever VRChat syncs on its own — see Simulation.CarryBroadcast.
+            // The voice's shadow — see Simulation.CarrySpeech.
             for (int i = 0; i < _arrived.Length; i++)
-                if (_arrived[i]) Simulation.CarryBroadcast(_broadcast, _clients[0], _clients[i + 1]);
+                if (_arrived[i]) Simulation.CarrySpeech(_builtIns, _clients[0], _clients[i + 1]);
 
             for (int i = 0; i < _clients.Count; i++)
             {

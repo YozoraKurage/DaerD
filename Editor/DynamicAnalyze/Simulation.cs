@@ -113,6 +113,111 @@ namespace Yozolab.DaerD.DynamicAnalyze
             return queues;
         }
 
+        // ---- the channels VRChat carries its own parameters on -----------------
+
+        /// <summary>
+        /// Seconds between IK updates. VRChat's number and not a setting: the channel is
+        /// documented as "always updated every 0.1 seconds (10 times per second)", and a field
+        /// for it would invite somebody to answer a question about VRChat with a cadence
+        /// VRChat does not have. It is deliberately not tied to <see cref="SyncWire.Interval"/>
+        /// either — the wearer's expression cadence has nothing to do with it, and a run where
+        /// turning one up slowed a gesture down would be inventing a coupling.
+        /// Source: https://creators.vrchat.com/avatars/animator-parameters/
+        /// </summary>
+        internal const float IkSyncInterval = 0.1f;
+
+        /// <summary>
+        /// The built-ins this controller reads, split by the channel VRChat carries each on.
+        /// Worked out once per run rather than per frame: it is the same answer for the length
+        /// of it, and three lists are what every frame then walks.
+        ///
+        /// Three lists rather than one, because the channels differ in each of the things a run
+        /// is for: when a value leaves, whether it can be lost, and what the other person's
+        /// copy does with it in between. One list carried every frame — which is what this was
+        /// — is all three answered with the fastest of them, so a gesture crossed on the frame
+        /// the hand moved and nobody could see the tenth of a second a headset spends on it.
+        /// </summary>
+        internal sealed class BuiltIns
+        {
+            /// <summary>With the pose, every <see cref="IkSyncInterval"/>, Floats interpolated
+            /// on the far side.</summary>
+            public readonly List<string> ik = new List<string>();
+
+            /// <summary>On the same channel as an expression parameter, so: in the wearer's
+            /// sample, at the wearer's cadence, lost when that sample is lost.</summary>
+            public readonly List<string> playable = new List<string>();
+
+            /// <summary>Not sent at all — computed on each side from audio that is crossing
+            /// anyway.</summary>
+            public readonly List<string> speech = new List<string>();
+
+            /// <summary>A run with nobody to carry anything to. Never written after this.
+            /// </summary>
+            public static readonly BuiltIns None = new BuiltIns();
+
+            public static BuiltIns For(SimClient client)
+            {
+                var found = new BuiltIns();
+                if (client == null) return found;
+                foreach (var definition in VrcParameters.All)
+                {
+                    if (!client.Has(definition.name)) continue;
+                    switch (definition.sync)
+                    {
+                        case VrcParameters.Sync.Ik: found.ik.Add(definition.name); break;
+                        case VrcParameters.Sync.Playable: found.playable.Add(definition.name); break;
+                        case VrcParameters.Sync.Speech: found.speech.Add(definition.name); break;
+                    }
+                }
+                return found;
+            }
+        }
+
+        /// <summary>
+        /// One IK Float on its way to the value that last landed. VRChat interpolates these on
+        /// the receiving client, which is why somebody else's Upright moves smoothly on a
+        /// headset instead of stepping ten times a second — and a run that snapped instead
+        /// would show a stair no eye has ever seen, in exactly the parameters most likely to be
+        /// driving a blend tree.
+        ///
+        /// Straight line, over exactly one interval. The real curve is not published; a guessed
+        /// ease would be a shape this module invented turning up in somebody's answer about
+        /// their avatar, and a line at least says plainly what it is.
+        /// </summary>
+        internal struct IkFloat
+        {
+            public float from;
+            public float to;
+            /// <summary>When it landed. The interpolation is read against the clock rather than
+            /// stepped per frame, so a jittering frame length cannot change where it has got
+            /// to.</summary>
+            public float since;
+        }
+
+        /// <summary>One person's IK channel: what is on its way to them, and where each Float
+        /// of theirs has got to. Per person for the same reason the sample queue is — how far a
+        /// stream has travelled is a fact about one copy of the avatar.</summary>
+        internal sealed class IkStream
+        {
+            public readonly Queue<WireDelivery> inFlight = new Queue<WireDelivery>();
+            public readonly Dictionary<string, IkFloat> floats = new Dictionary<string, IkFloat>();
+
+            /// <summary>Where a Float is at this moment: the value that landed, approached over
+            /// one interval from wherever the previous one had got to.</summary>
+            public float At(IkFloat moving, float time) =>
+                Mathf.Lerp(moving.from, moving.to,
+                    Mathf.Clamp01((time - moving.since) / IkSyncInterval));
+        }
+
+        /// <summary>A stream per person, made the way <see cref="InFlight"/> makes queues, so a
+        /// run and a live session cannot start from different shapes.</summary>
+        internal static IkStream[] IkStreams(int remotes)
+        {
+            var streams = new IkStream[Mathf.Max(0, remotes)];
+            for (int i = 0; i < streams.Length; i++) streams[i] = new IkStream();
+            return streams;
+        }
+
         /// <summary>
         /// One sample leaving the wearer: read once, then queued for everybody who is there to
         /// receive it, to land <see cref="SyncWire.Latency"/> seconds later.
@@ -125,10 +230,11 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// wrote. A wire that lost its samples on arrival instead would read better and would
         /// silently reshuffle every seeded run that already exists.
         /// </summary>
-        internal static void Send(SyncWire wire, List<SimClient> clients, SimRandom[] loss,
-            bool[] arrived, bool[] dropped, Queue<WireDelivery>[] inFlight, float time)
+        internal static void Send(SyncWire wire, BuiltIns builtIns, List<SimClient> clients,
+            SimRandom[] loss, bool[] arrived, bool[] dropped, Queue<WireDelivery>[] inFlight,
+            float time)
         {
-            var values = Sample(wire, clients[0]);
+            var values = Sample(wire, builtIns, clients[0]);
             float at = time + wire.Latency;
             for (int i = 0; i < arrived.Length; i++)
             {
@@ -147,6 +253,92 @@ namespace Yozolab.DaerD.DynamicAnalyze
             for (int i = 0; i < inFlight.Length; i++)
                 while (inFlight[i].Count > 0 && inFlight[i].Peek().at <= time)
                     Apply(inFlight[i].Dequeue().values, clients[i + 1]);
+        }
+
+        /// <summary>
+        /// One IK update leaving the wearer: read once, queued for everybody who is there to
+        /// receive it, landing <see cref="SyncWire.Latency"/> seconds later.
+        ///
+        /// Deliberately the same shape as <see cref="Send"/> — one reading, many deliveries,
+        /// through the same queue and the same delay — because it is the same network. What it
+        /// does NOT share is the schedule (its own fixed tenth of a second, not the wearer's
+        /// expression cadence), the dice (nothing is dropped here) and the rounding (none).
+        ///
+        /// No loss, and that is a modelling decision rather than a claim that packets do not go
+        /// missing: a lost tick of a stream that repeats every 0.1 s is overwritten by the next
+        /// one, so putting it in would buy a one-tick delay and the illusion that a run can
+        /// tell you how often it happens. A dropped expression sample is worth modelling
+        /// because a decoder can miss a step it will never be shown again; an IK tick has no
+        /// such step to miss.
+        /// </summary>
+        internal static void SendIk(SyncWire wire, BuiltIns builtIns, List<SimClient> clients,
+            bool[] arrived, IkStream[] streams, float time)
+        {
+            if (builtIns.ik.Count == 0) return;
+            var values = new Dictionary<string, float>();
+            foreach (var name in builtIns.ik) values[name] = clients[0].Read(name);
+            float at = time + wire.Latency;
+            for (int i = 0; i < arrived.Length; i++)
+                if (arrived[i])
+                    streams[i].inFlight.Enqueue(new WireDelivery { at = at, values = values });
+        }
+
+        /// <summary>
+        /// The IK channel as one person receives it: whatever has finished travelling, and then
+        /// this frame's position along whatever is still on its way there.
+        ///
+        /// Landing and interpolating in one call because they are one thing — an update does
+        /// not set a value, it sets where a value is heading — and separating them would let a
+        /// live session step the two in a different order from a batch run and be almost
+        /// right.
+        /// </summary>
+        internal static void CarryIk(List<SimClient> clients, IkStream[] streams, bool[] arrived,
+            float time)
+        {
+            for (int i = 0; i < streams.Length; i++)
+            {
+                if (!arrived[i]) continue;
+                var stream = streams[i];
+                var to = clients[i + 1];
+                while (stream.inFlight.Count > 0 && stream.inFlight.Peek().at <= time)
+                    LandIk(stream, stream.inFlight.Dequeue().values, to, time);
+                foreach (var pair in stream.floats)
+                    to.Write(pair.Key, stream.At(pair.Value, time));
+            }
+        }
+
+        /// <summary>
+        /// One IK update arriving. An Int or a Bool changes on the spot — there is nothing
+        /// between two gesture indices to be halfway through — and a Float becomes the
+        /// destination of a new interpolation instead.
+        ///
+        /// Where that interpolation STARTS is read out of the previous one rather than off the
+        /// client, which is not the same thing by a frame: updates land a whole interval apart,
+        /// so the last one has just finished at this instant while the last frame to write
+        /// anything was up to a frame earlier. Reading the client back would leave every Float
+        /// permanently a frame short of the wearer's, and a settled value would approach a
+        /// number it never reached.
+        /// </summary>
+        static void LandIk(IkStream stream, Dictionary<string, float> values, SimClient to,
+            float time)
+        {
+            foreach (var pair in values)
+            {
+                if (!to.Has(pair.Key)) continue;
+                if (to.TypeOf(pair.Key) != AnimatorControllerParameterType.Float)
+                {
+                    to.Write(pair.Key, pair.Value);
+                    continue;
+                }
+                float from = stream.floats.TryGetValue(pair.Key, out var moving)
+                    ? stream.At(moving, time) : to.Read(pair.Key);
+                stream.floats[pair.Key] = new IkFloat
+                {
+                    from = from,
+                    to = pair.Value,
+                    since = time,
+                };
+            }
         }
 
         public static SignalTrace Run(AnimatorController controller, SimClock clock = null,
@@ -179,7 +371,8 @@ namespace Yozolab.DaerD.DynamicAnalyze
                 var pending = settings.stimulus != null
                     ? settings.stimulus.InOrder() : new List<Stimulus.Entry>();
 
-                var broadcast = remotes > 0 ? Broadcast(clients[0]) : new List<string>();
+                var builtIns = remotes > 0 ? BuiltIns.For(clients[0]) : BuiltIns.None;
+                var ik = IkStreams(remotes);
                 var loss = new SimRandom[remotes];
                 // Zero means somebody loaded with the wearer, and then there is nothing to hand
                 // over: both copies start from the same defaults and the first thing that
@@ -202,6 +395,11 @@ namespace Yozolab.DaerD.DynamicAnalyze
                 // everyone: the wearer reads its own values once and the reading is broadcast.
                 float nextSample = remotes > 0
                     ? wire.EarliestJoin + wire.Interval : float.MaxValue;
+                // The IK stream keeps its own time. It starts where the wearer's does — with
+                // somebody there to receive it — and then runs on VRChat's tenth of a second
+                // whatever the wire is set to.
+                float nextIk = remotes > 0
+                    ? wire.EarliestJoin + IkSyncInterval : float.MaxValue;
 
                 for (int frame = 0; frame < steps.Length; frame++)
                 {
@@ -221,24 +419,33 @@ namespace Yozolab.DaerD.DynamicAnalyze
                         // they land on rather than waiting for the next change.
                         arrived[i] = true;
                         sampled = true;
-                        Carry(wire, clients[0], clients[i + 1]);
+                        Carry(wire, builtIns, clients[0], clients[i + 1]);
                     }
                     while (time >= nextSample)
                     {
                         nextSample += wire.Interval;
                         sampled = true;
-                        Send(wire, clients, loss, arrived, dropped, inFlight, time);
+                        Send(wire, builtIns, clients, loss, arrived, dropped, inFlight, time);
+                    }
+                    // The IK stream, on its own schedule. It does not raise `sampled`: the
+                    // wire's row means the wearer's expression sample went, which is what
+                    // every reader of it takes it for, and a second thing ticking on that row
+                    // would make a cadence somebody typed unreadable.
+                    while (time >= nextIk)
+                    {
+                        nextIk += IkSyncInterval;
+                        SendIk(wire, builtIns, clients, arrived, ik, time);
                     }
                     // What has finished travelling. There is no row for it: the wire's row
                     // says a sample WENT — which is what every reader of it, the findings
                     // included, takes it for — and a landing shows up as the other person's
                     // values moving, which is the thing anybody came here to look at.
                     Land(clients, inFlight, time);
+                    CarryIk(clients, ik, arrived, time);
 
-                    // Whatever VRChat syncs on its own, before the frame that reads it. Not on
-                    // the sample and not subject to its loss — see CarryBroadcast.
+                    // The voice's shadow, before the frame that reads it — see CarrySpeech.
                     for (int i = 0; i < remotes; i++)
-                        if (arrived[i]) CarryBroadcast(broadcast, clients[0], clients[i + 1]);
+                        if (arrived[i]) CarrySpeech(builtIns, clients[0], clients[i + 1]);
 
                     for (int i = 0; i < clients.Count; i++)
                     {
@@ -286,21 +493,46 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// this module has no model of it. Delaying it by the sample latency would be
         /// inventing one, and inventing one is how a run starts answering questions it was
         /// never entitled to answer.
+        ///
+        /// Every channel at once, the built-ins included and whatever cadence each of them
+        /// normally keeps: a joiner is shown a pose and a face, not a blank avatar that fills
+        /// in over the next tenth of a second. Which is also why the IK Floats are set here
+        /// rather than started on an interpolation — there is nothing yet for them to be
+        /// interpolating from.
         /// </summary>
-        internal static void Carry(SyncWire wire, SimClient from, SimClient to) =>
-            Apply(Sample(wire, from), to);
+        internal static void Carry(SyncWire wire, BuiltIns builtIns, SimClient from, SimClient to)
+        {
+            Apply(Sample(wire, builtIns, from), to);
+            Hand(builtIns.ik, from, to);
+            Hand(builtIns.speech, from, to);
+        }
+
+        /// <summary>The wearer's current values for these names, written straight across. What
+        /// a channel with no journey in it does.</summary>
+        static void Hand(List<string> names, SimClient from, SimClient to)
+        {
+            foreach (var name in names)
+                if (to.Has(name)) to.Write(name, from.Read(name));
+        }
 
         /// <summary>
         /// The wearer's synced values as the wire would carry them — rounded on the way out,
         /// because that is when the wire has them, and a value read now cannot be rounded
         /// differently by arriving later.
         ///
-        /// A built-in is skipped however it got into the list. VRChat feeds those itself, on
-        /// its own channels — a store that names one is a mistake people make, and honouring
-        /// it here would send AvatarVersion over a wire that never carries it and round a
+        /// The playable built-ins ride along in it, because VRChat puts them on the same
+        /// channel as an expression parameter: same cadence, same delivery, gone with the same
+        /// lost sample. They are NOT rounded with it. The eight bits over -1..1 are the price
+        /// of a place in the avatar's parameter budget, and a built-in is outside that budget —
+        /// so quantizing GestureLeftWeight here would charge an avatar for a bit it never
+        /// spent, and clamping EyeHeightAsMeters to a metre would be a bug no headset has.
+        ///
+        /// A built-in NAMED IN THE STORE is still skipped above and then carried by its own
+        /// channel below. Listing one is a mistake people make, and honouring it would round a
         /// Velocity into a range it does not live in.
         /// </summary>
-        internal static Dictionary<string, float> Sample(SyncWire wire, SimClient from)
+        internal static Dictionary<string, float> Sample(SyncWire wire, BuiltIns builtIns,
+            SimClient from)
         {
             var values = new Dictionary<string, float>();
             foreach (var name in wire.parameters)
@@ -309,6 +541,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
                 if (VrcParameters.IsBuiltIn(name)) continue;
                 values[name] = wire.Compress(from.Read(name), from.TypeOf(name));
             }
+            foreach (var name in builtIns.playable) values[name] = from.Read(name);
             return values;
         }
 
@@ -323,40 +556,16 @@ namespace Yozolab.DaerD.DynamicAnalyze
         }
 
         /// <summary>
-        /// The built-ins this controller reads that VRChat keeps in step by itself. Worked out
-        /// once per run rather than per frame: it is the same answer for the length of it.
-        /// </summary>
-        internal static List<string> Broadcast(SimClient client)
-        {
-            var names = new List<string>();
-            if (client == null) return names;
-            foreach (var definition in VrcParameters.All)
-                if (definition.sync == VrcParameters.Sync.Broadcast && client.Has(definition.name))
-                    names.Add(definition.name);
-            return names;
-        }
-
-        /// <summary>
-        /// What the platform syncs whether or not the avatar asked. Gesture, Viseme, Grounded,
-        /// the scale family — the values most controllers are actually built on — reach every
-        /// other client continuously, and a run that only carried the expression sample showed
-        /// a remote whose hand never moved. It is the commonest shape there is, so getting it
-        /// wrong was wrong about nearly every avatar.
+        /// The voice's shadow: Viseme and Voice, every frame, uncompressed and with no delay.
         ///
-        /// Every frame rather than on the sample, and uncompressed, because these do not ride
-        /// the expression channel: they are neither paced by its cadence nor rounded to its
-        /// eight bits over -1..1 — a rule that would clamp VelocityZ to a metre a second and
-        /// invent a bug that no headset has. For the same reason a lost sample does not take
-        /// them with it: a dropped tick of a continuous stream is replaced by the next frame's,
-        /// so modelling it would produce a one-frame delay and nothing else.
+        /// The only channel modelled as instant, and for the opposite reason to the others —
+        /// nothing about these is sent. Each client computes them from the audio it is already
+        /// receiving, so the wearer's mouth and the remote's move together for as long as the
+        /// voice is getting through at all. The approximation is that this run has no audio and
+        /// therefore no way to be behind: a headset's remote viseme is as late as the voice is,
+        /// and a run cannot tell anybody how late that is.
         /// </summary>
-        internal static void CarryBroadcast(List<string> names, SimClient from, SimClient to)
-        {
-            foreach (var name in names)
-            {
-                if (!to.Has(name)) continue;
-                to.Write(name, from.Read(name));
-            }
-        }
+        internal static void CarrySpeech(BuiltIns builtIns, SimClient from, SimClient to) =>
+            Hand(builtIns.speech, from, to);
     }
 }

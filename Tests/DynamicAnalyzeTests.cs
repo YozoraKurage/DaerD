@@ -1210,12 +1210,16 @@ namespace Yozolab.DaerD.Tests
         }
 
         [Test]
-        public void BuiltIns_ReachTheOtherPersonWithoutAnybodySyncingThem()
+        public void BuiltIns_OnTheIkChannel_ArriveOnItsOwnTenthOfASecond()
         {
             // GestureLeft is in no store and on no wire, and it still arrives: VRChat carries
             // its own parameters. Nearly every FX controller is built on these, so a run that
             // waited for them to be listed showed a remote whose hand never moved.
-            // Rounding is another test's business; this one is about when things arrive.
+            //
+            // But it is not instant either. The IK channel updates ten times a second, so the
+            // other person's hand changes on a tick and not on the frame the wearer's did —
+            // and a run that showed it following frame for frame was flattering the platform
+            // in exactly the parameters a gesture layer is built on.
             var wire = new SyncWire { intervalSeconds = 0.2f, quantize = false }.Syncs("X");
             var stimulus = new Stimulus().At(0.05f, "GestureLeft", 1f).At(0.05f, "X", 0.5f);
             var trace = Simulation.Run(Reading("GestureLeft"), Wired(0.5f, wire, stimulus));
@@ -1224,32 +1228,118 @@ namespace Yozolab.DaerD.Tests
             var there = trace.Find(Simulation.RemoteScope, "GestureLeft");
             Assert.AreEqual(1f, there.At(trace.Frames - 1), "it has to get there at all");
 
-            // And not on the sample's cadence: the expression parameter beside it waits for the
-            // next sample, and this does not.
             int moved = FirstFrameAt(here, 1f), arrived = FirstFrameAt(there, 1f);
-            Assert.LessOrEqual(arrived - moved, 1,
-                "a built-in is a continuous stream, not a passenger on the sample");
+            Assert.Greater(arrived, moved, "the channel ticks; it does not follow");
+            Assert.LessOrEqual(trace.TimeAt(arrived) - trace.TimeAt(moved), 0.1f + 1f / 60f,
+                "and never waits longer than the next tick of a 10 Hz channel");
+
+            // Still well ahead of the expression parameter poked in the same breath, which
+            // waits for the wearer's own cadence.
             Assert.Greater(FirstFrameAt(trace.Find(Simulation.RemoteScope, "X"), 0.5f), arrived,
-                "the synced parameter poked in the same breath still waits its turn");
+                "the synced parameter is on a slower channel and still waits its turn");
+        }
+
+        [Test]
+        public void BuiltIns_OnTheIkChannel_AreInterpolatedIntoPlaceOnTheOtherCopy()
+        {
+            // A Float on the IK channel is interpolated by the receiving client, so ten updates
+            // a second look like motion rather than like a staircase. The wearer jumps to 1 on
+            // the first frame; the other person's copy climbs to it over the interval.
+            var wire = new SyncWire { intervalSeconds = 0.5f }.Syncs("X");   // never samples here
+            var stimulus = new Stimulus().At(0f, "VelocityX", 1f);
+            var trace = Simulation.Run(Reading("VelocityX"), Wired(0.4f, wire, stimulus));
+            var there = trace.Find(Simulation.RemoteScope, "VelocityX");
+
+            int moving = FirstMove(there);
+            Assert.Greater(moving, 0, "it has to start moving at all");
+            Assert.Less(there.At(moving), 1f, "and not snap: it is on its way, not arrived");
+
+            int settled = -1;
+            for (int frame = moving; frame < trace.Frames && settled < 0; frame++)
+                if (there.At(frame) >= 1f - 1e-4f) settled = frame;
+            Assert.Greater(settled, moving + 2, "it climbed rather than arrived");
+            Assert.Less(trace.TimeAt(settled) - trace.TimeAt(moving), 0.12f,
+                "and got there inside the interval it was given");
+            for (int frame = moving; frame <= settled; frame++)
+                Assert.GreaterOrEqual(there.At(frame), there.At(frame - 1) - 1e-5f,
+                    "a straight line does not wander on its way");
+        }
+
+        [Test]
+        public void BuiltIns_OnThePlayableChannel_RideTheSample_AndAreNotRoundedLikeOne()
+        {
+            // VRChat puts these on the same channel as an expression parameter, so they arrive
+            // in the same delivery — and they are outside the avatar's bit budget, so the eight
+            // bits that budget pays for are not charged to them.
+            var wire = new SyncWire { intervalSeconds = 0.2f }.Syncs("X");
+            var stimulus = new Stimulus()
+                .At(0.05f, "GestureLeftWeight", 0.3f).At(0.05f, "X", 0.3f);
+            var trace = Simulation.Run(Reading("GestureLeftWeight"), Wired(0.5f, wire, stimulus));
+
+            var weight = trace.Find(Simulation.RemoteScope, "GestureLeftWeight");
+            var expression = trace.Find(Simulation.RemoteScope, "X");
+            Assert.AreEqual(FirstMove(expression), FirstMove(weight),
+                "one channel, one sample, one frame");
+            Assert.AreEqual(0.3f, weight.At(trace.Frames - 1), 1e-6f,
+                "an avatar was never charged a bit for this, so it is not rounded to one");
+            Assert.AreNotEqual(0.3f, expression.At(trace.Frames - 1),
+                "unlike the expression parameter beside it, which is");
+
+            // And it misses when the sample misses. A whole sample is lost or none of it is,
+            // and a built-in riding in one is not a special case of that.
+            var lossy = new SyncWire { intervalSeconds = 0.1f, dropChance = 1f }.Syncs("X");
+            var lost = Simulation.Run(Reading("GestureLeftWeight"), Wired(0.5f, lossy,
+                new Stimulus().At(0.05f, "GestureLeftWeight", 0.3f)));
+            Assert.AreEqual(0f,
+                lost.Find(Simulation.RemoteScope, "GestureLeftWeight").At(lost.Frames - 1),
+                "a lost sample takes its playable built-ins with it");
+        }
+
+        [Test]
+        public void BuiltIns_OnTheSpeechChannel_FollowTheWearerFrameForFrame()
+        {
+            // Nothing sends a viseme. Both clients compute it from audio that is crossing
+            // anyway, so the two copies move together and no cadence comes into it.
+            var wire = new SyncWire { intervalSeconds = 0.5f }.Syncs("X");
+            var stimulus = new Stimulus().At(0.05f, "Viseme", 4f);
+            var trace = Simulation.Run(Reading("Viseme"), Wired(0.4f, wire, stimulus));
+
+            Assert.AreEqual(FirstFrameAt(trace.Find(Simulation.LocalScope, "Viseme"), 4f),
+                FirstFrameAt(trace.Find(Simulation.RemoteScope, "Viseme"), 4f),
+                "the viseme is the shadow of the voice, and the voice is not on this wire");
+        }
+
+        [Test]
+        public void BuiltIns_AvatarVersion_TravelsWithThePose()
+        {
+            // It used to be filed as never leaving the client, which is what an older
+            // third-party table says. VRChat's own list puts it on the IK channel.
+            var wire = new SyncWire { intervalSeconds = 0.5f }.Syncs("X");
+            var stimulus = new Stimulus().At(0.05f, "AvatarVersion", 3f);
+            var trace = Simulation.Run(Reading("AvatarVersion"), Wired(0.5f, wire, stimulus));
+
+            Assert.AreEqual(3f,
+                trace.Find(Simulation.RemoteScope, "AvatarVersion").At(trace.Frames - 1),
+                "a controller branching on the avatar version branched only on the wearer");
         }
 
         [Test]
         public void BuiltIns_ThatAreNotTheWearersToSend_StayWhereTheyAre()
         {
-            // Two that must not ride along. AvatarVersion never leaves a client; IsOnFriendsList
-            // answers whether the wearer is on YOUR friends list, so the wearer's own copy of it
-            // is not an answer anybody else wants.
+            // The two shapes that must never cross, whatever channel exists. PreviewMode never
+            // leaves a client at all; IsOnFriendsList answers whether the wearer is on YOUR
+            // friends list, so the wearer's own copy of it is not an answer anybody else wants.
             var wire = new SyncWire { intervalSeconds = 0.1f }.Syncs("X");
             var stimulus = new Stimulus()
-                .At(0.05f, "AvatarVersion", 3f)
+                .At(0.05f, "PreviewMode", 3f)
                 .At(0.05f, "IsOnFriendsList", 1f);
             var trace = Simulation.Run(
-                Reading("AvatarVersion", "IsOnFriendsList", "IsLocal"),
+                Reading("PreviewMode", "IsOnFriendsList", "IsLocal"),
                 Wired(0.5f, wire, stimulus));
             int last = trace.Frames - 1;
 
-            Assert.AreEqual(3f, trace.Find(Simulation.LocalScope, "AvatarVersion").At(last));
-            Assert.AreEqual(0f, trace.Find(Simulation.RemoteScope, "AvatarVersion").At(last));
+            Assert.AreEqual(3f, trace.Find(Simulation.LocalScope, "PreviewMode").At(last));
+            Assert.AreEqual(0f, trace.Find(Simulation.RemoteScope, "PreviewMode").At(last));
             Assert.AreEqual(0f, trace.Find(Simulation.RemoteScope, "IsOnFriendsList").At(last));
 
             // The one this would break loudest: IsLocal is each client's own answer, and a wire
@@ -1269,18 +1359,69 @@ namespace Yozolab.DaerD.Tests
             var trace = Simulation.Run(Reading("VelocityZ"), Wired(0.5f, wire, stimulus));
 
             Assert.AreEqual(3.5f, trace.Find(Simulation.RemoteScope, "VelocityZ")
-                .At(trace.Frames - 1), 1e-5f, "carried by the platform, so not rounded like a sample");
+                .At(trace.Frames - 1), 1e-4f, "carried by the platform, so not rounded like a sample");
+        }
+
+        [Test]
+        public void BuiltIns_ChangeNothingInARunWithNobodyToSendTo()
+        {
+            // One client is an Animator question, not a VRChat one: there are no channels
+            // because there is nobody on the other end of them, and the wearer's own values
+            // are its own whatever VRChat would have done with them.
+            var settings = new SimSettings
+            {
+                clock = Clock(0.3f),
+                stimulus = new Stimulus()
+                    .At(0.05f, "GestureLeft", 1f).At(0.05f, "VelocityX", 0.5f),
+            };
+            var trace = Simulation.Run(Reading("GestureLeft", "VelocityX"), settings);
+
+            foreach (var signal in trace.Signals)
+                Assert.AreEqual(Simulation.LocalScope, signal.scope, signal.Path);
+            Assert.AreEqual(1f,
+                trace.Find(Simulation.LocalScope, "GestureLeft").At(trace.Frames - 1));
+            Assert.AreEqual(0.5f,
+                trace.Find(Simulation.LocalScope, "VelocityX").At(trace.Frames - 1), 1e-6f,
+                "and not interpolated towards itself");
         }
 
         [Test]
         public void ASessionCarriesTheBuiltInsTheSameWayARunDoes()
         {
-            var settings = Wired(1f, new SyncWire { intervalSeconds = 0.2f }.Syncs("X"));
-            using (var session = new SimSession(Reading("GestureLeft"), settings))
+            // Not "does it get there" but "do the two engines agree frame for frame". Each
+            // channel now has a schedule, a queue or an interpolation of its own, and a session
+            // that kept a second copy of any of them would drift inside a tenth of a second —
+            // which is exactly the interval every answer about a gesture is measured in.
+            var settings = new SimSettings
             {
-                session.StepOnce();
+                clock = new SimClock { fps = 60f, seconds = 0.5f, seed = 5 },
+                wire = new SyncWire { intervalSeconds = 0.2f, latencySeconds = 0.05f }
+                    .Syncs("X"),
+            };
+            settings.stimulus
+                .At(0f, "GestureLeft", 2f).At(0f, "VelocityX", 0.75f)
+                .At(0f, "GestureLeftWeight", 0.4f).At(0f, "Viseme", 5f);
+            string[] builtIns = { "GestureLeft", "VelocityX", "GestureLeftWeight", "Viseme" };
+            var batch = Simulation.Run(Reading(builtIns), settings);
+
+            using (var session = new SimSession(Reading(builtIns), settings))
+            {
+                // A session has hands rather than a list — see Session_RunsEverybodyTheWayARunDoes.
                 session.Write(Simulation.LocalScope, "GestureLeft", 2f);
-                session.StepOnce();
+                session.Write(Simulation.LocalScope, "VelocityX", 0.75f);
+                session.Write(Simulation.LocalScope, "GestureLeftWeight", 0.4f);
+                session.Write(Simulation.LocalScope, "Viseme", 5f);
+                for (int i = 0; i < 30; i++) session.StepOnce();
+
+                Assert.AreEqual(batch.Signals.Count, session.Trace.Signals.Count);
+                foreach (var signal in batch.Signals)
+                {
+                    var live = session.Trace.Find(signal.scope, signal.name);
+                    Assert.IsNotNull(live, signal.Path);
+                    for (int frame = 0; frame < batch.Frames; frame++)
+                        Assert.AreEqual(signal.At(frame), live.At(frame), 1e-6f,
+                            signal.Path + " at frame " + frame);
+                }
                 Assert.AreEqual(2f, session.Read(Simulation.RemoteScope, "GestureLeft"),
                     "live and batch are the same simulation or neither is worth reading");
             }
@@ -1310,6 +1451,16 @@ namespace Yozolab.DaerD.Tests
         {
             for (int frame = 0; frame < signal.Frames; frame++)
                 if (Mathf.Approximately(signal.At(frame), value)) return frame;
+            return -1;
+        }
+
+        /// <summary>The first frame this signal is anything but where it started, or -1. What
+        /// "something reached the other person" looks like when the value it is on its way to
+        /// is not the point.</summary>
+        static int FirstMove(SignalTrace.Signal signal)
+        {
+            for (int frame = 0; frame < signal.Frames; frame++)
+                if (signal.At(frame) != signal.At(0)) return frame;
             return -1;
         }
 

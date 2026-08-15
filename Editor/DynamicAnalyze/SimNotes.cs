@@ -35,12 +35,13 @@ namespace Yozolab.DaerD.DynamicAnalyze
         }
 
         /// <summary>
-        /// The built-ins whose two copies are meant to disagree. VRChat broadcasts the
-        /// locomotion values — this run carries them across every frame, which is right — but
-        /// playspace movement is counted on somebody else's copy of you and not on your own, so
-        /// a headset shows the wearer and the remote reading different numbers from the same
-        /// motion. Nothing here can produce that: a wire carries a value faithfully or not at
-        /// all, and this is the one shape where carrying it faithfully is the divergence.
+        /// The built-ins whose two copies are meant to disagree. VRChat puts the locomotion
+        /// values on the IK channel — this run carries them there too, ten times a second and
+        /// interpolated, which is right — but playspace movement is counted on somebody else's
+        /// copy of you and not on your own, so a headset shows the wearer and the remote
+        /// reading different numbers from the same motion. Nothing here can produce that: a
+        /// channel carries a value correctly or not at all, and this is the one shape where
+        /// carrying it correctly is the divergence.
         /// </summary>
         static void Playspace(AnimatorController controller, List<string> notes)
         {
@@ -49,7 +50,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
                 if (VrcParameters.PlayspaceDiffers(parameter.name)) names.Add(parameter.name);
             if (names.Count == 0) return;
             notes.Add(L.Tr(
-                "{0} locomotion parameter(s) read the same on both copies here ({1}). On a headset the other person's copy counts playspace movement and the wearer's own does not, so those two numbers are not meant to agree.",
+                "{0} locomotion parameter(s) carry the wearer's own number to the other person here ({1}). On a headset the other person's copy counts playspace movement and the wearer's own does not, so those two numbers are not meant to agree.",
                 names.Count, Join(names)));
         }
 
