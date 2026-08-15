@@ -39,8 +39,8 @@ namespace Yozolab.DaerD.Tests
         static List<string> Synced(params string[] names) => new List<string>(names);
 
         static List<string> Warnings(bool wire, List<string> synced, List<string> declared,
-            Stimulus stimulus = null) =>
-            RunWarnings.For(wire, synced, declared, stimulus);
+            Stimulus stimulus = null, bool edited = false) =>
+            RunWarnings.For(wire, synced, declared, stimulus, edited);
 
         static string One(List<string> warnings, string opening)
         {
@@ -173,6 +173,60 @@ namespace Yozolab.DaerD.Tests
             Assert.AreEqual(2, warnings.Count);
             One(warnings, "not parameters of this controller");
             One(warnings, "not on the wire");
+        }
+
+        // ---- a world that does not answer back --------------------------------
+
+        static Stimulus Recorded(bool world = true)
+        {
+            var stimulus = new Stimulus();
+            stimulus.At(Stimulus.MenuTrack, 0.1f, "Toggle", 1f);
+            if (world) stimulus.At(Stimulus.WorldTrack, 0.2f, "Touched", 1f);
+            return stimulus;
+        }
+
+        [Test]
+        public void FrozenWorld_IsSaidOnceTheInputsAreNoLongerTheOnesItWasRecordedBeside()
+        {
+            var stimulus = Recorded();
+            // Untouched, this is a replay of the recording and the world track is exactly as
+            // right as everything else in it.
+            None(Warnings(false, Synced(), Declared("Toggle", "Touched"), stimulus),
+                "frozen");
+
+            var warning = One(
+                Warnings(false, Synced(), Declared("Toggle", "Touched"), stimulus, true),
+                "frozen");
+            StringAssert.Contains(Stimulus.WorldTrack, warning);
+            StringAssert.Contains("Mute it", warning);
+        }
+
+        [Test]
+        public void FrozenWorld_GoesAwayWhenTheTrackDoes()
+        {
+            var declared = Declared("Toggle", "Touched");
+            var muted = Recorded();
+            muted.Find(Stimulus.WorldTrack).muted = true;
+            None(Warnings(false, Synced(), declared, muted, true),
+                "frozen");
+
+            // And is never said about a list that has no world track in it at all — which is
+            // every stimulus somebody typed from nothing.
+            None(Warnings(false, Synced(), declared, Recorded(false), true), "frozen");
+            None(Warnings(false, Synced(), declared, null, true), "frozen");
+        }
+
+        [Test]
+        public void FrozenWorld_IsSaidToASingleClientRunToo()
+        {
+            // The other warnings here are each about a value reaching somebody else and are
+            // silent without a second person. This one is about what the run does not work out,
+            // which does not need anybody else to be wrong.
+            var alone = Warnings(false, Synced(), Declared("Toggle", "Touched"), Recorded(), true);
+            Assert.AreEqual(1, alone.Count, "and it is the only thing worth saying:\n  "
+                + string.Join("\n  ", alone.ToArray()));
+            One(Warnings(true, Synced("Toggle"), Declared("Toggle", "Touched"), Recorded(), true),
+                "frozen");
         }
 
         // ---- the store, beside the button that reads it -----------------------

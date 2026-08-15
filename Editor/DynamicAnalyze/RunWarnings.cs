@@ -33,15 +33,51 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// <param name="synced">What the window is about to put on the wire.</param>
         /// <param name="declared">The controller's own parameters.</param>
         /// <param name="stimulus">The timed inputs, or null for a run with none.</param>
+        /// <param name="edited">Whether the inputs have been changed since they were taken off
+        /// a recording. The caller is the only one who can know — a stimulus says what it is,
+        /// not what it used to be — and it is what tells the one warning below that is about a
+        /// limit of the simulator rather than about a mistake.</param>
         public static List<string> For(bool wire, IList<string> synced, IList<string> declared,
-            Stimulus stimulus)
+            Stimulus stimulus, bool edited)
         {
             var warnings = new List<string>();
+            // First, and outside the wire's gate: every other warning here is about a value
+            // reaching somebody else, and this one is about what the run itself will not
+            // recompute — which is as true of a single client as of two.
+            FrozenWorld(stimulus, edited, warnings);
             if (!wire) return warnings;
             NothingTravels(synced, warnings);
             NamesWithNothingBehindThem(synced, declared, warnings);
             InputsThatWillNotLeave(synced, declared, stimulus, warnings);
             return warnings;
+        }
+
+        /// <summary>
+        /// A world track played back beside inputs that are no longer the ones it was recorded
+        /// with.
+        ///
+        /// The world track is what touched the avatar from outside — a contact, a physbone,
+        /// somebody else's hand. It is not a model of any of those: it is the values they
+        /// produced that day, frozen. Change the menu track and, in a headset, the contact would
+        /// have fired somewhere else or not at all; here it fires exactly where it did, and the
+        /// run looks like a clean answer to a question that was half asked.
+        ///
+        /// Only when something HAS been changed, and only while the track is switched on. Said
+        /// on every run that has a world track in it, the sentence would be a standing note
+        /// about the simulator — which is <see cref="SimNotes"/>'s job — and would be read past
+        /// by the time it mattered. This one appears the moment the run stops being a replay
+        /// and goes away again when the track is muted, which is one of the two ways out of it;
+        /// the other is the outer loop, where the edited inputs are played into an avatar
+        /// somebody is really wearing and the world answers for itself.
+        /// </summary>
+        static void FrozenWorld(Stimulus stimulus, bool edited, List<string> warnings)
+        {
+            if (stimulus == null || !edited) return;
+            var world = stimulus.Find(Stimulus.WorldTrack);
+            if (world == null || world.muted || world.entries.Count == 0) return;
+            warnings.Add(L.Tr(
+                "The {0} track is frozen: it replays what touched the avatar that day, and the rest of the inputs are no longer what it was recorded beside. Nothing here works out where a contact or a physbone would have fired instead. Mute it to ask the question without the world in it, or play the inputs into a real avatar and record the answer.",
+                Stimulus.WorldTrack));
         }
 
         /// <summary>

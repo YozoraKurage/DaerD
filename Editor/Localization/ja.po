@@ -3275,3 +3275,33 @@ msgstr "パラメータードライバーが書く {0} 個の名前は入れて�
 
 msgid "{0} name(s) an animation writes onto the Animator are left out ({1}). The run plays the same clips, so replaying these would fight what they write every frame."
 msgstr "アニメーションが Animator に書き込む {0} 個の名前は入れていません（{1}）。実行側も同じクリップを再生するので、これらを流し直すと毎フレーム書き合いになります。"
+
+msgid "Mute"
+msgstr "ミュート"
+
+msgid "Leave this track out of the run. Part of the experiment and saved with it: a run of the recording without its gestures is a question, and a saved answer has to be able to say it was asked."
+msgstr "このトラックを実行から外します。ミュートは実験の一部で、保存にも含まれます。「ジェスチャー抜きで記録を回す」は一つの問いであり、保存した答えはその問いを言えなければなりません。"
+
+msgid "Solo"
+msgstr "ソロ"
+
+msgid "Run this track and nothing else, until you turn it off again. Not saved with the run — it is a way of looking rather than part of the experiment, and the muting underneath it is left exactly as it was."
+msgstr "解除するまで、このトラックだけを実行します。ソロは保存されません。実験の一部ではなく見方の問題であり、下にあるミュートの設定はそのまま残ります。"
+
+msgid "Name"
+msgstr "名前"
+
+msgid "Rename this track. The name is how a track is found again, so a renamed one is no longer one this window will take from a recording for you — which is the point of renaming it."
+msgstr "このトラックの名前を変えます。トラックは名前で見つけ直すので、名前を変えたトラックはもうこのウィンドウが記録から取り直してくれる対象ではありません。名前を変えるとはそういうことです。"
+
+msgid "Re-take"
+msgstr "取り直し"
+
+msgid "Take this one track down from a recording again and leave the rest of the list alone. What it holds now is replaced by what that recording has in it, including nothing."
+msgstr "このトラックだけを記録から取り直し、他の行はそのままにします。今入っている内容は、その記録が持っている内容（何も無い場合も含む）で置き換わります。"
+
+msgid "Remove this whole track and everything in it. Muting leaves it in the file; this does not."
+msgstr "このトラックを中身ごと削除します。ミュートはファイルに残りますが、こちらは残りません。"
+
+msgid "The {0} track is frozen: it replays what touched the avatar that day, and the rest of the inputs are no longer what it was recorded beside. Nothing here works out where a contact or a physbone would have fired instead. Mute it to ask the question without the world in it, or play the inputs into a real avatar and record the answer."
+msgstr "{0} トラックは凍った入力です。記録した日にアバターへ触れたものをそのまま再生しますが、他の入力はもう記録時のものではありません。コンタクトや PhysBone が代わりにどこで発火したかを、ここでは計算しません。世界抜きで問うならミュートし、世界ごと問うなら実際のアバターへ入力を流して答えを記録してください。"

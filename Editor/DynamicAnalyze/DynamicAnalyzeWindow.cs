@@ -104,6 +104,12 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// a person extracts, presses Play to record the comparison, and comes back to a panel
         /// that would otherwise have forgotten what it left out.</summary>
         [SerializeField] string _extracted = string.Empty;
+        /// <summary>What the inputs looked like when they came off a recording, so the panel can
+        /// tell "still the recording" from "somebody has been editing" — which is the whole of
+        /// what the frozen-world warning needs to know. A signature rather than a copy: the
+        /// alternative was keeping a second set of tracks in the layout to compare against, for
+        /// a question whose answer is one bit.</summary>
+        [SerializeField] string _asExtracted = string.Empty;
         /// <summary>
         /// Which mood the window is in, as the two booleans that keep a saved layout meaning
         /// what it meant. <see cref="_live"/> is the flag this window has always had, and a
@@ -143,6 +149,13 @@ namespace Yozolab.DaerD.DynamicAnalyze
 
         readonly WaveformView _view = new WaveformView();
         SimSession _session;
+
+        // Which track is soloed, and which is having its name typed. Neither is serialized and
+        // neither should be: solo is "mute the others while I look at this one", which is a fact
+        // about somebody standing in front of the window rather than about the experiment (see
+        // Stimulus), and a half-typed name is not even that.
+        string _solo;
+        string _renaming;
 
         // The recording, and whether it is still being written to. Not serialized, and it does
         // not need to be: entering Play mode reloads the domain and takes these with it, which
@@ -536,6 +549,9 @@ namespace Yozolab.DaerD.DynamicAnalyze
 
             _tracks.Clear();
             _extracted = string.Empty;
+            _asExtracted = string.Empty;
+            _solo = null;
+            _renaming = null;
             if (settings.stimulus != null)
                 foreach (var track in settings.stimulus.tracks)
                 {
@@ -627,6 +643,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
                     if (extraction.stimulus.Find(name) == null)
                         Drop(name);
             _extracted = Left(extraction, taken);
+            _asExtracted = InputSignature(_tracks);
         }
 
         /// <summary>The tracks an extraction owns. A track by one of these names is replaced
@@ -835,6 +852,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
             // A live session was built from these; changing one has to rebuild it or the
             // window would be showing a run nobody asked for.
             if (EditorGUI.EndChangeCheck() && _live) DropSession();
+            DrawWarnings();
             EditorGUILayout.EndVertical();
         }
 
@@ -949,12 +967,23 @@ namespace Yozolab.DaerD.DynamicAnalyze
                     GUI.changed = true;
                 }
             }
+        }
 
-            // What is already wrong with the experiment, above the run rather than after it.
-            // Not in SimNotes: that list is what a run of this CONTROLLER cannot promise and is
-            // true whatever the settings say, and these are all fixed by a field on this panel.
-            foreach (var warning in RunWarnings.For(_twoClients, _synced, declared,
-                         BuildStimulus()))
+        /// <summary>
+        /// What is already wrong with the experiment, above the run rather than after it. Not in
+        /// SimNotes: that list is what a run of this CONTROLLER cannot promise and is true
+        /// whatever the settings say, and these are all fixed by a field on this panel.
+        ///
+        /// At the foot of the whole settings panel rather than under the list of what travels,
+        /// which is where it used to be. Most of these are about the wire and that was the right
+        /// place for them; the one about a frozen world track is about what the run does not
+        /// recompute, which is as true of a single-client run — and a warning that only appears
+        /// when a second person is in the run would be one nobody could find.
+        /// </summary>
+        void DrawWarnings()
+        {
+            foreach (var warning in RunWarnings.For(_twoClients, _synced, ParameterNames(),
+                         BuildStimulus(), Edited))
                 EditorGUILayout.HelpBox(warning, MessageType.Warning);
         }
 
@@ -1021,22 +1050,159 @@ namespace Yozolab.DaerD.DynamicAnalyze
                 EditorGUILayout.HelpBox(_extracted, MessageType.Info);
 
             var names = ParameterNames();
-            foreach (var track in _tracks) DrawTrack(track, names);
+            int drop = -1;
+            for (int i = 0; i < _tracks.Count; i++)
+                if (DrawTrack(_tracks[i], names)) drop = i;
+            if (drop >= 0) _tracks.RemoveAt(drop);
             EditorGUILayout.EndVertical();
         }
 
-        /// <summary>One track and its rows.</summary>
-        void DrawTrack(Track track, List<string> names)
+        /// <summary>
+        /// One track: what it is called, whether it is in the run, and its rows.
+        ///
+        /// The header is where a track is USED — muted, soloed, taken from the recording again —
+        /// and the rows underneath are where one is edited. Folded independently of the others,
+        /// because a recording's world track is hundreds of rows nobody wants to scroll past to
+        /// reach the three menu presses above it.
+        ///
+        /// Returns whether the reader asked for the whole track to go.
+        /// </summary>
+        bool DrawTrack(Track track, List<string> names)
         {
-            // Composed rather than translated: a name somebody typed with a count after it is
-            // punctuation around a number, and a catalogue entry for "({0})" would be one.
-            GUILayout.Label(track.name + " (" + track.entries.Count + ")",
-                EditorStyles.miniBoldLabel);
+            bool drop = false;
+            EditorGUILayout.BeginHorizontal();
+            if (_renaming == track.name) DrawRename(track);
+            else
+                // Composed rather than translated: a name somebody typed with a count after it
+                // is punctuation around a number, and a catalogue entry for "({0})" would be one.
+                track.open = EditorGUILayout.Foldout(track.open,
+                    track.name + " (" + track.entries.Count + ")", true);
+            GUILayout.FlexibleSpace();
 
+            // Muted travels with the experiment; soloed does not. Drawn side by side anyway,
+            // because from the reader's side they are the same gesture — this run, without that
+            // — and which of them a saved clip remembers is not something to make them guess at
+            // from the layout.
+            track.muted = GUILayout.Toggle(track.muted, new GUIContent(L.Tr("Mute"),
+                    L.Tr("Leave this track out of the run. Part of the experiment and saved with it: a run of the recording without its gestures is a question, and a saved answer has to be able to say it was asked.")),
+                EditorStyles.miniButton, GUILayout.Width(46f));
+            bool solo = GUILayout.Toggle(_solo == track.name, new GUIContent(L.Tr("Solo"),
+                    L.Tr("Run this track and nothing else, until you turn it off again. Not saved with the run — it is a way of looking rather than part of the experiment, and the muting underneath it is left exactly as it was.")),
+                EditorStyles.miniButton, GUILayout.Width(46f));
+            if (solo != (_solo == track.name)) _solo = solo ? track.name : null;
+
+            if (GUILayout.Button(new GUIContent(L.Tr("Name"),
+                    L.Tr("Rename this track. The name is how a track is found again, so a renamed one is no longer one this window will take from a recording for you — which is the point of renaming it.")),
+                    EditorStyles.miniButton, GUILayout.Width(48f)))
+                _renaming = _renaming == track.name ? null : track.name;
+
+            // Only on the tracks an extraction owns. On a hand-written one the button would
+            // have nothing to fill it from and would empty it, which is not what a reader
+            // pressing "from the recording" is asking for.
+            using (new EditorGUI.DisabledScope(System.Array.IndexOf(Extractable, track.name) < 0))
+                if (GUILayout.Button(new GUIContent(L.Tr("Re-take"),
+                        L.Tr("Take this one track down from a recording again and leave the rest of the list alone. What it holds now is replaced by what that recording has in it, including nothing.")),
+                        EditorStyles.miniButton, GUILayout.Width(58f)))
+                {
+                    var clip = PickClip(L.Tr("Load As Timed Inputs"));
+                    if (clip != null) Extract(clip, track.name);
+                }
+
+            if (GUILayout.Button(new GUIContent("-",
+                    L.Tr("Remove this whole track and everything in it. Muting leaves it in the file; this does not.")),
+                    EditorStyles.miniButton, GUILayout.Width(22f)))
+                drop = true;
+            EditorGUILayout.EndHorizontal();
+
+            if (!track.open) return drop;
             int remove = -1;
             for (int i = 0; i < track.entries.Count; i++)
                 if (DrawPoke(track.entries[i], names)) remove = i;
             if (remove >= 0) track.entries.RemoveAt(remove);
+            return drop;
+        }
+
+        /// <summary>
+        /// The name, being typed.
+        ///
+        /// Delayed, so a track is not renamed once per keystroke into a series of names nothing
+        /// else in the window has ever heard of. A name another track already has is refused
+        /// rather than taken: two tracks of one name merge the moment the run is built (see
+        /// <see cref="Stimulus.Named"/>), and a merge nobody asked for is a worse surprise than
+        /// a rename that did not happen.
+        /// </summary>
+        void DrawRename(Track track)
+        {
+            string typed = EditorGUILayout.DelayedTextField(track.name, GUILayout.Width(180f));
+            if (typed == track.name) return;
+            _renaming = null;
+            if (string.IsNullOrEmpty(typed)) return;
+            foreach (var other in _tracks)
+                if (other != track && other.name == typed) return;
+            if (_solo == track.name) _solo = typed;
+            track.name = typed;
+        }
+
+        /// <summary>
+        /// A short, stable description of the inputs that are NOT the world's.
+        ///
+        /// What it is for: telling "this is still the recording" from "somebody has edited it",
+        /// which is the only thing the frozen-world warning needs and is not a thing a stimulus
+        /// can say about itself. The world track is left out on purpose — muting or re-taking
+        /// the world track is not an edit to the inputs it was recorded beside, and a signature
+        /// that moved when it did would make the warning appear at the moment somebody acted on
+        /// it.
+        ///
+        /// A hash of its own rather than string.GetHashCode, which is not promised to be the
+        /// same number in the next runtime: this is written into a window layout and compared
+        /// against a reading taken after a domain reload, and a warning that appears because
+        /// Unity was updated would be one nobody could explain.
+        /// </summary>
+        internal static string InputSignature(List<Track> tracks)
+        {
+            ulong hash = 14695981039346656037UL;
+            foreach (var track in tracks)
+            {
+                if (track.name == Stimulus.WorldTrack) continue;
+                Feed(ref hash, track.name);
+                Feed(ref hash, track.muted ? "1" : "0");
+                foreach (var poke in track.entries)
+                    Feed(ref hash, Text(poke.at) + "|" + poke.parameter + "|"
+                        + Text(poke.value) + "|" + poke.scope);
+            }
+            return hash.ToString("x16");
+        }
+
+        /// <summary>FNV-1a, which is eight lines and the same number everywhere.</summary>
+        static void Feed(ref ulong hash, string text)
+        {
+            if (text == null) text = string.Empty;
+            for (int i = 0; i < text.Length; i++)
+            {
+                hash ^= text[i];
+                hash *= 1099511628211UL;
+            }
+            hash ^= 0xff;
+            hash *= 1099511628211UL;
+        }
+
+        static string Text(float value) =>
+            value.ToString("R", System.Globalization.CultureInfo.InvariantCulture);
+
+        /// <summary>Whether the inputs have moved since they came off a recording. False when
+        /// none ever did: a list somebody typed from nothing is not an edited recording, and
+        /// there is no world track in it to be frozen either.</summary>
+        bool Edited => !string.IsNullOrEmpty(_asExtracted)
+            && InputSignature(_tracks) != _asExtracted;
+
+        /// <summary>Which track solo is holding, or null — and null as well when it names one
+        /// that is no longer here, so a deleted track cannot silently mute the whole list.</summary>
+        string Soloed()
+        {
+            if (_solo == null) return null;
+            foreach (var track in _tracks)
+                if (track.name == _solo) return _solo;
+            return null;
         }
 
         /// <summary>One input, and whether the reader asked for it to go.</summary>
@@ -1454,10 +1620,14 @@ namespace Yozolab.DaerD.DynamicAnalyze
         Stimulus BuildStimulus()
         {
             var stimulus = new Stimulus();
+            string solo = Soloed();
             foreach (var track in _tracks)
             {
                 var into = stimulus.Named(track.name);
-                into.muted = track.muted;
+                // Solo mutes on the way out and never in the list itself, which is what keeps
+                // it out of a saved run: a clip written while one track was soloed says the
+                // others were muted, because for that run they were.
+                into.muted = track.muted || (solo != null && track.name != solo);
                 foreach (var poke in track.entries)
                     if (!string.IsNullOrEmpty(poke.parameter))
                         into.entries.Add(new Stimulus.Entry

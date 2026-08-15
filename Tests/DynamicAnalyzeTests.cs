@@ -3323,6 +3323,53 @@ namespace Yozolab.DaerD.Tests
                 "asking twice does not make two");
         }
 
+        static DynamicAnalyzeWindow.Track Typed(
+            System.Collections.Generic.List<DynamicAnalyzeWindow.Track> tracks, string name,
+            string parameter, float value)
+        {
+            var track = DynamicAnalyzeWindow.TrackNamed(tracks, name);
+            track.entries.Add(new DynamicAnalyzeWindow.Poke
+            {
+                at = 0.1f, parameter = parameter, value = value,
+            });
+            return track;
+        }
+
+        [Test]
+        public void Window_TheInputsSignatureMovesWhenTheInputsDoAndNotWhenTheWorldDoes()
+        {
+            var tracks = new System.Collections.Generic.List<DynamicAnalyzeWindow.Track>();
+            var menu = Typed(tracks, Stimulus.MenuTrack, "Go", 1f);
+            var world = Typed(tracks, Stimulus.WorldTrack, "X", 0.5f);
+            string taken = DynamicAnalyzeWindow.InputSignature(tracks);
+            Assert.AreEqual(taken, DynamicAnalyzeWindow.InputSignature(tracks),
+                "asking twice about the same list is the same answer");
+
+            // The world track is deliberately not in it: muting or re-taking the world is the
+            // reader ACTING on the warning, and a signature that moved when they did would
+            // take the warning away at the moment it was being read.
+            world.muted = true;
+            world.entries.Add(new DynamicAnalyzeWindow.Poke { at = 0.3f, parameter = "X" });
+            Assert.AreEqual(taken, DynamicAnalyzeWindow.InputSignature(tracks));
+
+            // Everything else moves it: a value, a time, whether a track is in the run at all,
+            // and a track that was not there before.
+            menu.entries[0].value = 0f;
+            string edited = DynamicAnalyzeWindow.InputSignature(tracks);
+            Assert.AreNotEqual(taken, edited);
+            menu.entries[0].value = 1f;
+            Assert.AreEqual(taken, DynamicAnalyzeWindow.InputSignature(tracks),
+                "and putting it back is the recording again");
+
+            menu.muted = true;
+            Assert.AreNotEqual(taken, DynamicAnalyzeWindow.InputSignature(tracks),
+                "leaving a track out is an edit to the inputs");
+            menu.muted = false;
+
+            Typed(tracks, Stimulus.HandTrack, "N", 2f);
+            Assert.AreNotEqual(taken, DynamicAnalyzeWindow.InputSignature(tracks));
+        }
+
         // ---- the hand, written down ------------------------------------------
 
         static System.Collections.Generic.List<DynamicAnalyzeWindow.Track> Hand() =>
