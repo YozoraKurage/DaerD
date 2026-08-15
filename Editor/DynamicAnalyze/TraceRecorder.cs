@@ -114,6 +114,18 @@ namespace Yozolab.DaerD.DynamicAnalyze
                     signal = moving,
                     read = () => client.InTransition(layer) ? 1f : 0f,
                 });
+                // WHICH transition, which the pair above cannot say between them: the state row
+                // names where the layer arrived, and a state can be arrived at by several
+                // routes. Added beside them rather than folded into either, because a saved run
+                // and a ghost comparison are read by row name — the two that were there before
+                // go on meaning exactly what they meant.
+                var via = Trace.Declare(client.Scope, layers[i].name + "/via",
+                    SignalKind.State, client.TransitionLabels(layer));
+                _readers.Add(new Reader
+                {
+                    signal = via,
+                    read = () => client.CurrentTransition(layer),
+                });
             }
         }
 

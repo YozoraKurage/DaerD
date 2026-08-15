@@ -78,6 +78,14 @@ namespace Yozolab.DaerD.Tests
             return this;
         }
 
+        /// <summary>Whether the layer is mid-blend. With <see cref="Transition"/>, the only way
+        /// to ask Mecanim what it calls the transition it is running — which is a question with
+        /// no documented answer, so the tests that care measure it rather than assume it.</summary>
+        public bool InTransition(int layer) => _animator.IsInTransition(layer);
+
+        public AnimatorTransitionInfo Transition(int layer) =>
+            _animator.GetAnimatorTransitionInfo(layer);
+
         /// <summary>The name of the state the layer is currently in — what a transition test is
         /// really asking about.</summary>
         public string CurrentState(int layer, params string[] candidates)

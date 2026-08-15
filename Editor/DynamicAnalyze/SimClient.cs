@@ -42,6 +42,8 @@ namespace Yozolab.DaerD.DynamicAnalyze
             new Dictionary<string, AnimatorControllerParameterType>();
         readonly List<string>[] _stateNames;
         readonly Dictionary<int, int>[] _stateOf;
+        readonly List<string>[] _transitionNames;
+        readonly Dictionary<int, int>[] _transitionOf;
         readonly Dictionary<int, List<ControllerIR.DriverSpec>> _drivers =
             new Dictionary<int, List<ControllerIR.DriverSpec>>();
         readonly int[] _entered;
@@ -115,14 +117,21 @@ namespace Yozolab.DaerD.DynamicAnalyze
             var layers = controller.layers;
             _stateNames = new List<string>[layers.Length];
             _stateOf = new Dictionary<int, int>[layers.Length];
+            _transitionNames = new List<string>[layers.Length];
+            _transitionOf = new Dictionary<int, int>[layers.Length];
             _entered = new int[layers.Length];
             for (int i = 0; i < layers.Length; i++)
             {
                 _stateNames[i] = new List<string>();
                 _stateOf[i] = new Dictionary<int, int>();
+                _transitionNames[i] = new List<string>();
+                _transitionOf[i] = new Dictionary<int, int>();
                 _entered[i] = 0;
-                if (layers[i].stateMachine != null)
-                    Collect(layers[i].stateMachine, layers[i].name, string.Empty, i);
+                if (layers[i].stateMachine == null) continue;
+                var naming = new Naming();
+                Collect(layers[i].stateMachine, layers[i].name, string.Empty, i, naming);
+                CollectTransitions(layers[i].stateMachine, naming);
+                NameTransitions(i, naming);
             }
 
             if (_types.ContainsKey(IsLocalParameter))
@@ -135,13 +144,16 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// the FULL path — layer name, sub-machines, state — so two states of one name in
         /// different sub-machines stay apart.
         /// </summary>
-        void Collect(AnimatorStateMachine machine, string fullPrefix, string label, int layer)
+        void Collect(AnimatorStateMachine machine, string fullPrefix, string label, int layer,
+            Naming naming)
         {
             foreach (var child in machine.states)
             {
                 if (child.state == null) continue;
                 string path = fullPrefix + "." + child.state.name;
                 int hash = Animator.StringToHash(path);
+                naming.paths[child.state] = path;
+                naming.labels[child.state] = label + child.state.name;
                 if (!_stateOf[layer].ContainsKey(hash))
                 {
                     _stateOf[layer][hash] = _stateNames[layer].Count;
@@ -158,9 +170,146 @@ namespace Yozolab.DaerD.DynamicAnalyze
                 }
             }
             foreach (var child in machine.stateMachines)
-                if (child.stateMachine != null)
-                    Collect(child.stateMachine, fullPrefix + "." + child.stateMachine.name,
-                        label + child.stateMachine.name + ".", layer);
+            {
+                if (child.stateMachine == null) continue;
+                naming.machines[child.stateMachine] = label + child.stateMachine.name;
+                Collect(child.stateMachine, fullPrefix + "." + child.stateMachine.name,
+                    label + child.stateMachine.name + ".", layer, naming);
+            }
+        }
+
+        // ---- which transition ------------------------------------------------
+
+        /// <summary>What Mecanim puts between the two ends of a transition in the path it
+        /// hashes. ASCII, and not the arrow a label shows.</summary>
+        const string Joint = " -> ";
+
+        /// <summary>The source of an any-state transition, in Mecanim's path for it. It is
+        /// spelt "Entry" rather than anything with "any" in it — measured, not guessed.</summary>
+        const string AnyStatePath = "Entry";
+
+        /// <summary>Both ways out of a machine, which Mecanim spells identically: an explicit
+        /// Exit, and a destination that is a sub-machine rather than a state.</summary>
+        const string ExitPath = "Exit";
+
+        const string AnyStateLabel = "Any State";
+
+        /// <summary>Between the two ends of a transition on a ROW. The typographic arrow, not
+        /// the ASCII one the hashed path uses, because a row is read rather than parsed.</summary>
+        const string Arrow = " → ";
+
+        /// <summary>What a layer's nodes are called, filled while walking it. Kept for the
+        /// length of the walk only: a transition's destination can be anywhere in the layer,
+        /// including a sub-machine the walk has not reached yet, so no transition can be named
+        /// until every node has been.</summary>
+        sealed class Naming
+        {
+            public readonly Dictionary<AnimatorState, string> paths =
+                new Dictionary<AnimatorState, string>();
+            public readonly Dictionary<AnimatorState, string> labels =
+                new Dictionary<AnimatorState, string>();
+            public readonly Dictionary<AnimatorStateMachine, string> machines =
+                new Dictionary<AnimatorStateMachine, string>();
+
+            /// <summary>Every transition found, in the order the layer authors them: the hash
+            /// Mecanim would report for it, and the label a row would show.</summary>
+            public readonly List<KeyValuePair<int, string>> transitions =
+                new List<KeyValuePair<int, string>>();
+        }
+
+        /// <summary>
+        /// Which transitions a layer HAS, so that a run can say which one is firing rather than
+        /// only that something is.
+        ///
+        /// Mecanim reports a transition as a hash and nothing else, and what it hashes was
+        /// measured rather than assumed — the source's full path, " -> ", the destination's
+        /// full path, out of the same full paths states are keyed by, and pinned by the tests
+        /// that spell those paths out. Two ends of the graph have no path of their own and
+        /// travel as bare words: an any-state transition's source is "Entry", and a destination
+        /// that is an Exit is "Exit".
+        ///
+        /// What this deliberately cannot name — the row falls back to "—" rather than guess:
+        /// two transitions between the same pair of states hash the same, so a run says which
+        /// pair is blending and not which of the two conditions opened it; a destination that
+        /// is a sub-machine is spelt exactly like an Exit from the same state, so a state that
+        /// has both has two different transitions under one hash and this names neither; and an
+        /// Entry transition is not a blend at all, so nothing is ever in one to report.
+        ///
+        /// The paths are built from the layer's name, the way the state table's are — Mecanim
+        /// itself builds them from the layer's root MACHINE's name, which Unity keeps equal to
+        /// the layer's. A controller where the two have been driven apart is one where the
+        /// state row already names nothing; this row is no worse off, and no better.
+        /// </summary>
+        void CollectTransitions(AnimatorStateMachine machine, Naming naming)
+        {
+            foreach (var child in machine.states)
+            {
+                if (child.state == null || !naming.paths.TryGetValue(child.state, out var path))
+                    continue;
+                foreach (var transition in child.state.transitions)
+                    Note(naming, path, naming.labels[child.state], transition);
+            }
+            // An any-state transition of a sub-machine is labelled like any other: which
+            // machine it was written in is not something a run can see it by, and giving it a
+            // different label would only put two labels under one hash and lose both.
+            foreach (var transition in machine.anyStateTransitions)
+                Note(naming, AnyStatePath, AnyStateLabel, transition);
+            foreach (var child in machine.stateMachines)
+                if (child.stateMachine != null) CollectTransitions(child.stateMachine, naming);
+        }
+
+        void Note(Naming naming, string sourcePath, string sourceLabel,
+            AnimatorStateTransition transition)
+        {
+            if (transition == null) return;
+            string path, label;
+            if (transition.destinationState != null)
+            {
+                if (!naming.paths.TryGetValue(transition.destinationState, out path)) return;
+                label = naming.labels[transition.destinationState];
+            }
+            else if (transition.destinationStateMachine != null)
+            {
+                path = ExitPath;
+                label = naming.machines.TryGetValue(transition.destinationStateMachine,
+                    out var machine) ? machine : transition.destinationStateMachine.name;
+            }
+            else if (transition.isExit)
+            {
+                path = ExitPath;
+                label = ExitPath;
+            }
+            else
+            {
+                // A transition with no destination at all: nothing to blend to, nothing to name.
+                return;
+            }
+            naming.transitions.Add(new KeyValuePair<int, string>(
+                Animator.StringToHash(sourcePath + Joint + path), sourceLabel + Arrow + label));
+        }
+
+        /// <summary>
+        /// The walk's findings as a row's labels. A hash that two transitions of DIFFERENT
+        /// names share is dropped rather than resolved: showing one of the two names would be
+        /// a run asserting something it does not know, and an unnamed frame is the honest
+        /// answer. Transitions of the same name under one hash keep it — there is nothing to
+        /// choose between them.
+        /// </summary>
+        void NameTransitions(int layer, Naming naming)
+        {
+            var agreed = new Dictionary<int, string>();
+            foreach (var found in naming.transitions)
+            {
+                if (!agreed.TryGetValue(found.Key, out var label)) agreed[found.Key] = found.Value;
+                else if (label != null && label != found.Value) agreed[found.Key] = null;
+            }
+            foreach (var found in naming.transitions)
+            {
+                if (agreed[found.Key] == null || _transitionOf[layer].ContainsKey(found.Key))
+                    continue;
+                _transitionOf[layer][found.Key] = _transitionNames[layer].Count;
+                _transitionNames[layer].Add(found.Value);
+            }
         }
 
         // ---- parameters -----------------------------------------------------
@@ -240,6 +389,24 @@ namespace Yozolab.DaerD.DynamicAnalyze
 
         public bool InTransition(int layer) =>
             layer >= 0 && layer < _stateOf.Length && _animator.IsInTransition(layer);
+
+        /// <summary>The transitions this layer can be seen in, in the order the layer authors
+        /// them — the names <see cref="CurrentTransition"/> indexes into.</summary>
+        public string[] TransitionLabels(int layer) =>
+            layer >= 0 && layer < _transitionNames.Length
+                ? _transitionNames[layer].ToArray() : new string[0];
+
+        /// <summary>Which transition the layer is blending through, as an index into
+        /// <see cref="TransitionLabels"/>. -1 for a settled layer, and -1 for a transition this
+        /// run cannot tell apart from another — see <see cref="CollectTransitions"/> for which
+        /// those are.</summary>
+        public int CurrentTransition(int layer)
+        {
+            if (layer < 0 || layer >= _transitionOf.Length) return -1;
+            if (!_animator.IsInTransition(layer)) return -1;
+            int hash = _animator.GetAnimatorTransitionInfo(layer).fullPathHash;
+            return _transitionOf[layer].TryGetValue(hash, out int at) ? at : -1;
+        }
 
         // ---- the frame ------------------------------------------------------
 

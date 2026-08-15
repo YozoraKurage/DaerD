@@ -201,6 +201,288 @@ namespace Yozolab.DaerD.Tests
             Assert.AreEqual(0.05f, trace.TimeAt(2), 1e-5f);
         }
 
+        // ---- which transition -----------------------------------------------
+
+        /// <summary>A transition that takes a fifth of a second on one condition. Long enough
+        /// to be caught in flight: one that finishes inside the frame it starts on leaves no
+        /// frame for a row to name it on.</summary>
+        static AnimatorStateTransition Blend(AnimatorStateTransition transition, string condition)
+        {
+            transition.hasExitTime = false;
+            transition.hasFixedDuration = true;
+            transition.duration = 0.2f;
+            transition.AddCondition(AnimatorConditionMode.If, 0f, condition);
+            return transition;
+        }
+
+        /// <summary>Idle with two ways out of it, so a run has something to tell apart. With
+        /// <paramref name="anyState"/> the same two destinations are reached from Any State
+        /// instead, which Mecanim reports differently.</summary>
+        static AnimatorController NewBranchingController(bool anyState = false)
+        {
+            var controller = new AnimatorController();
+            controller.AddLayer("Base");
+            controller.AddParameter("Go", AnimatorControllerParameterType.Bool);
+            controller.AddParameter("Other", AnimatorControllerParameterType.Bool);
+
+            var machine = controller.layers[0].stateMachine;
+            var idle = machine.AddState("Idle");
+            var a = machine.AddState("A");
+            var b = machine.AddState("B");
+            machine.defaultState = idle;
+
+            if (!anyState)
+            {
+                Blend(idle.AddTransition(a), "Go");
+                Blend(idle.AddTransition(b), "Other");
+                return controller;
+            }
+            Blend(machine.AddAnyStateTransition(a), "Go").canTransitionToSelf = false;
+            Blend(machine.AddAnyStateTransition(b), "Other").canTransitionToSelf = false;
+            return controller;
+        }
+
+        /// <summary>Steps until the layer is mid-blend and hands back what Mecanim calls the
+        /// transition it is in. Fails rather than returning nothing, because a settled layer
+        /// read as if it were blending would satisfy every assertion for the wrong reason.</summary>
+        static AnimatorTransitionInfo Blending(AnimatorRig rig, int layer = 0)
+        {
+            for (int frame = 0; frame < 30; frame++)
+            {
+                rig.Step();
+                if (rig.InTransition(layer)) return rig.Transition(layer);
+            }
+            Assert.Fail("nothing was blending after 30 frames");
+            return default(AnimatorTransitionInfo);
+        }
+
+        static void Settle(AnimatorRig rig, int layer = 0)
+        {
+            for (int frame = 0; frame < 60 && rig.InTransition(layer); frame++) rig.Step();
+        }
+
+        /// <summary>The one transition a run was seen in, by the name its row gave it.</summary>
+        static string ViaName(SignalTrace trace)
+        {
+            var via = trace.Find(Simulation.LocalScope, "Base/via");
+            Assert.IsNotNull(via);
+            var names = new System.Collections.Generic.List<string>();
+            for (int frame = 0; frame < trace.Frames; frame++)
+            {
+                string name = via.TextAt(frame);
+                if (name != "—" && !names.Contains(name)) names.Add(name);
+            }
+            Assert.AreEqual(1, names.Count,
+                "this run goes through exactly one transition; it named " + names.Count);
+            return names[0];
+        }
+
+        [Test]
+        public void Mecanim_SpellsATransitionAsTheFullPathsOfItsTwoEnds()
+        {
+            // Measured rather than assumed: SimClient turns a controller into a table of
+            // hashes and has nothing but this spelling to look them up by. A Unity that
+            // changed its mind would leave every via row saying "—", and this is the test that
+            // would say why.
+            var controller = new AnimatorController();
+            controller.AddLayer("Base");
+            controller.AddParameter("Go", AnimatorControllerParameterType.Bool);
+            controller.AddParameter("Down", AnimatorControllerParameterType.Bool);
+
+            var machine = controller.layers[0].stateMachine;
+            var idle = machine.AddState("Idle");
+            var a = machine.AddState("A");
+            machine.defaultState = idle;
+            var deep = machine.AddStateMachine("Sub").AddState("Deep");
+            Blend(idle.AddTransition(a), "Go");
+            Blend(a.AddTransition(deep), "Down");
+
+            using (var rig = new AnimatorRig(controller))
+            {
+                rig.Set("Go", true);
+                var info = Blending(rig);
+                Assert.AreEqual(Animator.StringToHash("Base.Idle -> Base.A"), info.fullPathHash,
+                    "both ends by their full paths, with \" -> \" between them");
+                // The short names travel too, in their own field, and are exactly what cannot
+                // be used: two sub-machines with an "Idle" apiece would share one.
+                Assert.AreEqual(Animator.StringToHash("Idle -> A"), info.nameHash);
+                Assert.AreEqual(0, info.userNameHash, "nobody named this transition");
+
+                Settle(rig);
+                rig.Set("Down", true);
+                Assert.AreEqual(Animator.StringToHash("Base.A -> Base.Sub.Deep"),
+                    Blending(rig).fullPathHash, "a sub-machine is a part of the path like any other");
+            }
+        }
+
+        [Test]
+        public void Mecanim_CallsAnAnyStatesSourceEntry_AndBothWaysOutOfAMachineExit()
+        {
+            var controller = new AnimatorController();
+            controller.AddLayer("Base");
+            foreach (var name in new[] { "Go", "Into", "Out" })
+                controller.AddParameter(name, AnimatorControllerParameterType.Bool);
+
+            var machine = controller.layers[0].stateMachine;
+            var idle = machine.AddState("Idle");
+            var a = machine.AddState("A");
+            machine.defaultState = idle;
+            var sub = machine.AddStateMachine("Sub");
+            sub.defaultState = sub.AddState("Deep");
+            Blend(machine.AddAnyStateTransition(a), "Go").canTransitionToSelf = false;
+            Blend(a.AddTransition(sub), "Into");
+            Blend(a.AddExitTransition(), "Out");
+
+            using (var rig = new AnimatorRig(controller))
+            {
+                rig.Set("Go", true);
+                var info = Blending(rig);
+                Assert.IsTrue(info.anyState);
+                Assert.AreEqual(Animator.StringToHash("Entry -> Base.A"), info.fullPathHash,
+                    "an any-state transition's source is spelt \"Entry\", of all things");
+
+                Settle(rig);
+                rig.Set("Go", false).Set("Into", true);
+                Assert.AreEqual(Animator.StringToHash("Base.A -> Exit"),
+                    Blending(rig).fullPathHash,
+                    "a destination that is a sub-machine is spelt \"Exit\"");
+            }
+
+            using (var rig = new AnimatorRig(controller))
+            {
+                rig.Set("Go", true);
+                Blending(rig);
+                Settle(rig);
+                rig.Set("Go", false).Set("Out", true);
+                // The same hash as the transition into the sub-machine above, which is why a
+                // state that has both of them can be named for neither.
+                Assert.AreEqual(Animator.StringToHash("Base.A -> Exit"),
+                    Blending(rig).fullPathHash, "and so is an Exit transition");
+            }
+        }
+
+        [Test]
+        public void Via_NamesTheTransitionThatIsFiring()
+        {
+            var stimulus = new Stimulus().At(0.05f, "Go", true);
+            var trace = Simulation.Run(NewBranchingController(), Clock(0.5f), stimulus);
+
+            var via = trace.Find(Simulation.LocalScope, "Base/via");
+            Assert.IsNotNull(via, "a layer gets one of these the way it gets a state row");
+            Assert.AreEqual(SignalKind.State, via.kind);
+            CollectionAssert.AreEqual(new[] { "Idle → A", "Idle → B" }, via.labels,
+                "both ways out of Idle, in the order the layer authors them");
+
+            // Never a name without a blend, and — in a controller with nothing ambiguous in it
+            // — never a blend without a name.
+            var moving = trace.Find(Simulation.LocalScope, "Base/transition");
+            int named = 0;
+            for (int frame = 0; frame < trace.Frames; frame++)
+            {
+                if (moving.At(frame) == 0f)
+                {
+                    Assert.AreEqual("—", via.TextAt(frame), "settled at frame " + frame);
+                    continue;
+                }
+                Assert.AreEqual("Idle → A", via.TextAt(frame), "blending at frame " + frame);
+                named++;
+            }
+            Assert.Greater(named, 1, "a fifth of a second is more than one frame of it");
+            Assert.AreEqual("—", via.TextAt(0), "nothing has been asked for yet");
+            Assert.AreEqual("—", via.TextAt(trace.Frames - 1), "and it arrived long ago");
+        }
+
+        [Test]
+        public void Via_NamesAnAnyStateTransitionByWhereItGoes()
+        {
+            var trace = Simulation.Run(NewBranchingController(anyState: true), Clock(0.5f),
+                new Stimulus().At(0.05f, "Go", true));
+
+            // Which state it left is not part of it: an any-state transition can be taken from
+            // anywhere, and naming it after wherever the layer happened to be would make one
+            // transition look like a different one each time it fired.
+            Assert.AreEqual("Any State → A", ViaName(trace));
+        }
+
+        [Test]
+        public void Via_TellsTwoRoutesOutOfOneStateApart()
+        {
+            // The point of the row: both runs end in a state the layer could have reached two
+            // ways, and the trace says which one it took.
+            Assert.AreEqual("Idle → A", ViaName(Simulation.Run(NewBranchingController(),
+                Clock(0.5f), new Stimulus().At(0.05f, "Go", true))));
+            Assert.AreEqual("Idle → B", ViaName(Simulation.Run(NewBranchingController(),
+                Clock(0.5f), new Stimulus().At(0.05f, "Other", true))));
+        }
+
+        [Test]
+        public void Via_NamesNothingWhereMecanimNamesTwoTransitionsAlike()
+        {
+            // A state with a way into a sub-machine and a way out of the machine has two
+            // transitions under one hash — see the pinning test above. The row says "—" for
+            // both rather than naming whichever was authored first: a run that named the wrong
+            // transition would be worse than one that named none.
+            var controller = new AnimatorController();
+            controller.AddLayer("Base");
+            foreach (var name in new[] { "Go", "Into", "Out" })
+                controller.AddParameter(name, AnimatorControllerParameterType.Bool);
+
+            var machine = controller.layers[0].stateMachine;
+            var idle = machine.AddState("Idle");
+            var on = machine.AddState("On");
+            machine.defaultState = idle;
+            var sub = machine.AddStateMachine("Sub");
+            sub.defaultState = sub.AddState("Deep");
+            Blend(idle.AddTransition(on), "Go");
+            Blend(on.AddTransition(sub), "Into");
+            Blend(on.AddExitTransition(), "Out");
+
+            var trace = Simulation.Run(controller, Clock(1f),
+                new Stimulus().At(0.05f, "Go", true).At(0.4f, "Into", true));
+
+            var via = trace.Find(Simulation.LocalScope, "Base/via");
+            CollectionAssert.AreEqual(new[] { "Idle → On" }, via.labels,
+                "the one transition of this layer that has a name to itself");
+
+            var moving = trace.Find(Simulation.LocalScope, "Base/transition");
+            int nameless = 0;
+            for (int frame = 0; frame < trace.Frames; frame++)
+                if (moving.At(frame) != 0f && via.TextAt(frame) == "—") nameless++;
+            Assert.Greater(nameless, 1, "the second transition ran and stayed unnamed");
+            Assert.AreEqual("Sub.Deep", trace.Find(Simulation.LocalScope, "Base/state")
+                .TextAt(trace.Frames - 1), "it did go into the sub-machine");
+        }
+
+        [Test]
+        public void Via_IsAddedBesideTheRowsThatWereThereBefore()
+        {
+            var trace = Simulation.Run(NewController(), Clock(0.2f),
+                new Stimulus().At(0.05f, "Go", true));
+
+            // A layer's rows, in this order. The two that were there before this one keep
+            // their names, their places and their values, because a saved run and a ghost
+            // comparison find a row by its name.
+            var names = new System.Collections.Generic.List<string>();
+            foreach (var signal in trace.Signals)
+                if (signal.scope == Simulation.LocalScope
+                    && signal.name.StartsWith("Base/", System.StringComparison.Ordinal))
+                    names.Add(signal.name);
+            CollectionAssert.AreEqual(new[] { "Base/state", "Base/transition", "Base/via" }, names);
+
+            var state = trace.Find(Simulation.LocalScope, "Base/state");
+            CollectionAssert.AreEqual(new[] { "Idle", "On" }, state.labels);
+            Assert.AreEqual("Idle", state.TextAt(0));
+            Assert.AreEqual("On", state.TextAt(trace.Frames - 1));
+
+            // This controller blends in no time at all, so its via row has little or nothing to
+            // say — and says nothing on every frame the layer was settled on.
+            var via = trace.Find(Simulation.LocalScope, "Base/via");
+            var moving = trace.Find(Simulation.LocalScope, "Base/transition");
+            for (int frame = 0; frame < trace.Frames; frame++)
+                if (moving.At(frame) == 0f)
+                    Assert.AreEqual("—", via.TextAt(frame), "settled at frame " + frame);
+        }
+
         // ---- the wire -------------------------------------------------------
 
         static SimSettings Wired(float seconds, SyncWire wire, Stimulus stimulus = null) =>
