@@ -17,7 +17,12 @@ namespace Yozolab.DaerD.DynamicAnalyze
     /// about a controller is learned faster than by pushing on it and watching, and no amount
     /// of writing the pushes down in advance replaces having done that once.
     ///
-    /// Both produce the same trace, and the same viewer reads it.
+    /// REC simulates nothing at all: it watches the avatar somebody is actually wearing in Play
+    /// mode and writes down what it did. The other two moods answer "what would this controller
+    /// do"; this one answers "what did it do", which is the question a bug report is made of.
+    /// Nothing here can be poked — the avatar belongs to whoever is wearing it.
+    ///
+    /// All three produce the same trace, and the same viewer reads it.
     /// </summary>
     sealed class DynamicAnalyzeWindow : EditorWindow
     {
@@ -72,7 +77,27 @@ namespace Yozolab.DaerD.DynamicAnalyze
         [SerializeField] bool _lagRows = true;
         [SerializeField] List<string> _synced = new List<string>();
         [SerializeField] List<Poke> _pokes = new List<Poke>();
+        /// <summary>
+        /// Which mood the window is in, as the two booleans that keep a saved layout meaning
+        /// what it meant. <see cref="_live"/> is the flag this window has always had, and a
+        /// layout saved before Rec existed carries it alone — so it goes on being read alone,
+        /// and such a window opens in exactly the mood it was closed in.
+        ///
+        /// An enum would have been tidier and would have made every old layout open in whatever
+        /// mood happened to be numbered the same as the old <c>false</c>. The invariant instead
+        /// is that at most one of the two is up; <see cref="SwitchTo"/> is the only thing that
+        /// sets either, and it sets both.
+        /// </summary>
         [SerializeField] bool _live;
+        [SerializeField] bool _rec;
+        /// <summary>The Animator being recorded. A scene reference, so entering Play mode —
+        /// which builds the scene again — leaves it pointing at nothing; that is what the
+        /// candidate list and the arm toggle are for, rather than a bug to be fixed.</summary>
+        [SerializeField] Animator _target;
+        /// <summary>Whether to start recording as soon as an avatar running this controller
+        /// turns up in Play mode. Serialized on purpose: entering Play mode reloads the domain,
+        /// so anything that is to survive being told before the fact has to be.</summary>
+        [SerializeField] bool _armed;
         [SerializeField] bool _settingsOpen = true;
         [SerializeField] bool _inputsOpen = true;
         [SerializeField] bool _notesOpen = true;
@@ -84,6 +109,14 @@ namespace Yozolab.DaerD.DynamicAnalyze
 
         readonly WaveformView _view = new WaveformView();
         SimSession _session;
+
+        // The recording, and whether it is still being written to. Not serialized, and it does
+        // not need to be: entering Play mode reloads the domain and takes these with it, which
+        // costs nothing because a recording only ever starts AFTER the enter. Leaving Play mode
+        // reloads nothing, so a finished recording is still here to be read, saved and compared
+        // — which is the whole reason the mood is worth having.
+        PlayRecorder _recorder;
+        bool _recording;
 
         // SimNotes.For walks every layer and opens a SerializedObject per driver, and OnGUI
         // asks several times a frame — on a real avatar's FX that is a steady cost for an
@@ -114,6 +147,12 @@ namespace Yozolab.DaerD.DynamicAnalyze
         List<string> _findings;
         SimSettings _ranWith;
 
+        /// <summary>The mood that computes an experiment whole — neither of the two that watch
+        /// something. Spelt as a question rather than a third flag so there is nothing extra to
+        /// keep in step: the timed inputs, the settings panel and the input list are all things
+        /// only a batch run has.</summary>
+        bool Batch => !_live && !_rec;
+
         bool _playing;
         bool _follow = true;
         double _lastTick;
@@ -124,6 +163,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
         void OnEnable()
         {
             EditorApplication.update += Tick;
+            EditorApplication.playModeStateChanged += OnPlayModeChanged;
             if (_controller == null) _controller = Selection.activeObject as AnimatorController;
         }
 
@@ -136,6 +176,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
         void OnDisable()
         {
             EditorApplication.update -= Tick;
+            EditorApplication.playModeStateChanged -= OnPlayModeChanged;
             // Before a domain reload rather than after: the clients own hidden GameObjects, and
             // one that outlives the C# holding it is a leak nothing can reach to clean up.
             DropSession();
@@ -146,6 +187,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
             double now = EditorApplication.timeSinceStartup;
             float elapsed = (float)(now - _lastTick);
             _lastTick = now;
+            if (Watch()) return;
             if (!_playing) return;
 
             if (_live)
@@ -196,10 +238,17 @@ namespace Yozolab.DaerD.DynamicAnalyze
             };
 
             DrawToolbar();
-            if (_settingsOpen) DrawSettings();
-            DrawNotes();
+            if (_settingsOpen)
+            {
+                if (_rec) DrawRec();
+                else DrawSettings();
+            }
+            // Nothing SimNotes says applies to a recording: those are the things a SIMULATION
+            // of this controller cannot promise, and a recording simulates nothing — Mecanim is
+            // Mecanim and VRChat's behaviours are really running.
+            if (!_rec) DrawNotes();
             DrawFindings();
-            if (_inputsOpen && !_live) DrawStimulus();
+            if (_inputsOpen && Batch) DrawStimulus();
             var rect = GUILayoutUtility.GetRect(0f, 100000f, 0f, 100000f);
             _view.Draw(rect);
             if (GUI.changed) Repaint();
@@ -213,27 +262,40 @@ namespace Yozolab.DaerD.DynamicAnalyze
 
             bool live = GUILayout.Toggle(_live, L.Tr("Live"), EditorStyles.toolbarButton,
                 GUILayout.Width(44f));
-            if (live != _live)
-            {
-                _live = live;
-                _playing = false;
-                DropSession();
-                _findings = null;
-                _ranWith = null;
-                if (!_live) _view.trace = null;
-            }
+            if (live != _live) SwitchTo(live, false);
+            bool rec = GUILayout.Toggle(_rec, L.Tr("Rec"), EditorStyles.toolbarButton,
+                GUILayout.Width(40f));
+            if (rec != _rec) SwitchTo(false, rec);
 
-            EditorGUI.BeginDisabledGroup(_controller == null);
-            if (GUILayout.Button(_live ? L.Tr("Restart") : L.Tr("Run"),
-                    EditorStyles.toolbarButton, GUILayout.Width(56f)))
+            if (_rec)
             {
-                if (_live) StartSession();
-                else RunNow();
+                // Only while something is running: there is no graph to find outside Play mode,
+                // and a button that started a recording of nothing would be a button that lies.
+                EditorGUI.BeginDisabledGroup(!EditorApplication.isPlaying);
+                if (GUILayout.Button(_recording ? L.Tr("Stop") : L.Tr("Record"),
+                        EditorStyles.toolbarButton, GUILayout.Width(56f)))
+                {
+                    if (_recording) StopRecording();
+                    else StartRecording(false);
+                }
+                EditorGUI.EndDisabledGroup();
             }
-            EditorGUI.EndDisabledGroup();
+            else
+            {
+                EditorGUI.BeginDisabledGroup(_controller == null);
+                if (GUILayout.Button(_live ? L.Tr("Restart") : L.Tr("Run"),
+                        EditorStyles.toolbarButton, GUILayout.Width(56f)))
+                {
+                    if (_live) StartSession();
+                    else RunNow();
+                }
+                EditorGUI.EndDisabledGroup();
+            }
 
             bool has = _view.trace != null && _view.Frames > 0;
-            EditorGUI.BeginDisabledGroup(!has && !_live);
+            // A recording that is still being written to is not something to scrub: the newest
+            // frame moves under the cursor, and Follow is the only control that means anything.
+            EditorGUI.BeginDisabledGroup((!has && !_live) || _recording);
 
             if (!_live && GUILayout.Button("|<", EditorStyles.toolbarButton, GUILayout.Width(26f)))
             { _view.cursorFrame = 0; _playing = false; }
@@ -271,9 +333,15 @@ namespace Yozolab.DaerD.DynamicAnalyze
                 GUILayout.Width(50f));
             _speed = Speeds[speed];
 
-            if (_live)
+            if (_live || _recording)
+            {
+                // Outside the disabled group above: while a recording runs this is the one
+                // thing worth reaching for.
+                EditorGUI.EndDisabledGroup();
                 _follow = GUILayout.Toggle(_follow, L.Tr("Follow"), EditorStyles.toolbarButton,
                     GUILayout.Width(52f));
+                EditorGUI.BeginDisabledGroup((!has && !_live) || _recording);
+            }
 
             GUILayout.Space(6f);
             if (has)
@@ -304,7 +372,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
             _view.movedOnly = GUILayout.Toggle(_view.movedOnly, L.Tr("Moved"),
                 EditorStyles.toolbarButton, GUILayout.Width(52f));
             DrawClipMenu(has);
-            if (!_live)
+            if (Batch)
                 _inputsOpen = GUILayout.Toggle(_inputsOpen, L.Tr("Timed"),
                     EditorStyles.toolbarButton, GUILayout.Width(52f));
             _settingsOpen = GUILayout.Toggle(_settingsOpen, L.Tr("Settings"),
@@ -340,8 +408,9 @@ namespace Yozolab.DaerD.DynamicAnalyze
             //
             // Never in a live session, which is the one mood where that is not true: there the
             // same object goes on being appended to, so the ghost would be the run itself and
-            // the comparison would be of a thing with itself.
-            if (has && !_live)
+            // the comparison would be of a thing with itself. A recording is a snapshot the
+            // moment it stops, and not one before that, for exactly the same reason.
+            if (has && !_live && !_recording)
                 menu.AddItem(new GUIContent(L.Tr("Compare With This Run")), false,
                     () => _view.ghost = _view.trace);
             else menu.AddDisabledItem(new GUIContent(L.Tr("Compare With This Run")));
@@ -376,8 +445,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
             var clip = PickClip(L.Tr("Open Run"));
             if (clip == null) return;
             _playing = false;
-            _live = false;
-            DropSession();
+            SwitchTo(false, false);
             // The clip's own settings if it carries any, and then the findings that need to
             // know what the wire was can speak about it. Without them the window keeps the
             // settings it had and _ranWith stays null: the findings a trace answers on its own
@@ -513,7 +581,10 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// </summary>
         void DrawFindings()
         {
-            if (_live || _view.trace == null || _view.Frames == 0) return;
+            // And not while a recording is being written either: the trace grows under the
+            // reader, so every finding beginning with "never" would be about however much of it
+            // had arrived when the panel last drew itself.
+            if (_live || _recording || _view.trace == null || _view.Frames == 0) return;
             if (_findings == null) _findings = RunFindings.For(_view.trace, _ranWith);
             if (_findings.Count == 0) return;
             EditorGUILayout.BeginVertical(EditorStyles.helpBox);
@@ -829,6 +900,214 @@ namespace Yozolab.DaerD.DynamicAnalyze
                 foreach (var declared in _controller.parameters)
                     if (declared.name == parameter) return declared.type;
             return AnimatorControllerParameterType.Float;
+        }
+
+        // ---- recording ------------------------------------------------------
+
+        /// <summary>
+        /// Into another mood, and out of whatever the last one was holding.
+        ///
+        /// The one place either flag is written, which is what keeps "at most one of them is
+        /// up" true (see <see cref="_live"/>). A live session's trace goes with the session it
+        /// belonged to; a recording's does not, because a recording that has stopped is a
+        /// finished thing and stays worth looking at wherever the window is standing.
+        /// </summary>
+        void SwitchTo(bool live, bool rec)
+        {
+            bool leavingLive = _live && !live;
+            _live = live;
+            _rec = rec;
+            _playing = false;
+            StopRecording();
+            _recorder = null;
+            DropSession();
+            _findings = null;
+            _ranWith = null;
+            if (leavingLive) _view.trace = null;
+        }
+
+        /// <summary>
+        /// One look at the avatar, on the editor's own update — and the arm toggle waiting for
+        /// one to appear.
+        ///
+        /// Returns whether this update belonged to the recording, so the playback transport
+        /// below does not also run on it. The sample itself is refused when the frame has
+        /// already been seen (see <see cref="PlayRecorder.Sample"/>), which is most of the
+        /// calls: the editor updates more often than the game draws.
+        /// </summary>
+        bool Watch()
+        {
+            if (!_rec) return false;
+            // Armed, in Play mode, and nothing recorded yet: keep looking. The graph does not
+            // exist at the instant Play begins — the tool builds it a few frames in — so
+            // arming has to be a wait rather than a single try. Stopping by hand leaves the
+            // recorder in place, which is what keeps this from starting again behind you.
+            if (_armed && !_recording && _recorder == null && EditorApplication.isPlaying)
+                StartRecording(true);
+            if (!_recording || _recorder == null) return false;
+            if (!_recorder.Alive)
+            {
+                StopRecording();
+                Repaint();
+                return true;
+            }
+            if (!_recorder.Sample(Time.frameCount, Time.time)) return false;
+            _view.trace = _recorder.Trace;
+            // Something quiet may have just moved, and the row list is built from what has.
+            _view.Invalidate();
+            if (_follow) _view.cursorFrame = _view.Frames - 1;
+            Repaint();
+            return true;
+        }
+
+        /// <param name="waiting">Whether the arm toggle is looking rather than somebody
+        /// pressing the button. It declines to start on an avatar that is not running THIS
+        /// controller, because the whole point of arming is to catch the moment the avatar
+        /// turns up — and for the first few frames of Play mode the scene is full of Animators
+        /// that are not it. A person pressing the button is answered rather than second-guessed:
+        /// they get whatever the chosen Animator can give, down to reading the component
+        /// directly, and the state line says which of those it was.</param>
+        void StartRecording(bool waiting)
+        {
+            if (!EditorApplication.isPlaying) return;
+            // The field wins while it is really running something. It stops being a live
+            // reference the moment Play mode rebuilds the scene, and then the scene is asked.
+            var target = _target;
+            if (target == null || PlayRecorder.PlayablesOn(target).Count == 0)
+            {
+                var found = PlayRecorder.Likeliest(_controller);
+                if (found != null) target = found;
+            }
+            if (target == null) return;
+            if (waiting && PlayRecorder.Matching(_controller,
+                    PlayRecorder.PlayablesOn(target)) < 0) return;
+
+            var recorder = PlayRecorder.On(target, _controller);
+            if (recorder == null) return;
+            _target = target;
+            _recorder = recorder;
+            _recording = true;
+            _playing = false;
+            _findings = null;
+            // A recording is not an experiment this window set up, so there are no settings
+            // that produced it. A clip saved from one carries the rows and no claim about a
+            // wire that was never there — see TraceClip.Save and DrawFindings.
+            _ranWith = null;
+            _view.trace = _recorder.Trace;
+            _view.cursorFrame = 0;
+            _view.Invalidate();
+            _view.Fit(position.width);
+            _lastTick = EditorApplication.timeSinceStartup;
+        }
+
+        /// <summary>Stops writing and keeps everything written. The recorder itself is kept
+        /// too: it is what the state line counts, and holding it is what stops an armed window
+        /// from starting again the instant it is stopped by hand.</summary>
+        void StopRecording()
+        {
+            if (!_recording) return;
+            _recording = false;
+            _findings = null;
+        }
+
+        /// <summary>
+        /// Play mode ending, which is the one event this mood turns on.
+        ///
+        /// Stopped on the way OUT rather than after: the scene is about to be taken down and a
+        /// recorder still looking would be reading a destroyed Animator. What happens next is
+        /// the asymmetry the whole mood rests on — leaving Play mode does not reload the domain,
+        /// so the trace written inside it is still here afterwards, and everything the window
+        /// offers over a trace now applies to it. ENTERING Play mode does reload, which is why
+        /// an unsaved recording does not survive one and the state line says so.
+        /// </summary>
+        void OnPlayModeChanged(PlayModeStateChange change)
+        {
+            if (change != PlayModeStateChange.ExitingPlayMode) return;
+            StopRecording();
+            Repaint();
+        }
+
+        /// <summary>
+        /// The Rec mood's panel: what to record off what, whether to start on its own, and how
+        /// it is going.
+        ///
+        /// The clock and the wire are not here because neither means anything — the frames are
+        /// the avatar's own and the other person is a real one or is nobody. The controller
+        /// stays, because it is what the states and layers are named from.
+        /// </summary>
+        void DrawRec()
+        {
+            EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+            _controller = (AnimatorController)EditorGUILayout.ObjectField(
+                L.Tr("Controller"), _controller, typeof(AnimatorController), false);
+
+            EditorGUILayout.BeginHorizontal();
+            _target = (Animator)EditorGUILayout.ObjectField(new GUIContent(L.Tr("Animator"),
+                    L.Tr("The avatar to record. Drop the object wearing it here, or pick one out of the list beside this — the list is everything a graph is currently driving, which is what an avatar being worn looks like from outside.")),
+                _target, typeof(Animator), true);
+            if (GUILayout.Button(new GUIContent(L.Tr("Running"),
+                    L.Tr("Every Animator some PlayableGraph is writing to right now. A tick marks the ones running this controller.")),
+                    EditorStyles.miniButton, GUILayout.Width(76f)))
+                ShowRunning();
+            EditorGUILayout.EndHorizontal();
+
+            _armed = EditorGUILayout.Toggle(new GUIContent(L.Tr("Record On Play"),
+                L.Tr("Start recording as soon as an avatar running this controller appears in Play mode. Kept across entering Play mode, which is the only way to catch the first second of a session — by the time the window can be clicked, it has gone.")),
+                _armed);
+
+            foreach (string line in RecState())
+                EditorGUILayout.LabelField("• " + line, EditorStyles.wordWrappedMiniLabel);
+            EditorGUILayout.EndVertical();
+        }
+
+        /// <summary>Where the recording stands, in the order somebody reads it: whether it is
+        /// running, what it is reading, and what will happen to what it has.</summary>
+        List<string> RecState()
+        {
+            var lines = new List<string>();
+            if (!EditorApplication.isPlaying)
+                lines.Add(L.Tr("Not in Play mode. Start the avatar running and press Record — or arm the toggle above and it will start on its own."));
+            else if (_recording)
+                lines.Add(L.Tr("Recording — {0} frame(s), {1} frame(s) missed.",
+                    _recorder != null ? _recorder.Frames : 0,
+                    _recorder != null ? _recorder.Missed : 0));
+            else if (_armed && _recorder == null)
+                lines.Add(L.Tr("Waiting for an avatar running this controller to appear."));
+
+            if (_recorder != null)
+            {
+                if (_recorder.Matched)
+                    lines.Add(L.Tr("Reading the graph that is running this controller, so the states, transitions and layer weights are named."));
+                else if (_recorder.FromGraph)
+                    lines.Add(L.Tr("Nothing in this avatar's graph is running this controller. Its parameters are recorded; nothing can be said about layers or states."));
+                else
+                    lines.Add(L.Tr("No graph is driving this Animator, so it is being read directly. Nothing VRChat-shaped is happening to this avatar."));
+                if (!_recording && _recorder.Frames > 0)
+                    lines.Add(L.Tr("{0} frame(s) recorded. Entering Play mode again drops them — save the run as a clip to keep it.",
+                        _recorder.Frames));
+            }
+            return lines;
+        }
+
+        /// <summary>The candidate list, which is the whole of the automatic detection: every
+        /// Animator a graph is writing to. No tool is asked and no component is looked for by
+        /// name, so an avatar worn by something nobody has heard of is in the list too.</summary>
+        void ShowRunning()
+        {
+            var menu = new GenericMenu();
+            var driven = PlayRecorder.Driven();
+            if (driven.Count == 0)
+                menu.AddDisabledItem(new GUIContent(
+                    L.Tr("Nothing in the scene is being driven by a graph.")));
+            foreach (var animator in driven)
+            {
+                var pick = animator;
+                bool runs = PlayRecorder.Matching(_controller,
+                    PlayRecorder.PlayablesOn(pick)) >= 0;
+                menu.AddItem(new GUIContent(pick.name + (runs ? " ✓" : string.Empty)),
+                    pick == _target, () => { _target = pick; Repaint(); });
+            }
+            menu.ShowAsContext();
         }
 
         // ---- running --------------------------------------------------------

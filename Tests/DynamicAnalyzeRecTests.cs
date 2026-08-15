@@ -620,6 +620,47 @@ namespace Yozolab.DaerD.Tests
             }
         }
 
+        // ---- the window's third mood -----------------------------------------
+
+        /// <summary>
+        /// A window layout saved before Rec existed opens in the mood it was closed in.
+        ///
+        /// An editor layout is serialized fields by NAME, so the compatibility question is
+        /// entirely about which names survive: the mood is two booleans rather than one enum
+        /// precisely because an enum would have had to give the old <c>false</c> a number, and
+        /// every layout ever saved carries <c>_live</c> and nothing else. It goes on being read
+        /// alone; <c>_rec</c> is absent from such a layout and reads as its default.
+        /// </summary>
+        [Test]
+        public void TheWindowsMood_IsStoredSoThatAnOldLayoutOpensWhereItWas()
+        {
+            var window = ScriptableObject.CreateInstance<DynamicAnalyzeWindow>();
+            try
+            {
+                var serialized = new UnityEditor.SerializedObject(window);
+                var live = serialized.FindProperty("_live");
+                var rec = serialized.FindProperty("_rec");
+                Assert.IsNotNull(live,
+                    "the flag every saved layout carries has been renamed, so every one of them "
+                    + "now opens in the wrong mood");
+                Assert.IsNotNull(rec, "the Rec flag is not serialized, so the mood is forgotten");
+                Assert.IsFalse(rec.boolValue,
+                    "a layout that predates Rec has no value for it and must read as not Rec");
+                Assert.IsFalse(live.boolValue,
+                    "a fresh window opens computing runs, the way it always has");
+
+                // And the armed toggle, which is the one setting that has to cross a domain
+                // reload to do its job at all.
+                Assert.IsNotNull(serialized.FindProperty("_armed"),
+                    "arming does not survive entering Play mode, which is the only moment it "
+                    + "would ever be read");
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(window);
+            }
+        }
+
         // ---- in a real Play mode ---------------------------------------------
 
         /// <summary>

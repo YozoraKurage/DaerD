@@ -3195,3 +3195,56 @@ msgstr "今の実行と比較"
 
 msgid "Δ {0} {1}"
 msgstr "Δ {0} {1}"
+
+# ---- DD DynamicAnalyze (Rec) ----
+
+msgid "Rec"
+msgstr "記録"
+
+msgid "Record"
+msgstr "記録開始"
+
+msgid "Stop"
+msgstr "停止"
+
+msgid "Animator"
+msgstr "Animator"
+
+msgid "The avatar to record. Drop the object wearing it here, or pick one out of the list beside this — the list is everything a graph is currently driving, which is what an avatar being worn looks like from outside."
+msgstr "記録する対象のアバターです。着用中のオブジェクトをここにドロップするか、隣の一覧から選んでください。一覧に出るのは「いまグラフに駆動されている Animator」で、外から見たアバター着用状態そのものです。"
+
+msgid "Running"
+msgstr "実行中"
+
+msgid "Every Animator some PlayableGraph is writing to right now. A tick marks the ones running this controller."
+msgstr "いずれかの PlayableGraph が現在書き込んでいる Animator の一覧です。このコントローラーを実行しているものにはチェックが付きます。"
+
+msgid "Record On Play"
+msgstr "Play 開始で記録"
+
+msgid "Start recording as soon as an avatar running this controller appears in Play mode. Kept across entering Play mode, which is the only way to catch the first second of a session — by the time the window can be clicked, it has gone."
+msgstr "Play モード中にこのコントローラーを実行しているアバターが現れた時点で、自動的に記録を開始します。この設定は Play 突入をまたいで保持されます。最初の 1 秒を捉える手段はこれだけです（ウィンドウをクリックできる頃には過ぎています）。"
+
+msgid "Not in Play mode. Start the avatar running and press Record — or arm the toggle above and it will start on its own."
+msgstr "Play モードではありません。アバターを動かしてから「記録開始」を押してください。上のトグルを入れておけば自動で始まります。"
+
+msgid "Recording — {0} frame(s), {1} frame(s) missed."
+msgstr "記録中 — {0} フレーム、取り逃し {1} フレーム。"
+
+msgid "Waiting for an avatar running this controller to appear."
+msgstr "このコントローラーを実行しているアバターが現れるのを待っています。"
+
+msgid "Reading the graph that is running this controller, so the states, transitions and layer weights are named."
+msgstr "このコントローラーを実行しているグラフを読んでいます。ステート・遷移・レイヤーウェイトまで名前付きで記録されます。"
+
+msgid "Nothing in this avatar's graph is running this controller. Its parameters are recorded; nothing can be said about layers or states."
+msgstr "このアバターのグラフには、このコントローラーを実行しているものがありません。パラメーターは記録されますが、レイヤーやステートについては何も言えません。"
+
+msgid "No graph is driving this Animator, so it is being read directly. Nothing VRChat-shaped is happening to this avatar."
+msgstr "この Animator を駆動しているグラフが無いため、Animator を直接読んでいます。このアバターには VRChat 相当の仕組みは何も掛かっていません。"
+
+msgid "{0} frame(s) recorded. Entering Play mode again drops them — save the run as a clip to keep it."
+msgstr "{0} フレーム記録しました。次に Play モードへ入ると失われます。残すならクリップとして保存してください。"
+
+msgid "Nothing in the scene is being driven by a graph."
+msgstr "グラフに駆動されているものがシーンにありません。"
