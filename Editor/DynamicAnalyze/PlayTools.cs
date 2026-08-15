@@ -25,8 +25,9 @@ namespace Yozolab.DaerD.DynamicAnalyze
     /// a compile error here rather than a feature that silently stops working on somebody
     /// else's machine after they update. Reflection by name was the alternative and was
     /// dropped — it costs the compiler's help exactly where the API is somebody else's and
-    /// changes without telling us, and the deeper uses these defines open up later (writing a
-    /// parameter back through GestureManager's own objects) would be unwritable safely.
+    /// changes without telling us, and the deeper use it opens up is the one below: WRITING a
+    /// parameter back through GestureManager's own objects, which is a call taking a type of
+    /// theirs as an argument and is not a thing to spell as a string.
     ///
     /// <para>WHAT THE CALLER SEES.</para>
     /// Nothing. Every entry point below exists whether or not either package is installed and
@@ -125,6 +126,77 @@ namespace Yozolab.DaerD.DynamicAnalyze
             }
 #endif
             return hold;
+        }
+
+        // ---- writing, which only one of the two is asked to do ------------------
+
+        /// <summary>
+        /// GestureManager's own object for this avatar, or null.
+        ///
+        /// Its module rather than its dictionary entry: the entry is a base class covering every
+        /// kind of avatar the tool can hold, and the parameters are a VRChat 3 avatar's. Anything
+        /// else in the dictionary — an avatar of another generation, or an entry mid-swap with
+        /// nothing in it yet — answers null, which is the same answer as "no tool has this one"
+        /// and wants the same handling from the caller.
+        /// </summary>
+#if DAERD_GM && DAERD_VRC
+        static global::BlackStartX.GestureManager.Editor.Modules.Vrc3.ModuleVrc3 Module(
+            Animator animator)
+        {
+            if (animator == null) return null;
+            return global::BlackStartX.GestureManager.GestureManager.ControlledAvatars
+                    .TryGetValue(animator.gameObject, out var module)
+                ? module as global::BlackStartX.GestureManager.Editor.Modules.Vrc3.ModuleVrc3
+                : null;
+        }
+#endif
+
+        /// <summary>Whether an input written here would land anywhere. False without the tool,
+        /// without the SDK, and for an avatar GestureManager is not holding — all of which are
+        /// the same thing from the caller's side: there is nobody to press this avatar's
+        /// buttons.</summary>
+        public static bool CanWrite(Animator animator)
+        {
+#if DAERD_GM && DAERD_VRC
+            return Module(animator) != null;
+#else
+            return false;
+#endif
+        }
+
+        /// <summary>
+        /// Sets a parameter on the avatar somebody is wearing, and says whether it landed.
+        ///
+        /// <para>WHY THROUGH THE TOOL AND NOT THROUGH THE PLAYABLE.</para>
+        /// The value could be written straight onto the AnimatorControllerPlayable the graph is
+        /// running, which is fewer moving parts and is the wrong thing. GestureManager holds
+        /// state ABOUT that value — the radial menu showing where the toggle is, the OSC module
+        /// forwarding it, whatever is subscribed to it changing — and a write that goes round
+        /// the tool leaves every one of those saying something the avatar is no longer doing.
+        /// The menu on screen would then disagree with the avatar under it, which is exactly the
+        /// confusion somebody running an experiment cannot afford. Its own Set is the point the
+        /// tool publishes for this, and it is what a person clicking the radial goes through.
+        ///
+        /// <para>WHAT A TRIGGER DOES HERE.</para>
+        /// One, and only one, direction: a non-zero value fires it and a zero does nothing,
+        /// because that is what the tool does with one unless the write claims to be a driver's.
+        /// A timed input that takes a trigger back down is therefore a no-op on a real avatar
+        /// while being a real write in the simulator — stated rather than worked around, because
+        /// working around it means telling the tool a lie about where the write came from.
+        /// </summary>
+        public static bool Write(Animator animator, string parameter, float value)
+        {
+#if DAERD_GM && DAERD_VRC
+            if (string.IsNullOrEmpty(parameter)) return false;
+            var module = Module(animator);
+            if (module == null) return false;
+            var param = module.GetParam(parameter);
+            if (param == null) return false;
+            param.Set(module, value);
+            return true;
+#else
+            return false;
+#endif
         }
 
         /// <summary>The tool's own name, untranslated on purpose: it is what the tool calls

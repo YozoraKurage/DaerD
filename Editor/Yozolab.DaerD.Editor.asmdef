@@ -3,6 +3,7 @@
     "rootNamespace": "Yozolab.DaerD",
     "references": [
         "vrchat.blackstartx.gesture-manager",
+        "vrchat.blackstartx.gesture-manager.editor",
         "lyuma.av3emulator",
         "nadena.dev.ndmf",
         "nadena.dev.ndmf.vrchat"

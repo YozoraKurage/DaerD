@@ -3370,6 +3370,124 @@ namespace Yozolab.DaerD.Tests
             Assert.AreNotEqual(taken, DynamicAnalyzeWindow.InputSignature(tracks));
         }
 
+        // ---- the inputs, sent back out ----------------------------------------
+
+        /// <summary>A recording's worth of inputs: a menu press, a built-in, something the
+        /// world did, one the avatar computes for itself, and one aimed at somebody else.</summary>
+        static Stimulus Edited()
+        {
+            var stimulus = new Stimulus();
+            stimulus.At(Stimulus.MenuTrack, 0.1f, "Go", 1f);
+            stimulus.At(Stimulus.MenuTrack, 0.3f, "Go", 0f);
+            stimulus.At(Stimulus.BuiltInTrack, 0.2f, "GestureLeft", 2f);
+            stimulus.At(Stimulus.WorldTrack, 0.15f, "Touched", 1f);
+            stimulus.At(Stimulus.HandTrack, 0.25f, "N", 5f);
+            stimulus.At(Stimulus.HandTrack, 0.35f, "X", 0.5f, Simulation.RemoteScope);
+            return stimulus;
+        }
+
+        static System.Collections.Generic.List<string> Pressed(PlayInputs sending, float at)
+        {
+            var names = new System.Collections.Generic.List<string>();
+            foreach (var entry in sending.Due(at)) names.Add(entry.parameter);
+            return names;
+        }
+
+        [Test]
+        public void Send_HandsOverEachInputOnceAndInTheOrderARunWouldSeeThem()
+        {
+            var sending = new PlayInputs(Edited(), false, null);
+            // The world track is out by default and the remote's input is never sendable, so
+            // four remain: Go, GestureLeft, N, Go again.
+            Assert.AreEqual(4, sending.Count);
+            Assert.AreEqual(0.3f, sending.Length, 1e-6f);
+
+            CollectionAssert.IsEmpty(Pressed(sending, 0.05f), "nothing is due yet");
+            CollectionAssert.AreEqual(new[] { "Go" }, Pressed(sending, 0.12f));
+            CollectionAssert.IsEmpty(Pressed(sending, 0.12f), "and it does not go twice");
+            Assert.IsFalse(sending.Done);
+
+            // An update that arrives late sends everything that came due while it was away,
+            // in order, rather than losing the ones it stepped over.
+            CollectionAssert.AreEqual(new[] { "GestureLeft", "N", "Go" },
+                Pressed(sending, 5f));
+            Assert.IsTrue(sending.Done);
+            Assert.AreEqual(4, sending.Sent);
+        }
+
+        [Test]
+        public void Send_ATimeThatWentBackwardsPressesNothing()
+        {
+            var sending = new PlayInputs(Edited(), false, null);
+            Assert.AreEqual(2, Pressed(sending, 0.2f).Count);
+            CollectionAssert.IsEmpty(Pressed(sending, 0f),
+                "there is no rewinding an avatar, so there is no starting again either");
+            Assert.AreEqual(2, sending.Sent);
+        }
+
+        [Test]
+        public void Send_LeavesTheWorldTrackAloneUnlessItIsAskedFor()
+        {
+            var without = new PlayInputs(Edited(), false, null);
+            CollectionAssert.DoesNotContain(Pressed(without, 10f), "Touched");
+
+            var with = new PlayInputs(Edited(), true, null);
+            CollectionAssert.AreEqual(new[] { "Go", "Touched", "GestureLeft", "N", "Go" },
+                Pressed(with, 10f), "and with it the world lands in the order it happened");
+        }
+
+        [Test]
+        public void Send_LeavesOutWhatTheAvatarWorksOutForItselfAndSaysWhich()
+        {
+            var derived = new System.Collections.Generic.HashSet<string> { "N" };
+            var sending = new PlayInputs(Edited(), false, derived);
+            CollectionAssert.AreEqual(new[] { "Go", "GestureLeft", "Go" },
+                Pressed(sending, 10f));
+            CollectionAssert.AreEqual(new[] { "N" }, sending.derived);
+        }
+
+        [Test]
+        public void Send_LeavesOutAMutedTrackTheSameWayARunDoes()
+        {
+            var stimulus = Edited();
+            stimulus.Find(Stimulus.MenuTrack).muted = true;
+            var sending = new PlayInputs(stimulus, true, null);
+            CollectionAssert.AreEqual(new[] { "Touched", "GestureLeft", "N" },
+                Pressed(sending, 10f),
+                "what a run would not be told is not what a real avatar is told either");
+
+            // And a playback of nothing is finished the moment it starts rather than a
+            // playback that never ends.
+            var empty = new PlayInputs(new Stimulus(), true, null);
+            Assert.IsTrue(empty.Done);
+            Assert.AreEqual(0f, empty.Length, 1e-6f);
+            Assert.IsTrue(new PlayInputs(null, true, null).Done);
+        }
+
+        [Test]
+        public void Send_WithNobodyHoldingTheAvatarWritesNothingAndSaysSo()
+        {
+            // Tool-free, and asserted directly rather than skipped: PlayTools compiles in a
+            // project with neither package and has to answer "there is nowhere to send this"
+            // rather than throw. The avatar being held by GestureManager is the other half and
+            // is in DynamicAnalyzeToolsTests, which is where the define lives.
+            var go = new GameObject("Nobody's");
+            go.hideFlags = HideFlags.HideAndDontSave;
+            try
+            {
+                var animator = go.AddComponent<Animator>();
+                Assert.IsFalse(PlayTools.CanWrite(animator));
+                Assert.IsFalse(PlayTools.CanWrite(null));
+                Assert.IsFalse(PlayTools.Write(animator, "Go", 1f));
+                Assert.IsFalse(PlayTools.Write(animator, string.Empty, 1f));
+                Assert.IsFalse(PlayTools.Write(null, "Go", 1f));
+            }
+            finally
+            {
+                Object.DestroyImmediate(go);
+            }
+        }
+
         // ---- the hand, written down ------------------------------------------
 
         static System.Collections.Generic.List<DynamicAnalyzeWindow.Track> Hand() =>

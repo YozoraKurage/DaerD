@@ -147,6 +147,22 @@ namespace Yozolab.DaerD.DynamicAnalyze
         }
 
         /// <summary>
+        /// Every name the avatar works out for itself: what a driver writes and what an
+        /// animation writes onto the Animator, in one set.
+        ///
+        /// The two are reported apart by an extraction, which has to say WHY each name is
+        /// missing. Everything else — playing the inputs back into a real avatar, most of all —
+        /// only wants to know that the avatar is the author of it and must not be argued with.
+        /// </summary>
+        public static HashSet<string> Derived(AnimatorController controller)
+        {
+            var names = DriverWrites(controller);
+            if (controller != null)
+                names.UnionWith(AapWriteScan.CollectWrittenParameters(controller));
+            return names;
+        }
+
+        /// <summary>
         /// Every parameter some VRC Parameter Driver in this controller writes — the Set, the
         /// Add, the Random and the destination of a Copy. A Copy's SOURCE is not one of these:
         /// it is read, and a value that is only read is an input like any other.

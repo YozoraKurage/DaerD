@@ -193,6 +193,38 @@ namespace Yozolab.DaerD.Tests
 #endif
         }
 
+        /// <summary>
+        /// The write side of the same dictionary: an avatar GestureManager is holding, whose
+        /// entry is not a VRChat 3 module, takes no input.
+        ///
+        /// What this pins is the SHAPE — that the module is asked for by type and that anything
+        /// else answers "there is nowhere to send this" rather than throwing. What it cannot
+        /// pin is a real ModuleVrc3, which the tool builds out of a live avatar descriptor
+        /// inside Play mode; that the radial menu really moves when an input is sent is a thing
+        /// somebody checks with a headset on, and is written down as such rather than faked
+        /// here with a mock of somebody else's class.
+        /// </summary>
+        [Test]
+        public void GestureManagerTakesNoInputForAnAvatarItIsNotRunningAsAVrc3One()
+        {
+#if DAERD_GM
+            var held = Avatar("Held");
+            GestureManagerTakes(held);
+            Assert.AreEqual(PlayTools.Tool.GestureManager, PlayTools.On(held).tool,
+                "the tool does have it — which is exactly the case worth asking about");
+
+            // Held, and the entry is not a module that has parameters. An input sent here would
+            // land nowhere, so it is refused rather than dropped quietly.
+            Assert.IsFalse(PlayTools.CanWrite(held));
+            Assert.IsFalse(PlayTools.Write(held, "Go", 1f));
+
+            ForgetControlledAvatars();
+            Assert.IsFalse(PlayTools.CanWrite(held));
+#else
+            Assert.Ignore("GestureManager is not installed in this project.");
+#endif
+        }
+
         // ---- Av3Emulator --------------------------------------------------------
 
         /// <summary>The local copy — the one the person in the editor is wearing — is named

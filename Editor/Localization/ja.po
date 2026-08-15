@@ -3305,3 +3305,30 @@ msgstr "このトラックを中身ごと削除します。ミュートはファ
 
 msgid "The {0} track is frozen: it replays what touched the avatar that day, and the rest of the inputs are no longer what it was recorded beside. Nothing here works out where a contact or a physbone would have fired instead. Mute it to ask the question without the world in it, or play the inputs into a real avatar and record the answer."
 msgstr "{0} トラックは凍った入力です。記録した日にアバターへ触れたものをそのまま再生しますが、他の入力はもう記録時のものではありません。コンタクトや PhysBone が代わりにどこで発火したかを、ここでは計算しません。世界抜きで問うならミュートし、世界ごと問うなら実際のアバターへ入力を流して答えを記録してください。"
+
+msgid "Play Inputs"
+msgstr "入力を流す"
+
+msgid "Stop Sending"
+msgstr "送出を止める"
+
+msgid "Press the timed inputs into the avatar GestureManager is holding, at the seconds they say, through the tool's own way of setting one — so the radial menu and everything else watching agree with the avatar. Start a recording as well and the result is the same experiment run for real, to lay against the simulated one."
+msgstr "GestureManager が掴んでいるアバターへ、時刻付き入力をそれぞれの秒に合わせて流し込みます。値の設定はツール自身の経路を通すので、ラジアルメニューやその他の表示がアバターと食い違いません。同時に記録を回せば、同じ実験を実機で走らせた結果になり、シミュレーション側と並べて比べられます。"
+
+msgid "Send The World"
+msgstr "World も流す"
+
+msgid "Send the World track too. Off by default: those values came from contacts and physbones, and in Play mode those components are running and writing the same parameters — two authors on one value, and which wins is a race. Worth turning on for a scene that has none of them, or to see what the recorded world does to an edited avatar."
+msgstr "World トラックも流します。既定はオフです。これらの値はコンタクトや PhysBone が書いたもので、Play モードではその実物が動いて同じパラメーターを書いているため、1 つの値に書き手が 2 人いる状態になり、どちらが勝つかは競争になります。そうしたコンポーネントが無いシーンや、記録された世界が編集後のアバターに何をするかを見たいときに入れてください。"
+
+msgid "Sending the timed inputs — {0} of {1} pressed, {2:0.#} s to go."
+msgstr "時刻付き入力を送出中 — {1} 件中 {0} 件を押しました。残り {2:0.#} 秒。"
+
+msgid "{0} of them are not being sent: the avatar works them out itself ({1})."
+msgstr "うち {0} 件は送っていません。アバターが自分で計算する値です（{1}）。"
+
+msgid "Nothing is written down to send. Timed inputs are written in the other two moods, or taken off a recording with Load As Timed Inputs."
+msgstr "送る入力が書かれていません。時刻付き入力は他の 2 つのモードで書くか、「時刻付き入力として読み込む」で記録から取り込んでください。"
+
+msgid "GestureManager is not holding this avatar, so there is nowhere to press its buttons. Only its own way of setting a parameter keeps the radial menu and the avatar saying the same thing, so nothing is sent without it."
+msgstr "GestureManager がこのアバターを掴んでいないため、ボタンを押す先がありません。ラジアルメニューとアバターの表示を一致させられるのはツール自身の設定経路だけなので、それが無い場合は何も送りません。"

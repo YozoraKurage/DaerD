@@ -138,6 +138,12 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// scope in a recording, on an avatar that has copies, which is what somebody who set
         /// those copies up was after.</summary>
         [SerializeField] bool _recordClones = true;
+        /// <summary>Whether a playback sends the world track as well. Off, and the tooltip says
+        /// why: those values came from components that are running in Play mode, so sending them
+        /// puts two authors on one parameter. Serialized because it is a setting somebody makes
+        /// once about how they work, and it survives entering Play mode for the same reason the
+        /// arm toggle does.</summary>
+        [SerializeField] bool _playWorld;
         [SerializeField] bool _settingsOpen = true;
         [SerializeField] bool _inputsOpen = true;
         [SerializeField] bool _notesOpen = true;
@@ -164,6 +170,13 @@ namespace Yozolab.DaerD.DynamicAnalyze
         // — which is the whole reason the mood is worth having.
         PlayRecorder _recorder;
         bool _recording;
+
+        // The playback of the timed inputs into a real avatar, and when it started. Not
+        // serialized and it must not be: this is a thing happening in Play mode, and a domain
+        // reload is the end of Play mode's world. A half-finished playback restored afterwards
+        // would go on pressing buttons on an avatar that no longer exists.
+        PlayInputs _sending;
+        double _sendingFrom;
 
         // SimNotes.For walks every layer and opens a SerializedObject per driver, and OnGUI
         // asks several times a frame — on a real avatar's FX that is a steady cost for an
@@ -251,6 +264,11 @@ namespace Yozolab.DaerD.DynamicAnalyze
             double now = EditorApplication.timeSinceStartup;
             float elapsed = (float)(now - _lastTick);
             _lastTick = now;
+            // Before the recording rather than after: an input and the frame it lands on are
+            // the point of doing both at once, and Watch swallows the update it takes a sample
+            // on. On the editor's update rather than on the game's frames, which is where the
+            // guarantee stops — see Send.
+            Send(now);
             if (Watch()) return;
             if (!_playing) return;
 
@@ -1301,6 +1319,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
             _rec = rec;
             _playing = false;
             StopRecording();
+            _sending = null;
             _recorder = null;
             DropSession();
             _findings = null;
@@ -1388,6 +1407,54 @@ namespace Yozolab.DaerD.DynamicAnalyze
             _lastTick = EditorApplication.timeSinceStartup;
         }
 
+        // ---- sending the inputs back out -------------------------------------
+
+        /// <summary>
+        /// One update's worth of timed inputs, into the avatar somebody is wearing.
+        ///
+        /// <para>WHAT THIS DOES AND DOES NOT PROMISE.</para>
+        /// The entries go out at the second they say, measured against the editor's own clock
+        /// from the moment the playback started. What that is not is frame-accurate: the editor
+        /// updates when it feels like it and the game draws when it feels like it, so an input
+        /// written down for 1.500 s lands on the first update at or after 1.500 s and the frame
+        /// it reaches is whichever one is next. A run in the simulator lands its inputs on an
+        /// exact frame and this cannot — which is the honest difference between the fast loop
+        /// and the real one, and is why the comparison afterwards is between two recordings
+        /// rather than a claim that they are the same experiment.
+        ///
+        /// Nothing is skipped when updates are missed: the playback is told the time rather
+        /// than the elapsed slice, so a stall sends everything that came due during it, late
+        /// and in order, instead of losing it.
+        /// </summary>
+        void Send(double now)
+        {
+            if (_sending == null) return;
+            if (!EditorApplication.isPlaying)
+            {
+                // Play mode ending takes the avatar with it. Stopping quietly rather than
+                // reporting: the state line already says a playback is running, and the reader
+                // just pressed stop on the thing it was running into.
+                _sending = null;
+                return;
+            }
+            foreach (var entry in _sending.Due((float)(now - _sendingFrom)))
+                PlayTools.Write(_target, entry.parameter, entry.value);
+            if (_sending.Done) _sending = null;
+            Repaint();
+        }
+
+        /// <summary>Starts one, from the top. Pressing it again while one is running stops it
+        /// rather than starting a second — two playbacks of one list into one avatar is not
+        /// something anybody means.</summary>
+        void StartSending()
+        {
+            if (_sending != null) { _sending = null; return; }
+            if (!EditorApplication.isPlaying || !PlayTools.CanWrite(_target)) return;
+            _sending = new PlayInputs(BuildStimulus(), _playWorld,
+                InputSurface.Derived(_controller));
+            _sendingFrom = EditorApplication.timeSinceStartup;
+        }
+
         /// <summary>Stops writing and keeps everything written. The recorder itself is kept
         /// too: it is what the state line counts, and holding it is what stops an armed window
         /// from starting again the instant it is stopped by hand.</summary>
@@ -1412,6 +1479,9 @@ namespace Yozolab.DaerD.DynamicAnalyze
         {
             if (change != PlayModeStateChange.ExitingPlayMode) return;
             StopRecording();
+            // And the playback, for the same reason: the avatar it is pressing is about to stop
+            // existing.
+            _sending = null;
             Repaint();
         }
 
@@ -1447,9 +1517,39 @@ namespace Yozolab.DaerD.DynamicAnalyze
                 L.Tr("Record the copies of this avatar that other people in the instance are seeing — Av3Emulator's non-local clones — into the same trace, under a scope each beside the wearer's. Whoever is there when the recording starts is who is in it; one made after that is caught by starting another recording.")),
                 _recordClones);
 
+            DrawSending();
+
             foreach (string line in RecState())
                 EditorGUILayout.LabelField("• " + line, EditorStyles.wordWrappedMiniLabel);
             EditorGUILayout.EndVertical();
+        }
+
+        /// <summary>
+        /// The other direction, on the panel where Play mode lives: the timed inputs, pressed
+        /// into the avatar somebody is wearing.
+        ///
+        /// Here rather than under the Timed inputs list, although that is what it plays. The
+        /// list is a batch mood's panel and this only means anything in Play mode, and the thing
+        /// a person is doing when they reach for it — start recording, send the inputs, watch
+        /// what the real avatar does with them — is entirely this panel's business.
+        /// </summary>
+        void DrawSending()
+        {
+            EditorGUILayout.BeginHorizontal();
+            bool can = EditorApplication.isPlaying && PlayTools.CanWrite(_target)
+                && Written() > 0;
+            using (new EditorGUI.DisabledScope(!can && _sending == null))
+                if (GUILayout.Button(new GUIContent(
+                        _sending != null ? L.Tr("Stop Sending") : L.Tr("Play Inputs"),
+                        L.Tr("Press the timed inputs into the avatar GestureManager is holding, at the seconds they say, through the tool's own way of setting one — so the radial menu and everything else watching agree with the avatar. Start a recording as well and the result is the same experiment run for real, to lay against the simulated one.")),
+                        EditorStyles.miniButton, GUILayout.Width(110f)))
+                    StartSending();
+
+            _playWorld = GUILayout.Toggle(_playWorld, new GUIContent(L.Tr("Send The World"),
+                    L.Tr("Send the World track too. Off by default: those values came from contacts and physbones, and in Play mode those components are running and writing the same parameters — two authors on one value, and which wins is a race. Worth turning on for a scene that has none of them, or to see what the recorded world does to an edited avatar.")),
+                EditorStyles.miniButton, GUILayout.Width(110f));
+            GUILayout.FlexibleSpace();
+            EditorGUILayout.EndHorizontal();
         }
 
         /// <summary>Where the recording stands, in the order somebody reads it: whether it is
@@ -1484,7 +1584,37 @@ namespace Yozolab.DaerD.DynamicAnalyze
                     lines.Add(L.Tr("{0} frame(s) recorded. Entering Play mode again drops them — save the run as a clip to keep it.",
                         _recorder.Frames));
             }
+            SendState(lines);
             return lines;
+        }
+
+        /// <summary>
+        /// Where the playback stands, said in the same list as the recording because they are
+        /// the two halves of one thing somebody is doing.
+        ///
+        /// The reason it cannot start is said when it cannot: a disabled button with nothing
+        /// beside it is the commonest way a feature looks broken. Nothing is said at all
+        /// outside Play mode — the line above already says that, and repeating it under a second
+        /// button would be the panel nagging.
+        /// </summary>
+        void SendState(List<string> lines)
+        {
+            if (_sending != null)
+            {
+                lines.Add(L.Tr("Sending the timed inputs — {0} of {1} pressed, {2:0.#} s to go.",
+                    _sending.Sent, _sending.Count,
+                    Mathf.Max(0f, _sending.Length
+                        - (float)(EditorApplication.timeSinceStartup - _sendingFrom))));
+                if (_sending.derived.Count > 0)
+                    lines.Add(L.Tr("{0} of them are not being sent: the avatar works them out itself ({1}).",
+                        _sending.derived.Count, Join(_sending.derived)));
+                return;
+            }
+            if (!EditorApplication.isPlaying) return;
+            if (Written() == 0)
+                lines.Add(L.Tr("Nothing is written down to send. Timed inputs are written in the other two moods, or taken off a recording with Load As Timed Inputs."));
+            else if (!PlayTools.CanWrite(_target))
+                lines.Add(L.Tr("GestureManager is not holding this avatar, so there is nowhere to press its buttons. Only its own way of setting a parameter keeps the radial menu and the avatar saying the same thing, so nothing is sent without it."));
         }
 
         /// <summary>
