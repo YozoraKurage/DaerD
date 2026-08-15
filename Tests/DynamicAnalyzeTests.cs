@@ -653,8 +653,9 @@ namespace Yozolab.DaerD.Tests
             view.filter = string.Empty;
             view.Fit(800f);
             Assert.AreEqual(0, view.firstFrame);
-            // The whole run across the plot, which is the width less the two name columns.
-            Assert.AreEqual((800f - 288f) / 60f, view.pixelsPerFrame, 0.01f);
+            // The whole run across the plot: the width less the two name columns, and less the
+            // gutter the row list's scrollbar is always kept out of.
+            Assert.AreEqual((800f - 288f - 16f) / 60f, view.pixelsPerFrame, 0.01f);
         }
 
         [Test]
@@ -763,6 +764,55 @@ namespace Yozolab.DaerD.Tests
                 Assert.GreaterOrEqual(RowAt(filtered, "Go"), 0);
                 Assert.AreEqual(-1, RowAt(filtered, "Base/transition"));
             }
+        }
+
+        [Test]
+        public void View_ZoomsAboutThePointer_AndStaysInsideItsLimits()
+        {
+            // 120 frames, and a plot as wide as a real window's.
+            var view = new WaveformView { trace = Simulation.Run(NewController(), Clock(2f)) };
+            var plot = new Rect(288f, 0f, 512f, 200f);
+            view.FitPlot(plot.width);
+            Assert.AreEqual(0, view.firstFrame);
+            Assert.AreEqual(plot.width / 120f, view.pixelsPerFrame, 0.01f);
+
+            // Whatever the pointer was over stays under it — the whole of what makes a wheel
+            // usable on a long run.
+            float pointer = plot.x + 300f;
+            int under = view.FrameAtX(plot, pointer);
+            view.ZoomAt(plot, pointer, 4f);
+            Assert.AreEqual(4f * plot.width / 120f, view.pixelsPerFrame, 0.01f);
+            Assert.LessOrEqual(Mathf.Abs(under - view.FrameAtX(plot, pointer)), 1,
+                "the moment under the pointer, give or take the pixel it rounds to");
+
+            view.ZoomAt(plot, pointer, 10000f);
+            Assert.AreEqual(WaveformView.MaxZoom, view.pixelsPerFrame, 0.001f);
+            view.ZoomAt(plot, pointer, 0.00001f);
+            Assert.AreEqual(WaveformView.MinZoom, view.pixelsPerFrame, 0.001f);
+        }
+
+        [Test]
+        public void View_PansInWholeFrames_ButKeepsTheFractionItHasTravelled()
+        {
+            var view = new WaveformView
+            {
+                trace = Simulation.Run(NewController(), Clock(2f)),
+                pixelsPerFrame = 4f,
+            };
+            // Four pixels to the frame: three one-pixel drags are not a frame, and the fourth
+            // is. Dropping the remainder each time would leave the run stuck under a slow hand.
+            view.PanBy(1f);
+            view.PanBy(1f);
+            view.PanBy(1f);
+            Assert.AreEqual(0, view.firstFrame);
+            view.PanBy(1f);
+            Assert.AreEqual(1, view.firstFrame);
+
+            // And it stops at both ends of the run rather than travelling off it.
+            view.PanBy(-10000f);
+            Assert.AreEqual(0, view.firstFrame);
+            view.PanBy(10000f);
+            Assert.AreEqual(view.Frames - 1, view.firstFrame);
         }
 
         /// <summary>

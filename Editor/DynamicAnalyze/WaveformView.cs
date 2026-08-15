@@ -235,6 +235,16 @@ namespace Yozolab.DaerD.DynamicAnalyze
         const float NameWidth = 200f;
         const float ValueWidth = 88f;
         const float ScrollbarHeight = 14f;
+        /// <summary>Kept clear down the right for the row list's own scrollbar. Always, whether
+        /// or not it is showing: the ruler, the cursor and the rows all measure time off the
+        /// same left edge, and a right edge that moved when the list grew past the window would
+        /// put the cursor a few frames off the waveform it is pointing at.</summary>
+        const float Gutter = 16f;
+
+        /// <summary>How far in and out the run can be zoomed, in pixels per frame. Out to where
+        /// a frame is a fiftieth of a pixel, so a long run fits; in to where one is forty, so
+        /// two neighbouring frames can be told apart.</summary>
+        public const float MinZoom = 0.02f, MaxZoom = 40f;
 
         public SignalTrace trace;
 
@@ -280,11 +290,22 @@ namespace Yozolab.DaerD.DynamicAnalyze
         public int firstFrame;
         public string filter = string.Empty;
 
-        Vector2 _rowScroll;
+        /// <summary>How far down the row list is scrolled. Public because the wheel is handled
+        /// by <see cref="WaveformInput"/> now that the scroll view no longer eats it.</summary>
+        public Vector2 rowScroll;
+
         /// <summary>Where the row list is on screen, as the last draw put it. Kept because the
         /// list decides whether it may change shape by asking where the pointer is — see
         /// <see cref="MayReshape"/>.</summary>
         Rect _rowArea;
+        /// <summary>How tall the rows are altogether — what a wheel scrolling them is bounded
+        /// by.</summary>
+        float _content;
+        /// <summary>The fraction of a frame a pan has travelled but not yet spent. Zoomed out
+        /// far enough, one pixel of hand movement is a fraction of a frame, and rounding each
+        /// drag event on its own would leave the run stuck under a slow hand.</summary>
+        float _pan;
+        readonly WaveformInput _input = new WaveformInput();
         /// <summary>The last geometry a real pass was drawn with. The Layout pass is handed a
         /// dummy rect, and a pass that lays the rows out differently from the pass the click
         /// arrives in hands out different control ids.</summary>
@@ -360,13 +381,52 @@ namespace Yozolab.DaerD.DynamicAnalyze
             if (markFrame >= 0) markFrame = Mathf.Clamp(markFrame, 0, Frames - 1);
         }
 
-        /// <summary>Fits the whole run across this width — what a fresh run opens at.</summary>
-        public void Fit(float width)
+        /// <summary>Fits the whole run across a window this wide — what a fresh run opens
+        /// at.</summary>
+        public void Fit(float width) =>
+            FitPlot(width - NameWidth - ValueWidth - Gutter);
+
+        /// <summary>The same, told the width of the run's own column rather than the window's.
+        /// What the Frame All key has: by then the plot is on screen and its width is known
+        /// exactly, and going back through the window's would land a few pixels out.</summary>
+        public void FitPlot(float plotWidth)
         {
-            float area = Mathf.Max(32f, width - NameWidth - ValueWidth);
-            pixelsPerFrame = Frames > 0 ? Mathf.Clamp(area / Frames, 0.02f, 40f) : 4f;
+            float area = Mathf.Max(32f, plotWidth);
+            pixelsPerFrame = Frames > 0 ? Mathf.Clamp(area / Frames, MinZoom, MaxZoom) : 4f;
             firstFrame = 0;
+            _pan = 0f;
         }
+
+        /// <summary>
+        /// Zoom, keeping the moment under the pointer where it is. Anchoring is the whole of
+        /// what makes a wheel usable on a long run: zooming about the left edge walks whatever
+        /// is being looked at off the screen, and then getting back to it is a second gesture.
+        /// </summary>
+        public void ZoomAt(Rect plot, float pointerX, float factor)
+        {
+            int anchor = FrameAtX(plot, pointerX);
+            pixelsPerFrame = Mathf.Clamp(pixelsPerFrame * factor, MinZoom, MaxZoom);
+            firstFrame = Mathf.Clamp(
+                anchor - Mathf.RoundToInt((pointerX - plot.x) / pixelsPerFrame),
+                0, Mathf.Max(0, Frames - 1));
+            _pan = 0f;
+        }
+
+        /// <summary>Travel along the run, in pixels — positive is later. The fraction of a
+        /// frame left over is kept, so a slow hand zoomed out still moves.</summary>
+        public void PanBy(float pixels)
+        {
+            float frames = pixels / Mathf.Max(MinZoom, pixelsPerFrame) + _pan;
+            int whole = Mathf.FloorToInt(frames);
+            _pan = frames - whole;
+            firstFrame = Mathf.Clamp(firstFrame + whole, 0, Mathf.Max(0, Frames - 1));
+        }
+
+        /// <summary>Scroll the row list, in pixels. Bounded by the rows themselves, since the
+        /// scroll view is no longer the one being asked.</summary>
+        public void ScrollRows(float pixels) =>
+            rowScroll.y = Mathf.Clamp(rowScroll.y + pixels, 0f,
+                Mathf.Max(0f, _content - _rowArea.height));
 
         public void Draw(Rect rect)
         {
@@ -390,30 +450,35 @@ namespace Yozolab.DaerD.DynamicAnalyze
             }
             Measure();
 
+            // Everything left of the gutter. The rows, the ruler and the cursor are laid out
+            // against this one width, so they agree whether or not the list is long enough to
+            // have a scrollbar.
+            float body = Mathf.Max(NameWidth + ValueWidth + 1f, rect.width - Gutter);
             var plot = new Rect(rect.x + NameWidth + ValueWidth, rect.y + RulerHeight,
-                Mathf.Max(1f, rect.width - NameWidth - ValueWidth),
+                body - NameWidth - ValueWidth,
                 Mathf.Max(1f, rect.height - RulerHeight - ScrollbarHeight));
+            var ruler = new Rect(plot.x, rect.y, plot.width, RulerHeight);
             // Before the list is asked for: whether it may change shape depends on where the
             // pointer is, and this is where the rows are.
-            _rowArea = new Rect(rect.x, plot.y, rect.width, plot.height);
+            _rowArea = new Rect(rect.x, plot.y, body, plot.height);
             var visible = Visible();
             ClampScroll(plot.width);
 
-            DrawRuler(new Rect(plot.x, rect.y, plot.width, RulerHeight), plot.width);
+            DrawRuler(ruler, plot.width);
             EditorGUI.DrawRect(plot, WaveformColors.Backdrop);
 
-            float content = visible.Count * RowHeight;
+            _content = visible.Count * RowHeight;
             var view = new Rect(rect.x, plot.y, rect.width, plot.height);
-            _rowScroll = GUI.BeginScrollView(view,
-                _rowScroll, new Rect(0f, 0f, rect.width - 16f, content), false, content > plot.height);
+            rowScroll = GUI.BeginScrollView(view,
+                rowScroll, new Rect(0f, 0f, body, _content), false, _content > plot.height);
             // Only the rows on screen. A scroll view clips the rest, but clipping happens after
             // the drawing has already been asked for, which is the expensive half.
-            int firstRow = Mathf.Max(0, Mathf.FloorToInt(_rowScroll.y / RowHeight));
+            int firstRow = Mathf.Max(0, Mathf.FloorToInt(rowScroll.y / RowHeight));
             int lastRow = Mathf.Min(visible.Count - 1,
-                Mathf.CeilToInt((_rowScroll.y + plot.height) / RowHeight));
+                Mathf.CeilToInt((rowScroll.y + plot.height) / RowHeight));
             for (int i = firstRow; i <= lastRow; i++)
             {
-                var area = new Rect(0f, i * RowHeight, rect.width - 16f, RowHeight);
+                var area = new Rect(0f, i * RowHeight, body, RowHeight);
                 if (visible[i].IsHeader) DrawHeader(visible[i], area);
                 else
                 {
@@ -421,12 +486,15 @@ namespace Yozolab.DaerD.DynamicAnalyze
                     DrawSignal(visible[i].signal, area);
                 }
             }
-            GUI.EndScrollView();
+            // Not the scroll view's wheel: over a run, a wheel means zoom — see WaveformInput.
+            GUI.EndScrollView(false);
 
             DrawMark(plot);
             DrawCursor(plot);
-            DrawScrollbar(new Rect(plot.x, plot.yMax, plot.width, ScrollbarHeight), plot.width);
-            HandleInput(plot);
+            DrawTimebar(new Rect(plot.x, plot.yMax, plot.width, ScrollbarHeight), plot.width);
+            // Last, so the row list has already had every click that belongs to it: a value
+            // cell is a control, and the plot underneath is not.
+            _input.Handle(this, ruler, plot, _rowArea);
         }
 
         // ---- rows -----------------------------------------------------------
@@ -577,7 +645,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
             if (signal.kind == SignalKind.Trigger) ink = WaveformColors.EventInk;
             if (signal.scope == Simulation.WireScope) ink = WaveformColors.EventInk;
 
-            float perFrame = Mathf.Max(0.02f, pixelsPerFrame);
+            float perFrame = Mathf.Max(MinZoom, pixelsPerFrame);
             int stride = perFrame >= 1f ? 1 : Mathf.Max(1, Mathf.FloorToInt(1f / perFrame));
             int last = LastFrame(plot.width);
             int runStart = firstFrame;
@@ -613,7 +681,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
         {
             if (ghost == null || ghost.Frames == 0) return;
             var ink = WaveformColors.GhostInk;
-            float perFrame = Mathf.Max(0.02f, pixelsPerFrame);
+            float perFrame = Mathf.Max(MinZoom, pixelsPerFrame);
             int stride = perFrame >= 1f ? 1 : Mathf.Max(1, Mathf.FloorToInt(1f / perFrame));
             int last = LastFrame(plot.width);
             var cursor = new GhostCursor(ghost);
@@ -722,7 +790,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
             int last = LastFrame(width);
             // A mark about every 80 px, rounded to a whole number of frames so the labels do
             // not crawl as the zoom changes.
-            int stride = Mathf.Max(1, Mathf.RoundToInt(80f / Mathf.Max(0.02f, pixelsPerFrame)));
+            int stride = Mathf.Max(1, Mathf.RoundToInt(80f / Mathf.Max(MinZoom, pixelsPerFrame)));
             for (int frame = firstFrame - firstFrame % stride; frame <= last; frame += stride)
             {
                 if (frame < 0) continue;
@@ -739,63 +807,64 @@ namespace Yozolab.DaerD.DynamicAnalyze
         {
             if (!HasMark) return;
             if (markFrame < firstFrame || markFrame > LastFrame(plot.width)) return;
-            EditorGUI.DrawRect(new Rect(X(plot, markFrame), plot.y - RulerHeight, 1f,
-                plot.height + RulerHeight), WaveformColors.Mark);
+            DrawPlayhead(plot, markFrame, WaveformColors.Mark);
         }
 
         void DrawCursor(Rect plot)
         {
             if (cursorFrame < firstFrame || cursorFrame > LastFrame(plot.width)) return;
-            float x = X(plot, cursorFrame);
+            DrawPlayhead(plot, cursorFrame, WaveformColors.Cursor);
+        }
+
+        /// <summary>A line down the run with a grip on the ruler. The grip is what says the
+        /// ruler is where this is moved from — scrubbing lives there and nowhere else now, and
+        /// a bare line gives a reader nothing to aim at.</summary>
+        void DrawPlayhead(Rect plot, int frame, Color ink)
+        {
+            float x = X(plot, frame);
             EditorGUI.DrawRect(new Rect(x, plot.y - RulerHeight, 1f, plot.height + RulerHeight),
-                WaveformColors.Cursor);
+                ink);
+            EditorGUI.DrawRect(new Rect(x - 3f, plot.y - RulerHeight + 2f, 7f, RulerHeight - 5f),
+                ink);
         }
 
-        void DrawScrollbar(Rect rect, float width)
+        /// <summary>
+        /// The bar under the run: drag it to travel, drag either end to change how much of the
+        /// run is on screen. The Animation window puts the same control in the same place, and
+        /// a plain scrollbar — which is what was here — could only ever do the travelling half.
+        ///
+        /// Always drawn, including when the whole run already fits: it is then the way to zoom
+        /// IN, and a control that disappears at the one moment a reader goes looking for it is
+        /// worse than one that does nothing.
+        /// </summary>
+        void DrawTimebar(Rect rect, float width)
         {
-            int span = Mathf.Max(1, Mathf.CeilToInt(width / Mathf.Max(0.02f, pixelsPerFrame)));
-            if (span >= Frames) return;
-            firstFrame = Mathf.RoundToInt(GUI.HorizontalScrollbar(rect, firstFrame,
-                span, 0f, Frames));
-        }
-
-        void HandleInput(Rect plot)
-        {
-            var e = Event.current;
-            if (!plot.Contains(e.mousePosition)) return;
-            if (e.type == EventType.MouseDown || e.type == EventType.MouseDrag)
-            {
-                int frame = Mathf.Clamp(FrameAt(plot, e.mousePosition.x), 0, Frames - 1);
-                // Shift moves the mark instead of the cursor. Held while dragging it keeps
-                // moving the mark rather than picking it up on every frame it crosses — the
-                // toggle is a click, which is a thing done once and on purpose.
-                if (e.shift && e.type == EventType.MouseDrag) markFrame = frame;
-                else if (e.shift) Mark(frame);
-                else cursorFrame = frame;
-                e.Use();
-                GUI.changed = true;
-            }
-            else if (e.type == EventType.ScrollWheel)
-            {
-                // Zoom about the pointer, so the thing being looked at stays under it.
-                int anchor = FrameAt(plot, e.mousePosition.x);
-                pixelsPerFrame = Mathf.Clamp(pixelsPerFrame * (e.delta.y > 0f ? 0.85f : 1.18f),
-                    0.02f, 40f);
-                firstFrame = Mathf.Max(0,
-                    anchor - Mathf.RoundToInt((e.mousePosition.x - plot.x) / pixelsPerFrame));
-                e.Use();
-            }
+            if (Frames <= 1) return;
+            float from = firstFrame;
+            float to = Mathf.Min(Frames, firstFrame + Span(width));
+            EditorGUI.BeginChangeCheck();
+            EditorGUI.MinMaxSlider(rect, ref from, ref to, 0f, Frames);
+            if (!EditorGUI.EndChangeCheck()) return;
+            pixelsPerFrame = Mathf.Clamp(width / Mathf.Max(1f, to - from), MinZoom, MaxZoom);
+            firstFrame = Mathf.Clamp(Mathf.RoundToInt(from), 0, Mathf.Max(0, Frames - 1));
+            _pan = 0f;
         }
 
         // ---- geometry -------------------------------------------------------
 
         float X(Rect plot, int frame) => plot.x + (frame - firstFrame) * pixelsPerFrame;
 
-        int FrameAt(Rect plot, float x) =>
-            firstFrame + Mathf.FloorToInt((x - plot.x) / Mathf.Max(0.02f, pixelsPerFrame));
+        /// <summary>The frame under a point. The ruler and the plot share a left edge and a
+        /// zoom, so one answer serves both — which is what lets a scrub started on the ruler
+        /// carry on over the run.</summary>
+        public int FrameAtX(Rect plot, float x) =>
+            firstFrame + Mathf.FloorToInt((x - plot.x) / Mathf.Max(MinZoom, pixelsPerFrame));
 
-        int LastFrame(float width) =>
-            Mathf.Min(Frames - 1, firstFrame + Mathf.CeilToInt(width / Mathf.Max(0.02f, pixelsPerFrame)));
+        /// <summary>How many frames a column this wide can hold.</summary>
+        int Span(float width) =>
+            Mathf.Max(1, Mathf.CeilToInt(width / Mathf.Max(MinZoom, pixelsPerFrame)));
+
+        int LastFrame(float width) => Mathf.Min(Frames - 1, firstFrame + Span(width));
 
         /// <summary>Where a value sits in its row's band. Clamped, so a value the range has not
         /// caught up with yet stays on its own row instead of being drawn over the one above:
@@ -810,7 +879,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
 
         void ClampScroll(float width)
         {
-            int span = Mathf.Max(1, Mathf.CeilToInt(width / Mathf.Max(0.02f, pixelsPerFrame)));
+            int span = Mathf.Max(1, Mathf.CeilToInt(width / Mathf.Max(MinZoom, pixelsPerFrame)));
             firstFrame = Mathf.Clamp(firstFrame, 0, Mathf.Max(0, Frames - span));
             cursorFrame = Mathf.Clamp(cursorFrame, 0, Mathf.Max(0, Frames - 1));
         }
