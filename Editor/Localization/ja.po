@@ -3195,3 +3195,9 @@ msgstr "長い実行"
 
 msgid "This works out at about {0:N0} samples — {1:N0} rows over {2:N0} frames. Nothing is wrong with that; it will simply take a while, and a shorter run or fewer people costs proportionally less."
 msgstr "この設定はおよそ {0:N0} サンプル（{2:N0} フレーム × {1:N0} 行）になります。間違いではありませんが、それなりに時間が掛かります。長さを短くするか人数を減らせば、その分だけ軽くなります。"
+
+msgid "Compare With This Run"
+msgstr "今の実行と比較"
+
+msgid "Δ {0} {1}"
+msgstr "Δ {0} {1}"

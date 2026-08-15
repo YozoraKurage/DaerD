@@ -1629,6 +1629,141 @@ namespace Yozolab.DaerD.Tests
             Assert.AreEqual(-1, view.markFrame);
         }
 
+        // ---- the row the reader picked out -----------------------------------
+
+        /// <summary>A run of one Float with two edges in it — flat, up at frame 10, half at
+        /// frame 30 — so what a jump should land on is arithmetic rather than something the
+        /// test has to go looking for.</summary>
+        static SignalTrace Stepped(out SignalTrace.Signal signal)
+        {
+            var trace = new SignalTrace();
+            signal = trace.Declare(Simulation.LocalScope, "X", SignalKind.Float);
+            for (int frame = 0; frame < 60; frame++)
+                Record(trace, signal, frame < 10 ? 0f : frame < 30 ? 1f : 0.5f);
+            return trace;
+        }
+
+        [Test]
+        public void View_PicksOutOneRow_AndStillHasItAfterTheRunIsRunAgain()
+        {
+            var stimulus = new Stimulus().At(0.05f, "Go", true);
+            var view = new WaveformView { trace = Simulation.Run(NewController(), Clock(0.5f), stimulus) };
+            Assert.IsNull(view.Selected, "nothing is picked out until something is");
+
+            var go = view.trace.Find(Simulation.LocalScope, "Go");
+            view.Select(go);
+            Assert.AreSame(go, view.Selected);
+            Assert.IsTrue(view.IsSelected(go));
+            Assert.IsFalse(view.IsSelected(view.trace.Find(Simulation.RemoteScope, "Go")),
+                "the other person's copy of a name is another row");
+
+            // The same settings again is a NEW trace of new signals. The selection is held as
+            // scope and name for exactly this: a reader who re-runs to see what one changed
+            // setting did is the reader least willing to lose the row they were watching, and
+            // a held Signal would either vanish here or go on answering out of the old run.
+            view.trace = Simulation.Run(NewController(), Clock(0.5f), stimulus);
+            Assert.IsNotNull(view.Selected);
+            Assert.AreNotSame(go, view.Selected, "that one belongs to the run that is gone");
+            Assert.AreEqual("Go", view.SelectedName);
+
+            view.Select(null);
+            Assert.IsNull(view.Selected);
+            Assert.IsFalse(view.IsSelected(go));
+        }
+
+        [Test]
+        public void View_JumpsToTheSelectedRowsChanges_AndStopsAtTheEnds()
+        {
+            var view = new WaveformView { trace = Stepped(out var signal) };
+            view.Select(signal);
+
+            view.cursorFrame = 0;
+            Assert.IsTrue(view.StepToChange(1));
+            Assert.AreEqual(10, view.cursorFrame);
+            Assert.IsTrue(view.StepToChange(1));
+            Assert.AreEqual(30, view.cursorFrame);
+            // Nothing past the last edge: the cursor stays where it is rather than travelling
+            // to a frame that is not a change at all.
+            Assert.IsFalse(view.StepToChange(1));
+            Assert.AreEqual(30, view.cursorFrame);
+
+            Assert.IsTrue(view.StepToChange(-1));
+            Assert.AreEqual(10, view.cursorFrame);
+            // Frame 0 is not an edge — a change is a difference from the frame before it, and
+            // the first frame has none.
+            Assert.IsFalse(view.StepToChange(-1));
+            Assert.AreEqual(10, view.cursorFrame);
+        }
+
+        [Test]
+        public void View_JumpsNowhereWithoutARowToJumpAlong()
+        {
+            var view = new WaveformView { trace = Stepped(out var signal) };
+            view.cursorFrame = 5;
+            Assert.IsFalse(view.StepToChange(1), "no row is picked out");
+            Assert.AreEqual(5, view.cursorFrame);
+
+            // A row picked out in another run is not a row in this one either.
+            var elsewhere = new SignalTrace();
+            view.Select(elsewhere.Declare(Simulation.RemoteScope, "Nowhere", SignalKind.Float));
+            Assert.IsFalse(view.StepToChange(1));
+            Assert.AreEqual(5, view.cursorFrame);
+
+            view.Select(signal);
+            Assert.IsTrue(view.StepToChange(1));
+            Assert.AreEqual(10, view.cursorFrame);
+        }
+
+        [Test]
+        public void View_SubtractsTheSelectedRowsValueBetweenTheTwoCursors()
+        {
+            var view = new WaveformView { trace = Stepped(out var signal) };
+            view.Select(signal);
+            view.cursorFrame = 40;
+            Assert.IsNull(view.ValueDeltaText(), "one cursor has nothing to subtract from");
+            Assert.AreEqual(0f, view.ValueDelta(), 1e-6f);
+
+            view.Mark(15);
+            // Signed, and cursor minus mark: which way it went is half of the question, and
+            // the mark is where the reader was measuring from.
+            Assert.AreEqual(-0.5f, view.ValueDelta(), 1e-6f);
+            Assert.AreEqual("-0.5", view.ValueDeltaText());
+
+            view.cursorFrame = 15;
+            view.Mark(40);
+            Assert.AreEqual(0.5f, view.ValueDelta(), 1e-6f);
+            Assert.AreEqual("+0.5", view.ValueDeltaText(), "a rise says so");
+        }
+
+        [Test]
+        public void View_SubtractsNothingOffARowWhoseValuesAreNotQuantities()
+        {
+            var trace = new SignalTrace();
+            var count = trace.Declare(Simulation.LocalScope, "N", SignalKind.Int);
+            var toggle = trace.Declare(Simulation.LocalScope, "Go", SignalKind.Bool);
+            var state = trace.Declare(Simulation.LocalScope, "Base/state", SignalKind.State,
+                new[] { "Idle", "On" });
+            for (int frame = 0; frame < 20; frame++)
+            {
+                trace.Frame(frame / 60f, 1f / 60f);
+                count.Push(frame < 10 ? 3f : 7f);
+                toggle.Push(frame < 10 ? 0f : 1f);
+                state.Push(frame < 10 ? 0f : 1f);
+            }
+            var view = new WaveformView { trace = trace, cursorFrame = 19 };
+            view.Mark(0);
+
+            view.Select(count);
+            Assert.AreEqual("+4", view.ValueDeltaText(), "an Int row counts in whole numbers");
+
+            // A Bool or a Trigger differing by one is what "it changed" already says, and the
+            // difference between two state indices is arithmetic on names.
+            view.Select(toggle);
+            Assert.IsNull(view.ValueDeltaText());
+            view.Select(state);
+            Assert.IsNull(view.ValueDeltaText());
+        }
+
         [Test]
         public void Ghost_LinesUpTwoRunsByTime_NotByFrameNumber()
         {
@@ -1698,6 +1833,36 @@ namespace Yozolab.DaerD.Tests
             // 1 and 14.5 at the same height and call them the same.
             Assert.AreEqual(14.5f, view.RangeOf(mine).y, 1e-4f);
             Assert.AreEqual(0f, view.RangeOf(mine).x, 1e-4f);
+        }
+
+        [Test]
+        public void Ghost_TakenFromTheRunInHandIsASnapshotOfIt()
+        {
+            // What the Clip menu's "Compare With This Run" does, and the whole of why it can:
+            // a batch run REPLACES the trace rather than growing it, so a reference kept
+            // before the next Run goes on being the run it was taken from.
+            var view = new WaveformView
+            {
+                trace = Simulation.Run(NewController(), Clock(0.5f),
+                    new Stimulus().At(0.05f, "X", 1f)),
+            };
+            var before = view.trace;
+            view.ghost = view.trace;
+
+            view.trace = Simulation.Run(NewController(), Clock(0.5f),
+                new Stimulus().At(0.05f, "X", 4f));
+            Assert.AreSame(before, view.ghost, "the ghost is the run it was taken from");
+            Assert.AreNotSame(view.trace, view.ghost);
+
+            // And it still reads as that run: the two rows say different things at the same
+            // moment, which is the only reason to lay one under the other.
+            var mine = view.trace.Find(Simulation.LocalScope, "X");
+            var theirs = view.ghost.Find(Simulation.LocalScope, "X");
+            Assert.AreEqual(4f, mine.At(mine.Frames - 1), 1e-4f);
+            Assert.AreEqual(1f, theirs.At(theirs.Frames - 1), 1e-4f);
+            // One row, one scale — the ghost is another reading of the same thing.
+            view.Measure();
+            Assert.AreEqual(4f, view.RangeOf(mine).y, 1e-4f);
         }
 
         [Test]

@@ -170,6 +170,20 @@ namespace Yozolab.DaerD.DynamicAnalyze
                 case KeyCode.End:
                     view.cursorFrame = view.Frames - 1;
                     return true;
+                // The selected row's own edges. Not the Animation window's — it has keyframes
+                // to step between and this has a run that changed — but the same shape of
+                // gesture, and bare keys because walking a row is done over and over. Bracket
+                // keys because they are what a timeline steps markers with nearly everywhere
+                // else, and because nothing over this plot answers to them: F, A, the arrows,
+                // Home and End are the whole of what does.
+                //
+                // Spelled here rather than in DaerD's shortcut table for the reason at the top
+                // of this file: the table lives in the core, and this module is meant to lift
+                // out into an assembly of its own.
+                case KeyCode.RightBracket:
+                    return view.StepToChange(1);
+                case KeyCode.LeftBracket:
+                    return view.StepToChange(-1);
                 default:
                     return false;
             }

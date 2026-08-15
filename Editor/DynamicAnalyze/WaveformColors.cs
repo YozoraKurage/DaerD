@@ -111,5 +111,15 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// </summary>
         public static Color Wrong =>
             Dark ? new Color(0.98f, 0.68f, 0.28f) : new Color(0.66f, 0.36f, 0.02f);
+
+        /// <summary>
+        /// The row the reader has picked out. A tint under its name and value rather than
+        /// across the whole row: the waveform to the right is the thing being looked at, and a
+        /// wash over it would change what every ink on that row reads as. Translucent because
+        /// it sits over the alternating row tint — two opaque fills would make the odd rows
+        /// and the even ones select in different colours.
+        /// </summary>
+        public static Color Selected =>
+            Dark ? new Color(0.32f, 0.50f, 0.76f, 0.45f) : new Color(0.30f, 0.52f, 0.86f, 0.30f);
     }
 }

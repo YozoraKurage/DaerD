@@ -278,6 +278,15 @@ namespace Yozolab.DaerD.DynamicAnalyze
             // mark: a Δ of nothing reading 0 s would look like an answer.
             if (has && _view.HasMark)
                 GUILayout.Label(L.Tr("Δ {0:0.###} s", _view.Span()), EditorStyles.miniLabel);
+            // And how far the picked-out row moved over that time, beside how long it took.
+            // The pair is what a duration is usually wanted for — how fast did this ramp, how
+            // much did the wire round off — and both halves of it were being read off the plot
+            // by eye. Named, because a number with no row beside it belongs to whichever row
+            // the reader last thought about.
+            string moved = has ? _view.ValueDeltaText() : null;
+            if (moved != null)
+                GUILayout.Label(L.Tr("Δ {0} {1}", _view.SelectedName, moved),
+                    EditorStyles.miniLabel);
             EditorGUI.EndDisabledGroup();
 
             GUILayout.FlexibleSpace();
@@ -316,6 +325,19 @@ namespace Yozolab.DaerD.DynamicAnalyze
             // setting change anything" are both questions about two runs, and a viewer that
             // can only hold one answers neither.
             menu.AddItem(new GUIContent(L.Tr("Compare With…")), false, CompareWith);
+            // And the same question without a file in it. "Did that setting change anything"
+            // is asked far more often about the run on screen than about one on disk, and
+            // going through Save Run… and Compare With… to ask it made a folder full of runs
+            // nobody wanted to keep. A batch run REPLACES the trace rather than growing it, so
+            // holding the reference is holding a snapshot.
+            //
+            // Never in a live session, which is the one mood where that is not true: there the
+            // same object goes on being appended to, so the ghost would be the run itself and
+            // the comparison would be of a thing with itself.
+            if (has && !_live)
+                menu.AddItem(new GUIContent(L.Tr("Compare With This Run")), false,
+                    () => _view.ghost = _view.trace);
+            else menu.AddDisabledItem(new GUIContent(L.Tr("Compare With This Run")));
             if (_view.ghost != null)
                 menu.AddItem(new GUIContent(L.Tr("Stop Comparing")), false,
                     () => _view.ghost = null);

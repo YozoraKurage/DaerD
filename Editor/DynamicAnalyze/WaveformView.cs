@@ -294,6 +294,23 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// by <see cref="WaveformInput"/> now that the scroll view no longer eats it.</summary>
         public Vector2 rowScroll;
 
+        /// <summary>
+        /// The row the reader has picked out, held as scope and name rather than as the signal
+        /// itself.
+        ///
+        /// A run is re-run with one setting changed, and what comes back is a new trace whose
+        /// signals are new objects. Holding the Signal would mean the selection either vanished
+        /// at every Run — the one moment a reader most wants to be looking at the same row — or,
+        /// worse, went on answering out of the run that has been replaced, which is a number
+        /// from the wrong experiment printed beside the right one. Scope and name are what make
+        /// a row the same row across two runs; it is what a ghost is matched by, for the same
+        /// reason.
+        ///
+        /// Drawing state and nothing else: the trace is not touched, and a saved run carries no
+        /// trace of what was selected while it was read.
+        /// </summary>
+        string _selectedScope, _selectedName;
+
         /// <summary>Where the row list is on screen, as the last draw put it. Kept because the
         /// list decides whether it may change shape by asking where the pointer is — see
         /// <see cref="MayReshape"/>.</summary>
@@ -361,6 +378,99 @@ namespace Yozolab.DaerD.DynamicAnalyze
             if (Frames == 0) { markFrame = -1; return; }
             frame = Mathf.Clamp(frame, 0, Frames - 1);
             markFrame = frame == markFrame ? -1 : frame;
+        }
+
+        /// <summary>The picked-out row's signal in the run being shown, or null — for no
+        /// selection, and for a selection whose row this run has not got.</summary>
+        public SignalTrace.Signal Selected =>
+            trace != null && _selectedName != null
+                ? trace.Find(_selectedScope, _selectedName) : null;
+
+        /// <summary>What was picked out, whether or not this run has it. The window's own
+        /// label, which has a name to print before it has a signal to read.</summary>
+        public string SelectedName => _selectedName;
+
+        public bool IsSelected(SignalTrace.Signal signal) =>
+            signal != null && _selectedName != null
+            && signal.name == _selectedName && signal.scope == _selectedScope;
+
+        /// <summary>Picks a row out; null puts it back. A header cannot be picked — a scope is
+        /// not a signal, and neither the jump nor the difference means anything for one.</summary>
+        public void Select(SignalTrace.Signal signal)
+        {
+            _selectedScope = signal != null ? signal.scope : null;
+            _selectedName = signal != null ? signal.name : null;
+        }
+
+        /// <summary>
+        /// The cursor to the selected row's next change, or its previous one.
+        ///
+        /// A run is read by finding the row that matters and then walking its edges, and at a
+        /// zoom where a whole run fits, an edge is a pixel and the arrow keys are a frame each.
+        /// Bounded to ONE row on purpose: "the next thing that happened anywhere" is a question
+        /// about a run with hundreds of rows in it, and the answer is nearly always a lag row
+        /// twitching. The row a reader has picked out is the row they are asking about.
+        ///
+        /// Nothing at all without a selection, and nothing at the ends — the cursor stays where
+        /// it is rather than travelling to a frame that is not a change. Frame 0 is never one:
+        /// a change is a difference from the frame before, and the first frame has none.
+        /// </summary>
+        public bool StepToChange(int direction)
+        {
+            int frame = NextChange(Selected, cursorFrame, direction);
+            if (frame < 0) return false;
+            cursorFrame = frame;
+            return true;
+        }
+
+        /// <summary>Where this signal changes next, from a frame and in a direction, or -1 for
+        /// nowhere. Static and told everything it needs, so what the key does can be asked
+        /// without a window or an event.</summary>
+        public static int NextChange(SignalTrace.Signal signal, int from, int direction)
+        {
+            if (signal == null || direction == 0) return -1;
+            if (direction > 0)
+            {
+                for (int frame = Mathf.Max(1, from + 1); frame < signal.Frames; frame++)
+                    if (signal.ChangedAt(frame)) return frame;
+                return -1;
+            }
+            for (int frame = Mathf.Min(from - 1, signal.Frames - 1); frame > 0; frame--)
+                if (signal.ChangedAt(frame)) return frame;
+            return -1;
+        }
+
+        /// <summary>
+        /// How much the selected row's value changed between the mark and the cursor, or null
+        /// when there is nothing to subtract.
+        ///
+        /// The measurement the second cursor was added for, in the other axis: the pair already
+        /// says how long between two moments, and this says how far. Float and Int rows only.
+        /// A Bool or a Trigger differing by one is what "it changed" already says, and the
+        /// difference between two state indices is arithmetic on names — 3 minus 1 is not two
+        /// of anything.
+        ///
+        /// Signed, and cursor minus mark: which way it went is half of what is being asked, and
+        /// the reader put the mark where they were measuring from.
+        /// </summary>
+        public string ValueDeltaText()
+        {
+            var signal = Selected;
+            if (!HasMark || signal == null) return null;
+            if (signal.kind != SignalKind.Float && signal.kind != SignalKind.Int) return null;
+            float delta = signal.At(cursorFrame) - signal.At(markFrame);
+            return (delta > 0f ? "+" : string.Empty) + Number(signal, delta);
+        }
+
+        /// <summary>The same as a number, for anything asking the question rather than
+        /// printing the answer. Zero when there is nothing to subtract, which is also what two
+        /// cursors on the same value read as — <see cref="ValueDeltaText"/> is what tells those
+        /// two apart.</summary>
+        public float ValueDelta()
+        {
+            var signal = Selected;
+            return HasMark && signal != null
+                ? signal.At(cursorFrame) - signal.At(markFrame) : 0f;
         }
 
         /// <summary>
@@ -483,6 +593,12 @@ namespace Yozolab.DaerD.DynamicAnalyze
                 else
                 {
                     if (i % 2 == 1) EditorGUI.DrawRect(area, WaveformColors.RowTint);
+                    // Under the name and its value, not across the run: the waveform is what
+                    // is being looked at, and a tint over it would change what its ink says.
+                    if (IsSelected(visible[i].signal))
+                        EditorGUI.DrawRect(
+                            new Rect(area.x, area.y, NameWidth + ValueWidth, area.height),
+                            WaveformColors.Selected);
                     DrawSignal(visible[i].signal, area);
                 }
             }
@@ -527,6 +643,19 @@ namespace Yozolab.DaerD.DynamicAnalyze
         void DrawSignal(SignalTrace.Signal signal, Rect row)
         {
             var name = new Rect(row.x + 14f, row.y, NameWidth - 18f, row.height);
+            // The name is where a row is picked out, and a second click on it puts it back —
+            // "measure this one" and "stop" are the same thought a moment apart, which is how
+            // the mark works too. Taken from the raw event rather than through a control,
+            // because a label takes no id here on purpose (see below) and inventing one would
+            // renumber every id after it on the pass a click arrives in.
+            var press = Event.current;
+            if (press != null && press.type == EventType.MouseDown && press.button == 0
+                && name.Contains(press.mousePosition))
+            {
+                Select(IsSelected(signal) ? null : signal);
+                GUI.changed = true;
+                press.Use();
+            }
             GUI.Label(name, signal.name, EditorStyles.miniLabel);
 
             // The value at the cursor, and in a live session the way to change it. Beside its
