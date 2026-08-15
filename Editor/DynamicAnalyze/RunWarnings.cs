@@ -111,7 +111,9 @@ namespace Yozolab.DaerD.DynamicAnalyze
         {
             if (stimulus == null) return;
             var stranded = new List<string>();
-            foreach (var entry in stimulus.entries)
+            // The active tracks only: a muted one is an input the experiment left out,
+            // and a warning about something that is not going to happen is noise.
+            foreach (var entry in stimulus.Active)
             {
                 if (entry == null || string.IsNullOrEmpty(entry.parameter)) continue;
                 // Empty is the wearer, who is the one pressing things. An input aimed at

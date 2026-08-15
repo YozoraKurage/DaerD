@@ -67,6 +67,11 @@ namespace Yozolab.DaerD.Tests
             // What a run cannot promise: the behaviours this module does not model. Naming them
             // means knowing what they are called.
             { "VrcBehaviours", "the behaviour names SimNotes reports it does not simulate" },
+            // Which parameters an animation writes onto the Animator. Taking an input face off
+            // a recording has to leave those out or the run applies them twice, and the scan is
+            // a walk of every reachable state's clips — a second implementation of it here
+            // would be one that disagrees with the analyzer about the same controller.
+            { "AapWriteScan", "which parameters animation writes, so an extraction can leave them out" },
             // The product's language. A module with its own string table would be a second
             // catalogue for a user to find half-translated.
             { "L", "the string table every DaerD window speaks through" },

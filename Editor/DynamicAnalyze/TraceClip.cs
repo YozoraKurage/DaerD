@@ -31,6 +31,19 @@ namespace Yozolab.DaerD.DynamicAnalyze
             public float value;
         }
 
+        /// <summary>One layer of the timed inputs, flattened the same way and for the same
+        /// reason. Whether a track was muted is written down because it is part of the
+        /// experiment — "this run is the recording without its gestures" is a question, and a
+        /// file that could not say which tracks were in it would be an answer nobody can
+        /// re-ask.</summary>
+        [System.Serializable]
+        public sealed class Track
+        {
+            public string name = string.Empty;
+            public bool muted;
+            public List<Poke> entries = new List<Poke>();
+        }
+
         /// <summary>
         /// The experiment that produced the run, beside the run.
         ///
@@ -50,8 +63,14 @@ namespace Yozolab.DaerD.DynamicAnalyze
         {
             /// <summary>What this build writes. Bumped when a field's MEANING changes, which
             /// is the only change a reader cannot survive: adding one is already survivable,
-            /// because a clip written before it deserializes with that field's default.</summary>
-            public const int Current = 1;
+            /// because a clip written before it deserializes with that field's default.
+            ///
+            /// Two is the timed inputs in tracks. <see cref="stimulus"/> did not change shape
+            /// and did not need to; what changed is that it is no longer where they are, and a
+            /// reader that went on believing it would read a v2 run as one with no inputs at
+            /// all. So the flat list stays, is written by nothing, and means "the inputs of a
+            /// run saved before there were tracks".</summary>
+            public const int Current = 2;
 
             /// <summary>Zero is a run saved before settings travelled at all — and, because
             /// Unity gives a missing block its defaults rather than a null, it is also how such
@@ -80,7 +99,12 @@ namespace Yozolab.DaerD.DynamicAnalyze
             public List<float> laterJoins = new List<float>();
             public List<string> parameters = new List<string>();
 
+            /// <summary>The timed inputs of a version 1 run, in one flat list. Read, never
+            /// written — see <see cref="Current"/>.</summary>
             public List<Poke> stimulus = new List<Poke>();
+
+            /// <summary>The timed inputs, in the tracks they were edited in.</summary>
+            public List<Track> tracks = new List<Track>();
         }
 
         public List<Entry> signals = new List<Entry>();
@@ -197,15 +221,28 @@ namespace Yozolab.DaerD.DynamicAnalyze
                 saved.laterJoins.AddRange(wire.laterJoins);
                 saved.parameters.AddRange(wire.parameters);
             }
+            // Every track, muted ones included: a muted track is an input the experiment
+            // deliberately does not use, and a file that dropped it would be one where taking a
+            // question back is retyping it. Only the ACTIVE ones are what the run consumed, and
+            // the manifest is the experiment rather than the run's own transcript.
             if (settings.stimulus != null)
-                foreach (var entry in settings.stimulus.InOrder())
-                    saved.stimulus.Add(new TraceManifest.Poke
+                foreach (var track in settings.stimulus.tracks)
+                {
+                    var written = new TraceManifest.Track
                     {
-                        at = entry.atSeconds,
-                        scope = entry.scope,
-                        parameter = entry.parameter,
-                        value = entry.value,
-                    });
+                        name = track.name,
+                        muted = track.muted,
+                    };
+                    foreach (var entry in track.entries)
+                        written.entries.Add(new TraceManifest.Poke
+                        {
+                            at = entry.atSeconds,
+                            scope = entry.scope,
+                            parameter = entry.parameter,
+                            value = entry.value,
+                        });
+                    saved.tracks.Add(written);
+                }
             return saved;
         }
 
@@ -275,36 +312,64 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// changed becomes a poke at that second. What a run recorded can then drive the next
         /// one — the same experiment against a different wire, a different frame rate, a
         /// different seed.
+        ///
+        /// Everything in one track, under the name a run saved before there were tracks reads
+        /// back as. Which face of the recording each row belongs to is a question about the
+        /// controller rather than about the clip, and <see cref="InputSurface"/> is where it is
+        /// asked; this is the whole of it, for the caller that wants the whole of it.
         /// </summary>
         public static Stimulus ToStimulus(AnimationClip clip, string scope,
             ICollection<string> parameters)
         {
             var stimulus = new Stimulus();
             var trace = Load(clip);
+            var track = stimulus.Named(Stimulus.OneTrack);
             foreach (var signal in trace.Signals)
-            {
-                // Only what the target controller can actually be told, and only the wearer's
-                // side of a two-client recording: a remote's values are what the run works
-                // out, not what it is given.
-                if (parameters != null && !parameters.Contains(signal.name)) continue;
-                if (!string.IsNullOrEmpty(signal.scope)
-                    && signal.scope != Simulation.LocalScope) continue;
-                if (signal.kind == SignalKind.State) continue;
-
-                for (int frame = 0; frame < trace.Frames; frame++)
-                {
-                    if (frame != 0 && !signal.ChangedAt(frame)) continue;
-                    // The start of the frame the change was seen in, not its end: a sample is
-                    // taken after the frame ran, so what caused it was already true when the
-                    // frame began. A quarter of a frame earlier still, so that repeating the
-                    // run lands the poke on the same frame and not on the one after it however
-                    // the arithmetic rounds.
-                    float at = Mathf.Max(0f,
-                        trace.StartOfFrame(frame) - trace.StepAt(frame) * 0.25f);
-                    stimulus.At(at, signal.name, signal.At(frame), scope);
-                }
-            }
+                if (CanDrive(signal, parameters)) Changes(trace, signal, scope, track);
             return stimulus;
+        }
+
+        /// <summary>
+        /// Whether this row is something a run could be told rather than something it works
+        /// out. Only what the target controller can actually be told, and only the wearer's
+        /// side of a two-client recording: a remote's values are what the run works out, not
+        /// what it is given. A state row is never an input at all — a layer arrives at a state,
+        /// it is not put in one.
+        /// </summary>
+        public static bool CanDrive(SignalTrace.Signal signal, ICollection<string> parameters)
+        {
+            if (signal == null || signal.kind == SignalKind.State) return false;
+            if (parameters != null && !parameters.Contains(signal.name)) return false;
+            return string.IsNullOrEmpty(signal.scope) || signal.scope == Simulation.LocalScope;
+        }
+
+        /// <summary>
+        /// Every moment this signal changed, written into a track as an input at that second.
+        /// One place rather than two, because the arithmetic below is the whole difference
+        /// between a stimulus that replays onto the same frames and one that lands a frame late.
+        /// </summary>
+        public static void Changes(SignalTrace trace, SignalTrace.Signal signal, string scope,
+            Stimulus.Track track)
+        {
+            if (trace == null || signal == null || track == null) return;
+            for (int frame = 0; frame < trace.Frames; frame++)
+            {
+                if (frame != 0 && !signal.ChangedAt(frame)) continue;
+                // The start of the frame the change was seen in, not its end: a sample is
+                // taken after the frame ran, so what caused it was already true when the
+                // frame began. A quarter of a frame earlier still, so that repeating the
+                // run lands the poke on the same frame and not on the one after it however
+                // the arithmetic rounds.
+                float at = Mathf.Max(0f,
+                    trace.StartOfFrame(frame) - trace.StepAt(frame) * 0.25f);
+                track.entries.Add(new Stimulus.Entry
+                {
+                    atSeconds = at,
+                    parameter = signal.name,
+                    value = signal.At(frame),
+                    scope = scope ?? string.Empty,
+                });
+            }
         }
 
         /// <summary>
@@ -348,12 +413,44 @@ namespace Yozolab.DaerD.DynamicAnalyze
                     }
                     : null,
             };
-            foreach (var poke in saved.stimulus)
-                settings.stimulus.At(poke.at, poke.parameter, poke.value, poke.scope);
+            Inputs(saved, settings.stimulus);
             if (settings.wire == null) return settings;
             foreach (float join in saved.laterJoins) settings.wire.Joining(join);
             settings.wire.Syncs(saved.parameters.ToArray());
             return settings;
+        }
+
+        /// <summary>
+        /// The timed inputs out of a settings block, whichever way that block writes them down.
+        ///
+        /// A version 1 run had one flat list and no way to say it was one of several — so it
+        /// comes back as one track under the name that used to be at the top of the panel. Not
+        /// as the hand-written track, although that is where a typed input goes today: a run
+        /// taken off a recording before tracks existed is not something somebody typed, and
+        /// calling it that would be this module inventing a provenance for it. A person who
+        /// wants it under another name renames it, which is a thing tracks can do.
+        ///
+        /// Both are read rather than one or the other. A file's version says what wrote it, not
+        /// what is in it, and a reader that trusted the number over the bytes would lose a
+        /// run's inputs to a field somebody forgot to bump.
+        /// </summary>
+        static void Inputs(TraceManifest.Settings saved, Stimulus stimulus)
+        {
+            foreach (var poke in saved.stimulus)
+                stimulus.At(Stimulus.OneTrack, poke.at, poke.parameter, poke.value, poke.scope);
+            foreach (var track in saved.tracks)
+            {
+                var into = stimulus.Named(track.name);
+                into.muted = track.muted;
+                foreach (var poke in track.entries)
+                    into.entries.Add(new Stimulus.Entry
+                    {
+                        atSeconds = poke.at,
+                        scope = poke.scope,
+                        parameter = poke.parameter,
+                        value = poke.value,
+                    });
+            }
         }
 
         public static TraceManifest ManifestOf(AnimationClip clip)

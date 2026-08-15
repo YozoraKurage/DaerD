@@ -3266,3 +3266,12 @@ msgstr "{0} フレーム記録しました。次に Play モードへ入ると�
 
 msgid "Nothing in the scene is being driven by a graph."
 msgstr "グラフに駆動されているものがシーンにありません。"
+
+msgid "Took {0} input(s) from the recording into {1} track(s)."
+msgstr "記録から {0} 件の入力を取り込み、{1} 本のトラックに分けました。"
+
+msgid "{0} name(s) a parameter driver writes are left out ({1}). The run applies the drivers itself, so replaying these would apply each of them twice."
+msgstr "パラメータードライバーが書く {0} 個の名前は入れていません（{1}）。ドライバーは実行側が自分で適用するので、これらを流し直すと二重に適用されます。"
+
+msgid "{0} name(s) an animation writes onto the Animator are left out ({1}). The run plays the same clips, so replaying these would fight what they write every frame."
+msgstr "アニメーションが Animator に書き込む {0} 個の名前は入れていません（{1}）。実行側も同じクリップを再生するので、これらを流し直すと毎フレーム書き合いになります。"

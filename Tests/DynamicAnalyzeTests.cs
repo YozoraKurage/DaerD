@@ -2841,7 +2841,7 @@ namespace Yozolab.DaerD.Tests
 
                 // One poke where the value started, and one at each change — not one per
                 // frame, which would be a recording rather than a stimulus.
-                Assert.Less(stimulus.entries.Count, 12, "far too many pokes");
+                Assert.Less(stimulus.InOrder().Count, 12, "far too many pokes");
                 var again = Simulation.Run(NewController(), Clock(0.5f), stimulus);
                 for (int frame = 0; frame < again.Frames; frame++)
                 {
@@ -3017,22 +3017,344 @@ namespace Yozolab.DaerD.Tests
             }
         }
 
+        // ---- the inputs, in tracks -------------------------------------------
+
+        [Test]
+        public void Tracks_MergeByTimeAndBreakATieByTrackOrder()
+        {
+            var stimulus = new Stimulus();
+            stimulus.At("First", 0.2f, "X", 1f);
+            stimulus.At("First", 0.1f, "X", 2f);
+            stimulus.At("First", 0.1f, "X", 3f);
+            stimulus.At("Second", 0.1f, "X", 4f);
+            stimulus.At("Second", 0.05f, "X", 5f);
+
+            var order = stimulus.InOrder();
+            CollectionAssert.AreEqual(new[] { 5f, 2f, 3f, 4f, 1f },
+                order.ConvertAll(entry => entry.value),
+                "sorted by time; two at one second keep track order and then the order they "
+                + "were written down in");
+        }
+
+        [Test]
+        public void Tracks_AMutedOneIsNotInTheRunAndIsStillWrittenDown()
+        {
+            var stimulus = new Stimulus();
+            stimulus.At(Stimulus.MenuTrack, 0.05f, "Go", 1f);
+            stimulus.At(Stimulus.WorldTrack, 0.05f, "X", 0.5f);
+            stimulus.Named(Stimulus.WorldTrack).muted = true;
+
+            var order = stimulus.InOrder();
+            Assert.AreEqual(1, order.Count);
+            Assert.AreEqual("Go", order[0].parameter);
+            Assert.AreEqual(2, stimulus.Count, "and the muted track is still in the list");
+            Assert.AreEqual(2, stimulus.tracks.Count);
+
+            // The run really does not see it: X is left at its default rather than at 0.5.
+            var trace = Simulation.Run(NewController(), Clock(0.3f), stimulus);
+            Assert.AreEqual(0f, trace.Find(Simulation.LocalScope, "X").At(trace.Frames - 1),
+                1e-6f);
+            Assert.AreEqual("On",
+                trace.Find(Simulation.LocalScope, "Base/state").TextAt(trace.Frames - 1),
+                "and the track that is not muted still did its work");
+        }
+
+        [Test]
+        public void Tracks_AnInputWithNoTrackNamedGoesToTheHandsTrack()
+        {
+            var stimulus = new Stimulus().At(0.1f, "Go", true);
+            Assert.AreEqual(1, stimulus.tracks.Count);
+            Assert.AreEqual(Stimulus.HandTrack, stimulus.tracks[0].name);
+            Assert.IsNull(stimulus.Find("Nothing"), "asking does not make one");
+            Assert.AreEqual(1, stimulus.tracks.Count);
+        }
+
+        /// <summary>A controller with one of each face of an input: a menu parameter, a
+        /// built-in, something a component would write, one a driver writes and one an
+        /// animation writes.</summary>
+        static AnimatorController Faces()
+        {
+            var controller = new AnimatorController();
+            controller.AddLayer("Base");
+            controller.AddParameter("Toggle", AnimatorControllerParameterType.Bool);
+            controller.AddParameter("GestureLeft", AnimatorControllerParameterType.Int);
+            controller.AddParameter("Touched", AnimatorControllerParameterType.Float);
+            controller.AddParameter("Driven", AnimatorControllerParameterType.Int);
+            controller.AddParameter("Animated", AnimatorControllerParameterType.Float);
+
+            var machine = controller.layers[0].stateMachine;
+            var idle = machine.AddState("Idle");
+            machine.defaultState = idle;
+            idle.writeDefaultValues = true;
+            idle.motion = AapClip("Animated", 1f);
+            var driver = VrcParameterDriver.AddTo(idle, "Test");
+            Assert.IsNotNull(driver, "the driver behaviour (or its stub) has to be present");
+            VrcParameterDriver.AddSetEntry(driver, "Driven", 3f);
+            return controller;
+        }
+
+        /// <summary>A recording in which every one of those five moved once, halfway through.
+        /// Built rather than run, so what the extraction is being asked about is exactly what
+        /// is in the file.</summary>
+        static SignalTrace Moved(params string[] names)
+        {
+            var trace = new SignalTrace();
+            var signals = new System.Collections.Generic.List<SignalTrace.Signal>();
+            foreach (string name in names)
+                signals.Add(trace.Declare(Simulation.LocalScope, name, SignalKind.Float));
+            for (int frame = 0; frame < 10; frame++)
+            {
+                trace.Frame((frame + 1) / 60f, 1f / 60f);
+                foreach (var signal in signals) signal.Push(frame < 5 ? 0f : 1f);
+            }
+            return trace;
+        }
+
+        [Test]
+        public void Extract_SplitsARecordingIntoTheThreeFacesOfIt()
+        {
+            var controller = Faces();
+            var trace = Moved("Toggle", "GestureLeft", "Touched");
+            const string path = "Assets/DDTraceFacesTest.anim";
+            try
+            {
+                var clip = TraceClip.Save(trace, path);
+                var extraction = InputSurface.Of(clip, string.Empty, controller,
+                    new[] { "Toggle", "GestureLeft", "Touched" }, new[] { "Toggle" });
+
+                var tracks = extraction.stimulus.tracks;
+                CollectionAssert.AreEqual(
+                    new[] { Stimulus.MenuTrack, Stimulus.BuiltInTrack, Stimulus.WorldTrack },
+                    tracks.ConvertAll(track => track.name),
+                    "the three, in the order they merge in");
+                Assert.AreEqual("Toggle", tracks[0].entries[0].parameter,
+                    "what travels is what a person pressed");
+                Assert.AreEqual("GestureLeft", tracks[1].entries[0].parameter,
+                    "and what VRChat was feeding the avatar is its own track");
+                Assert.AreEqual("Touched", tracks[2].entries[0].parameter,
+                    "everything else is the world's");
+                foreach (var track in tracks)
+                    Assert.AreEqual(2, track.entries.Count,
+                        track.name + " takes the value it started at and the one change");
+            }
+            finally
+            {
+                AssetDatabase.DeleteAsset(path);
+            }
+        }
+
+        [Test]
+        public void Extract_LeavesOutWhatTheRunWorksOutForItselfAndSaysWhich()
+        {
+            var controller = Faces();
+            var trace = Moved("Toggle", "Driven", "Animated");
+            const string path = "Assets/DDTraceDerivedTest.anim";
+            try
+            {
+                var clip = TraceClip.Save(trace, path);
+                var extraction = InputSurface.Of(clip, string.Empty, controller,
+                    new[] { "Toggle", "Driven", "Animated" }, new[] { "Toggle" });
+
+                CollectionAssert.AreEqual(new[] { Stimulus.MenuTrack },
+                    extraction.stimulus.tracks.ConvertAll(track => track.name),
+                    "a track with nothing in it is not material to edit");
+                CollectionAssert.AreEqual(new[] { "Driven" }, extraction.driven);
+                CollectionAssert.AreEqual(new[] { "Animated" }, extraction.animated);
+                Assert.AreEqual(2, extraction.Left);
+                foreach (var entry in extraction.stimulus.Active)
+                    Assert.AreEqual("Toggle", entry.parameter,
+                        "nothing the run computes again is anywhere in the tracks");
+
+                // And the reason it matters: without a controller to ask, nothing is derived
+                // and the same recording comes back with all three in it. Null is "nobody
+                // asked" rather than "nothing is derived".
+                var told = InputSurface.Of(clip, string.Empty, null,
+                    new[] { "Toggle", "Driven", "Animated" }, new[] { "Toggle" });
+                Assert.AreEqual(0, told.Left);
+                var reached = new System.Collections.Generic.List<string>();
+                foreach (var entry in told.stimulus.Active)
+                    if (!reached.Contains(entry.parameter)) reached.Add(entry.parameter);
+                CollectionAssert.AreEquivalent(new[] { "Toggle", "Driven", "Animated" }, reached);
+            }
+            finally
+            {
+                AssetDatabase.DeleteAsset(path);
+            }
+        }
+
+        [Test]
+        public void Extract_ADriversOwnOutputIsNotAMenuInputHoweverItIsDeclared()
+        {
+            // A driver writing a synced expression parameter, which is an ordinary thing to do.
+            // Read as a menu input it would be applied twice — once as a poke and once by the
+            // driver the run applies itself — and the second one is what would look like a bug.
+            var controller = Faces();
+            var trace = Moved("Driven");
+            const string path = "Assets/DDTraceDrivenMenuTest.anim";
+            try
+            {
+                var clip = TraceClip.Save(trace, path);
+                var extraction = InputSurface.Of(clip, string.Empty, controller,
+                    new[] { "Driven" }, new[] { "Driven" });
+                CollectionAssert.IsEmpty(extraction.stimulus.tracks);
+                CollectionAssert.AreEqual(new[] { "Driven" }, extraction.driven);
+            }
+            finally
+            {
+                AssetDatabase.DeleteAsset(path);
+            }
+        }
+
+        [Test]
+        public void Clip_CarriesTheTracksAndWhichOfThemWereMuted()
+        {
+            var settings = Elaborate();
+            settings.stimulus = new Stimulus();
+            settings.stimulus.At(Stimulus.MenuTrack, 0.05f, "Go", 1f);
+            settings.stimulus.At(Stimulus.WorldTrack, 0.1f, "X", 0.25f);
+            settings.stimulus.At(Stimulus.WorldTrack, 0.15f, "N", 3f);
+            settings.stimulus.Named(Stimulus.WorldTrack).muted = true;
+            var trace = Simulation.Run(NewController(), settings);
+
+            const string path = "Assets/DDTraceTracksTest.anim";
+            try
+            {
+                var clip = TraceClip.Save(trace, path, settings);
+                var read = TraceClip.SettingsOf(clip);
+                Assert.IsNotNull(read);
+
+                var tracks = read.stimulus.tracks;
+                Assert.AreEqual(2, tracks.Count);
+                Assert.AreEqual(Stimulus.MenuTrack, tracks[0].name);
+                Assert.IsFalse(tracks[0].muted);
+                Assert.AreEqual(Stimulus.WorldTrack, tracks[1].name);
+                Assert.IsTrue(tracks[1].muted, "which tracks were in the run is the experiment");
+                // A muted track's rows travel too — taking the question back has to be a
+                // click rather than an afternoon of retyping.
+                Assert.AreEqual(2, tracks[1].entries.Count);
+                Assert.AreEqual(1, read.stimulus.InOrder().Count, "and the run still sees one");
+
+                var again = Simulation.Run(NewController(), read);
+                Assert.AreEqual(trace.Frames, again.Frames);
+                foreach (var signal in trace.Signals)
+                {
+                    var twin = again.Find(signal.scope, signal.name);
+                    Assert.IsNotNull(twin, "row " + signal.Path + " ran again");
+                    for (int frame = 0; frame < trace.Frames; frame += 3)
+                        Assert.AreEqual(signal.At(frame), twin.At(frame), 1e-4f,
+                            signal.Path + " at " + frame);
+                }
+            }
+            finally
+            {
+                AssetDatabase.DeleteAsset(path);
+            }
+        }
+
+        [Test]
+        public void Clip_SavedBeforeThereWereTracks_ReadsAsOneTrack()
+        {
+            var trace = Simulation.Run(NewController(), Clock(0.3f), new Stimulus());
+
+            const string path = "Assets/DDTraceV1Test.anim";
+            try
+            {
+                var clip = TraceClip.Save(trace, path);
+                // A settings block exactly as the build before this one wrote it: version 1,
+                // the inputs in the flat list, and no tracks at all.
+                var manifest = TraceClip.ManifestOf(clip);
+                Assert.IsNotNull(manifest);
+                manifest.settings = new TraceManifest.Settings
+                {
+                    version = 1,
+                    fps = 60f,
+                    seconds = 0.3f,
+                    seed = 7,
+                };
+                manifest.settings.stimulus.Add(new TraceManifest.Poke
+                {
+                    at = 0.05f, parameter = "Go", value = 1f,
+                });
+                manifest.settings.stimulus.Add(new TraceManifest.Poke
+                {
+                    at = 0.1f, parameter = "N", value = 4f, scope = Simulation.RemoteScope,
+                });
+                EditorUtility.SetDirty(manifest);
+                AssetDatabase.SaveAssets();
+
+                var read = TraceClip.SettingsOf(
+                    AssetDatabase.LoadAssetAtPath<AnimationClip>(path));
+                Assert.IsNotNull(read, "a run of the previous format is still a run");
+                Assert.AreEqual(1, read.stimulus.tracks.Count,
+                    "one flat list is one track, not none and not two");
+                Assert.AreEqual(Stimulus.OneTrack, read.stimulus.tracks[0].name);
+                Assert.IsFalse(read.stimulus.tracks[0].muted);
+
+                var entries = read.stimulus.InOrder();
+                Assert.AreEqual(2, entries.Count);
+                Assert.AreEqual("Go", entries[0].parameter);
+                Assert.AreEqual(0.05f, entries[0].atSeconds, 1e-6f);
+                Assert.AreEqual(string.Empty, entries[0].scope);
+                Assert.AreEqual("N", entries[1].parameter);
+                Assert.AreEqual(Simulation.RemoteScope, entries[1].scope,
+                    "an input aimed at somebody else stays aimed at them");
+
+                // And it runs: the point of reading an old file is being able to ask it again.
+                var again = Simulation.Run(NewController(), read);
+                Assert.AreEqual("On",
+                    again.Find(Simulation.LocalScope, "Base/state").TextAt(again.Frames - 1));
+            }
+            finally
+            {
+                AssetDatabase.DeleteAsset(path);
+            }
+        }
+
+        [Test]
+        public void Window_AskingForATrackTwiceGivesBackTheSameOne()
+        {
+            // The window's side of the same compatibility: a layout saved before there were
+            // tracks still has its pokes in the old field, and they become the track such a
+            // list always was rather than quietly ceasing to be drawn.
+            var tracks = new System.Collections.Generic.List<DynamicAnalyzeWindow.Track>();
+            var hand = DynamicAnalyzeWindow.TrackNamed(tracks, Stimulus.OneTrack);
+            Assert.AreEqual(1, tracks.Count);
+            Assert.AreSame(hand, DynamicAnalyzeWindow.TrackNamed(tracks, Stimulus.OneTrack),
+                "asking twice does not make two");
+        }
+
         // ---- the hand, written down ------------------------------------------
 
-        static System.Collections.Generic.List<DynamicAnalyzeWindow.Poke> Hand() =>
-            new System.Collections.Generic.List<DynamicAnalyzeWindow.Poke>();
+        static System.Collections.Generic.List<DynamicAnalyzeWindow.Track> Hand() =>
+            new System.Collections.Generic.List<DynamicAnalyzeWindow.Track>();
+
+        /// <summary>The hand-written track's rows, or nothing when no live write ever made
+        /// one. Named, because "the pokes" is now a question about which track.</summary>
+        static System.Collections.Generic.List<DynamicAnalyzeWindow.Poke> Wrote(
+            System.Collections.Generic.List<DynamicAnalyzeWindow.Track> tracks)
+        {
+            foreach (var track in tracks)
+                if (track.name == Stimulus.HandTrack) return track.entries;
+            return new System.Collections.Generic.List<DynamicAnalyzeWindow.Poke>();
+        }
 
         [Test]
         public void Hand_ALiveWriteBecomesATimedInputAtTheSecondItHappened()
         {
-            var pokes = Hand();
+            var tracks = Hand();
             using (var session = LiveSession(NewController()))
             {
                 StepSession(session, 6);
                 var go = session.Trace.Find(Simulation.LocalScope, "Go");
                 Assert.IsNotNull(go);
 
-                DynamicAnalyzeWindow.Record(pokes, session, go, 1f);
+                DynamicAnalyzeWindow.Record(tracks, session, go, 1f);
+                // Onto the hand-written track, which is made because a hand made it: what
+                // somebody pressed is not one of the faces an extraction takes off a recording,
+                // and mixing the two would make "take the menu track down again" throw it away.
+                Assert.AreEqual(1, tracks.Count);
+                Assert.AreEqual(Stimulus.HandTrack, tracks[0].name);
+                var pokes = Wrote(tracks);
                 Assert.AreEqual(1, pokes.Count);
                 Assert.AreEqual("Go", pokes[0].parameter);
                 Assert.AreEqual(1f, pokes[0].value, 1e-6f);
@@ -3050,9 +3372,30 @@ namespace Yozolab.DaerD.Tests
         }
 
         [Test]
+        public void Hand_JoinsTheTrackItAlreadyHasRatherThanMakingAnother()
+        {
+            var tracks = Hand();
+            // A window with a recording already taken apart in it: the hand's writes belong
+            // beside the ones it took down before, not in a second track of the same name.
+            DynamicAnalyzeWindow.TrackNamed(tracks, Stimulus.MenuTrack);
+            DynamicAnalyzeWindow.TrackNamed(tracks, Stimulus.HandTrack).entries.Add(
+                new DynamicAnalyzeWindow.Poke { at = 0f, parameter = "X", value = 0.25f });
+
+            using (var session = LiveSession(NewController()))
+            {
+                StepSession(session, 4);
+                DynamicAnalyzeWindow.Record(tracks, session,
+                    session.Trace.Find(Simulation.LocalScope, "Go"), 1f);
+                Assert.AreEqual(2, tracks.Count, "no second hand track");
+                Assert.AreEqual(2, Wrote(tracks).Count);
+                CollectionAssert.IsEmpty(tracks[0].entries, "and nothing went to the menu track");
+            }
+        }
+
+        [Test]
         public void Hand_AWriteToSomebodyElsesCopyKeepsWhoseItWas()
         {
-            var pokes = Hand();
+            var tracks = Hand();
             var settings = new SimSettings
             {
                 clock = new SimClock { fps = 60f, seconds = 1f },
@@ -3064,7 +3407,8 @@ namespace Yozolab.DaerD.Tests
                 var remote = session.Trace.Find(Simulation.RemoteScope, "X");
                 Assert.IsNotNull(remote, "the other person's copy of X is a row");
 
-                DynamicAnalyzeWindow.Record(pokes, session, remote, 0.5f);
+                DynamicAnalyzeWindow.Record(tracks, session, remote, 0.5f);
+                var pokes = Wrote(tracks);
                 Assert.AreEqual(1, pokes.Count);
                 Assert.AreEqual(Simulation.RemoteScope, pokes[0].scope);
                 Assert.AreEqual("X", pokes[0].parameter);
@@ -3074,7 +3418,7 @@ namespace Yozolab.DaerD.Tests
         [Test]
         public void Hand_DoesNotWriteDownALayersWeight()
         {
-            var pokes = Hand();
+            var tracks = Hand();
             using (var session = LiveSession(AapLayers(null)))
             {
                 StepSession(session, 2);
@@ -3085,20 +3429,21 @@ namespace Yozolab.DaerD.Tests
 
                 // Taken live, and still not written down: a timed input cannot carry a weight
                 // (see Stimulus), so a list holding one would replay into a different run.
-                DynamicAnalyzeWindow.Record(pokes, session, weight, 0.5f);
-                CollectionAssert.IsEmpty(pokes);
+                DynamicAnalyzeWindow.Record(tracks, session, weight, 0.5f);
+                CollectionAssert.IsEmpty(Wrote(tracks));
+                CollectionAssert.IsEmpty(tracks, "and no track was made to hold nothing");
 
                 // A parameter of the same session still is.
-                DynamicAnalyzeWindow.Record(pokes, session,
+                DynamicAnalyzeWindow.Record(tracks, session,
                     session.Trace.Find(Simulation.LocalScope, "X"), 0.25f);
-                Assert.AreEqual(1, pokes.Count);
+                Assert.AreEqual(1, Wrote(tracks).Count);
             }
         }
 
         [Test]
         public void Hand_TwoWritesAtOneMomentAreOneInput_AndNothingElseIsDropped()
         {
-            var pokes = Hand();
+            var tracks = Hand();
             using (var session = LiveSession(NewController()))
             {
                 StepSession(session, 3);
@@ -3107,19 +3452,20 @@ namespace Yozolab.DaerD.Tests
                 // A float cell being dragged writes on every repaint; the session has not moved,
                 // so all of it happened at one moment and only the last value can be seen there.
                 for (int i = 1; i <= 20; i++)
-                    DynamicAnalyzeWindow.Record(pokes, session, x, i * 0.01f);
+                    DynamicAnalyzeWindow.Record(tracks, session, x, i * 0.01f);
+                var pokes = Wrote(tracks);
                 Assert.AreEqual(1, pokes.Count, "one drag is one input");
                 Assert.AreEqual(0.2f, pokes[0].value, 1e-6f, "and it is where the drag ended");
 
                 // Time moving on makes the next write its own input — the values genuinely
                 // happened at different seconds, and a run replaying them has to do the same.
                 StepSession(session, 1);
-                DynamicAnalyzeWindow.Record(pokes, session, x, 0.5f);
+                DynamicAnalyzeWindow.Record(tracks, session, x, 0.5f);
                 Assert.AreEqual(2, pokes.Count);
                 Assert.Greater(pokes[1].at, pokes[0].at);
 
                 // A different parameter at the same moment is never a replacement either.
-                DynamicAnalyzeWindow.Record(pokes, session,
+                DynamicAnalyzeWindow.Record(tracks, session,
                     session.Trace.Find(Simulation.LocalScope, "Go"), 1f);
                 Assert.AreEqual(3, pokes.Count);
                 Assert.AreEqual("Go", pokes[2].parameter);

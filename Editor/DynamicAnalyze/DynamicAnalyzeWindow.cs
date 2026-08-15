@@ -47,6 +47,25 @@ namespace Yozolab.DaerD.DynamicAnalyze
             public float value;
         }
 
+        /// <summary>
+        /// One layer of the Timed inputs list, as the window holds it.
+        ///
+        /// <see cref="Stimulus.Track"/> is the same three things and is deliberately not this
+        /// type, for the reason the manifest's is not either: this one is serialized into a
+        /// window layout that has to keep opening after the engine's shape changes, and the
+        /// engine's shape is meant to be free to change.
+        /// </summary>
+        [System.Serializable]
+        internal sealed class Track
+        {
+            public string name = string.Empty;
+            public bool muted;
+            public List<Poke> entries = new List<Poke>();
+            /// <summary>Whether the rows are showing. Not part of the experiment — a folded
+            /// track runs exactly like an open one.</summary>
+            public bool open = true;
+        }
+
         [SerializeField] AnimatorController _controller;
         [SerializeField] float _fps = 60f;
         [SerializeField] float _seconds = 10f;
@@ -76,7 +95,15 @@ namespace Yozolab.DaerD.DynamicAnalyze
         [SerializeField] bool _quantize = true;
         [SerializeField] bool _lagRows = true;
         [SerializeField] List<string> _synced = new List<string>();
+        /// <summary>The timed inputs of a window laid out before there were tracks. Read once
+        /// on the way in and emptied — see <see cref="AdoptOldPokes"/>.</summary>
         [SerializeField] List<Poke> _pokes = new List<Poke>();
+        [SerializeField] List<Track> _tracks = new List<Track>();
+        /// <summary>What the last extraction from a recording did and did not take, kept until
+        /// the next one. Serialized so it survives a domain reload, which entering Play mode is:
+        /// a person extracts, presses Play to record the comparison, and comes back to a panel
+        /// that would otherwise have forgotten what it left out.</summary>
+        [SerializeField] string _extracted = string.Empty;
         /// <summary>
         /// Which mood the window is in, as the two booleans that keep a saved layout meaning
         /// what it meant. <see cref="_live"/> is the flag this window has always had, and a
@@ -171,7 +198,24 @@ namespace Yozolab.DaerD.DynamicAnalyze
         {
             EditorApplication.update += Tick;
             EditorApplication.playModeStateChanged += OnPlayModeChanged;
+            AdoptOldPokes();
             if (_controller == null) _controller = Selection.activeObject as AnimatorController;
+        }
+
+        /// <summary>
+        /// A window laid out before the inputs were in tracks, opened again.
+        ///
+        /// Unity keeps the old field's contents in the layout, so the list is still there and
+        /// would simply stop being drawn — an afternoon of pokes silently gone, on a window that
+        /// looks like it was always empty. It becomes the one track such a list always was,
+        /// under the same name a saved run of that vintage reads back as, and the old field is
+        /// emptied so this happens exactly once.
+        /// </summary>
+        void AdoptOldPokes()
+        {
+            if (_pokes.Count == 0) return;
+            TrackNamed(_tracks, Stimulus.OneTrack).entries.AddRange(_pokes);
+            _pokes.Clear();
         }
 
         void OnFocus()
@@ -241,7 +285,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
             {
                 if (_session == null) return;
                 _session.Write(signal.scope, signal.name, value);
-                Record(_pokes, _session, signal, value);
+                Record(_tracks, _session, signal, value);
             };
 
             DrawToolbar();
@@ -490,16 +534,22 @@ namespace Yozolab.DaerD.DynamicAnalyze
             _seed = clock.seed;
             _lagRows = settings.lagRows;
 
-            _pokes.Clear();
+            _tracks.Clear();
+            _extracted = string.Empty;
             if (settings.stimulus != null)
-                foreach (var entry in settings.stimulus.InOrder())
-                    _pokes.Add(new Poke
-                    {
-                        at = entry.atSeconds,
-                        scope = entry.scope,
-                        parameter = entry.parameter,
-                        value = entry.value,
-                    });
+                foreach (var track in settings.stimulus.tracks)
+                {
+                    var into = TrackNamed(_tracks, track.name);
+                    into.muted = track.muted;
+                    foreach (var entry in track.entries)
+                        into.entries.Add(new Poke
+                        {
+                            at = entry.atSeconds,
+                            scope = entry.scope,
+                            parameter = entry.parameter,
+                            value = entry.value,
+                        });
+                }
 
             var wire = settings.wire;
             _twoClients = wire != null;
@@ -522,23 +572,146 @@ namespace Yozolab.DaerD.DynamicAnalyze
             _synced.AddRange(wire.parameters);
         }
 
-        /// <summary>The other direction: what one run recorded becomes what the next one is
-        /// told to do.</summary>
+        /// <summary>
+        /// The other direction: what one run recorded becomes what the next one is told to do.
+        ///
+        /// Split into the three faces of the recording rather than taken flat — see
+        /// <see cref="InputSurface"/> — and the three replace only themselves. Anything else in
+        /// the list stays, which is what makes taking the menu track down again a thing somebody
+        /// can do in the middle of an experiment without losing the inputs they typed.
+        /// </summary>
         void LoadAsInputs()
         {
             var clip = PickClip(L.Tr("Load As Timed Inputs"));
             if (clip == null) return;
-            var stimulus = TraceClip.ToStimulus(clip, string.Empty, ParameterNames());
-            _pokes.Clear();
-            foreach (var entry in stimulus.InOrder())
-                _pokes.Add(new Poke
-                {
-                    at = entry.atSeconds,
-                    parameter = entry.parameter,
-                    value = entry.value,
-                    scope = entry.scope,
-                });
+            Extract(clip, null);
             _inputsOpen = true;
+        }
+
+        /// <summary>
+        /// One extraction, into the whole list or into one track of it.
+        ///
+        /// <paramref name="only"/> names the single track to replace, or null for all of them.
+        /// A track the extraction did not produce is emptied rather than left as it was: the
+        /// button says the track now holds what this recording has in it, and a track quietly
+        /// keeping the previous recording's rows would be the one lie that makes the comparison
+        /// afterwards meaningless.
+        /// </summary>
+        void Extract(AnimationClip clip, string only)
+        {
+            var extraction = InputSurface.Of(clip, string.Empty, _controller, InputNames(),
+                MenuNames());
+            int taken = 0;
+            foreach (var track in extraction.stimulus.tracks)
+            {
+                if (only != null && track.name != only) continue;
+                var into = TrackNamed(_tracks, track.name);
+                into.entries.Clear();
+                foreach (var entry in track.entries)
+                    into.entries.Add(new Poke
+                    {
+                        at = entry.atSeconds,
+                        parameter = entry.parameter,
+                        value = entry.value,
+                        scope = entry.scope,
+                    });
+                taken += into.entries.Count;
+            }
+            if (only != null && extraction.stimulus.Find(only) == null)
+                TrackNamed(_tracks, only).entries.Clear();
+            else if (only == null)
+                // The tracks this extraction is the source of, and only those: one it did not
+                // produce this time is one this recording has nothing in, and a hand-written
+                // track was never its to clear.
+                foreach (string name in Extractable)
+                    if (extraction.stimulus.Find(name) == null)
+                        Drop(name);
+            _extracted = Left(extraction, taken);
+        }
+
+        /// <summary>The tracks an extraction owns. A track by one of these names is replaced
+        /// wholesale by the next extraction; every other one is somebody's own.</summary>
+        static readonly string[] Extractable =
+            { Stimulus.MenuTrack, Stimulus.BuiltInTrack, Stimulus.WorldTrack };
+
+        void Drop(string name)
+        {
+            for (int i = _tracks.Count - 1; i >= 0; i--)
+                if (_tracks[i].name == name) _tracks.RemoveAt(i);
+        }
+
+        /// <summary>
+        /// What the extraction took, and what it deliberately did not.
+        ///
+        /// The second half is the half that has to be said. A parameter that moved all through
+        /// the recording and is in none of the tracks looks exactly like a tool that lost it,
+        /// and the reason it is not there — the run computes it again, so replaying it would
+        /// apply it twice — is not something anybody would guess.
+        /// </summary>
+        static string Left(InputSurface.Extraction extraction, int taken)
+        {
+            string said = L.Tr("Took {0} input(s) from the recording into {1} track(s).",
+                taken, extraction.stimulus.tracks.Count);
+            if (extraction.driven.Count > 0)
+                said += "\n" + L.Tr(
+                    "{0} name(s) a parameter driver writes are left out ({1}). The run applies the drivers itself, so replaying these would apply each of them twice.",
+                    extraction.driven.Count, Join(extraction.driven));
+            if (extraction.animated.Count > 0)
+                said += "\n" + L.Tr(
+                    "{0} name(s) an animation writes onto the Animator are left out ({1}). The run plays the same clips, so replaying these would fight what they write every frame.",
+                    extraction.animated.Count, Join(extraction.animated));
+            return said;
+        }
+
+        /// <summary>Names, with a tail rather than a wall of them — the shape
+        /// <see cref="RunWarnings"/> uses, spelt again rather than made public there for the
+        /// sake of five lines.</summary>
+        static string Join(List<string> names)
+        {
+            const int shown = 4;
+            if (names.Count <= shown) return string.Join(", ", names.ToArray());
+            var head = names.GetRange(0, shown);
+            return string.Join(", ", head.ToArray())
+                + L.Tr(" and {0} more", names.Count - shown);
+        }
+
+        /// <summary>
+        /// The names a run of this controller can be told at all, which is what an extraction
+        /// filters a recording by.
+        ///
+        /// The build's synced list is added to the controller's own because a recording of an
+        /// assembled avatar speaks the names its BUILD produced, and those are not the names in
+        /// the controller sitting in the field — a menu parameter renamed by the build appears
+        /// in the recording under a spelling the controller has never heard of, and filtering it
+        /// out would empty the one track most experiments edit.
+        /// </summary>
+        List<string> InputNames()
+        {
+            var names = ParameterNames();
+            var built = BuildCapture.SyncedFor(_target);
+            if (built == null) return names;
+            foreach (string name in built)
+                if (!names.Contains(name)) names.Add(name);
+            return names;
+        }
+
+        /// <summary>
+        /// What counts as a menu parameter when a recording is split up: the build's own list
+        /// first, then the wire's, then the avatar's store.
+        ///
+        /// In that order because each is a better answer than the next about the recording in
+        /// hand and a worse one about anything else. The build is what the avatar really had
+        /// while it was being recorded, under the names it really had. The wire is what this
+        /// window was told to carry, which is the answer for a run somebody set up by hand. The
+        /// store is what a person wrote down, which is right for a controller that has never
+        /// been built and is the only one available then.
+        /// </summary>
+        List<string> MenuNames()
+        {
+            var built = BuildCapture.SyncedFor(_target);
+            if (built != null && built.Count > 0) return built;
+            if (_synced.Count > 0) return _synced;
+            return StoredSynced() ?? new List<string>();
         }
 
         static AnimationClip PickClip(string title)
@@ -832,54 +1005,79 @@ namespace Yozolab.DaerD.DynamicAnalyze
         {
             EditorGUILayout.BeginVertical(EditorStyles.helpBox);
             EditorGUILayout.BeginHorizontal();
-            EditorGUILayout.LabelField(L.Tr("Timed inputs ({0})", _pokes.Count),
+            EditorGUILayout.LabelField(L.Tr("Timed inputs ({0})", Written()),
                 EditorStyles.boldLabel);
             GUILayout.FlexibleSpace();
             if (GUILayout.Button(L.Tr("Add"), EditorStyles.miniButton, GUILayout.Width(46f)))
-                _pokes.Add(new Poke { at = _pokes.Count > 0 ? _pokes[_pokes.Count - 1].at : 0f });
+            {
+                var hand = TrackNamed(_tracks, Stimulus.HandTrack);
+                hand.entries.Add(new Poke
+                {
+                    at = hand.entries.Count > 0 ? hand.entries[hand.entries.Count - 1].at : 0f,
+                });
+            }
             EditorGUILayout.EndHorizontal();
+            if (!string.IsNullOrEmpty(_extracted))
+                EditorGUILayout.HelpBox(_extracted, MessageType.Info);
 
             var names = ParameterNames();
-            int remove = -1;
-            for (int i = 0; i < _pokes.Count; i++)
-            {
-                var poke = _pokes[i];
-                EditorGUILayout.BeginHorizontal();
-                poke.at = EditorGUILayout.FloatField(poke.at, GUILayout.Width(52f));
-                GUILayout.Label(L.Tr("s"), GUILayout.Width(12f));
-
-                int at = Mathf.Max(0, names.IndexOf(poke.parameter));
-                if (names.Count > 0)
-                {
-                    at = EditorGUILayout.Popup(at, names.ToArray(), GUILayout.Width(150f));
-                    poke.parameter = names[at];
-                }
-                else poke.parameter = EditorGUILayout.TextField(poke.parameter,
-                    GUILayout.Width(150f));
-
-                var type = TypeOf(poke.parameter);
-                if (type == AnimatorControllerParameterType.Trigger)
-                    // A written-down trigger is the same press the live button makes: 1 sets it
-                    // and 0 takes it back down, which is all a trigger can be told. Named
-                    // rather than a checkbox, because "off" is not a state a trigger sits in.
-                    poke.value = EditorGUILayout.Popup(poke.value != 0f ? 0 : 1,
-                        new[] { L.Tr("Fire"), L.Tr("Clear") }, GUILayout.Width(60f)) == 0
-                        ? 1f : 0f;
-                else if (type == AnimatorControllerParameterType.Bool)
-                    poke.value = EditorGUILayout.Toggle(poke.value != 0f,
-                        GUILayout.Width(40f)) ? 1f : 0f;
-                else
-                    poke.value = EditorGUILayout.FloatField(poke.value, GUILayout.Width(60f));
-
-                poke.scope = PokeScope(poke.scope);
-
-                if (GUILayout.Button("-", EditorStyles.miniButton, GUILayout.Width(22f)))
-                    remove = i;
-                GUILayout.FlexibleSpace();
-                EditorGUILayout.EndHorizontal();
-            }
-            if (remove >= 0) _pokes.RemoveAt(remove);
+            foreach (var track in _tracks) DrawTrack(track, names);
             EditorGUILayout.EndVertical();
+        }
+
+        /// <summary>One track and its rows.</summary>
+        void DrawTrack(Track track, List<string> names)
+        {
+            // Composed rather than translated: a name somebody typed with a count after it is
+            // punctuation around a number, and a catalogue entry for "({0})" would be one.
+            GUILayout.Label(track.name + " (" + track.entries.Count + ")",
+                EditorStyles.miniBoldLabel);
+
+            int remove = -1;
+            for (int i = 0; i < track.entries.Count; i++)
+                if (DrawPoke(track.entries[i], names)) remove = i;
+            if (remove >= 0) track.entries.RemoveAt(remove);
+        }
+
+        /// <summary>One input, and whether the reader asked for it to go.</summary>
+        bool DrawPoke(Poke poke, List<string> names)
+        {
+            bool remove = false;
+            EditorGUILayout.BeginHorizontal();
+            GUILayout.Space(12f);
+            poke.at = EditorGUILayout.FloatField(poke.at, GUILayout.Width(52f));
+            GUILayout.Label(L.Tr("s"), GUILayout.Width(12f));
+
+            int at = Mathf.Max(0, names.IndexOf(poke.parameter));
+            if (names.Count > 0)
+            {
+                at = EditorGUILayout.Popup(at, names.ToArray(), GUILayout.Width(150f));
+                poke.parameter = names[at];
+            }
+            else poke.parameter = EditorGUILayout.TextField(poke.parameter,
+                GUILayout.Width(150f));
+
+            var type = TypeOf(poke.parameter);
+            if (type == AnimatorControllerParameterType.Trigger)
+                // A written-down trigger is the same press the live button makes: 1 sets it
+                // and 0 takes it back down, which is all a trigger can be told. Named
+                // rather than a checkbox, because "off" is not a state a trigger sits in.
+                poke.value = EditorGUILayout.Popup(poke.value != 0f ? 0 : 1,
+                    new[] { L.Tr("Fire"), L.Tr("Clear") }, GUILayout.Width(60f)) == 0
+                    ? 1f : 0f;
+            else if (type == AnimatorControllerParameterType.Bool)
+                poke.value = EditorGUILayout.Toggle(poke.value != 0f,
+                    GUILayout.Width(40f)) ? 1f : 0f;
+            else
+                poke.value = EditorGUILayout.FloatField(poke.value, GUILayout.Width(60f));
+
+            poke.scope = PokeScope(poke.scope);
+
+            if (GUILayout.Button("-", EditorStyles.miniButton, GUILayout.Width(22f)))
+                remove = true;
+            GUILayout.FlexibleSpace();
+            EditorGUILayout.EndHorizontal();
+            return remove;
         }
 
         /// <summary>
@@ -1217,11 +1415,12 @@ namespace Yozolab.DaerD.DynamicAnalyze
         ///
         /// Static, and handed the list: the rule is worth a test and an EditorWindow is not one.
         /// </summary>
-        internal static void Record(List<Poke> pokes, SimSession session,
+        internal static void Record(List<Track> tracks, SimSession session,
             SignalTrace.Signal signal, float value)
         {
-            if (pokes == null || session == null || signal == null) return;
+            if (tracks == null || session == null || signal == null) return;
             if (!session.Has(signal.name)) return;
+            var pokes = TrackNamed(tracks, Stimulus.HandTrack).entries;
             // The wearer is the empty scope in this list, which is what the panel writes and
             // what a run reads (see Simulation.Targets). A row says "Local" for the same client,
             // and one list spelling it two ways would be one the reader cannot sort.
@@ -1246,14 +1445,52 @@ namespace Yozolab.DaerD.DynamicAnalyze
 
         /// <summary>The timed inputs as the engine takes them. Its own step because the panel
         /// asks what these inputs are about to do — see <see cref="RunWarnings"/> — and a
-        /// warning read off a differently built list would be a warning about another run.</summary>
+        /// warning read off a differently built list would be a warning about another run.
+        ///
+        /// The tracks cross over as tracks, muted flags and all: the engine merges them and does
+        /// not otherwise know they exist (see <see cref="Stimulus"/>), and building the merge
+        /// here would leave the settings a saved run carries unable to say what the experiment
+        /// was made of.</summary>
         Stimulus BuildStimulus()
         {
             var stimulus = new Stimulus();
-            foreach (var poke in _pokes)
-                if (!string.IsNullOrEmpty(poke.parameter))
-                    stimulus.At(poke.at, poke.parameter, poke.value, poke.scope);
+            foreach (var track in _tracks)
+            {
+                var into = stimulus.Named(track.name);
+                into.muted = track.muted;
+                foreach (var poke in track.entries)
+                    if (!string.IsNullOrEmpty(poke.parameter))
+                        into.entries.Add(new Stimulus.Entry
+                        {
+                            atSeconds = poke.at,
+                            parameter = poke.parameter,
+                            value = poke.value,
+                            scope = poke.scope,
+                        });
+            }
             return stimulus;
+        }
+
+        /// <summary>The track by this name, made at the end of the list if there is none.
+        /// Static and handed the list for the reason <see cref="Record"/> is: the rule is worth
+        /// a test and an EditorWindow is not one.</summary>
+        internal static Track TrackNamed(List<Track> tracks, string name)
+        {
+            foreach (var track in tracks)
+                if (track.name == name) return track;
+            var made = new Track { name = name };
+            tracks.Add(made);
+            return made;
+        }
+
+        /// <summary>How many inputs are written down, muted tracks included: the panel counts
+        /// what is in the list, and what a run will consume is a different number that the run
+        /// itself is the place to learn.</summary>
+        int Written()
+        {
+            int count = 0;
+            foreach (var track in _tracks) count += track.entries.Count;
+            return count;
         }
 
         SimSettings BuildSettings()
