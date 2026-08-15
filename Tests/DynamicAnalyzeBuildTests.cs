@@ -5,6 +5,8 @@ using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
+using UnityEngine.Animations;
+using UnityEngine.Playables;
 using UnityEngine.TestTools;
 using Yozolab.DaerD.DynamicAnalyze;
 
@@ -58,6 +60,7 @@ namespace Yozolab.DaerD.Tests
 
         readonly List<GameObject> _made = new List<GameObject>();
         readonly List<UnityEngine.Object> _assets = new List<UnityEngine.Object>();
+        readonly List<PlayableGraph> _graphs = new List<PlayableGraph>();
 
         /// <summary>Deliberately no [SetUp] that empties the registry.
         ///
@@ -76,6 +79,11 @@ namespace Yozolab.DaerD.Tests
             if (EditorApplication.isPlayingOrWillChangePlaymode)
                 EditorApplication.isPlaying = false;
             BuildCapture.Forget();
+            // Graphs first: a graph left behind is not only a leak, it is a candidate the next
+            // test's look round the scene would find (see DynamicAnalyzeRecTests).
+            foreach (var graph in _graphs)
+                if (graph.IsValid()) graph.Destroy();
+            _graphs.Clear();
             foreach (var go in _made)
                 if (go != null) UnityEngine.Object.DestroyImmediate(go);
             _made.Clear();
@@ -410,6 +418,125 @@ namespace Yozolab.DaerD.Tests
 #endif
         }
 
+        // ---- and what a recording then reads ------------------------------------
+
+        /// <summary>
+        /// The bridge, end to end: an avatar assembled by a build, a graph running what the
+        /// build produced, and a recorder pointed at the controller in the WINDOW's field —
+        /// which is not what is playing and does not match it.
+        ///
+        /// Every row this is about is one the recorder could not have had otherwise. The merged
+        /// layer has states, the built layer names are the ones on screen, and the recording
+        /// says out loud which controller it was named from so nobody has to guess.
+        /// </summary>
+        [Test]
+        public void ARecordingIsNamedFromTheBuiltControllerRatherThanTheOneInTheField()
+        {
+#if DAERD_NDMF && DAERD_VRC
+            Skip.WithoutModularAvatar();
+            var avatar = Rig("DD Build Rec");
+            Build(avatar.root);
+            var fx = BuildCapture.ControllersFor(avatar.animator)[0];
+            Assert.AreEqual(-1, PlayRecorder.Matching(avatar.fx, PlayRecorder.PlayablesOn(
+                    Drive(avatar.animator, fx))),
+                "the controller in the field matches the graph after all, so this proves nothing");
+
+            var recorder = PlayRecorder.On(avatar.animator, avatar.fx);
+            Assert.IsTrue(recorder.Matched,
+                "the built controller was never tried against the graph, so the recording lost "
+                + "its state rows on exactly the avatar this feature is for");
+            Assert.AreEqual("FX", recorder.Built,
+                "the recording does not say which playable layer it was named from");
+            recorder.Sample(1, 0f);
+            Assert.IsNotNull(recorder.Trace.Find(Simulation.PlayScope, "Gimmick/state"),
+                "the merged layer has no rows, so the naming came from the field's controller");
+            Assert.IsNotNull(recorder.Trace.Find(Simulation.PlayScope, "Base/state"));
+            Assert.IsNotNull(recorder.Trace.Find(Simulation.PlayScope,
+                    Internal("Wag", "Gimmick")),
+                "the parameter is recorded under the name the avatar wears, which is the whole "
+                + "of what a build changes about it");
+
+            // And the other half of the bridge: what the panel's second button fills from.
+            var synced = BuildCapture.SyncedFor(avatar.animator);
+            CollectionAssert.Contains(synced, Internal("Wag", "Gimmick"));
+            CollectionAssert.DoesNotContain(synced, "Wag");
+#else
+            Assert.Ignore("NDMF and the VRChat avatars SDK are not both installed.");
+#endif
+        }
+
+        /// <summary>
+        /// An avatar running its own build counts as running the controller in the field, which
+        /// is what the arm toggle and the candidate list's tick are decided by. Without it,
+        /// arming would wait forever on the avatars this is for: they never run the field's
+        /// controller, by construction.
+        /// </summary>
+        [Test]
+        public void AnAvatarRunningItsOwnBuildCountsAsRunningTheControllerItWasBuiltBeside()
+        {
+#if DAERD_NDMF && DAERD_VRC
+            Skip.WithoutModularAvatar();
+            var avatar = Rig("DD Build Arms");
+            Build(avatar.root);
+            Drive(avatar.animator, BuildCapture.ControllersFor(avatar.animator)[0]);
+
+            Assert.IsTrue(PlayRecorder.Runs(avatar.fx, avatar.animator));
+            Assert.AreSame(avatar.animator, PlayRecorder.Likeliest(avatar.fx),
+                "nothing else in the scene is running anything, and the built avatar was not "
+                + "picked");
+#else
+            Assert.Ignore("NDMF and the VRChat avatars SDK are not both installed.");
+#endif
+        }
+
+        /// <summary>
+        /// And it is never preferred over an avatar running the field's controller outright.
+        ///
+        /// The scene that decides it is the one somebody actually has open: the gimmick being
+        /// edited, playing on its own, beside the assembled avatar it is part of. The plain one
+        /// is what the window is pointed at, so it stays the pick.
+        /// </summary>
+        [Test]
+        public void AnAvatarRunningTheFieldsControllerOutrightIsStillPreferred()
+        {
+#if DAERD_NDMF && DAERD_VRC
+            Skip.WithoutModularAvatar();
+            var avatar = Rig("DD Build Second");
+            Build(avatar.root);
+            Drive(avatar.animator, BuildCapture.ControllersFor(avatar.animator)[0]);
+            var plain = Avatar("DD Build First");
+            Drive(plain, avatar.fx);
+
+            Assert.AreSame(plain, PlayRecorder.Likeliest(avatar.fx),
+                "the built avatar was preferred over the one running the very controller in the "
+                + "field");
+#else
+            Assert.Ignore("NDMF and the VRChat avatars SDK are not both installed.");
+#endif
+        }
+
+        /// <summary>
+        /// With no build anywhere — most projects — a recording is exactly the recording it was:
+        /// named from the controller in the field, and saying nothing about a build. Asserted
+        /// directly rather than skipped, because "unchanged where nothing is installed" is the
+        /// half of this that everybody gets.
+        /// </summary>
+        [Test]
+        public void WithNoBuildWatchedARecordingIsNamedTheWayItAlwaysWas()
+        {
+            var animator = Avatar("DD Build Unwatched");
+            var controller = Controller("Base", "Wave");
+            Drive(animator, controller);
+
+            Assert.IsTrue(PlayRecorder.Runs(controller, animator));
+            var recorder = PlayRecorder.On(animator, controller);
+            Assert.IsTrue(recorder.Matched);
+            Assert.IsEmpty(recorder.Built,
+                "a recording named from the field's own controller claimed a build made it");
+            recorder.Sample(1, 0f);
+            Assert.IsNotNull(recorder.Trace.Find(Simulation.PlayScope, "Base/state"));
+        }
+
         // ---- in a real Play mode ------------------------------------------------
 
         /// <summary>
@@ -506,6 +633,24 @@ namespace Yozolab.DaerD.Tests
             transition.duration = 0f;
             transition.AddCondition(AnimatorConditionMode.If, 0f, parameter);
             return controller;
+        }
+
+        /// <summary>A graph of the shape the tools that wear an avatar build: a layer mixer
+        /// with a controller playable under it, written out to an Animator that holds no
+        /// controller of its own. Returns the Animator so a call can be written inside an
+        /// expression about it.</summary>
+        Animator Drive(Animator animator, AnimatorController controller)
+        {
+            var graph = PlayableGraph.Create("DD Build Graph");
+            _graphs.Add(graph);
+            var mixer = AnimationLayerMixerPlayable.Create(graph, 1);
+            var playable = AnimatorControllerPlayable.Create(graph, controller);
+            graph.Connect(playable, 0, mixer, 0);
+            mixer.SetInputWeight(0, 1f);
+            var output = AnimationPlayableOutput.Create(graph, "o", animator);
+            output.SetSourcePlayable(mixer);
+            graph.Play();
+            return animator;
         }
 
         internal struct Avatars

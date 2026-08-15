@@ -70,6 +70,10 @@ namespace Yozolab.DaerD.DynamicAnalyze
             public string scope;
             public bool matched;
             public bool fromGraph;
+            /// <summary>Which playable layer of this avatar's own build the rows were named
+            /// from — "FX" — or empty when they were named from the controller in the window's
+            /// field. See <see cref="Fitting"/>.</summary>
+            public string built = string.Empty;
             /// <summary>What <see cref="Look"/> last found, asked once a frame rather than once
             /// a row: a real avatar has hundreds of rows and they are all this one avatar's.</summary>
             public bool alive = true;
@@ -98,6 +102,14 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// component directly. False is the plain-playback case, and worth showing: it means no
         /// tool has hold of this avatar, so nothing VRChat-shaped is happening to it.</summary>
         public bool FromGraph => _watched.Count > 0 && _watched[0].fromGraph;
+
+        /// <summary>Which playable layer of the avatar's own build the rows are named from, or
+        /// empty when they are named from the controller in the window's field. Worth showing
+        /// rather than hiding: the two can name the same state differently, and a reader
+        /// comparing a recording against the asset in front of them has to know which they are
+        /// looking at.</summary>
+        public string Built =>
+            _watched.Count > 0 ? _watched[0].built : string.Empty;
 
         /// <summary>How many avatars are being read at once — one, plus a scope each for the
         /// other people's copies that were found when the recording started.</summary>
@@ -253,6 +265,68 @@ namespace Yozolab.DaerD.DynamicAnalyze
             return true;
         }
 
+        /// <summary>What a set of rows can be named from: a controller, which playable of this
+        /// avatar's is running it, and which of the avatar's built playable layers it came out
+        /// of (empty for the one in the window's field).</summary>
+        internal struct Fit
+        {
+            public AnimatorController controller;
+            public string built;
+            public int at;
+        }
+
+        /// <summary>
+        /// Which controller this avatar's rows should be named from, and which playable is
+        /// running it.
+        ///
+        /// <para>THE BUILT ONE FIRST.</para>
+        /// On an avatar assembled by a build, the controller in the window's field is an INPUT
+        /// to the thing running rather than the thing running: layers have been merged into it
+        /// from elsewhere and parameters renamed, so its layer names do not match the graph and
+        /// a recording of it loses every state, transition and weight row it could have had.
+        /// The build's own output does match, because it is what is playing. Where a build was
+        /// watched, its controllers are therefore tried first, and where none was — most
+        /// projects, most of the time — this is exactly what it was before.
+        ///
+        /// <para>WHAT IS AND IS NOT PROVED BY A MATCH.</para>
+        /// That the graph is running THIS controller, decided by the layer-name multiset like
+        /// any other match. Not that the controller descends from the one in the field: nothing
+        /// in a built controller says what it was built out of, and claiming otherwise would be
+        /// inventing a provenance. What is actually being relied on is narrower and true — the
+        /// registry says this avatar was built, and the avatar in front of the recorder is that
+        /// avatar. The window says which controller the rows came from so that a reader is
+        /// never left guessing which of the two they are reading. And picking a target still
+        /// prefers an avatar running the field's controller outright, so this only ever decides
+        /// cases the old rule left with nothing at all.
+        /// </summary>
+        internal static Fit Fitting(Animator animator, AnimatorController controller,
+            List<AnimatorControllerPlayable> playables)
+        {
+            foreach (var candidate in BuildCapture.ControllersFor(animator))
+            {
+                int found = Matching(candidate, playables);
+                if (found < 0) continue;
+                return new Fit
+                {
+                    controller = candidate,
+                    built = BuildCapture.KindOf(animator, candidate),
+                    at = found,
+                };
+            }
+            return new Fit
+            {
+                controller = controller,
+                built = string.Empty,
+                at = Matching(controller, playables),
+            };
+        }
+
+        /// <summary>Whether this avatar's graph is running the window's controller — or the
+        /// controller its own build made. Asked wherever "is this the avatar the window is
+        /// about" used to be asked of the field's controller alone.</summary>
+        public static bool Runs(AnimatorController controller, Animator animator) =>
+            Fitting(animator, controller, PlayablesOn(animator)).at >= 0;
+
         /// <summary>
         /// Which controller layer each of the source's layers is, by name — the first layer of
         /// that name that has not been claimed yet.
@@ -307,11 +381,12 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// is written on the promise that there is no such row.
         ///
         /// Each avatar gets the same three-way look, on its own: a graph playable whose layers
-        /// are this controller's, which is rows with states; any graph playable at all, which is
-        /// parameters only; and no graph, which falls back to the Animator component. The
-        /// unmatched case reads the LAST playable for the same reason the matched case picks the
-        /// last — it is the newest, and there is nothing better to go on once the layer names
-        /// have already failed to say which one is meant.
+        /// are this controller's — or its build's, see <see cref="Fitting"/> — which is rows
+        /// with states; any graph playable at all, which is parameters only; and no graph, which
+        /// falls back to the Animator component. The unmatched case reads the LAST playable for
+        /// the same reason the matched case picks the last — it is the newest, and there is
+        /// nothing better to go on once the layer names have already failed to say which one is
+        /// meant.
         /// </summary>
         public static PlayRecorder On(Animator animator, AnimatorController controller,
             List<Animator> clones)
@@ -334,12 +409,13 @@ namespace Yozolab.DaerD.DynamicAnalyze
         void Watch(Animator animator, AnimatorController controller, string scope)
         {
             var playables = PlayablesOn(animator);
-            int at = Matching(controller, playables);
-            if (at >= 0)
+            var fit = Fitting(animator, controller, playables);
+            if (fit.at >= 0)
             {
-                var source = PlaySource.Of(playables[at]);
-                Declare(Add(animator, source, scope, true, true), new StateTables(controller),
-                    Align(source, controller));
+                var source = PlaySource.Of(playables[fit.at]);
+                var watched = Add(animator, source, scope, true, true);
+                watched.built = fit.built;
+                Declare(watched, new StateTables(fit.controller), Align(source, fit.controller));
                 return;
             }
             for (int i = playables.Count - 1; i >= 0; i--)
@@ -378,16 +454,30 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// preference for never starting. Underneath that, and only there, the tools break the
         /// tie that used to be broken by "whichever graph Unity handed out first" — see
         /// <see cref="PlayTools.Preferred"/> for the order and why.
+        ///
+        /// An avatar running a controller its own BUILD made sits between the two: it is the
+        /// one meant whenever there is nothing running the field's controller outright, and it
+        /// is never preferred over one that is. The order matters on exactly one scene — the
+        /// gimmick being edited is in it beside the assembled avatar it belongs to — and there
+        /// the plain one is the one somebody pointed the window at.
         /// </summary>
         public static Animator Likeliest(AnimatorController controller)
         {
             var driven = PlayTools.Candidates(Driven());
             var running = new List<Animator>();
+            var built = new List<Animator>();
             foreach (var animator in driven)
-                if (Matching(controller, PlayablesOn(animator)) >= 0) running.Add(animator);
+            {
+                var playables = PlayablesOn(animator);
+                if (Matching(controller, playables) >= 0) running.Add(animator);
+                else if (Fitting(animator, controller, playables).at >= 0) built.Add(animator);
+            }
             var pick = PlayTools.Preferred(running);
             if (pick != null) return pick;
             if (running.Count > 0) return running[0];
+            pick = PlayTools.Preferred(built);
+            if (pick != null) return pick;
+            if (built.Count > 0) return built[0];
             pick = PlayTools.Preferred(driven);
             if (pick != null) return pick;
             return driven.Count > 0 ? driven[0] : null;

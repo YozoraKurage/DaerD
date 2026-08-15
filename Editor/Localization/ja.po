@@ -2988,6 +2988,12 @@ msgstr "同期対象: {0} 個"
 msgid "From The Store"
 msgstr "ストアから取得"
 
+msgid "From The Build"
+msgstr "ビルドから取得"
+
+msgid "Fill this from the expression parameters the recorded avatar's own build produced — the list VRChat would really sync, after everything that renames or adds to it. Available once a build of that avatar has been watched this session, which entering Play mode is."
+msgstr "記録対象アバターのビルドが生成した Expression Parameters から埋めます。リネームや追加をすべて済ませたあとの、VRChat が実際に同期するリストです。このセッション中にそのアバターのビルドを見ていれば使えます（Play モードへ入るのがそれです）。"
+
 msgid "No run yet — press Run."
 msgstr "まだ実行していません。「実行」を押してください。"
 
@@ -3242,6 +3248,9 @@ msgstr "このコントローラーを実行しているアバターが現れる
 
 msgid "Reading the graph that is running this controller, so the states, transitions and layer weights are named."
 msgstr "このコントローラーを実行しているグラフを読んでいます。ステート・遷移・レイヤーウェイトまで名前付きで記録されます。"
+
+msgid "Reading the graph that is running this avatar's own build, so the states, transitions and layer weights are named — out of the {0} the build produced rather than the controller in the field, which is not what is playing."
+msgstr "このアバター自身のビルドを実行しているグラフを読んでいます。ステート・遷移・レイヤーウェイトまで名前付きで記録されます。名前はフィールドのコントローラーではなく、ビルドが生成した {0} から取っています（動いているのはそちらです）。"
 
 msgid "Nothing in this avatar's graph is running this controller. Its parameters are recorded; nothing can be said about layers or states."
 msgstr "このアバターのグラフには、このコントローラーを実行しているものがありません。パラメーターは記録されますが、レイヤーやステートについては何も言えません。"

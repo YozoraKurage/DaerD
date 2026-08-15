@@ -734,6 +734,17 @@ namespace Yozolab.DaerD.DynamicAnalyze
                 GUILayout.Label(new GUIContent(L.Tr("≠ store"),
                         L.Tr("This is not the set the avatar's parameter store calls synced. Deliberate for a run asking what happens without one of them; stale otherwise.")),
                     Warning, GUILayout.Width(46f));
+            // Drawn whether or not anything was ever built, and disabled when nothing was: a
+            // button that appears and disappears is one nobody can learn is there, and the
+            // absent case is most projects. See PlayTools for the same bargain.
+            using (new EditorGUI.DisabledScope(!BuildCapture.Has(_target)))
+                if (GUILayout.Button(new GUIContent(L.Tr("From The Build"),
+                        L.Tr("Fill this from the expression parameters the recorded avatar's own build produced — the list VRChat would really sync, after everything that renames or adds to it. Available once a build of that avatar has been watched this session, which entering Play mode is.")),
+                        EditorStyles.miniButton, GUILayout.Width(110f)))
+                {
+                    FillFromBuild();
+                    GUI.changed = true;
+                }
             if (GUILayout.Button(L.Tr("From The Store"), EditorStyles.miniButton,
                     GUILayout.Width(110f)))
             {
@@ -986,8 +997,10 @@ namespace Yozolab.DaerD.DynamicAnalyze
                 if (found != null) target = found;
             }
             if (target == null) return;
-            if (waiting && PlayRecorder.Matching(_controller,
-                    PlayRecorder.PlayablesOn(target)) < 0) return;
+            // "Running this controller" includes running what a build made out of it — see
+            // PlayRecorder.Fitting. Without that, arming would never fire on an avatar somebody
+            // assembles, which is the case this whole bridge exists for.
+            if (waiting && !PlayRecorder.Runs(_controller, target)) return;
 
             // Who else is in it is decided here and never revisited — see PlayRecorder.On. The
             // list is asked for unconditionally: without Av3Emulator it is empty, so the toggle
@@ -1091,7 +1104,10 @@ namespace Yozolab.DaerD.DynamicAnalyze
 
             if (_recorder != null)
             {
-                if (_recorder.Matched)
+                if (_recorder.Matched && !string.IsNullOrEmpty(_recorder.Built))
+                    lines.Add(L.Tr("Reading the graph that is running this avatar's own build, so the states, transitions and layer weights are named — out of the {0} the build produced rather than the controller in the field, which is not what is playing.",
+                        _recorder.Built));
+                else if (_recorder.Matched)
                     lines.Add(L.Tr("Reading the graph that is running this controller, so the states, transitions and layer weights are named."));
                 else if (_recorder.FromGraph)
                     lines.Add(L.Tr("Nothing in this avatar's graph is running this controller. Its parameters are recorded; nothing can be said about layers or states."));
@@ -1128,8 +1144,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
             foreach (var animator in driven)
             {
                 var pick = animator;
-                bool runs = PlayRecorder.Matching(_controller,
-                    PlayRecorder.PlayablesOn(pick)) >= 0;
+                bool runs = PlayRecorder.Runs(_controller, pick);
                 menu.AddItem(new GUIContent(PlayTools.Label(pick) + (runs ? " ✓" : string.Empty)),
                     pick == _target, () => { _target = pick; Repaint(); });
             }
@@ -1148,6 +1163,29 @@ namespace Yozolab.DaerD.DynamicAnalyze
             foreach (var entry in store.Read())
                 if (entry != null && entry.synced && !string.IsNullOrEmpty(entry.name))
                     _synced.Add(entry.name);
+        }
+
+        /// <summary>
+        /// The same question asked of the BUILD rather than of the store, for the avatar being
+        /// recorded.
+        ///
+        /// A second source rather than a better one. The store is what a person wrote down and
+        /// is the right answer for a run of a controller that belongs to nobody yet; the build
+        /// is what the avatar ended up with, which on an assembled avatar is a different list —
+        /// names the store never had, and names the store had under a spelling the wire does not
+        /// use. A run set up from the wrong one of those is a run whose every wire-crossing is
+        /// about a parameter that does not exist.
+        ///
+        /// Left alone rather than emptied when there is nothing to fill from: a button that
+        /// silently clears a list somebody spent an afternoon on is worse than a button that
+        /// does nothing, and the disabled state above already says which it will be.
+        /// </summary>
+        void FillFromBuild()
+        {
+            var names = BuildCapture.SyncedFor(_target);
+            if (names == null) return;
+            _synced.Clear();
+            _synced.AddRange(names);
         }
 
         /// <summary>
