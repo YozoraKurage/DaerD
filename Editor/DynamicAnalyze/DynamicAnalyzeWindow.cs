@@ -74,6 +74,10 @@ namespace Yozolab.DaerD.DynamicAnalyze
         [SerializeField] bool _inputsOpen = true;
         [SerializeField] bool _notesOpen = true;
         [SerializeField] bool _findingsOpen = true;
+        /// <summary>Whether the list of what travels is showing its names. Folded by default —
+        /// the count above it is the answer most of the time, and a real avatar's list is
+        /// longer than everything else on the panel put together.</summary>
+        [SerializeField] bool _syncedOpen;
 
         readonly WaveformView _view = new WaveformView();
         SimSession _session;
@@ -86,6 +90,15 @@ namespace Yozolab.DaerD.DynamicAnalyze
         List<string> _notes;
         AnimatorController _notesFor;
         bool _notesWithRemote = true;
+
+        // What the avatar's own store says travels, read the same way and for the same reason:
+        // it opens an asset and walks it, and the panel asks on every repaint whether the list
+        // in hand still matches. Dropped where _notes is dropped — the store is edited in
+        // another window, so regaining focus is the moment to look again.
+        List<string> _stored;
+        AnimatorController _storedFor;
+        bool _storedRead;
+        GUIStyle _warningStyle;
 
         // The other list, read off the finished trace instead of off the controller. It cannot
         // go stale on its own — a batch run's trace never changes once it exists — so it is
@@ -109,7 +122,11 @@ namespace Yozolab.DaerD.DynamicAnalyze
             if (_controller == null) _controller = Selection.activeObject as AnimatorController;
         }
 
-        void OnFocus() => _notes = null;
+        void OnFocus()
+        {
+            _notes = null;
+            _storedRead = false;
+        }
 
         void OnDisable()
         {
@@ -473,12 +490,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
                     L.Tr("A row per parameter saying how long the other person has been looking at a different value. For a multiplexed target that is the age of their copy — the remote view, as a number.")), _lagRows);
                 EditorGUILayout.EndHorizontal();
 
-                EditorGUILayout.BeginHorizontal();
-                EditorGUILayout.LabelField(L.Tr("Synced: {0} parameter(s)", _synced.Count));
-                if (GUILayout.Button(L.Tr("From The Store"), EditorStyles.miniButton,
-                        GUILayout.Width(110f)))
-                    FillFromStore();
-                EditorGUILayout.EndHorizontal();
+                DrawSynced();
             }
             // A live session was built from these; changing one has to rebuild it or the
             // window would be showing a run nobody asked for.
@@ -518,6 +530,113 @@ namespace Yozolab.DaerD.DynamicAnalyze
                     new GUIContent(L.Tr("Remote {0} Joins At (s)", i + 2),
                         L.Tr("When this one turns up. Somebody who walks in while a cycle is already running is the case a single remote can only ever ask about at the very first frame.")),
                     _laterJoins[i]);
+        }
+
+        // ---- what travels ---------------------------------------------------
+
+        /// <summary>
+        /// The list of what crosses the wire, by name.
+        ///
+        /// It used to be a count, which is the right answer to "is this set up" and no answer
+        /// at all to "is it set up right" — and the second question is the one asked, because
+        /// every difference a two-client run shows comes out of this list. A count cannot say
+        /// that a name is spelled the way the controller spelled it last month, and a list
+        /// whose entries could only be replaced wholesale meant that trying a run without one
+        /// parameter was not a thing the window could do.
+        ///
+        /// Folded away by default: the count is still the answer most of the time, and on a
+        /// real avatar this is longer than the rest of the panel together.
+        /// </summary>
+        void DrawSynced()
+        {
+            var declared = ParameterNames();
+            EditorGUILayout.BeginHorizontal();
+            // Folding is not a setting. The panel rebuilds a live session whenever one of its
+            // fields changes, and a session dropped because somebody opened a list would take
+            // the history they opened it to read away with it.
+            bool changed = GUI.changed;
+            _syncedOpen = EditorGUILayout.Foldout(_syncedOpen,
+                L.Tr("Synced: {0} parameter(s)", _synced.Count), true);
+            GUI.changed = changed;
+            GUILayout.FlexibleSpace();
+            // Beside the button that would fix it rather than in a HelpBox of its own: a list
+            // that differs from the store is sometimes the experiment — taking one parameter
+            // off the wire to see what breaks is a run whose list SHOULD differ — so this says
+            // where the two stand and leaves the deciding alone.
+            if (RunWarnings.DiffersFromStore(_synced, StoredSynced()))
+                GUILayout.Label(new GUIContent(L.Tr("≠ store"),
+                        L.Tr("This is not the set the avatar's parameter store calls synced. Deliberate for a run asking what happens without one of them; stale otherwise.")),
+                    Warning, GUILayout.Width(46f));
+            if (GUILayout.Button(L.Tr("From The Store"), EditorStyles.miniButton,
+                    GUILayout.Width(110f)))
+            {
+                FillFromStore();
+                GUI.changed = true;
+            }
+            EditorGUILayout.EndHorizontal();
+
+            if (_syncedOpen)
+            {
+                int remove = -1;
+                for (int i = 0; i < _synced.Count; i++)
+                {
+                    EditorGUILayout.BeginHorizontal();
+                    GUILayout.Space(16f);
+                    bool missing = RunWarnings.Missing(_synced[i], declared);
+                    GUILayout.Label(new GUIContent(_synced[i], missing
+                            ? L.Tr("This controller has no parameter by this name.")
+                            : string.Empty),
+                        missing ? Warning : EditorStyles.miniLabel);
+                    GUILayout.FlexibleSpace();
+                    if (GUILayout.Button("-", EditorStyles.miniButton, GUILayout.Width(22f)))
+                        remove = i;
+                    EditorGUILayout.EndHorizontal();
+                }
+                if (remove >= 0)
+                {
+                    _synced.RemoveAt(remove);
+                    GUI.changed = true;
+                }
+            }
+
+            // What is already wrong with the experiment, above the run rather than after it.
+            // Not in SimNotes: that list is what a run of this CONTROLLER cannot promise and is
+            // true whatever the settings say, and these are all fixed by a field on this panel.
+            foreach (var warning in RunWarnings.For(_twoClients, _synced, declared,
+                         BuildStimulus()))
+                EditorGUILayout.HelpBox(warning, MessageType.Warning);
+        }
+
+        /// <summary>A name that will not do what it says, in the one ink this module keeps for
+        /// that. Built once — a style allocated per repaint is a style allocated per row.</summary>
+        GUIStyle Warning
+        {
+            get
+            {
+                if (_warningStyle == null)
+                    _warningStyle = new GUIStyle(EditorStyles.miniLabel);
+                // Re-set rather than set once: the skin can change under a window that is
+                // already open, and a style built on the other one keeps the other one's ink.
+                _warningStyle.normal.textColor = WaveformColors.Wrong;
+                return _warningStyle;
+            }
+        }
+
+        /// <summary>What the avatar's store says travels, or null when there is no store to
+        /// ask. Null and empty are different answers: nothing to compare against is not the
+        /// same as a store that syncs nothing.</summary>
+        List<string> StoredSynced()
+        {
+            if (_storedRead && _storedFor == _controller) return _stored;
+            _storedRead = true;
+            _storedFor = _controller;
+            var store = _controller != null ? ParameterStore.Of(_controller) : null;
+            if (store == null) return _stored = null;
+            _stored = new List<string>();
+            foreach (var entry in store.Read())
+                if (entry != null && entry.synced && !string.IsNullOrEmpty(entry.name))
+                    _stored.Add(entry.name);
+            return _stored;
         }
 
         // ---- inputs ---------------------------------------------------------
@@ -631,6 +750,18 @@ namespace Yozolab.DaerD.DynamicAnalyze
                     _synced.Add(entry.name);
         }
 
+        /// <summary>The timed inputs as the engine takes them. Its own step because the panel
+        /// asks what these inputs are about to do — see <see cref="RunWarnings"/> — and a
+        /// warning read off a differently built list would be a warning about another run.</summary>
+        Stimulus BuildStimulus()
+        {
+            var stimulus = new Stimulus();
+            foreach (var poke in _pokes)
+                if (!string.IsNullOrEmpty(poke.parameter))
+                    stimulus.At(poke.at, poke.parameter, poke.value, poke.scope);
+            return stimulus;
+        }
+
         SimSettings BuildSettings()
         {
             var settings = new SimSettings
@@ -642,7 +773,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
                     jitter = _jitter,
                     seed = _seed,
                 },
-                stimulus = new Stimulus(),
+                stimulus = BuildStimulus(),
                 lagRows = _lagRows,
                 wire = _twoClients
                     ? new SyncWire
@@ -661,9 +792,6 @@ namespace Yozolab.DaerD.DynamicAnalyze
             if (settings.wire != null)
                 for (int i = 0; i < _remotes - 1 && i < _laterJoins.Count; i++)
                     settings.wire.Joining(_laterJoins[i]);
-            foreach (var poke in _pokes)
-                if (!string.IsNullOrEmpty(poke.parameter))
-                    settings.stimulus.At(poke.at, poke.parameter, poke.value, poke.scope);
             if (settings.wire != null)
             {
                 if (_synced.Count == 0) FillFromStore();
@@ -674,14 +802,41 @@ namespace Yozolab.DaerD.DynamicAnalyze
 
         void RunNow()
         {
+            var settings = BuildSettings();
+            if (!WorthTheWait(settings)) return;
             _playing = false;
             _notes = null;
             _findings = null;
-            _ranWith = BuildSettings();
+            _ranWith = settings;
             _view.trace = Simulation.Run(_controller, _ranWith);
             _view.cursorFrame = 0;
             _view.Fit(position.width);
             Repaint();
+        }
+
+        /// <summary>
+        /// Asks before a run big enough to be noticed, and only then.
+        ///
+        /// A batch run is computed whole with nothing drawn until it finishes, so an hour typed
+        /// where a minute was meant is an editor that has stopped answering and no way to tell
+        /// whether it ever will. The estimate is arithmetic over the settings —
+        /// <see cref="RunCost"/> — so the question can be asked before any of the work is done.
+        ///
+        /// A question and not a refusal, and asked only past the threshold: a window that
+        /// confirmed every run would be a window whose confirmations are dismissed unread, and
+        /// the run that finds a bug is not this window's to veto.
+        /// </summary>
+        bool WorthTheWait(SimSettings settings)
+        {
+            int parameters = _controller != null ? _controller.parameters.Length : 0;
+            int layers = _controller != null ? _controller.layers.Length : 0;
+            long samples = RunCost.Samples(settings, parameters, layers);
+            if (samples <= RunCost.Uncomfortable) return true;
+            return EditorUtility.DisplayDialog(L.Tr("A long run"),
+                L.Tr("This works out at about {0:N0} samples — {1:N0} rows over {2:N0} frames. Nothing is wrong with that; it will simply take a while, and a shorter run or fewer people costs proportionally less.",
+                    samples, RunCost.Rows(settings, parameters, layers),
+                    settings.clock != null ? settings.clock.Frames : 0),
+                L.Tr("Run"), L.Tr("Cancel"));
         }
 
         void StartSession()

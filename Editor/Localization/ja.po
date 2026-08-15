@@ -3171,3 +3171,27 @@ msgstr "巡回順に戻す"
 
 msgid "Discard the pass this setup carries and lay the cycle out from the list above again. There is no way back to it from here."
 msgstr "このセットアップが持っている周回を破棄し、上の一覧から巡回を組み直します。ここから元に戻す手段はありません。"
+
+msgid "Nothing is on the wire, so the other person learns nothing at all. Their copy runs on its own defaults for the whole run, and every difference between the two is that rather than anything this controller does."
+msgstr "同期対象が 1 つも無いので、相手は何も知りません。相手のコピーは最後まで自分の初期値のまま動き、2 つのコピーの差はすべてそれが理由であって、このコントローラーの挙動ではありません。"
+
+msgid "{0} synced name(s) are not parameters of this controller ({1}). Nothing carries them because there is nothing to carry — the usual reason is a parameter store that has moved on since the controller did."
+msgstr "同期対象の名前のうち {0} 個が、このコントローラーのパラメーターにありません（{1}）。運ぶ中身が無いので何も運ばれません。よくある原因は、コントローラーより先にパラメーターストアだけが変わっていることです。"
+
+msgid "{0} timed input(s) press something on the wearer that is not on the wire ({1}). Whatever they do, they do to one person — worth knowing now, while the list is still being written."
+msgstr "時刻指定の入力のうち {0} 件が、同期対象でないパラメーターを装着者側で操作しています（{1}）。何が起きても 1 人にしか起きません。一覧をまだ書き換えられる今のうちに知っておく価値があります。"
+
+msgid "≠ store"
+msgstr "≠ ストア"
+
+msgid "This is not the set the avatar's parameter store calls synced. Deliberate for a run asking what happens without one of them; stale otherwise."
+msgstr "アバターのパラメーターストアが同期対象と言っている集合とは違います。「1 つ外したらどうなるか」を試す実行なら意図どおりですが、そうでなければ古いままです。"
+
+msgid "This controller has no parameter by this name."
+msgstr "このコントローラーには、この名前のパラメーターがありません。"
+
+msgid "A long run"
+msgstr "長い実行"
+
+msgid "This works out at about {0:N0} samples — {1:N0} rows over {2:N0} frames. Nothing is wrong with that; it will simply take a while, and a shorter run or fewer people costs proportionally less."
+msgstr "この設定はおよそ {0:N0} サンプル（{2:N0} フレーム × {1:N0} 行）になります。間違いではありませんが、それなりに時間が掛かります。長さを短くするか人数を減らせば、その分だけ軽くなります。"

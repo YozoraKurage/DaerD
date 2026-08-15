@@ -101,5 +101,15 @@ namespace Yozolab.DaerD.DynamicAnalyze
 
         /// <summary>The wire's rows: a sample sent, and a sample lost.</summary>
         public static Color EventInk => new Color(0.92f, 0.40f, 0.42f);
+
+        /// <summary>
+        /// A setting that will not do what it says — a synced name this controller has not got,
+        /// and a list that is not the store's. On the settings panel rather than on the plot,
+        /// which is where a thing said BEFORE a run belongs; the palette is here all the same,
+        /// because the module keeps its colours in one place and where they are painted is not
+        /// what decides that.
+        /// </summary>
+        public static Color Wrong =>
+            Dark ? new Color(0.98f, 0.68f, 0.28f) : new Color(0.66f, 0.36f, 0.02f);
     }
 }
