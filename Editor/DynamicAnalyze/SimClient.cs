@@ -40,6 +40,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
         readonly Animator _animator;
         readonly Dictionary<string, AnimatorControllerParameterType> _types =
             new Dictionary<string, AnimatorControllerParameterType>();
+        readonly string[] _layerNames;
         readonly List<string>[] _stateNames;
         readonly Dictionary<int, int>[] _stateOf;
         readonly List<string>[] _transitionNames;
@@ -115,6 +116,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
             }
 
             var layers = controller.layers;
+            _layerNames = new string[layers.Length];
             _stateNames = new List<string>[layers.Length];
             _stateOf = new Dictionary<int, int>[layers.Length];
             _transitionNames = new List<string>[layers.Length];
@@ -122,6 +124,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
             _entered = new int[layers.Length];
             for (int i = 0; i < layers.Length; i++)
             {
+                _layerNames[i] = layers[i].name ?? string.Empty;
                 _stateNames[i] = new List<string>();
                 _stateOf[i] = new Dictionary<int, int>();
                 _transitionNames[i] = new List<string>();
@@ -406,6 +409,67 @@ namespace Yozolab.DaerD.DynamicAnalyze
             if (!_animator.IsInTransition(layer)) return -1;
             int hash = _animator.GetAnimatorTransitionInfo(layer).fullPathHash;
             return _transitionOf[layer].TryGetValue(hash, out int at) ? at : -1;
+        }
+
+        // ---- layer weight ---------------------------------------------------
+
+        /// <summary>The end of a layer's weight row's name.</summary>
+        const string WeightSuffix = "/weight";
+
+        /// <summary>
+        /// What a layer's weight row is called. Built here, rather than spelt where it is
+        /// declared, because it is the only row name that has to be recognised again: a value
+        /// typed into that cell comes back as a name and nothing else, and the name has to find
+        /// its way to the layer it was made from.
+        /// </summary>
+        public static string WeightRow(string layer) => layer + WeightSuffix;
+
+        /// <summary>
+        /// Which layer this row is the weight of, or -1 for a name that is not one.
+        ///
+        /// Every layer's row name is built again and compared, rather than the row being taken
+        /// apart at its last '/': a layer may be called "Face/Eyes", and splitting would go
+        /// looking for a layer called "Face". The first layer of a name wins, which is the one
+        /// whose row <see cref="SignalTrace.Find"/> answers with.
+        /// </summary>
+        public int WeightRowLayer(string row)
+        {
+            if (row == null || !row.EndsWith(WeightSuffix, StringComparison.Ordinal)) return -1;
+            for (int i = 0; i < _layerNames.Length; i++)
+                if (WeightRow(_layerNames[i]) == row) return i;
+            return -1;
+        }
+
+        /// <summary>
+        /// How much of this layer is being mixed in — the one thing about a layer that changes
+        /// what a run RECORDS, and the reason it is worth a row of its own. A layer's weight
+        /// scales what its animation writes, animated parameters included: measured, an AAP
+        /// writing 1 over a base that writes nothing records 0.5 at half weight, and over a
+        /// base that writes 0.2 it records 0.6 — the layer blends its value in over what the
+        /// layers below it left, and its parameter goes with it.
+        ///
+        /// Layer 0 is pinned, also measured: Mecanim answers 1 for it whatever anybody sets,
+        /// and runs it in full even where the controller declares a default weight of 0. Its
+        /// row is recorded like every other layer's — a flat 1 IS the answer to what the base
+        /// layer's weight is, and a special case that hid one row of one layer would cost more
+        /// than the row does.
+        /// </summary>
+        public float LayerWeight(int layer) =>
+            layer >= 0 && layer < LayerCount ? _animator.GetLayerWeight(layer) : 0f;
+
+        /// <summary>
+        /// Sets it, clamped to 0..1. Mecanim does not clamp — measured: a weight of 1.5 reads
+        /// back as 1.5 and mixes the layer in past the values it was blending towards — but
+        /// nothing on a headset can ask for one, and a run answering "what if the weight were
+        /// 1.5" would be answering a question that cannot be put to an avatar.
+        ///
+        /// Layer 0 is not refused, it is simply not taken: passing it on costs nothing and
+        /// Mecanim ignores it. See <see cref="LayerWeight"/>.
+        /// </summary>
+        public void SetLayerWeight(int layer, float weight)
+        {
+            if (layer < 0 || layer >= LayerCount) return;
+            _animator.SetLayerWeight(layer, Mathf.Clamp01(weight));
         }
 
         // ---- the frame ------------------------------------------------------

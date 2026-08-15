@@ -188,14 +188,52 @@ namespace Yozolab.DaerD.DynamicAnalyze
             return 0f;
         }
 
-        /// <summary>A poke, live. Lands on the next frame the session steps — never inside the
-        /// one already recorded, which would make the trace disagree with itself.</summary>
-        public void Write(string scope, string parameter, float value)
+        /// <summary>
+        /// Whether this row is a layer's weight AND one this session would actually take —
+        /// which is what decides whether the window offers a field for it.
+        ///
+        /// Layer 0's is not: Mecanim pins it at 1 (see SimClient.LayerWeight), so a field over
+        /// that row would take a number, throw it away, and show the 1 again — which reads as
+        /// the window having missed the click. Its row is still recorded; there is simply
+        /// nothing to turn.
+        /// </summary>
+        public bool CanSetWeight(string scope, string row)
         {
+            foreach (var client in _clients)
+                if (Simulation.Targets(client, scope) && client.WeightRowLayer(row) > 0)
+                    return true;
+            return false;
+        }
+
+        /// <summary>
+        /// A poke, live. Lands on the next frame the session steps — never inside the one
+        /// already recorded, which would make the trace disagree with itself.
+        ///
+        /// A name that is not a parameter may still be a layer's weight row, which is written
+        /// by setting the weight rather than by writing a parameter — a live session is the
+        /// only place a weight moves at all, since nothing here runs VRChat's Layer Control.
+        /// The parameter wins the tie, because a parameter may be called anything including
+        /// "Base/weight", and the trace already answers Find for such a name with the
+        /// parameter's row. What that costs: in a controller carrying both, the layer's weight
+        /// cell writes the parameter instead — and such a controller is one where two rows
+        /// already share a name and a reader cannot tell them apart either.
+        /// </summary>
+        public void Write(string scope, string name, float value)
+        {
+            if (!Has(name))
+            {
+                foreach (var client in _clients)
+                {
+                    if (!Simulation.Targets(client, scope)) continue;
+                    int layer = client.WeightRowLayer(name);
+                    if (layer >= 0) client.SetLayerWeight(layer, value);
+                }
+                return;
+            }
             Simulation.Poke(_clients, new Stimulus.Entry
             {
                 scope = scope ?? string.Empty,
-                parameter = parameter,
+                parameter = name,
                 value = value,
             });
         }

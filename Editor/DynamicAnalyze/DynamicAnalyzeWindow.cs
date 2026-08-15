@@ -156,10 +156,15 @@ namespace Yozolab.DaerD.DynamicAnalyze
             // A live row's value cell IS the way to poke it: the row already says whose value
             // it is and already shows what it did, so a panel repeating the same parameters
             // somewhere else was one list too many.
+            //
+            // Which is why a layer's weight is offered the same way rather than as a control of
+            // its own: it is a row, so the cell beside it is where a reader already looks. Not
+            // every weight row takes one — see SimSession.CanSetWeight.
             _view.editable = _live && _session != null ? (System.Func<SignalTrace.Signal, bool>)
                 (signal => signal.kind != SignalKind.State
                     && Simulation.IsClient(signal.scope)
-                    && _session.Has(signal.name))
+                    && (_session.Has(signal.name)
+                        || _session.CanSetWeight(signal.scope, signal.name)))
                 : null;
             _view.write = (signal, value) =>
             {

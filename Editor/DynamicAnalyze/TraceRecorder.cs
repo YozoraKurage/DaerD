@@ -126,6 +126,24 @@ namespace Yozolab.DaerD.DynamicAnalyze
                     signal = via,
                     read = () => client.CurrentTransition(layer),
                 });
+                // The weight, which is not a fourth way of saying where the layer is — it is
+                // the scale on everything that layer writes. An animated parameter recorded at
+                // 0.6 was written by a clip saying 1 on a layer at half weight, and without
+                // this row the run would show the 0.6 and nothing to explain it.
+                //
+                // Recorded for every client and every layer, and named the way the three above
+                // are, so it is a row like any other: a saved run keeps it, a ghost lines it up,
+                // and the rows that were there before go on meaning exactly what they meant.
+                // Nothing here moves it on its own — VRChat's Layer Control is not run (see
+                // SimNotes) — so in a batch run it is a flat line the moved-only rule hides,
+                // and in a live session it is a knob, because there its cell can be typed into.
+                var weight = Trace.Declare(client.Scope, SimClient.WeightRow(layers[i].name),
+                    SignalKind.Float);
+                _readers.Add(new Reader
+                {
+                    signal = weight,
+                    read = () => client.LayerWeight(layer),
+                });
             }
         }
 

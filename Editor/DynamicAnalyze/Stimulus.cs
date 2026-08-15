@@ -12,6 +12,17 @@ namespace Yozolab.DaerD.DynamicAnalyze
     /// jitter does. An entry lands on the first frame whose start has reached its time, which
     /// means an entry between two frames happens on the later one — never the earlier, and
     /// never twice.
+    ///
+    /// A LAYER'S WEIGHT is deliberately not one of these, though a live session can turn one
+    /// (see SimSession.Write). An entry is "at this second, set this parameter to this", and a
+    /// weight is not a parameter: giving the entry a second kind of target changes what an
+    /// entry is, and an entry is the unit a whole experiment gets written down in — everything
+    /// that reads or saves a stimulus would have to learn the new shape before anybody could
+    /// use the first timed weight. What that leaves out, said plainly: a weight cannot be part
+    /// of a repeatable run, only of a session somebody is standing in. It is left out because a
+    /// timed weight is a Layer Control by another name — a schedule of weights — and modelling
+    /// that behaviour is the thing this module decided not to do. Turning the knob by hand and
+    /// watching is the question it was wanted for: what does this look like at half weight.
     /// </summary>
     sealed class Stimulus
     {

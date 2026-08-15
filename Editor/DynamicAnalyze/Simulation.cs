@@ -266,11 +266,15 @@ namespace Yozolab.DaerD.DynamicAnalyze
         internal static void Poke(List<SimClient> clients, Stimulus.Entry entry)
         {
             foreach (var client in clients)
-                if (string.IsNullOrEmpty(entry.scope)
-                    ? client.IsLocal
-                    : client.Scope == entry.scope)
+                if (Targets(client, entry.scope))
                     client.Write(entry.parameter, entry.value);
         }
+
+        /// <summary>Whether something aimed at this scope reaches this client. Empty names the
+        /// wearer — see Stimulus.Entry. Shared with the live session's own writes, so a poke
+        /// and a weight turned by hand agree about who they are for.</summary>
+        internal static bool Targets(SimClient client, string scope) =>
+            string.IsNullOrEmpty(scope) ? client.IsLocal : client.Scope == scope;
 
         /// <summary>
         /// One sample handed over with no journey in between: read off the wearer and written

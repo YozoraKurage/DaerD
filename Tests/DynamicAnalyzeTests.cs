@@ -461,13 +461,17 @@ namespace Yozolab.DaerD.Tests
 
             // A layer's rows, in this order. The two that were there before this one keep
             // their names, their places and their values, because a saved run and a ghost
-            // comparison find a row by its name.
+            // comparison find a row by its name. A claim about the first three and not about
+            // how many there are: rows added since go on the end, and the newest wave's own
+            // test is where the whole list is pinned.
             var names = new System.Collections.Generic.List<string>();
             foreach (var signal in trace.Signals)
                 if (signal.scope == Simulation.LocalScope
                     && signal.name.StartsWith("Base/", System.StringComparison.Ordinal))
                     names.Add(signal.name);
-            CollectionAssert.AreEqual(new[] { "Base/state", "Base/transition", "Base/via" }, names);
+            Assert.GreaterOrEqual(names.Count, 3, "the layer lost rows it had");
+            CollectionAssert.AreEqual(new[] { "Base/state", "Base/transition", "Base/via" },
+                names.GetRange(0, 3));
 
             var state = trace.Find(Simulation.LocalScope, "Base/state");
             CollectionAssert.AreEqual(new[] { "Idle", "On" }, state.labels);
@@ -481,6 +485,229 @@ namespace Yozolab.DaerD.Tests
             for (int frame = 0; frame < trace.Frames; frame++)
                 if (moving.At(frame) == 0f)
                     Assert.AreEqual("—", via.TextAt(frame), "settled at frame " + frame);
+        }
+
+        // ---- a layer's weight -----------------------------------------------
+
+        /// <summary>A clip that writes a value onto an animator parameter — an AAP, which is
+        /// the one kind of write a layer's weight can scale.</summary>
+        static AnimationClip AapClip(string parameter, float value)
+        {
+            var clip = new AnimationClip { name = parameter + " = " + value };
+            AnimationUtility.SetEditorCurve(clip,
+                EditorCurveBinding.FloatCurve(string.Empty, typeof(Animator), parameter),
+                new AnimationCurve(new Keyframe(0f, value)));
+            return clip;
+        }
+
+        /// <summary>A base layer that writes X (or nothing at all) and a layer over it whose
+        /// only state writes X = 1 through an AAP. The upper layer's name is the caller's,
+        /// because a layer may be called something with a '/' in it.</summary>
+        static AnimatorController AapLayers(float? baseValue, string over = "Over")
+        {
+            var controller = new AnimatorController();
+            controller.AddParameter("X", AnimatorControllerParameterType.Float);
+            controller.AddLayer("Base");
+            controller.AddLayer(over);
+            var layers = controller.layers;
+            layers[0].defaultWeight = 1f;
+            layers[1].defaultWeight = 1f;
+            controller.layers = layers;
+
+            var bottom = controller.layers[0].stateMachine.AddState("Bottom");
+            bottom.writeDefaultValues = true;
+            if (baseValue.HasValue) bottom.motion = AapClip("X", baseValue.Value);
+            var top = controller.layers[1].stateMachine.AddState("Top");
+            top.writeDefaultValues = true;
+            top.motion = AapClip("X", 1f);
+            return controller;
+        }
+
+        static SimSession LiveSession(AnimatorController controller) =>
+            new SimSession(controller,
+                new SimSettings { clock = new SimClock { fps = 60f, seconds = 1f } });
+
+        static void StepSession(SimSession session, int frames)
+        {
+            for (int i = 0; i < frames; i++) session.StepOnce();
+        }
+
+        static float LastAt(SimSession session, string scope, string name)
+        {
+            var signal = session.Trace.Find(scope, name);
+            Assert.IsNotNull(signal, "no row '" + name + "' under " + scope);
+            return signal.At(signal.Frames - 1);
+        }
+
+        [Test]
+        public void Weight_ScalesWhatAnAnimatedParameterWrites()
+        {
+            // Measured, and the reason the row is worth having: a weight is not decoration,
+            // it is the scale on every AAP value in the trace.
+            using (var session = LiveSession(AapLayers(null)))
+            {
+                StepSession(session, 4);
+                Assert.AreEqual(1f, LastAt(session, Simulation.LocalScope, "X"), 1e-4f,
+                    "the whole clip at full weight");
+
+                session.Write(Simulation.LocalScope, "Over/weight", 0.5f);
+                StepSession(session, 4);
+                Assert.AreEqual(0.5f, LastAt(session, Simulation.LocalScope, "X"), 1e-4f,
+                    "half the weight, half the value");
+
+                session.Write(Simulation.LocalScope, "Over/weight", 0f);
+                StepSession(session, 4);
+                Assert.AreEqual(0f, LastAt(session, Simulation.LocalScope, "X"), 1e-4f);
+            }
+
+            // Over a base that writes 0.2 the layer blends towards THAT rather than towards
+            // zero: 0.2 + 0.5 × (1 − 0.2). A weight scales the layer's contribution, which is
+            // not the same thing as scaling the number it writes.
+            using (var session = LiveSession(AapLayers(0.2f)))
+            {
+                session.Write(Simulation.LocalScope, "Over/weight", 0.5f);
+                StepSession(session, 4);
+                Assert.AreEqual(0.6f, LastAt(session, Simulation.LocalScope, "X"), 1e-4f);
+            }
+        }
+
+        [Test]
+        public void Weight_RowShowsTheNewValue_FromTheFrameAfterItWasSet()
+        {
+            using (var session = LiveSession(AapLayers(null)))
+            {
+                StepSession(session, 2);
+                var weight = session.Trace.Find(Simulation.LocalScope, "Over/weight");
+                Assert.IsNotNull(weight);
+                Assert.AreEqual(SignalKind.Float, weight.kind);
+                Assert.AreEqual(1f, weight.At(weight.Frames - 1), 1e-4f);
+
+                int recorded = weight.Frames;
+                session.Write(Simulation.LocalScope, "Over/weight", 0.25f);
+                Assert.AreEqual(recorded, weight.Frames, "a poke records nothing by itself");
+                Assert.AreEqual(1f, weight.At(recorded - 1), 1e-4f,
+                    "and does not change the frame already written down");
+
+                session.StepOnce();
+                Assert.AreEqual(0.25f, weight.At(weight.Frames - 1), 1e-4f);
+            }
+        }
+
+        [Test]
+        public void Weight_OfTheBaseLayerIsPinnedAtOne_WhateverAnybodySets()
+        {
+            using (var session = LiveSession(AapLayers(0.2f)))
+            {
+                session.Write(Simulation.LocalScope, "Base/weight", 0f);
+                session.Write(Simulation.LocalScope, "Over/weight", 0f);
+                StepSession(session, 4);
+
+                Assert.AreEqual(1f, LastAt(session, Simulation.LocalScope, "Base/weight"), 1e-4f,
+                    "Mecanim answers 1 for layer 0 whatever anybody sets");
+                Assert.AreEqual(0.2f, LastAt(session, Simulation.LocalScope, "X"), 1e-4f,
+                    "and runs it in full — the base layer's own AAP still writes");
+
+                // Which is why the window offers no field for that one row.
+                Assert.IsFalse(session.CanSetWeight(Simulation.LocalScope, "Base/weight"));
+                Assert.IsTrue(session.CanSetWeight(Simulation.LocalScope, "Over/weight"));
+                Assert.IsFalse(session.CanSetWeight(Simulation.LocalScope, "X"));
+            }
+        }
+
+        [Test]
+        public void Weight_IsClampedToTheRangeAnAvatarCanBeIn()
+        {
+            using (var session = LiveSession(AapLayers(null)))
+            {
+                // Mecanim would have kept the 1.5 and mixed the layer in past the value it was
+                // blending towards; nothing on a headset can ask for that.
+                session.Write(Simulation.LocalScope, "Over/weight", 1.5f);
+                StepSession(session, 3);
+                Assert.AreEqual(1f, LastAt(session, Simulation.LocalScope, "Over/weight"), 1e-4f);
+                Assert.AreEqual(1f, LastAt(session, Simulation.LocalScope, "X"), 1e-4f);
+
+                session.Write(Simulation.LocalScope, "Over/weight", -0.5f);
+                StepSession(session, 3);
+                Assert.AreEqual(0f, LastAt(session, Simulation.LocalScope, "Over/weight"), 1e-4f);
+                Assert.AreEqual(0f, LastAt(session, Simulation.LocalScope, "X"), 1e-4f);
+            }
+        }
+
+        [Test]
+        public void Weight_FindsALayerWhoseOwnNameHasASlashInIt()
+        {
+            using (var session = LiveSession(AapLayers(null, "Face/Eyes")))
+            {
+                var weight = session.Trace.Find(Simulation.LocalScope, "Face/Eyes/weight");
+                Assert.IsNotNull(weight, "the row is named after the whole layer");
+
+                // The tail of a layer's name is not a layer, and taking the row apart at its
+                // last '/' would have found one.
+                session.Write(Simulation.LocalScope, "Eyes/weight", 0.5f);
+                StepSession(session, 3);
+                Assert.AreEqual(1f, weight.At(weight.Frames - 1), 1e-4f);
+                Assert.IsFalse(session.CanSetWeight(Simulation.LocalScope, "Eyes/weight"));
+
+                session.Write(Simulation.LocalScope, "Face/Eyes/weight", 0.5f);
+                StepSession(session, 3);
+                Assert.AreEqual(0.5f, weight.At(weight.Frames - 1), 1e-4f);
+                Assert.AreEqual(0.5f, LastAt(session, Simulation.LocalScope, "X"), 1e-4f);
+            }
+        }
+
+        [Test]
+        public void Weight_IsTurnedOnTheClientWhoseRowItIs()
+        {
+            var settings = new SimSettings
+            {
+                clock = new SimClock { fps = 60f, seconds = 1f },
+                wire = new SyncWire(),
+            };
+            using (var session = new SimSession(AapLayers(null), settings))
+            {
+                session.Write(Simulation.RemoteScope, "Over/weight", 0f);
+                StepSession(session, 3);
+                Assert.AreEqual(1f, LastAt(session, Simulation.LocalScope, "Over/weight"), 1e-4f,
+                    "the wearer's copy was not the one asked");
+                Assert.AreEqual(0f, LastAt(session, Simulation.RemoteScope, "Over/weight"), 1e-4f);
+                Assert.AreEqual(1f, LastAt(session, Simulation.LocalScope, "X"), 1e-4f);
+                Assert.AreEqual(0f, LastAt(session, Simulation.RemoteScope, "X"), 1e-4f,
+                    "two copies of one avatar, showing different numbers for the same reason a "
+                    + "headset would");
+            }
+        }
+
+        [Test]
+        public void Weight_IsAddedBesideTheRowsThatWereThereBefore()
+        {
+            var trace = Simulation.Run(NewController(), Clock(0.2f),
+                new Stimulus().At(0.05f, "Go", true));
+
+            var names = new System.Collections.Generic.List<string>();
+            foreach (var signal in trace.Signals)
+                if (signal.scope == Simulation.LocalScope
+                    && signal.name.StartsWith("Base/", System.StringComparison.Ordinal))
+                    names.Add(signal.name);
+            CollectionAssert.AreEqual(
+                new[] { "Base/state", "Base/transition", "Base/via", "Base/weight" }, names);
+
+            // The three that were there before keep their names, their places and their values.
+            var state = trace.Find(Simulation.LocalScope, "Base/state");
+            CollectionAssert.AreEqual(new[] { "Idle", "On" }, state.labels);
+            Assert.AreEqual("Idle", state.TextAt(0));
+            Assert.AreEqual("On", state.TextAt(trace.Frames - 1));
+            var via = trace.Find(Simulation.LocalScope, "Base/via");
+            var moving = trace.Find(Simulation.LocalScope, "Base/transition");
+            for (int frame = 0; frame < trace.Frames; frame++)
+                if (moving.At(frame) == 0f)
+                    Assert.AreEqual("—", via.TextAt(frame), "settled at frame " + frame);
+
+            var weight = trace.Find(Simulation.LocalScope, "Base/weight");
+            Assert.AreEqual(SignalKind.Float, weight.kind);
+            Assert.IsNull(weight.labels, "a weight is a number, not a band of names");
+            for (int frame = 0; frame < trace.Frames; frame++)
+                Assert.AreEqual(1f, weight.At(frame), 1e-4f, "nothing in a batch run turns it");
+            Assert.IsFalse(weight.Moved, "so the moved-only rule keeps it out of the way");
         }
 
         // ---- the wire -------------------------------------------------------
