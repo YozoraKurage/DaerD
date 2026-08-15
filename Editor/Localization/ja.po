@@ -2955,8 +2955,26 @@ msgstr "同期周期 (秒)"
 msgid "Seconds between samples. The wearer's synced values are read whole and handed over together, so a change that comes and goes inside one interval never leaves them."
 msgstr "サンプリングの間隔（秒）です。装着者の同期値はまとめて読まれて一括で渡るので、1 周期の中で起きて消えた変化は装着者から出ていきません。"
 
+msgid "Latency (s)"
+msgstr "遅延 (秒)"
+
+msgid "How long a sample spends on its way. The wearer's values are read when the sample goes and land this much later, so the other person acts on what was true when they were read. Zero means deliveries land the way they have always landed here — not a claim that a real trip takes no time."
+msgstr "サンプルが相手に届くまでの時間です。装着者の値はサンプル時点で読まれ、この秒数だけ後に着弾します。つまり相手が扱うのは「読まれた時点で正しかった値」です。0 は、これまでどおりの届き方をするという意味であって、実際の通信に時間が掛からないという主張ではありません。"
+
 msgid "Loss"
 msgstr "損失"
+
+msgid "Own Loss Seed"
+msgstr "損失に専用シード"
+
+msgid "Roll the lost samples from a seed of the wire's own instead of the clock's. Off is what this window has always done. On lets the frame timing be asked a new question without reshuffling which samples go missing, and the other way round."
+msgstr "どのサンプルを失うかを、時計のシードではなく線専用のシードで決めます。オフはこれまでどおりの挙動です。オンにすると、失われるサンプルの並びを変えずにフレームの揺れだけを試す（逆も同様）ことができます。"
+
+msgid "Loss Seed"
+msgstr "損失シード"
+
+msgid "Fixes which samples are lost, and nothing else. Same wire and same seed lose the same samples however the clock is changed."
+msgstr "どのサンプルが失われるかだけを固定します。線とこのシードが同じなら、時計をどう変えても失われるサンプルは同じです。"
 
 msgid "Round Like The Wire"
 msgstr "実際の同期精度で丸める"

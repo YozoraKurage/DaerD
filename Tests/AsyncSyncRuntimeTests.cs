@@ -171,6 +171,38 @@ namespace Yozolab.DaerD.Tests
             Assert.Greater(worst, 0.2f, "suspiciously good — is anything being measured?");
         }
 
+        [Test]
+        public void TheLagRowNeverReadsBetterThanTheWireIsSlow()
+        {
+            // The same measurement as above, run twice: once on a wire that hands a sample
+            // over the instant it reads it, and once on one that takes a quarter of a second
+            // to. A cycle cannot be quicker than the trip its values make, so whatever the
+            // wizard promises, the wire's own delay is underneath it — which is the reason
+            // this harness is allowed to be called a measurement of the promise at all.
+            const float latency = 0.25f;
+            float[] worst = new float[2];
+            for (int run = 0; run < 2; run++)
+            {
+                var controller = Multiplexed(out var request);
+                var settings = Settings(request, 6f);
+                settings.wire.latencySeconds = run == 0 ? 0f : latency;
+                for (int i = 1; i < 4; i++) settings.stimulus.At(i * 1.5f, "I", 10 + i);
+
+                var trace = Simulation.Run(controller, settings);
+                var lag = trace.Find(Simulation.LagScope, "I");
+                // Skip the first pass, as the test above does: nothing has arrived yet, so the
+                // lag there is the age of the run rather than anything about the wire.
+                for (int frame = trace.FrameAt(1.5f); frame < trace.Frames; frame++)
+                    worst[run] = Mathf.Max(worst[run], lag.At(frame));
+            }
+
+            Assert.Greater(worst[1], latency, "a value was right on the far side before it got there");
+            // And the delay is added to the wait rather than hidden inside it: every window in
+            // which the two copies disagree is exactly one trip longer than it was.
+            Assert.AreEqual(worst[0] + latency, worst[1], 0.05f,
+                "the trip is not what was added to the lag");
+        }
+
         // ---- the reliability flags -------------------------------------------
 
         [Test]

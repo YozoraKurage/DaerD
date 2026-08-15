@@ -34,6 +34,10 @@ namespace Yozolab.DaerD.DynamicAnalyze
         readonly SimRandom[] _loss;
         readonly bool[] _arrived;
         readonly bool[] _dropped;
+        /// <summary>Samples that have gone but not landed — see Simulation.Send. A session
+        /// holds them across frames the way a run does, so a wire with a latency behaves the
+        /// same whether it is being watched or read afterwards.</summary>
+        readonly Queue<Simulation.WireDelivery>[] _inFlight;
         /// <summary>The built-ins VRChat keeps in step by itself, as this controller reads
         /// them. Worked out once, like the batch run's.</summary>
         readonly List<string> _broadcast;
@@ -76,6 +80,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
             _loss = new SimRandom[remotes];
             _arrived = new bool[remotes];
             _dropped = new bool[remotes];
+            _inFlight = Simulation.InFlight(remotes);
             for (int i = 0; i < remotes; i++)
             {
                 _loss[i] = new SimRandom(Simulation.LossSeed(wire.seed, i));
@@ -131,13 +136,12 @@ namespace Yozolab.DaerD.DynamicAnalyze
             {
                 _nextSample += wire.Interval;
                 sampled = true;
-                for (int i = 0; i < _arrived.Length; i++)
-                {
-                    if (!_arrived[i]) continue;
-                    if (_loss[i].NextChance(wire.dropChance)) _dropped[i] = true;
-                    else Simulation.Carry(wire, _clients[0], _clients[i + 1]);
-                }
+                Simulation.Send(wire, _clients, _loss, _arrived, _dropped, _inFlight, _time);
             }
+            // What has finished travelling — see Simulation.Land. The queue is the run's, not
+            // the session's: sending and landing live in one place so a live session cannot
+            // drift away from the run it is meant to be the same simulation as.
+            Simulation.Land(_clients, _inFlight, _time);
 
             // Whatever VRChat syncs on its own — see Simulation.CarryBroadcast.
             for (int i = 0; i < _arrived.Length; i++)

@@ -637,6 +637,194 @@ namespace Yozolab.DaerD.Tests
                 trace.Find(Simulation.RemoteScope, "Base/state").TextAt(last));
         }
 
+        /// <summary>The first frame this row held anything but zero, or -1.</summary>
+        static int FirstMoved(SignalTrace.Signal signal)
+        {
+            for (int frame = 0; frame < signal.Frames; frame++)
+                if (signal.At(frame) != 0f) return frame;
+            return -1;
+        }
+
+        [Test]
+        public void Wire_WithALatency_LandsASampleThatLongAfterItWentOut()
+        {
+            var wire = new SyncWire
+            {
+                intervalSeconds = 0.2f,
+                latencySeconds = 0.3f,
+                quantize = false,
+            }.Syncs("X");
+            var stimulus = new Stimulus().At(0f, "X", 0.5f);
+            var trace = Simulation.Run(NewController(), Wired(1f, wire, stimulus));
+
+            // The first sample goes at 0.2 s and lands at 0.5 s. Until then the other person
+            // is looking at the value they started the run with, which is the whole point.
+            int sent = FirstMoved(trace.Find(Simulation.WireScope, "sample"));
+            int landed = FirstMoved(trace.Find(Simulation.RemoteScope, "X"));
+            Assert.Greater(sent, 0, "no sample ever went");
+            Assert.Greater(landed, 0, "the sample never landed");
+            Assert.AreEqual(0.2f, trace.StartOfFrame(sent), 0.02f, "a sample went early");
+            Assert.AreEqual(0.3f, trace.StartOfFrame(landed) - trace.StartOfFrame(sent), 0.02f,
+                "the trip is the latency, to within the frame it lands on");
+            Assert.AreEqual(0.5f, trace.Find(Simulation.RemoteScope, "X").At(landed), 1e-5f);
+
+            // The wire row is still about the sending: it is one frame of "a sample went",
+            // which is what every reading of it — the findings included — takes it for.
+            Assert.AreEqual(0f, trace.Find(Simulation.WireScope, "sample").At(landed),
+                "the landing was recorded as a send");
+        }
+
+        [Test]
+        public void Wire_CarriesTheValueItRead_NotTheOneItLandsOn()
+        {
+            var wire = new SyncWire
+            {
+                intervalSeconds = 0.2f,
+                latencySeconds = 0.25f,
+                quantize = false,
+            }.Syncs("X");
+            var stimulus = new Stimulus()
+                .At(0f, "X", 0.5f)        // what the sample at 0.2 s reads
+                .At(0.25f, "X", -0.5f);   // moved while that sample is still travelling
+            var trace = Simulation.Run(NewController(), Wired(0.8f, wire, stimulus));
+
+            var remote = trace.Find(Simulation.RemoteScope, "X");
+            int landed = FirstMoved(remote);
+            Assert.Greater(landed, 0, "nothing landed");
+            Assert.AreEqual(0.5f, remote.At(landed), 1e-5f,
+                "a sample in flight went back for the newer value");
+            // The wearer had moved on 0.2 s before that landed, and the other person goes on
+            // holding what was read until the sample that read the new value lands in its own
+            // turn — acting on a stale value is the failure a latency exists to show.
+            Assert.AreEqual(-0.5f, trace.Find(Simulation.LocalScope, "X").At(landed), 1e-5f);
+            int caught = -1;
+            for (int frame = landed; frame < trace.Frames && caught < 0; frame++)
+                if (remote.At(frame) < 0f) caught = frame;
+            Assert.Greater(caught, landed, "the new value never landed");
+            Assert.AreEqual(0.65f, trace.StartOfFrame(caught), 0.02f,
+                "read at 0.4 s and landed 0.25 s later");
+            for (int frame = landed; frame < caught; frame++)
+                Assert.AreEqual(0.5f, remote.At(frame), 1e-5f,
+                    "the other person stopped holding the value they were sent at frame " + frame);
+        }
+
+        /// <summary>Which of the wearer's samples a run lost, in order — a character per
+        /// sample, so two runs whose frames do not line up can still be compared.</summary>
+        static string Drops(SignalTrace trace)
+        {
+            var text = new System.Text.StringBuilder();
+            var sample = trace.Find(Simulation.WireScope, "sample");
+            var lost = trace.Find(Simulation.WireScope, "lost");
+            for (int frame = 0; frame < trace.Frames; frame++)
+                if (sample.At(frame) != 0f) text.Append(lost.At(frame) != 0f ? 'x' : '.');
+            return text.ToString();
+        }
+
+        static string Losses(int clockSeed, int wireSeed)
+        {
+            var settings = new SimSettings
+            {
+                // Jittered, so the clock's seed genuinely changes the run: the frames are of
+                // different lengths and the samples fall on different ones.
+                clock = new SimClock { fps = 60f, seconds = 1.5f, jitter = 0.5f, seed = clockSeed },
+                wire = new SyncWire
+                {
+                    intervalSeconds = 0.1f,
+                    dropChance = 0.5f,
+                    seed = wireSeed,
+                }.Syncs("X"),
+                stimulus = new Stimulus().At(0f, "X", 0.5f),
+            };
+            string drops = Drops(Simulation.Run(NewController(), settings));
+            Assert.Greater(drops.Length, 8, "too few samples to say anything about the dice");
+            return drops.Substring(0, 8);
+        }
+
+        [Test]
+        public void Wire_KeepsItsOwnDice_WhateverTheClockIsSeededWith()
+        {
+            // The wire has always had a seed of its own; what it is for is this. Two runs whose
+            // frames land in different places lose exactly the same samples, so the timing can
+            // be asked a new question without the losses moving underneath the answer.
+            string first = Losses(3, 8);
+            Assert.AreEqual(first, Losses(99, 8),
+                "the clock's seed reshuffled the wire's losses");
+            Assert.IsTrue(first.Contains("x") && first.Contains("."),
+                "a run that lost everything or nothing proves nothing about a seed");
+            // And the other way round: it is the wire's own seed that moves them.
+            Assert.AreNotEqual(first, Losses(3, 12), "the wire's seed changed nothing");
+        }
+
+        /// <summary>
+        /// Everything a run put on the named rows, as the frames each one changed on and what
+        /// it changed to. A string rather than a handful of asserts because what is being
+        /// pinned down is the whole of a run: a wedge that only checks the parts somebody
+        /// thought of is not a wedge.
+        /// </summary>
+        static string[] Fingerprint(SignalTrace trace, params string[] paths)
+        {
+            var lines = new string[paths.Length];
+            for (int i = 0; i < paths.Length; i++)
+            {
+                string path = paths[i];
+                int slash = path.IndexOf('/');
+                var signal = trace.Find(path.Substring(0, slash), path.Substring(slash + 1));
+                Assert.IsNotNull(signal, path + " is not a row this run has");
+                var text = new System.Text.StringBuilder(path).Append(':');
+                for (int frame = 0; frame < signal.Frames; frame++)
+                    if (signal.ChangedAt(frame))
+                        text.Append(' ').Append(frame).Append('=').Append(
+                            signal.At(frame).ToString("0.#####",
+                                System.Globalization.CultureInfo.InvariantCulture));
+                lines[i] = text.ToString();
+            }
+            return lines;
+        }
+
+        /// <summary>
+        /// What the run in <see cref="Wire_WithNoLatency_RunsTheRunItRanBeforeThereWasAny"/>
+        /// produced back when a wire could not be given a latency at all — read off the engine
+        /// as it stood before the delivery queue existed, which is the only moment such a
+        /// number can honestly be taken. A line per row rather than one block of text, so no
+        /// argument about line endings can ever be mistaken for a change in the simulation.
+        /// </summary>
+        static readonly string[] WireWithoutLatency =
+        {
+            "Wire/sample: 8=1 9=0 14=1 15=0 20=1 21=0 22=1 23=0 25=1 26=0 32=1 33=0 38=1 39=0 45=1 46=0 51=1 52=0 57=1 58=0 63=1 64=0 69=1 70=0 75=1 76=0 81=1 82=0 86=1 87=0",
+            "Wire/lost: 8=1 9=0 14=1 15=0 57=1 58=0",
+            "Wire/lost 2: 25=1 26=0 32=1 33=0 57=1 58=0 81=1 82=0",
+            "Wire/remote here 2: 22=1",
+            "Remote/X: 20=-0.24706 63=0.74902 81=-1",
+            "Remote/N: 45=7 69=200",
+            "Remote 2/X: 22=-0.24706 63=0.74902 86=-1",
+            "Remote 2/N: 45=7 69=200",
+        };
+
+        [Test]
+        public void Wire_WithNoLatency_RunsTheRunItRanBeforeThereWasAny()
+        {
+            // Loss, jitter, rounding, two people and one of them late: every mechanism whose
+            // order of drawing from the wire's dice a delivery queue could disturb.
+            var wire = new SyncWire { intervalSeconds = 0.1f, dropChance = 0.25f, seed = 3 }
+                .Syncs("X", "N").Joining(0.35f);
+            var settings = new SimSettings
+            {
+                clock = new SimClock { fps = 60f, seconds = 1.5f, jitter = 0.4f, seed = 11 },
+                wire = wire,
+                stimulus = new Stimulus()
+                    .At(0.05f, "X", 0.5f).At(0.3f, "X", -0.25f)
+                    .At(0.62f, "N", 7f).At(0.9f, "X", 0.75f)
+                    .At(1.1f, "N", 200f).At(1.25f, "X", -1f),
+            };
+            Assert.AreEqual(0f, settings.wire.latencySeconds,
+                "the wedge is about the default, so the default has to still be none");
+            var trace = Simulation.Run(NewController(), settings);
+            CollectionAssert.AreEqual(WireWithoutLatency, Fingerprint(trace,
+                    "Wire/sample", "Wire/lost", "Wire/lost 2", "Wire/remote here 2",
+                    "Remote/X", "Remote/N", "Remote 2/X", "Remote 2/N"),
+                "a wire with no latency is not running the run it ran before latency existed");
+        }
+
         [Test]
         public void Stimulus_ReachesTheWearerUnlessItNamesSomebody()
         {
@@ -1656,6 +1844,40 @@ namespace Yozolab.DaerD.Tests
                 session.Write(Simulation.LocalScope, "X", 0.5f);
                 for (int i = 0; i < 30; i++) session.StepOnce();
                 Assert.AreEqual(batch.Signals.Count, session.Trace.Signals.Count);
+                foreach (var signal in batch.Signals)
+                {
+                    var live = session.Trace.Find(signal.scope, signal.name);
+                    Assert.IsNotNull(live, signal.Path);
+                    for (int frame = 0; frame < batch.Frames; frame++)
+                        Assert.AreEqual(signal.At(frame), live.At(frame), 1e-6f,
+                            signal.Path + " at frame " + frame);
+                }
+            }
+        }
+
+        [Test]
+        public void Session_HoldsASampleInFlightTheWayARunDoes()
+        {
+            // The same agreement as above, on a wire that takes time. A session steps one
+            // frame at a time and a run computes the lot, so a queue that was kept in either
+            // of them rather than in the one piece of machinery they share would show up here
+            // as two simulations that no longer match.
+            var settings = new SimSettings
+            {
+                clock = new SimClock { fps = 60f, seconds = 0.6f, seed = 5 },
+                wire = new SyncWire { intervalSeconds = 0.1f, latencySeconds = 0.15f }
+                    .Syncs("X"),
+            };
+            settings.stimulus.At(0f, "X", 0.5f);
+            var batch = Simulation.Run(NewController(), settings);
+            Assert.AreEqual(0.5f,
+                batch.Find(Simulation.RemoteScope, "X").At(batch.Frames - 1), 0.01f,
+                "nothing crossed at all, so there is nothing to agree about");
+
+            using (var session = new SimSession(NewController(), settings))
+            {
+                session.Write(Simulation.LocalScope, "X", 0.5f);
+                for (int i = 0; i < 36; i++) session.StepOnce();
                 foreach (var signal in batch.Signals)
                 {
                     var live = session.Trace.Find(signal.scope, signal.name);

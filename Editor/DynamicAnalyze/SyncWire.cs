@@ -50,6 +50,25 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// </summary>
         public bool quantize = true;
 
+        /// <summary>
+        /// How long a sample spends on its way over, in seconds. The values are READ when the
+        /// sample goes and LAND this much later, so a remote acts on what was true when the
+        /// wearer was read rather than on what is true when it arrives — which is the whole of
+        /// what a delay does to a controller, and the floor under every lag row.
+        ///
+        /// Zero by default, and the default is a claim about honesty rather than about
+        /// networks. VRChat's real round trip moves by an order of magnitude with the region,
+        /// the instance and the person's connection; unlike <see cref="quantize"/>, where 8
+        /// bits over -1..1 IS the platform, there is no number here that could be called
+        /// measured rather than picked. Zero also means every saved experiment, every ghost
+        /// laid over another run and every test that predates this field runs frame for frame
+        /// the way it did — a delivery still lands on the frame its sample went out on.
+        ///
+        /// A one-way delay, not a round trip: nothing in a run travels back, so a number
+        /// typed here is half of what a ping reports.
+        /// </summary>
+        public float latencySeconds;
+
         /// <summary>Fixes which samples are lost. Its own seed, so changing the clock's does
         /// not reshuffle the drops and vice versa.</summary>
         public int seed = 1;
@@ -138,6 +157,10 @@ namespace Yozolab.DaerD.DynamicAnalyze
         }
 
         public float Interval => Mathf.Max(1e-4f, intervalSeconds);
+
+        /// <summary>Never negative: a delivery that landed before its sample was read would be
+        /// a wire that answers questions before they are asked.</summary>
+        public float Latency => Mathf.Max(0f, latencySeconds);
 
         /// <summary>
         /// One value as a remote can hold it. Bool is a bit; Int is a byte, so 300 arrives as

@@ -46,7 +46,17 @@ namespace Yozolab.DaerD.DynamicAnalyze
         [SerializeField] int _seed = 1;
         [SerializeField] bool _twoClients = true;
         [SerializeField] float _interval = 0.2f;
+        /// <summary>Zero, and a saved layout that predates the field reads as zero too — which
+        /// is the same run it was, because a delivery with no latency lands on the frame its
+        /// sample went out on.</summary>
+        [SerializeField] float _latency;
         [SerializeField] float _dropChance;
+        /// <summary>Whether the wire rolls its losses from a seed of its own. Off is what this
+        /// window has always done — the clock's seed handed to both — so a layout saved before
+        /// this existed goes on producing the run it produced. The wire has always HAD its own
+        /// seed; until now there was no way to reach it from here.</summary>
+        [SerializeField] bool _ownWireSeed;
+        [SerializeField] int _wireSeed = 1;
         [SerializeField] float _joinsAt;
         /// <summary>How many other people are in the instance. One is the run this window has
         /// always done; the rest turn up at times of their own.</summary>
@@ -436,8 +446,18 @@ namespace Yozolab.DaerD.DynamicAnalyze
                 EditorGUILayout.BeginHorizontal();
                 _interval = EditorGUILayout.FloatField(new GUIContent(L.Tr("Sync Every (s)"),
                     L.Tr("Seconds between samples. The wearer's synced values are read whole and handed over together, so a change that comes and goes inside one interval never leaves them.")), _interval);
-                _dropChance = EditorGUILayout.Slider(L.Tr("Loss"), _dropChance, 0f, 1f);
+                _latency = EditorGUILayout.FloatField(new GUIContent(L.Tr("Latency (s)"),
+                    L.Tr("How long a sample spends on its way. The wearer's values are read when the sample goes and land this much later, so the other person acts on what was true when they were read. Zero means deliveries land the way they have always landed here — not a claim that a real trip takes no time.")), _latency);
                 EditorGUILayout.EndHorizontal();
+
+                EditorGUILayout.BeginHorizontal();
+                _dropChance = EditorGUILayout.Slider(L.Tr("Loss"), _dropChance, 0f, 1f);
+                _ownWireSeed = EditorGUILayout.Toggle(new GUIContent(L.Tr("Own Loss Seed"),
+                    L.Tr("Roll the lost samples from a seed of the wire's own instead of the clock's. Off is what this window has always done. On lets the frame timing be asked a new question without reshuffling which samples go missing, and the other way round.")), _ownWireSeed);
+                EditorGUILayout.EndHorizontal();
+                if (_ownWireSeed)
+                    _wireSeed = EditorGUILayout.IntField(new GUIContent(L.Tr("Loss Seed"),
+                        L.Tr("Fixes which samples are lost, and nothing else. Same wire and same seed lose the same samples however the clock is changed.")), _wireSeed);
 
                 DrawRemotes();
 
@@ -623,10 +643,13 @@ namespace Yozolab.DaerD.DynamicAnalyze
                     ? new SyncWire
                     {
                         intervalSeconds = _interval,
+                        latencySeconds = _latency,
                         dropChance = _dropChance,
                         remoteJoinsAt = _joinsAt,
                         quantize = _quantize,
-                        seed = _seed,
+                        // The clock's seed unless the wire was given one, so a run set up
+                        // before the wire could have its own is still that run.
+                        seed = _ownWireSeed ? _wireSeed : _seed,
                     }
                     : null,
             };

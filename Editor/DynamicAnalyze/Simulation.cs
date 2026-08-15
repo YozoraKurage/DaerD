@@ -84,6 +84,71 @@ namespace Yozolab.DaerD.DynamicAnalyze
         internal static int LossSeed(int seed, int index) =>
             unchecked((int)((uint)seed ^ 0x9E3779B9u * (uint)index));
 
+        /// <summary>
+        /// One reading of the wearer's synced values, on its way to one person.
+        ///
+        /// The values themselves rather than a way back to the wearer, because what a remote
+        /// receives is what was true when the sample was READ: a sample in flight does not go
+        /// back for the newer number, and a run that let it would hide the whole class of bug
+        /// where somebody acts on a value the wearer has already moved on from.
+        ///
+        /// One reading is shared by every delivery it made — a broadcast, not a letter each —
+        /// so the dictionary is never written to after it is queued.
+        /// </summary>
+        internal struct WireDelivery
+        {
+            /// <summary>The second it lands. Read against the start of a frame the way a
+            /// stimulus is, so it takes effect on the first frame that has reached it — never
+            /// the frame before, and never twice.</summary>
+            public float at;
+            public Dictionary<string, float> values;
+        }
+
+        /// <summary>A queue per person. Theirs alone, because a sample one of them lost is
+        /// still on its way to everybody else.</summary>
+        internal static Queue<WireDelivery>[] InFlight(int remotes)
+        {
+            var queues = new Queue<WireDelivery>[Mathf.Max(0, remotes)];
+            for (int i = 0; i < queues.Length; i++) queues[i] = new Queue<WireDelivery>();
+            return queues;
+        }
+
+        /// <summary>
+        /// One sample leaving the wearer: read once, then queued for everybody who is there to
+        /// receive it, to land <see cref="SyncWire.Latency"/> seconds later.
+        ///
+        /// Losses are rolled HERE — at the sample, per person, in person order — which is
+        /// exactly where and in what order they were rolled before deliveries could be in
+        /// flight. That is what makes a wire with no latency not merely similar to the run it
+        /// used to do but the same one: the dice are drawn the same number of times in the
+        /// same order, and a queue that empties immediately writes what an immediate hand-over
+        /// wrote. A wire that lost its samples on arrival instead would read better and would
+        /// silently reshuffle every seeded run that already exists.
+        /// </summary>
+        internal static void Send(SyncWire wire, List<SimClient> clients, SimRandom[] loss,
+            bool[] arrived, bool[] dropped, Queue<WireDelivery>[] inFlight, float time)
+        {
+            var values = Sample(wire, clients[0]);
+            float at = time + wire.Latency;
+            for (int i = 0; i < arrived.Length; i++)
+            {
+                if (!arrived[i]) continue;
+                if (loss[i].NextChance(wire.dropChance)) dropped[i] = true;
+                else inFlight[i].Enqueue(new WireDelivery { at = at, values = values });
+            }
+        }
+
+        /// <summary>Everything whose time has come, in the order it was sent. One latency for
+        /// the whole wire, so a queue is always in the order it was filled and the first thing
+        /// in it is the first thing due.</summary>
+        internal static void Land(List<SimClient> clients, Queue<WireDelivery>[] inFlight,
+            float time)
+        {
+            for (int i = 0; i < inFlight.Length; i++)
+                while (inFlight[i].Count > 0 && inFlight[i].Peek().at <= time)
+                    Apply(inFlight[i].Dequeue().values, clients[i + 1]);
+        }
+
         public static SignalTrace Run(AnimatorController controller, SimClock clock = null,
             Stimulus stimulus = null) =>
             Run(controller, new SimSettings
@@ -122,6 +187,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
                 // up to a session already in progress.
                 var arrived = new bool[remotes];
                 var dropped = new bool[remotes];
+                var inFlight = InFlight(remotes);
                 for (int i = 0; i < remotes; i++)
                 {
                     loss[i] = new SimRandom(LossSeed(wire.seed, i));
@@ -161,13 +227,13 @@ namespace Yozolab.DaerD.DynamicAnalyze
                     {
                         nextSample += wire.Interval;
                         sampled = true;
-                        for (int i = 0; i < remotes; i++)
-                        {
-                            if (!arrived[i]) continue;
-                            if (loss[i].NextChance(wire.dropChance)) dropped[i] = true;
-                            else Carry(wire, clients[0], clients[i + 1]);
-                        }
+                        Send(wire, clients, loss, arrived, dropped, inFlight, time);
                     }
+                    // What has finished travelling. There is no row for it: the wire's row
+                    // says a sample WENT — which is what every reader of it, the findings
+                    // included, takes it for — and a landing shows up as the other person's
+                    // values moving, which is the thing anybody came here to look at.
+                    Land(clients, inFlight, time);
 
                     // Whatever VRChat syncs on its own, before the frame that reads it. Not on
                     // the sample and not subject to its loss — see CarryBroadcast.
@@ -207,22 +273,49 @@ namespace Yozolab.DaerD.DynamicAnalyze
         }
 
         /// <summary>
-        /// One sample: every synced parameter read off the wearer and written to the remote,
-        /// together and in the shape the wire allows.
+        /// One sample handed over with no journey in between: read off the wearer and written
+        /// to the remote in the same breath.
+        ///
+        /// This is what ARRIVING is. Somebody who walks in is given the state of every synced
+        /// parameter at once, and that hand-over is deliberately not put through the delivery
+        /// queue: the join handshake is its own piece of machinery with its own timing, and
+        /// this module has no model of it. Delaying it by the sample latency would be
+        /// inventing one, and inventing one is how a run starts answering questions it was
+        /// never entitled to answer.
+        /// </summary>
+        internal static void Carry(SyncWire wire, SimClient from, SimClient to) =>
+            Apply(Sample(wire, from), to);
+
+        /// <summary>
+        /// The wearer's synced values as the wire would carry them — rounded on the way out,
+        /// because that is when the wire has them, and a value read now cannot be rounded
+        /// differently by arriving later.
         ///
         /// A built-in is skipped however it got into the list. VRChat feeds those itself, on
         /// its own channels — a store that names one is a mistake people make, and honouring
         /// it here would send AvatarVersion over a wire that never carries it and round a
         /// Velocity into a range it does not live in.
         /// </summary>
-        internal static void Carry(SyncWire wire, SimClient from, SimClient to)
+        internal static Dictionary<string, float> Sample(SyncWire wire, SimClient from)
         {
+            var values = new Dictionary<string, float>();
             foreach (var name in wire.parameters)
             {
-                if (!from.Has(name) || !to.Has(name)) continue;
+                if (!from.Has(name)) continue;
                 if (VrcParameters.IsBuiltIn(name)) continue;
-                to.Write(name, wire.Compress(from.Read(name), from.TypeOf(name)));
+                values[name] = wire.Compress(from.Read(name), from.TypeOf(name));
             }
+            return values;
+        }
+
+        /// <summary>One sample landing: whatever of it this copy of the avatar has a parameter
+        /// for. Order does not come into it — the writes are one per name and a name is in a
+        /// sample once, so the set lands as a set, which is the promise the whole model
+        /// rests on.</summary>
+        internal static void Apply(Dictionary<string, float> values, SimClient to)
+        {
+            foreach (var pair in values)
+                if (to.Has(pair.Key)) to.Write(pair.Key, pair.Value);
         }
 
         /// <summary>
