@@ -512,20 +512,85 @@ namespace Yozolab.DaerD
             return transition;
         }
 
+        /// <summary>How long a route with nothing to wait for waits, in seconds. Under one
+        /// frame at any frame rate anybody runs at, so the route is taken on the first frame
+        /// the state is evaluated at all — and still a real wait, which is what
+        /// <see cref="Immediate"/> needs it to be.</summary>
+        const float ImmediateSeconds = 0.001f;
+
         /// <summary>
-        /// A route with nothing to wait for: the else of a judgement, and the way back out of a
-        /// state whose whole job was the driver that ran on the way in.
+        /// A route with nothing to wait for: the else of a judgement, taken on the first frame
+        /// the state it leaves is evaluated at all.
         ///
-        /// It carries an exit time of zero rather than no exit time at all. A transition with
-        /// neither a condition nor an exit time is never taken — the state machine sits in the
-        /// state forever, which reads in a run as a watcher that judged once and then went
-        /// deaf, and which nothing about the layer's SHAPE would show.
+        /// It carries an exit time rather than no exit time at all. A transition with neither a
+        /// condition nor an exit time is never taken — the state machine sits in the state
+        /// forever, which reads in a run as a watcher that judged once and then went deaf, and
+        /// which nothing about the layer's SHAPE would show.
+        ///
+        /// The exit time is a millisecond, and emphatically not zero. Zero reads as "leave at
+        /// once" and measures as the opposite: an exit time of 0 fires exactly where 1 does, at
+        /// the loop boundary, so a state carrying a 0.5 s clip held the layer for 0.5 s and a
+        /// motion-less one — whose normalized unit is a second — held it for about 1.02 s
+        /// (61 frames at 60 fps). Every judgement paid that, once a lap, to say a thing it had
+        /// already worked out. A millisecond is the same intent expressed as a number Mecanim
+        /// reads the way it is meant, and it is written in seconds and divided by the motion the
+        /// way <see cref="Step"/>'s dwell is, so it stays a millisecond whether or not the
+        /// generated states carry the Empty clip.
+        ///
+        /// Being sub-frame is what makes the judgement's else an else: the conditioned routes
+        /// out of the same state become eligible on that same first frame, and Mecanim takes the
+        /// first transition in list order. AsyncSyncDwellTests pins the tie.
+        ///
+        /// Not "no exit time plus a condition that is always true", which is the usual way round
+        /// this: an always-true condition needs a parameter that can spell one, and while the Int
+        /// index can (greater than -1) the bit encoding has nothing of the sort — it would mean
+        /// generating a parameter for the trick's sake, and a condition that asks nothing is one
+        /// more thing for whoever opens the generated layer to work out.
         /// </summary>
-        static AnimatorStateTransition Immediate(AnimatorState from, AnimatorState to)
+        static AnimatorStateTransition Immediate(AnimatorState from, AnimatorState to,
+            AnimationClip empty)
         {
             var transition = from.AddTransition(to);
             transition.hasExitTime = true;
-            transition.exitTime = 0f;
+            transition.exitTime = empty != null
+                ? ImmediateSeconds / empty.length : ImmediateSeconds;
+            transition.hasFixedDuration = true;
+            transition.duration = 0f;
+            EditorUtility.SetDirty(transition);
+            return transition;
+        }
+
+        /// <summary>
+        /// The way back out of a state whose whole job was the driver that ran on the way in,
+        /// taken one loop of that state's motion later — a second on a motion-less state, the
+        /// clip's length on one carrying the Empty clip.
+        ///
+        /// Spelled as an exit time of 1 rather than the 0 that stood here before. The two are
+        /// the same transition to Mecanim: measured, exit time 0 fires exactly where 1 does, at
+        /// the loop boundary. The 0 was written meaning "at once" and read that way by everyone
+        /// after, which is how the commit came to stand in its own state for about a second of
+        /// every lap without anybody noticing. If the wait is going to be there, the number has
+        /// to say so.
+        ///
+        /// And the wait stays, which <see cref="Immediate"/> is the reason to say out loud. The
+        /// obvious reading is that a commit has nothing to wait for either — the driver has run,
+        /// the flags are down, and coming straight back would let the next whole set through as
+        /// soon as it lands instead of up to a second later. Measured, coming straight back
+        /// makes the group tear MORE, not less: with the commit prompt, the guard closes the
+        /// moment the last member arrives, so every commit holds each member's first decode
+        /// after the previous commit — and a change the wearer made between two members' sends
+        /// is then copied out half-old. Over thirteen change times a tenth of a second apart,
+        /// four tore with the wait and nine without it. Neither is a promise; the group's real
+        /// hole is that its members travel in different steps, and closing it is a change to the
+        /// guard (or to the schedule) rather than to this transition. Until that is decided the
+        /// dwell is what keeps most changes whole, so it is kept deliberately rather than
+        /// removed by tidying. AsyncSyncDwellTests measures both halves of this.
+        /// </summary>
+        static AnimatorStateTransition AfterALoop(AnimatorState from, AnimatorState to)
+        {
+            var transition = from.AddTransition(to);
+            transition.hasExitTime = true;
+            transition.exitTime = 1f;
             transition.hasFixedDuration = true;
             transition.duration = 0f;
             EditorUtility.SetDirty(transition);
@@ -625,7 +690,7 @@ namespace Yozolab.DaerD
                 Instant(judge, dirty).AddCondition(AnimatorConditionMode.IfNot, 0f,
                     FreshParameter(r.baseName, slotNames[i]));
             }
-            Immediate(judge, clean);
+            Immediate(judge, clean, empty);
 
             AddIndexLeaves(dirty, idle, r, encoding, indexBits, markerIndex);
             AddIndexLeaves(clean, idle, r, encoding, indexBits, markerIndex);
@@ -650,6 +715,15 @@ namespace Yozolab.DaerD
         /// of the exercise. And the guard is "every member has arrived" rather than "the last
         /// member just did", so a lap that lost one of them commits nothing and leaves the
         /// remote on the last complete set — a stale whole rather than a torn one.
+        ///
+        /// What is structural is that the remote's members change together, on one frame. That
+        /// the pair they change TO is a pair the wearer held at one moment is not: the members
+        /// leave in different steps of the cycle, so a change made between two of those steps
+        /// puts one new value and one old one in the shadows, and a commit that lands in
+        /// between copies both. Measured, that happens for some of the moments a change can be
+        /// made and not for others — see <see cref="AfterALoop"/>, which is where the odds
+        /// currently live. Closing it properly is a change to the guard or to the schedule, and
+        /// it has not been made.
         ///
         /// Nothing here runs on the wearer: the decoder that raises the flags is behind the
         /// cycle layer's remote branch, so the flags never come up and the real parameters are
@@ -694,9 +768,12 @@ namespace Yozolab.DaerD
                 foreach (var name in group.members)
                     arm.AddCondition(AnimatorConditionMode.If, 0f,
                         HeldParameter(r.baseName, name));
-                // Straight back: the flags are down by the time this is evaluated, so the
-                // guard above cannot fire again until the next member arrives.
-                Immediate(commit, idle);
+                // Back after a loop of the state's own motion. The flags are down by the time
+                // this is evaluated, so the guard above cannot fire again until every member
+                // has arrived once more — and the dwell on top of that is what keeps a change
+                // whose members travel in different steps from being copied out half-old. See
+                // AfterALoop, which measures what taking it away does.
+                AfterALoop(commit, idle);
 
                 if (!r.skipDrivers) AddCommitDriver(commit, r, group);
                 EditorUtility.SetDirty(machine);

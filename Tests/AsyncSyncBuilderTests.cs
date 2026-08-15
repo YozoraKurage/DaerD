@@ -2127,6 +2127,65 @@ namespace Yozolab.DaerD.Tests
             Object.DestroyImmediate(controller);
         }
 
+        /// <summary>
+        /// The two unconditioned routes out of a watcher, which look alike and are not. Neither
+        /// may be left without an exit time — a transition with no condition and no exit time is
+        /// never taken at all — and neither may carry zero, which reads as "at once" and fires
+        /// at the loop boundary instead.
+        ///
+        /// The judgement's else takes a millisecond, written in seconds and normalized to the
+        /// motion the way the cycle's dwell is, so it stays a millisecond with or without the
+        /// Empty clip. The commit's way out keeps the loop, spelled as the 1 it always meant,
+        /// because the group leans on the dwell — AsyncSyncDwellTests measures what it is worth
+        /// and what it costs.
+        /// </summary>
+        [Test]
+        public void Apply_SpellsTheTwoUnconditionedRoutesOutOfAWatcherApart()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.stale = true;
+            request.groups.Add(Group("Outfit", "F", "B"));
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var judged = FindState(FindLayer(controller, "Async Stale"), "Judge").transitions[2];
+            var committed = FindState(FindLayer(controller, "Async Outfit"), "Commit")
+                .transitions[0];
+            foreach (var transition in new[] { judged, committed })
+            {
+                Assert.AreEqual(0, transition.conditions.Length, "there is nothing to wait for");
+                Assert.IsTrue(transition.hasExitTime,
+                    "a route with neither a condition nor an exit time is never taken");
+                Assert.AreNotEqual(0f, transition.exitTime,
+                    "zero is the loop boundary, whatever it reads as");
+            }
+            // Motion-less states: normalized time is a second, so an exit time reads as seconds.
+            Assert.AreEqual(0.001f, judged.exitTime, 1e-6f);
+            Assert.AreEqual(1f, committed.exitTime, 1e-6f, "one loop of the state's own motion");
+            Object.DestroyImmediate(controller);
+
+            // ...and with the Empty clip on them, the millisecond becomes a fraction of it while
+            // the loop stays a loop: the two are normalized to the same motion and mean
+            // different things by it.
+            var filled = NewController();
+            var clip = NewEmptyClip(0.5f);
+            var withClip = NewRequest(filled, "F", "B", "I");
+            withClip.emptyClip = clip;
+            withClip.stale = true;
+            withClip.groups.Add(Group("Outfit", "F", "B"));
+            Assert.IsTrue(AsyncSyncBuilder.Apply(withClip));
+
+            Assert.AreEqual(0.001f / 0.5f,
+                FindState(FindLayer(filled, "Async Stale"), "Judge").transitions[2].exitTime,
+                1e-6f);
+            Assert.AreEqual(1f,
+                FindState(FindLayer(filled, "Async Outfit"), "Commit").transitions[0].exitTime,
+                1e-6f);
+
+            Object.DestroyImmediate(clip);
+            Object.DestroyImmediate(filled);
+        }
+
         [Test]
         public void Apply_IgnoresAZeroLengthEmptyClip()
         {
