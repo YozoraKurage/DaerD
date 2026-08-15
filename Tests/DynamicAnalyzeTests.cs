@@ -183,6 +183,146 @@ namespace Yozolab.DaerD.Tests
             }
         }
 
+        // ---- entering a state from itself -----------------------------------
+
+        /// <summary>Which way back into the counted state a run is being asked about. The last
+        /// one is the ordinary transition the other two have to go on behaving like.</summary>
+        enum Route { Itself, AnyState, Elsewhere }
+
+        /// <summary>A layer whose state "A" ADDS 1 to N on the way in, so that how many times
+        /// it was entered is readable as a number rather than inferred, and one route into it
+        /// on a trigger.</summary>
+        static AnimatorController NewCountingController(float duration, Route route = Route.Itself)
+        {
+            var controller = new AnimatorController();
+            controller.AddLayer("Base");
+            controller.AddParameter("T", AnimatorControllerParameterType.Trigger);
+            controller.AddParameter("N", AnimatorControllerParameterType.Int);
+
+            var machine = controller.layers[0].stateMachine;
+            var counted = machine.AddState("A");
+            machine.defaultState = counted;
+
+            AnimatorStateTransition into;
+            switch (route)
+            {
+                case Route.AnyState:
+                    into = machine.AddAnyStateTransition(counted);
+                    into.canTransitionToSelf = true;
+                    break;
+                case Route.Elsewhere:
+                    var idle = machine.AddState("Idle");
+                    machine.defaultState = idle;
+                    into = idle.AddTransition(counted);
+                    break;
+                default:
+                    into = counted.AddTransition(counted);
+                    break;
+            }
+            into.hasExitTime = false;
+            into.hasFixedDuration = true;
+            into.duration = duration;
+            into.AddCondition(AnimatorConditionMode.If, 0f, "T");
+
+            var driver = VrcParameterDriver.AddTo(counted, "Test");
+            Assert.IsNotNull(driver, "the driver behaviour (or its stub) has to be present");
+            VrcParameterDriver.AddAddEntry(driver, "N", 1f);
+            return controller;
+        }
+
+        /// <summary>Runs the client for that many sixtieths and hands back the count at the end
+        /// of each of them. The shape is the answer as much as the last value is: a driver
+        /// applied once per frame of a blend and one applied once per entry differ by the
+        /// frames in between.</summary>
+        static float[] Counted(SimClient client, int frames)
+        {
+            var read = new float[frames];
+            for (int i = 0; i < frames; i++)
+            {
+                client.Step(1f / 60f);
+                read[i] = client.Read("N");
+            }
+            return read;
+        }
+
+        [Test]
+        public void Client_AppliesTheDriverAgain_WhenAStateIsEnteredFromItself()
+        {
+            using (var client = new SimClient(NewCountingController(0.25f), "C", true, 1))
+            {
+                Assert.AreEqual(1f, Counted(client, 5)[4],
+                    "the state a layer starts in is entered once and then stood in");
+
+                client.Write("T", 1f);
+                client.Step(1f / 60f);
+                Assert.AreEqual(2f, client.Read("N"),
+                    "measured on a real Animator: a state's transition to itself re-enters it, "
+                    + "and the entry is the frame the blend starts on");
+                Assert.IsTrue(client.InTransition(0), "which is the only frame it can be seen on");
+                Assert.AreEqual("A → A", client.TransitionLabels(0)[client.CurrentTransition(0)],
+                    "and the via row names the route, so a reader can see what re-entered it");
+
+                Assert.AreEqual(2f, Counted(client, 29)[28],
+                    "one entry, not one per frame of a quarter-second blend");
+
+                client.Write("T", 1f);
+                Assert.AreEqual(3f, Counted(client, 30)[29], "a second press is a second entry");
+            }
+        }
+
+        [Test]
+        public void Client_AppliesTheDriverAgain_WhenAnyStateReEntersTheStateItIsIn()
+        {
+            using (var client = new SimClient(NewCountingController(0.25f, Route.AnyState),
+                       "C", true, 1))
+            {
+                Assert.AreEqual(1f, Counted(client, 5)[4]);
+
+                client.Write("T", 1f);
+                var blend = Counted(client, 30);
+                Assert.AreEqual(2f, blend[0],
+                    "canTransitionToSelf is the other way an avatar re-enters a state");
+                Assert.AreEqual(2f, blend[29], "and it too is one entry per press");
+            }
+        }
+
+        [Test]
+        public void Client_CannotSeeAReEntryThatTakesNoTime()
+        {
+            // The limit, written down rather than left to be found: a transition of duration 0
+            // is over inside the step it began on (measured), so a state re-entered by one is
+            // in the same state, aiming nowhere, by the time the run can look. A headset drives
+            // here and this does not, and a run that pretended otherwise would be guessing.
+            using (var client = new SimClient(NewCountingController(0f), "C", true, 1))
+            {
+                Assert.AreEqual(1f, Counted(client, 5)[4]);
+
+                client.Write("T", 1f);
+                var after = Counted(client, 30);
+                Assert.AreEqual(0f, client.Read("T"),
+                    "the press was taken, so the re-entry did happen");
+                Assert.AreEqual(1f, after[29], "and left no frame of the run to be seen on");
+            }
+        }
+
+        [Test]
+        public void Client_DrivesAnOrdinaryBlendOnce_NotOncePerFrameOfIt()
+        {
+            // The regression the self-transition branch could cause: for every frame of an
+            // ordinary blend the layer names the same destination, and reading each of those as
+            // an entry would drive it once per frame instead of once.
+            using (var client = new SimClient(NewCountingController(0.25f, Route.Elsewhere),
+                       "C", true, 1))
+            {
+                Assert.AreEqual(0f, Counted(client, 5)[4], "nothing has entered A yet");
+
+                client.Write("T", 1f);
+                var blend = Counted(client, 30);
+                Assert.AreEqual(1f, blend[0], "the drive lands with the start of the blend");
+                Assert.AreEqual(1f, blend[29], "and that is the whole of it");
+            }
+        }
+
         [Test]
         public void Trace_SaysWhenASignalMoved()
         {

@@ -26,8 +26,9 @@ namespace Yozolab.DaerD.DynamicAnalyze
     /// Where that differs from a headset, stated so it can be argued with: a driver's write is
     /// not visible to another LAYER inside the same frame, so a chain of drivers across layers
     /// takes a frame per link here and one frame in total there; a transition from a state to
-    /// itself enters nothing this can see, so its drivers do not fire; and layers are served in
-    /// index order, which VRChat does not promise either way.
+    /// itself is only visible while it blends, so the drivers of one written with a duration of
+    /// 0 do not fire; and layers are served in index order, which VRChat does not promise
+    /// either way.
     /// </summary>
     sealed class SimClient : IDisposable
     {
@@ -48,6 +49,20 @@ namespace Yozolab.DaerD.DynamicAnalyze
         readonly Dictionary<int, List<ControllerIR.DriverSpec>> _drivers =
             new Dictionary<int, List<ControllerIR.DriverSpec>>();
         readonly int[] _entered;
+
+        /// <summary>Per layer: whether the blend it is in has already had its destination
+        /// served. Needed because a state entered from ITSELF leaves <see cref="_entered"/>
+        /// where it was, so the only evidence of that entry is the layer aiming at where it
+        /// already is — and a blend is several frames of aiming, not one.
+        ///
+        /// Cleared when the layer is seen settled, which counts a self transition taken before
+        /// the previous blend into that same state finished as one entry where a headset would
+        /// fire two. Telling a restarted blend from a running one means watching the
+        /// transition's normalizedTime for a step backwards, and a drive fired twice for one
+        /// entry would be a run inventing a write nobody made — the safe side of that trade is
+        /// the one where a press the run could not see is missed rather than doubled.</summary>
+        readonly bool[] _served;
+
         readonly AnimatorController _copy;
         readonly List<string> _triggerNames = new List<string>();
         readonly HashSet<string> _pulsed = new HashSet<string>();
@@ -122,6 +137,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
             _transitionNames = new List<string>[layers.Length];
             _transitionOf = new Dictionary<int, int>[layers.Length];
             _entered = new int[layers.Length];
+            _served = new bool[layers.Length];
             for (int i = 0; i < layers.Length; i++)
             {
                 _layerNames[i] = layers[i].name ?? string.Empty;
@@ -478,6 +494,20 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// One frame: Mecanim runs, then every state entered by it has its drivers applied. The
         /// order is what makes the drivers observable at all — Mecanim has to have moved before
         /// there is an entry to notice.
+        ///
+        /// For everything but one case an entry is a change of state. The exception is a
+        /// transition from a state to itself, which really does re-enter it — measured in play
+        /// mode and in the editor alike, for a state's own transition and for an any-state one
+        /// with canTransitionToSelf, Mecanim calls OnStateEnter a second time — while leaving
+        /// the hash exactly where it was. So the entry is caught as the layer beginning to
+        /// blend towards where it already is, on the rising edge of that (see
+        /// <see cref="_served"/>) rather than once per frame of the blend.
+        ///
+        /// What is still not caught is a self transition of duration 0: measured, a blend of no
+        /// length is finished inside the step it began on, and no frame of the run has the
+        /// layer aiming anywhere. Not a hole that can be plugged from here — the difference
+        /// between such a transition having fired and nothing having happened is not a thing
+        /// Mecanim keeps for anybody to read.
         /// </summary>
         public void Step(float deltaTime)
         {
@@ -491,17 +521,36 @@ namespace Yozolab.DaerD.DynamicAnalyze
             _animator.Update(deltaTime);
             for (int layer = 0; layer < _entered.Length; layer++)
             {
+                bool blending = _animator.IsInTransition(layer);
                 // The destination of a transition is entered when the transition starts, which
                 // is what a headset's OnStateEnter reports too — waiting for it to finish would
                 // put every driver a blend-length late.
-                int hash = _animator.IsInTransition(layer)
+                int hash = blending
                     ? _animator.GetNextAnimatorStateInfo(layer).fullPathHash
                     : _animator.GetCurrentAnimatorStateInfo(layer).fullPathHash;
-                if (hash == _entered[layer]) continue;
-                _entered[layer] = hash;
-                if (!_drivers.TryGetValue(hash, out var specs)) continue;
-                foreach (var spec in specs) Apply(spec);
+                if (hash != _entered[layer])
+                {
+                    _entered[layer] = hash;
+                    // A blend served here is remembered as served: the frames after it name the
+                    // same destination, and reading those as entries would drive an ordinary
+                    // transition once per frame it takes.
+                    _served[layer] = blending;
+                    Serve(hash);
+                }
+                else if (!blending) _served[layer] = false;
+                else if (!_served[layer])
+                {
+                    // Aiming at the state it is already in: a self transition, and its entry.
+                    _served[layer] = true;
+                    Serve(hash);
+                }
             }
+        }
+
+        void Serve(int hash)
+        {
+            if (!_drivers.TryGetValue(hash, out var specs)) return;
+            foreach (var spec in specs) Apply(spec);
         }
 
         void Apply(ControllerIR.DriverSpec spec)
