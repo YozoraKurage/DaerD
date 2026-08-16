@@ -112,6 +112,158 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// <summary>What the run was made of, or a block at version 0 — see
         /// <see cref="Settings.version"/>.</summary>
         public Settings settings = new Settings();
+
+        // ---- the shape, and the engine on either side of it --------------------
+
+        // Both file formats write these same fields — the .anim's sub-asset and the .ddrun's
+        // JSON block are two containers for one shape — so the translation between them and the
+        // engine's own types lives here, once, rather than in whichever container was written
+        // first. A second copy of it inside the new format would be the thing that quietly
+        // disagrees about what a version 1 settings block means.
+
+        /// <summary>What the manifest says about one signal: everything a column of numbers
+        /// cannot say for itself.</summary>
+        public static Entry EntryFor(SignalTrace.Signal signal)
+        {
+            var entry = new Entry
+            {
+                scope = signal.scope,
+                name = signal.name,
+                kind = (int)signal.kind,
+            };
+            if (signal.labels != null) entry.labels.AddRange(signal.labels);
+            return entry;
+        }
+
+        /// <summary>The settings as a file keeps them.</summary>
+        public static Settings Wrote(SimSettings settings)
+        {
+            var clock = settings.clock ?? new SimClock();
+            var wire = settings.wire;
+            var saved = new Settings
+            {
+                version = Settings.Current,
+                fps = clock.fps,
+                seconds = clock.seconds,
+                jitter = clock.jitter,
+                seed = clock.seed,
+                lagRows = settings.lagRows,
+                wire = wire != null,
+            };
+            if (wire != null)
+            {
+                saved.interval = wire.intervalSeconds;
+                saved.latency = wire.latencySeconds;
+                saved.dropChance = wire.dropChance;
+                saved.quantize = wire.quantize;
+                saved.wireSeed = wire.seed;
+                saved.remoteJoinsAt = wire.remoteJoinsAt;
+                saved.laterJoins.AddRange(wire.laterJoins);
+                saved.parameters.AddRange(wire.parameters);
+            }
+            // Every track, muted ones included: a muted track is an input the experiment
+            // deliberately does not use, and a file that dropped it would be one where taking a
+            // question back is retyping it. Only the ACTIVE ones are what the run consumed, and
+            // the manifest is the experiment rather than the run's own transcript.
+            if (settings.stimulus != null)
+                foreach (var track in settings.stimulus.tracks)
+                {
+                    var written = new Track
+                    {
+                        name = track.name,
+                        muted = track.muted,
+                    };
+                    foreach (var entry in track.entries)
+                        written.entries.Add(new Poke
+                        {
+                            at = entry.atSeconds,
+                            scope = entry.scope,
+                            parameter = entry.parameter,
+                            value = entry.value,
+                        });
+                    saved.tracks.Add(written);
+                }
+            return saved;
+        }
+
+        /// <summary>
+        /// The experiment back out of a settings block, or null when the block does not say —
+        /// a run saved before settings travelled, or a file that was never a DD run at all.
+        /// Null and a default <see cref="SimSettings"/> are different answers, and the caller is
+        /// meant to tell them apart: nothing known is a reason to leave a form alone, not a
+        /// reason to overwrite it with 60 fps.
+        ///
+        /// A version this build does not know is read anyway, for the fields it has names for.
+        /// Refusing would leave the reader holding whatever settings were already in hand, which
+        /// are nobody's; reading gives them the run as far as this build can describe it, and
+        /// the ways it falls short are the fields that did not exist here.
+        /// </summary>
+        public static SimSettings Restored(Settings saved)
+        {
+            if (saved == null || saved.version <= 0) return null;
+
+            var settings = new SimSettings
+            {
+                clock = new SimClock
+                {
+                    fps = saved.fps,
+                    seconds = saved.seconds,
+                    jitter = saved.jitter,
+                    seed = saved.seed,
+                },
+                stimulus = new Stimulus(),
+                lagRows = saved.lagRows,
+                wire = saved.wire
+                    ? new SyncWire
+                    {
+                        intervalSeconds = saved.interval,
+                        latencySeconds = saved.latency,
+                        dropChance = saved.dropChance,
+                        quantize = saved.quantize,
+                        seed = saved.wireSeed,
+                        remoteJoinsAt = saved.remoteJoinsAt,
+                    }
+                    : null,
+            };
+            Inputs(saved, settings.stimulus);
+            if (settings.wire == null) return settings;
+            foreach (float join in saved.laterJoins) settings.wire.Joining(join);
+            settings.wire.Syncs(saved.parameters.ToArray());
+            return settings;
+        }
+
+        /// <summary>
+        /// The timed inputs out of a settings block, whichever way that block writes them down.
+        ///
+        /// A version 1 run had one flat list and no way to say it was one of several — so it
+        /// comes back as one track under the name that used to be at the top of the panel. Not
+        /// as the hand-written track, although that is where a typed input goes today: a run
+        /// taken off a recording before tracks existed is not something somebody typed, and
+        /// calling it that would be this module inventing a provenance for it. A person who
+        /// wants it under another name renames it, which is a thing tracks can do.
+        ///
+        /// Both are read rather than one or the other. A file's version says what wrote it, not
+        /// what is in it, and a reader that trusted the number over the bytes would lose a
+        /// run's inputs to a field somebody forgot to bump.
+        /// </summary>
+        static void Inputs(Settings saved, Stimulus stimulus)
+        {
+            foreach (var poke in saved.stimulus)
+                stimulus.At(Stimulus.OneTrack, poke.at, poke.parameter, poke.value, poke.scope);
+            foreach (var track in saved.tracks)
+            {
+                var into = stimulus.Named(track.name);
+                into.muted = track.muted;
+                foreach (var poke in track.entries)
+                    into.entries.Add(new Stimulus.Entry
+                    {
+                        atSeconds = poke.at,
+                        scope = poke.scope,
+                        parameter = poke.parameter,
+                        value = poke.value,
+                    });
+            }
+        }
     }
 
     /// <summary>
@@ -179,71 +331,11 @@ namespace Yozolab.DaerD.DynamicAnalyze
         {
             var manifest = ScriptableObject.CreateInstance<TraceManifest>();
             manifest.name = "DD Signals";
-            if (settings != null) manifest.settings = Wrote(settings);
+            if (settings != null) manifest.settings = TraceManifest.Wrote(settings);
             if (trace == null) return manifest;
             foreach (var signal in trace.Signals)
-            {
-                var entry = new TraceManifest.Entry
-                {
-                    scope = signal.scope,
-                    name = signal.name,
-                    kind = (int)signal.kind,
-                };
-                if (signal.labels != null) entry.labels.AddRange(signal.labels);
-                manifest.signals.Add(entry);
-            }
+                manifest.signals.Add(TraceManifest.EntryFor(signal));
             return manifest;
-        }
-
-        /// <summary>The settings as the file keeps them.</summary>
-        static TraceManifest.Settings Wrote(SimSettings settings)
-        {
-            var clock = settings.clock ?? new SimClock();
-            var wire = settings.wire;
-            var saved = new TraceManifest.Settings
-            {
-                version = TraceManifest.Settings.Current,
-                fps = clock.fps,
-                seconds = clock.seconds,
-                jitter = clock.jitter,
-                seed = clock.seed,
-                lagRows = settings.lagRows,
-                wire = wire != null,
-            };
-            if (wire != null)
-            {
-                saved.interval = wire.intervalSeconds;
-                saved.latency = wire.latencySeconds;
-                saved.dropChance = wire.dropChance;
-                saved.quantize = wire.quantize;
-                saved.wireSeed = wire.seed;
-                saved.remoteJoinsAt = wire.remoteJoinsAt;
-                saved.laterJoins.AddRange(wire.laterJoins);
-                saved.parameters.AddRange(wire.parameters);
-            }
-            // Every track, muted ones included: a muted track is an input the experiment
-            // deliberately does not use, and a file that dropped it would be one where taking a
-            // question back is retyping it. Only the ACTIVE ones are what the run consumed, and
-            // the manifest is the experiment rather than the run's own transcript.
-            if (settings.stimulus != null)
-                foreach (var track in settings.stimulus.tracks)
-                {
-                    var written = new TraceManifest.Track
-                    {
-                        name = track.name,
-                        muted = track.muted,
-                    };
-                    foreach (var entry in track.entries)
-                        written.entries.Add(new TraceManifest.Poke
-                        {
-                            at = entry.atSeconds,
-                            scope = entry.scope,
-                            parameter = entry.parameter,
-                            value = entry.value,
-                        });
-                    saved.tracks.Add(written);
-                }
-            return saved;
         }
 
         /// <summary>Writes the run to a .anim, with its signal list and the experiment that
@@ -372,85 +464,13 @@ namespace Yozolab.DaerD.DynamicAnalyze
             }
         }
 
-        /// <summary>
-        /// The experiment a saved run was made with, or null when the file does not say — a
-        /// clip saved before settings travelled, or one that was never a DD run at all. Null and
-        /// a default <see cref="SimSettings"/> are different answers, and the caller is meant to
-        /// tell them apart: nothing known is a reason to leave a form alone, not a reason to
-        /// overwrite it with 60 fps.
-        ///
-        /// A version this build does not know is read anyway, for the fields it has names for.
-        /// Refusing would leave the reader holding whatever settings were already in hand, which
-        /// are nobody's; reading gives them the run as far as this build can describe it, and
-        /// the ways it falls short are the fields that did not exist here.
-        /// </summary>
+        /// <summary>The experiment a saved clip was made with, or null when it does not say —
+        /// see <see cref="TraceManifest.Restored"/>, which is where that reading lives now that
+        /// two formats write the same block.</summary>
         public static SimSettings SettingsOf(AnimationClip clip)
         {
             var manifest = ManifestOf(clip);
-            var saved = manifest != null ? manifest.settings : null;
-            if (saved == null || saved.version <= 0) return null;
-
-            var settings = new SimSettings
-            {
-                clock = new SimClock
-                {
-                    fps = saved.fps,
-                    seconds = saved.seconds,
-                    jitter = saved.jitter,
-                    seed = saved.seed,
-                },
-                stimulus = new Stimulus(),
-                lagRows = saved.lagRows,
-                wire = saved.wire
-                    ? new SyncWire
-                    {
-                        intervalSeconds = saved.interval,
-                        latencySeconds = saved.latency,
-                        dropChance = saved.dropChance,
-                        quantize = saved.quantize,
-                        seed = saved.wireSeed,
-                        remoteJoinsAt = saved.remoteJoinsAt,
-                    }
-                    : null,
-            };
-            Inputs(saved, settings.stimulus);
-            if (settings.wire == null) return settings;
-            foreach (float join in saved.laterJoins) settings.wire.Joining(join);
-            settings.wire.Syncs(saved.parameters.ToArray());
-            return settings;
-        }
-
-        /// <summary>
-        /// The timed inputs out of a settings block, whichever way that block writes them down.
-        ///
-        /// A version 1 run had one flat list and no way to say it was one of several — so it
-        /// comes back as one track under the name that used to be at the top of the panel. Not
-        /// as the hand-written track, although that is where a typed input goes today: a run
-        /// taken off a recording before tracks existed is not something somebody typed, and
-        /// calling it that would be this module inventing a provenance for it. A person who
-        /// wants it under another name renames it, which is a thing tracks can do.
-        ///
-        /// Both are read rather than one or the other. A file's version says what wrote it, not
-        /// what is in it, and a reader that trusted the number over the bytes would lose a
-        /// run's inputs to a field somebody forgot to bump.
-        /// </summary>
-        static void Inputs(TraceManifest.Settings saved, Stimulus stimulus)
-        {
-            foreach (var poke in saved.stimulus)
-                stimulus.At(Stimulus.OneTrack, poke.at, poke.parameter, poke.value, poke.scope);
-            foreach (var track in saved.tracks)
-            {
-                var into = stimulus.Named(track.name);
-                into.muted = track.muted;
-                foreach (var poke in track.entries)
-                    into.entries.Add(new Stimulus.Entry
-                    {
-                        atSeconds = poke.at,
-                        scope = poke.scope,
-                        parameter = poke.parameter,
-                        value = poke.value,
-                    });
-            }
+            return TraceManifest.Restored(manifest != null ? manifest.settings : null);
         }
 
         public static TraceManifest ManifestOf(AnimationClip clip)

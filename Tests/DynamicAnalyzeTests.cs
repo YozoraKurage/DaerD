@@ -3017,6 +3017,317 @@ namespace Yozolab.DaerD.Tests
             }
         }
 
+        // ---- a run as a file --------------------------------------------------
+
+        /// <summary>A path outside the AssetDatabase. A .ddrun is not an asset — nothing about
+        /// it goes through an importer — so writing one into Assets/ would make these tests
+        /// wait on Unity's refresh to measure a format that does not use it.</summary>
+        static string TempRun() =>
+            FileUtil.GetUniqueTempPathInProject() + "." + TraceFile.Extension;
+
+        /// <summary>The controller of <see cref="NewController"/> with a Trigger and a second
+        /// layer added, so a run of it has one row of every <see cref="SignalKind"/> in it and
+        /// two label tables to keep.</summary>
+        static AnimatorController EveryKind()
+        {
+            var controller = NewController();
+            controller.AddParameter("Fire", AnimatorControllerParameterType.Trigger);
+            controller.AddLayer("Second");
+
+            var machine = controller.layers[1].stateMachine;
+            var waiting = machine.AddState("Waiting");
+            var fired = machine.AddState("Fired");
+            machine.defaultState = waiting;
+            var transition = waiting.AddTransition(fired);
+            transition.hasExitTime = false;
+            transition.hasFixedDuration = true;
+            transition.duration = 0.05f;
+            transition.AddCondition(AnimatorConditionMode.If, 0f, "Fire");
+            return controller;
+        }
+
+        /// <summary>
+        /// Every frame of every row, exactly.
+        ///
+        /// Without a tolerance on purpose, and it is the whole acceptance condition of the
+        /// format: a sample is a float, the file writes a float, and a run that comes back
+        /// nearly equal is a run somebody would go looking for a bug in. The times and the
+        /// frame lengths are held to the same standard — a jittered run has no frame rate to
+        /// recompute them from, so they are data rather than a formula.
+        /// </summary>
+        static void SameRun(SignalTrace expected, SignalTrace actual)
+        {
+            Assert.AreEqual(expected.Frames, actual.Frames, "frames");
+            for (int frame = 0; frame < expected.Frames; frame++)
+            {
+                Assert.AreEqual(expected.TimeAt(frame), actual.TimeAt(frame),
+                    "the time of frame " + frame);
+                Assert.AreEqual(expected.StepAt(frame), actual.StepAt(frame),
+                    "the length of frame " + frame);
+            }
+
+            Assert.AreEqual(expected.Signals.Count, actual.Signals.Count, "rows");
+            for (int i = 0; i < expected.Signals.Count; i++)
+            {
+                var before = expected.Signals[i];
+                var after = actual.Signals[i];
+                Assert.AreEqual(before.scope, after.scope, "the scope of row " + i);
+                Assert.AreEqual(before.name, after.name, "the name of row " + i);
+                Assert.AreEqual(before.kind, after.kind, before.Path + "'s kind");
+                if (before.labels == null)
+                    Assert.IsNull(after.labels, before.Path + "'s labels");
+                else
+                    CollectionAssert.AreEqual(before.labels, after.labels,
+                        before.Path + "'s labels");
+                Assert.AreEqual(before.Moved, after.Moved,
+                    before.Path + " is listed as having moved");
+                for (int frame = 0; frame < expected.Frames; frame++)
+                    Assert.AreEqual(before.At(frame), after.At(frame),
+                        before.Path + " at frame " + frame);
+            }
+        }
+
+        [Test]
+        public void File_CarriesEveryFrameOfTheRunBackExactly()
+        {
+            // Everything the format has to survive at once: jitter, so no two frames are the
+            // same length and the times cannot be worked out from a frame rate; a wire with two
+            // other people, so the same names appear under three scopes; a Trigger; and two
+            // layers' state and transition rows, which are the only ones with names behind
+            // their numbers.
+            var wire = new SyncWire { intervalSeconds = 0.1f, latencySeconds = 0.05f }
+                .Joining(0.25f).Syncs("X", "N");
+            var settings = new SimSettings
+            {
+                clock = new SimClock { fps = 60f, seconds = 0.6f, jitter = 0.3f, seed = 5 },
+                stimulus = new Stimulus(),
+                wire = wire,
+            };
+            settings.stimulus.At(Stimulus.MenuTrack, 0.05f, "Go", 1f);
+            settings.stimulus.At(Stimulus.MenuTrack, 0.15f, "Fire", 1f);
+            settings.stimulus.At(Stimulus.MenuTrack, 0.2f, "X", 0.375f);
+            settings.stimulus.At(Stimulus.WorldTrack, 0.3f, "N", 4f);
+            var trace = Simulation.Run(EveryKind(), settings);
+
+            string path = TempRun();
+            try
+            {
+                TraceFile.Save(trace, path, settings);
+                SameRun(trace, TraceFile.Load(path));
+
+                // And that the run really had all of that in it, rather than the comparison
+                // being of two empty things.
+                Assert.Greater(trace.Frames, 30);
+                Assert.IsNotNull(trace.Find(Simulation.RemoteScopeAt(1), "X"),
+                    "a third client's copy is a row of its own");
+                CollectionAssert.AreEqual(new[] { "Waiting", "Fired" },
+                    trace.Find(Simulation.LocalScope, "Second/state").labels);
+                Assert.AreEqual(SignalKind.Trigger,
+                    trace.Find(Simulation.LocalScope, "Fire").kind);
+            }
+            finally
+            {
+                System.IO.File.Delete(path);
+            }
+        }
+
+        [Test]
+        public void File_CarriesTheExperimentThatMadeIt_MutedTracksIncluded()
+        {
+            var settings = Elaborate();
+            settings.stimulus = new Stimulus();
+            settings.stimulus.At(Stimulus.MenuTrack, 0.05f, "Go", 1f);
+            settings.stimulus.At(Stimulus.WorldTrack, 0.1f, "X", 0.25f);
+            settings.stimulus.At(Stimulus.WorldTrack, 0.15f, "N", 3f);
+            settings.stimulus.Named(Stimulus.WorldTrack).muted = true;
+            var trace = Simulation.Run(NewController(), settings);
+
+            string path = TempRun();
+            try
+            {
+                TraceFile.Save(trace, path, settings);
+                var run = TraceFile.Read(path);
+                SameRun(trace, run.trace);
+
+                var read = run.settings;
+                Assert.IsNotNull(read, "the settings ride along with the run");
+                Assert.AreEqual(45f, read.clock.fps, 1e-6f);
+                Assert.AreEqual(0.2f, read.clock.jitter, 1e-6f);
+                Assert.AreEqual(11, read.clock.seed);
+                Assert.IsFalse(read.lagRows);
+                Assert.IsNotNull(read.wire, "a two-client run says so");
+                Assert.AreEqual(0.08f, read.wire.latencySeconds, 1e-6f);
+                Assert.AreEqual(0.25f, read.wire.dropChance, 1e-6f);
+                Assert.IsFalse(read.wire.quantize);
+                // The one thing about the experiment that cannot be worked out from anything
+                // else: the wire was given a seed of its own, and it is not the clock's.
+                Assert.AreEqual(99, read.wire.seed);
+                Assert.AreNotEqual(read.clock.seed, read.wire.seed);
+                Assert.AreEqual(3, read.wire.Remotes, "and how many people were in the instance");
+                CollectionAssert.AreEqual(new[] { "X", "N" }, read.wire.parameters);
+
+                var tracks = read.stimulus.tracks;
+                Assert.AreEqual(2, tracks.Count);
+                Assert.AreEqual(Stimulus.MenuTrack, tracks[0].name);
+                Assert.IsFalse(tracks[0].muted);
+                Assert.AreEqual(Stimulus.WorldTrack, tracks[1].name);
+                Assert.IsTrue(tracks[1].muted, "which tracks were in the run is the experiment");
+                Assert.AreEqual(2, tracks[1].entries.Count,
+                    "and a muted track's rows travel, so taking the question back is a click");
+                Assert.AreEqual(1, read.stimulus.InOrder().Count, "the run still sees one");
+
+                // The whole point of keeping them: the file, asked again, is the same run.
+                var again = Simulation.Run(NewController(), read);
+                Assert.AreEqual(trace.Frames, again.Frames);
+                foreach (var signal in trace.Signals)
+                {
+                    var twin = again.Find(signal.scope, signal.name);
+                    Assert.IsNotNull(twin, "row " + signal.Path + " ran again");
+                    for (int frame = 0; frame < trace.Frames; frame += 3)
+                        Assert.AreEqual(signal.At(frame), twin.At(frame), 1e-4f,
+                            signal.Path + " at " + frame);
+                }
+            }
+            finally
+            {
+                System.IO.File.Delete(path);
+            }
+        }
+
+        [Test]
+        public void File_WithNoSettings_SaysNothingRatherThanSayingDefaults()
+        {
+            var trace = Simulation.Run(NewController(), Clock(0.2f), new Stimulus());
+
+            string path = TempRun();
+            try
+            {
+                TraceFile.Save(trace, path);
+                var run = TraceFile.Read(path);
+                Assert.IsNull(run.settings,
+                    "nothing known is a reason to leave a form alone, not to write 60 fps into it");
+                SameRun(trace, run.trace);
+            }
+            finally
+            {
+                System.IO.File.Delete(path);
+            }
+        }
+
+        [Test]
+        public void File_OfALiveTraceThatWasTrimmed_KeepsTheClockItWasTrimmedTo()
+        {
+            // A session that ran long enough to drop its oldest frames. Its times count from
+            // the start of the session rather than from the start of what is still kept, so the
+            // first frame's time is not its length — which is exactly the case a format that
+            // reconstructed the times from a frame rate would get wrong.
+            var trace = new SignalTrace();
+            var moving = trace.Declare(Simulation.LocalScope, "X", SignalKind.Float);
+            var still = trace.Declare(Simulation.LocalScope, "Go", SignalKind.Bool);
+            float time = 0f;
+            for (int frame = 0; frame < 200; frame++)
+            {
+                float step = 1f / 60f + (frame % 7) * 1e-4f;
+                time += step;
+                trace.Frame(time, step);
+                moving.Push(Mathf.Sin(frame * 0.1f));
+                still.Push(1f);
+            }
+            trace.Trim(50);
+            Assert.AreEqual(50, trace.Frames);
+            Assert.AreNotEqual(trace.TimeAt(0), trace.StepAt(0),
+                "a trimmed trace does not begin at the start of the session");
+
+            string path = TempRun();
+            try
+            {
+                TraceFile.Save(trace, path);
+                SameRun(trace, TraceFile.Load(path));
+            }
+            finally
+            {
+                System.IO.File.Delete(path);
+            }
+        }
+
+        [Test]
+        public void File_RefusesAFormatItDoesNotKnow_AndSaysWhichOne()
+        {
+            string path = TempRun();
+            try
+            {
+                TraceFile.Save(Simulation.Run(NewController(), Clock(0.1f)), path);
+
+                // The version, in the header and outside the compression precisely so that this
+                // is answerable without inflating anything.
+                var bytes = System.IO.File.ReadAllBytes(path);
+                bytes[5] = 9;
+                System.IO.File.WriteAllBytes(path, bytes);
+                var refused = Assert.Throws<System.IO.InvalidDataException>(
+                    () => TraceFile.Read(path));
+                StringAssert.Contains("9", refused.Message,
+                    "the number is what a reader has to go looking for a build with");
+
+                // And a file that was never a run at all, which fails differently and has to
+                // say so differently.
+                System.IO.File.WriteAllBytes(path,
+                    System.Text.Encoding.UTF8.GetBytes("PK not a run at all"));
+                var foreign = Assert.Throws<System.IO.InvalidDataException>(
+                    () => TraceFile.Read(path));
+                StringAssert.Contains("marker", foreign.Message);
+
+                Assert.Throws<System.IO.FileNotFoundException>(
+                    () => TraceFile.Read(path + ".missing"));
+            }
+            finally
+            {
+                System.IO.File.Delete(path);
+            }
+        }
+
+        /// <summary><paramref name="rows"/> signals over <paramref name="frames"/> frames,
+        /// either perfectly still or moving at every single frame.</summary>
+        static SignalTrace Sampled(int rows, int frames, bool moving)
+        {
+            var trace = new SignalTrace();
+            var signals = new System.Collections.Generic.List<SignalTrace.Signal>();
+            for (int row = 0; row < rows; row++)
+                signals.Add(trace.Declare(Simulation.LocalScope, "P" + row, SignalKind.Float));
+            for (int frame = 0; frame < frames; frame++)
+            {
+                trace.Frame((frame + 1) / 60f, 1f / 60f);
+                for (int row = 0; row < signals.Count; row++)
+                    signals[row].Push(moving
+                        ? Mathf.Sin((frame * 37 + row * 11) * 0.1f) : 0.5f);
+            }
+            return trace;
+        }
+
+        static long Bytes(SignalTrace trace)
+        {
+            string path = TempRun();
+            try
+            {
+                TraceFile.Save(trace, path);
+                return new System.IO.FileInfo(path).Length;
+            }
+            finally
+            {
+                System.IO.File.Delete(path);
+            }
+        }
+
+        [Test]
+        public void File_CostsWhatMovedRatherThanWhatWasSampled()
+        {
+            long still = Bytes(Sampled(40, 600, false));
+            long busy = Bytes(Sampled(40, 600, true));
+            Assert.Less(still * 4, busy,
+                "a row that never moves is one change point and a row that moves at every frame "
+                + "is six hundred of them — a format that charged for the samples would price "
+                + "the two the same (" + still + " B still, " + busy + " B moving)");
+        }
+
         // ---- the inputs, in tracks -------------------------------------------
 
         [Test]

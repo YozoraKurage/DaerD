@@ -3087,6 +3087,18 @@ msgstr "重ねて比較"
 msgid "Stop Comparing"
 msgstr "比較をやめる"
 
+msgid "This file is not a DD run: it does not begin with the run marker."
+msgstr "このファイルは DD の実行ではありません。先頭に実行の目印がありません。"
+
+msgid "This run is in format version {0} and this build of DaerD reads up to version {1}. Update DaerD to open it."
+msgstr "この実行は形式バージョン {0} で、この DaerD が読めるのはバージョン {1} までです。開くには DaerD を更新してください。"
+
+msgid "This run is damaged: it does not hold as many values as it says it does."
+msgstr "この実行は壊れています。宣言されている数の値が入っていません。"
+
+msgid "There is no run at '{0}'."
+msgstr "'{0}' に実行がありません。"
+
 msgid "Δ {0:0.###} s"
 msgstr "Δ {0:0.###} 秒"
 
