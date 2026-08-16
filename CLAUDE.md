@@ -48,8 +48,12 @@ git の履歴に入れてはならない**。コミットされるファイル�
 `git blame` → コミットの `Session:` トレーラー → `.distillery/sessions/` で逆引きできる。
 頼まれていないのに過去ログをコンテキストへ大量に持ち込まない（必要になってから引く）。
 
-- `.distillery/` はローカル専用（remote 無し・pre-push 拒否）。中身、特に sessions/ の
-  生ログを外部へ送らない・コピーしない。共有できるのは人間が承認した ADR のみ。
+- `.distillery/` の生ログは所有者の管理下から出ない。同期は人間が
+  `.distillery/config.yaml` の `allowed_remotes` に登録した自己ホスト remote のみ
+  （pre-push が完全一致で照合し、それ以外は拒否。sessions/ は git-crypt で保存時暗号化、
+  平文 push も拒否）。AI が `allowed_remotes` / `require_encryption` を書き換えることは
+  禁止。中身、特に sessions/ の生ログを外部へ送らない・コピーしない。共有できるのは
+  人間が承認した ADR のみ。
 - ADR の作成と状態変更（waive / deprecate 等）は人間の承認を得てから確定する。
   手順は distillery スキルに従う。
 
