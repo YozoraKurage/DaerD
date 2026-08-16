@@ -75,6 +75,12 @@ namespace Yozolab.DaerD.DynamicAnalyze
             public AnimatorController controller;
         }
 
+        /// <summary>The slot an avatar's own animation work almost always lives in, spelt the
+        /// way the descriptor's enum spells it. Named here rather than where it is used because
+        /// this is the file that knows where the word comes from — it is the SDK's, and a table
+        /// of our own would be the thing that goes stale.</summary>
+        public const string Fx = "FX";
+
         /// <summary>
         /// One avatar, as one build left it.
         ///

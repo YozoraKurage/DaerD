@@ -298,27 +298,70 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// never left guessing which of the two they are reading. And picking a target still
         /// prefers an avatar running the field's controller outright, so this only ever decides
         /// cases the old rule left with nothing at all.
+        ///
+        /// <para>WHICH BUILT ONE, WHEN SEVERAL MATCH.</para>
+        /// A real avatar's build fills several playable slots at once, and every one of them is
+        /// a candidate here: the graph is running all of them, so "does this candidate match a
+        /// playable" is true of Base, Gesture, Action and FX alike. Taking the first was what
+        /// this did, and on a real avatar the first is the descriptor's Base — a locomotion
+        /// controller nobody was pointing at, whose parameters are the movement ones and whose
+        /// states are the walk cycle. So the pick is made on the evidence there is about which
+        /// slot the person meant: the layer names their controller and each candidate have in
+        /// COMMON, as a multiset, most in common winning. That is the same quantity the match
+        /// itself is decided by, read as a degree rather than a yes — the built FX contains the
+        /// FX layers somebody was editing, and no other slot does.
+        ///
+        /// A tie with something in common goes to the FX slot, because that is the one an
+        /// avatar's own animation work almost always lives in and the one this window is opened
+        /// on. A tie at NOTHING in common is left alone: no candidate shares a layer name with
+        /// the field's controller, there is no evidence about which slot was meant, and the
+        /// descriptor's own slot order — what this picked before — is kept rather than swapped
+        /// for a guess. So a project this used to decide one way is decided that way still, and
+        /// only a project where the names say something is decided differently.
+        ///
+        /// Where no build was watched, <see cref="BuildCapture.ControllersFor"/> is empty and
+        /// none of this runs.
         /// </summary>
         internal static Fit Fitting(Animator animator, AnimatorController controller,
             List<AnimatorControllerPlayable> playables)
         {
+            var wanted = controller != null ? LayerNames(controller) : new List<string>();
+            var best = new Fit { controller = null, built = string.Empty, at = -1 };
+            int shared = -1;
+            bool preferred = false;
             foreach (var candidate in BuildCapture.ControllersFor(animator))
             {
                 int found = Matching(candidate, playables);
                 if (found < 0) continue;
-                return new Fit
-                {
-                    controller = candidate,
-                    built = BuildCapture.KindOf(animator, candidate),
-                    at = found,
-                };
+                string kind = BuildCapture.KindOf(animator, candidate);
+                int common = Shared(wanted, LayerNames(candidate));
+                bool fx = kind == BuildCapture.Fx;
+                bool better = common > shared
+                    || (common == shared && common > 0 && fx && !preferred);
+                if (best.at >= 0 && !better) continue;
+                shared = common;
+                preferred = fx;
+                best = new Fit { controller = candidate, built = kind, at = found };
             }
+            if (best.at >= 0) return best;
             return new Fit
             {
                 controller = controller,
                 built = string.Empty,
                 at = Matching(controller, playables),
             };
+        }
+
+        /// <summary>How many layer names these two have in common, counting duplicates — the
+        /// size of the multiset intersection. Zero for two controllers that share nothing, and
+        /// the full count for two that would <see cref="Fits"/> each other.</summary>
+        static int Shared(List<string> names, List<string> others)
+        {
+            var left = new List<string>(others);
+            int common = 0;
+            foreach (string name in names)
+                if (left.Remove(name)) common++;
+            return common;
         }
 
         /// <summary>Whether this avatar's graph is running the window's controller — or the
@@ -405,27 +448,49 @@ namespace Yozolab.DaerD.DynamicAnalyze
             return recorder;
         }
 
-        /// <summary>One more avatar to read, under a scope of its own.</summary>
+        /// <summary>One more avatar to read, under a scope of its own. The parameters come off
+        /// every playable this avatar has and not only the one the states are named from — see
+        /// <see cref="Declare"/> for why, and for what the difference costs.</summary>
         void Watch(Animator animator, AnimatorController controller, string scope)
         {
             var playables = PlayablesOn(animator);
+            var pool = Pool(playables);
             var fit = Fitting(animator, controller, playables);
             if (fit.at >= 0)
             {
                 var source = PlaySource.Of(playables[fit.at]);
                 var watched = Add(animator, source, scope, true, true);
                 watched.built = fit.built;
-                Declare(watched, new StateTables(fit.controller), Align(source, fit.controller));
+                Declare(watched, pool, new StateTables(fit.controller),
+                    Align(source, fit.controller));
                 return;
             }
             for (int i = playables.Count - 1; i >= 0; i--)
             {
                 if (!playables[i].IsValid()) continue;
                 Declare(Add(animator, PlaySource.Of(playables[i]), scope, false, true),
-                    null, null);
+                    pool, null, null);
                 return;
             }
-            Declare(Add(animator, PlaySource.Of(animator), scope, false, false), null, null);
+            Declare(Add(animator, PlaySource.Of(animator), scope, false, false), null, null, null);
+        }
+
+        /// <summary>
+        /// Every controller playable this avatar has, as something readable, in the order the
+        /// graph hands them out — which is the mixer's input order, so it is the avatar's own
+        /// playable layer order and not an accident of ours.
+        ///
+        /// A fixed order matters because it is the tie-break: where two playables declare the
+        /// same parameter and neither is the one the states were named from, the first one here
+        /// is the one read. Fixed rather than clever, so two recordings of the same avatar read
+        /// the same row off the same place.
+        /// </summary>
+        static List<PlaySource> Pool(List<AnimatorControllerPlayable> playables)
+        {
+            var pool = new List<PlaySource>();
+            foreach (var playable in playables)
+                if (playable.IsValid()) pool.Add(PlaySource.Of(playable));
+            return pool;
         }
 
         Watched Add(Animator animator, PlaySource source, string scope, bool matched,
@@ -494,24 +559,42 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// The parameters come off the SOURCE rather than off the controller, because the source
         /// is what is running. A recording with no matched playable still gets them, and they
         /// are then the only thing it has.
+        ///
+        /// <para>AND OFF EVERY SOURCE, NOT ONE.</para>
+        /// A playable knows only the parameters ITS OWN controller declares. On an avatar a tool
+        /// is wearing that is a fraction of the avatar's parameters: the slots are separate
+        /// controllers and Mecanim gives each playable its own parameter list, so the locomotion
+        /// slot has the movement ones and no gestures, and the FX slot has the gestures and none
+        /// of the movement. Reading one playable therefore recorded one slice and silently lost
+        /// the rest — which is exactly what a real avatar's recording looked like: the movement
+        /// rows moved and nothing anybody pressed appeared anywhere. So a row is declared per
+        /// DISTINCT NAME across every playable, and read from the first that declares it, the
+        /// preferred source first and the rest in <see cref="Pool"/> order.
+        ///
+        /// <para>WHAT THAT ASSUMES, AND WHERE IT WOULD BE WRONG.</para>
+        /// That the copies of a same-named parameter in different slots agree. They are separate
+        /// values in Mecanim and nothing makes them equal by construction — but the tools this
+        /// is for write a parameter to every playable that has it, which is what makes an
+        /// avatar's Gesture mean the same thing in FX as in Action. Where they somehow diverge,
+        /// the row is one of them rather than both, and it is the one named above rather than an
+        /// arbitrary one. Splitting the row per slot was the alternative and was dropped: it
+        /// would double the row count of every real recording to say something that is the same
+        /// number twice, and it would stop a recording lining up under a run, which names rows
+        /// by parameter and has no slots at all.
+        ///
+        /// The states, transitions and weights stay with the one matched playable. Those really
+        /// are per slot — two slots' layers can share a name and mean different states — and a
+        /// row that merged them would be wrong rather than missing. Recording every slot's
+        /// layers under a scope each is a thing worth doing and is not this.
         /// </summary>
-        void Declare(Watched watched, StateTables tables, int[] alignment)
+        void Declare(Watched watched, List<PlaySource> pool, StateTables tables, int[] alignment)
         {
             var source = watched.source;
             string scope = watched.scope;
-            for (int i = 0; i < source.ParameterCount; i++)
-            {
-                var parameter = source.ParameterAt(i);
-                string name = parameter.name;
-                var type = parameter.type;
-                var signal = Trace.Declare(scope, name, TraceRecorder.KindOf(type));
-                _readers.Add(new Reader
-                {
-                    signal = signal,
-                    of = watched,
-                    read = () => source.Read(name, type),
-                });
-            }
+            var declared = new HashSet<string>();
+            DeclareParameters(watched, source, declared);
+            if (pool != null)
+                foreach (var other in pool) DeclareParameters(watched, other, declared);
             if (alignment == null) return;
 
             for (int i = 0; i < alignment.Length; i++)
@@ -549,6 +632,28 @@ namespace Yozolab.DaerD.DynamicAnalyze
                     signal = weight,
                     of = watched,
                     read = () => source.LayerWeight(layer),
+                });
+            }
+        }
+
+        /// <summary>Every parameter this source declares that no source before it did, as a row
+        /// read off this source. The set of names already spoken for is what makes the merge a
+        /// union rather than a concatenation — a name declared in four slots is one row, read
+        /// from the first slot that claimed it.</summary>
+        void DeclareParameters(Watched watched, PlaySource source, HashSet<string> declared)
+        {
+            for (int i = 0; i < source.ParameterCount; i++)
+            {
+                var parameter = source.ParameterAt(i);
+                string name = parameter.name;
+                if (!declared.Add(name)) continue;
+                var type = parameter.type;
+                var signal = Trace.Declare(watched.scope, name, TraceRecorder.KindOf(type));
+                _readers.Add(new Reader
+                {
+                    signal = signal,
+                    of = watched,
+                    read = () => source.Read(name, type),
                 });
             }
         }

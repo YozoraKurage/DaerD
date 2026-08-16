@@ -630,6 +630,59 @@ namespace Yozolab.DaerD.Tests
         }
 
         /// <summary>
+        /// And WHICH of the built controllers, on an avatar whose build filled more than one
+        /// playable slot — which is every avatar somebody actually wears.
+        ///
+        /// The graph runs all of them, so every slot matches a playable of its own and "the
+        /// first one that matches" is an answer rather than the answer. It used to be taken,
+        /// and on a real avatar the first slot is Base: a locomotion controller nobody was
+        /// pointing at, whose states are the walk cycle. A recording of it named the wrong
+        /// layers and had none of the states the person was looking for.
+        ///
+        /// So the slot is chosen on the only evidence there is — the layer names the field's
+        /// controller and each candidate have in common. Asserted with the Base slot deliberately
+        /// FIRST, because the pick is only worth making where the old rule would have made the
+        /// other one.
+        /// </summary>
+        [Test]
+        public void WithSeveralSlotsBuiltTheRecordingIsNamedFromTheOneTheFieldsLayersAreIn()
+        {
+#if DAERD_NDMF && DAERD_VRC
+            var avatar = Rig("DD Build Slots", under: Controller("Locomotion", "Grounded"));
+            Build(avatar.root);
+
+            var built = BuildCapture.ControllersFor(avatar.animator);
+            Assert.GreaterOrEqual(built.Count, 2,
+                "the build left one slot, so there is nothing here to choose between");
+            Assert.Greater(built.FindIndex(
+                    slot => BuildCapture.KindOf(avatar.animator, slot) == BuildCapture.Fx), 0,
+                "the rig is meant to put the locomotion slot first — with FX first there is no "
+                + "wrong answer for this to avoid");
+
+            var playables = PlayRecorder.PlayablesOn(Drive(avatar.animator, built.ToArray()));
+            Assert.GreaterOrEqual(PlayRecorder.Matching(built[0], playables), 0,
+                "the first slot matches nothing, so the old rule would not have taken it either");
+
+            var recorder = PlayRecorder.On(avatar.animator, avatar.fx);
+            Assert.AreEqual("FX", recorder.Built,
+                "the recording was named from a slot the field's controller has no layer in");
+            recorder.Sample(1, 0f);
+            Assert.IsNotNull(recorder.Trace.Find(Simulation.PlayScope, "Base/state"),
+                "the layer the field's controller is about has no state row");
+            Assert.IsNull(recorder.Trace.Find(Simulation.PlayScope, "Locomotion/state"),
+                "a layer of a slot nothing was named from has rows it has no labels for");
+            // And the other half: the slot that was NOT named from still contributes its
+            // parameters, which is the whole of what a person watching gestures needs.
+            Assert.IsNotNull(recorder.Trace.Find(Simulation.PlayScope, "Grounded"),
+                "the locomotion slot's parameter is missing, so a recording of a real avatar "
+                + "carries one slot's parameters and loses the rest");
+            Assert.IsNotNull(recorder.Trace.Find(Simulation.PlayScope, "Wave"));
+#else
+            Assert.Ignore("NDMF and the VRChat avatars SDK are not both installed.");
+#endif
+        }
+
+        /// <summary>
         /// An avatar running its own build counts as running the controller in the field, which
         /// is what the arm toggle and the candidate list's tick are decided by. Without it,
         /// arming would wait forever on the avatars this is for: they never run the field's
@@ -803,14 +856,17 @@ namespace Yozolab.DaerD.Tests
         /// with a controller playable under it, written out to an Animator that holds no
         /// controller of its own. Returns the Animator so a call can be written inside an
         /// expression about it.</summary>
-        Animator Drive(Animator animator, AnimatorController controller)
+        Animator Drive(Animator animator, params AnimatorController[] controllers)
         {
             var graph = PlayableGraph.Create("DD Build Graph");
             _graphs.Add(graph);
-            var mixer = AnimationLayerMixerPlayable.Create(graph, 1);
-            var playable = AnimatorControllerPlayable.Create(graph, controller);
-            graph.Connect(playable, 0, mixer, 0);
-            mixer.SetInputWeight(0, 1f);
+            var mixer = AnimationLayerMixerPlayable.Create(graph, controllers.Length);
+            for (int i = 0; i < controllers.Length; i++)
+            {
+                var playable = AnimatorControllerPlayable.Create(graph, controllers[i]);
+                graph.Connect(playable, 0, mixer, i);
+                mixer.SetInputWeight(i, 1f);
+            }
             var output = AnimationPlayableOutput.Create(graph, "o", animator);
             output.SetSourcePlayable(mixer);
             graph.Play();
@@ -871,8 +927,14 @@ namespace Yozolab.DaerD.Tests
         /// an expression parameters asset of its own, and — unless asked otherwise — a child
         /// carrying a gimmick that merges a second layer in and declares an internal parameter
         /// that has to be renamed for it.
+        ///
+        /// <paramref name="under"/> puts a second playable slot — Base, the locomotion one —
+        /// AHEAD of the FX slot, which is the arrangement every real avatar has and the one the
+        /// slot order used to be decided by. The array is emptied first so the order is this
+        /// rig's statement rather than whatever the descriptor happened to come with.
         /// </summary>
-        Avatars Rig(string name, bool gimmick = true, bool keep = false, bool saved = false)
+        Avatars Rig(string name, bool gimmick = true, bool keep = false, bool saved = false,
+            AnimatorController under = null)
         {
             var made = new Avatars();
             made.root = new GameObject(name);
@@ -892,6 +954,13 @@ namespace Yozolab.DaerD.Tests
             so.FindProperty("customExpressions").boolValue = true;
             so.FindProperty("expressionParameters").objectReferenceValue =
                 Parameters("Wave", saved ? OnPlayParameters : null);
+            if (under != null)
+            {
+                so.FindProperty("baseAnimationLayers").arraySize = 0;
+                Slot(so, "Base").FindPropertyRelative("animatorController").objectReferenceValue =
+                    under;
+                Slot(so, "Base").FindPropertyRelative("isDefault").boolValue = false;
+            }
             Slot(so, "FX").FindPropertyRelative("animatorController").objectReferenceValue = made.fx;
             Slot(so, "FX").FindPropertyRelative("isDefault").boolValue = false;
             so.ApplyModifiedPropertiesWithoutUndo();

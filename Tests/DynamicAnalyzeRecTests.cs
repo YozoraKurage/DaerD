@@ -336,11 +336,122 @@ namespace Yozolab.DaerD.Tests
                 Assert.AreEqual("Idle", TextAt(recorder.Trace, "FX/state", 0));
                 Assert.AreEqual("On", TextAt(recorder.Trace, "FX/state", 1));
 
-                // The other playable's controller is not this one, so none of its rows are here
-                // — a recording says what the controller in the field did and nothing else.
+                // The other playable's LAYERS are not this controller's, so none of its state
+                // rows are here: those belong to a slot and two slots can name a layer the same
+                // thing while meaning different states.
                 Assert.IsNull(recorder.Trace.Find(Simulation.PlayScope, "Gesture/state"));
-                Assert.IsNull(recorder.Trace.Find(Simulation.PlayScope, "Hand"));
+                // Its PARAMETERS are here, because a parameter belongs to the avatar rather
+                // than to the slot that happens to declare it — see the test below for the
+                // avatar this matters on.
+                Assert.IsNotNull(recorder.Trace.Find(Simulation.PlayScope, "Hand"),
+                    "a parameter the other playable declares was dropped");
             }
+        }
+
+        /// <summary>
+        /// The shape every test above this one was missing, and the one a real avatar under a
+        /// tool has: several controller playables, each declaring only the parameters of the
+        /// slot it is.
+        ///
+        /// The rig here was one avatar with one controller until an avatar in somebody's project
+        /// showed what that hid. Mecanim gives an <see cref="AnimatorControllerPlayable"/> the
+        /// parameter list of its OWN controller, so on a real build the locomotion slot has the
+        /// movement parameters and no gestures, and the slot somebody is editing has the
+        /// gestures and none of the movement. Reading the matched playable alone therefore
+        /// recorded one slot's slice and lost every other — which looks, to the person
+        /// recording, exactly like a window that writes down movement and ignores everything
+        /// they press.
+        ///
+        /// What is asserted is the whole rule: a row per distinct name across the playables, the
+        /// value read from the matched playable where it declares the name, and the state rows
+        /// still coming from the matched playable alone.
+        /// </summary>
+        [Test]
+        public void Recorder_ReadsParametersOffEveryPlayable_NotOnlyTheOneItMatched()
+        {
+            using (var basis = Owned(Slot("Locomotion", "VelocityX",
+                AnimatorControllerParameterType.Float)))
+            using (var effects = Owned(Slot("Hands", "GestureLeft",
+                AnimatorControllerParameterType.Int)))
+            using (var rig = new Rig(basis.asset, effects.asset))
+            {
+                Assert.AreEqual(1, PlayRecorder.Matching(effects.asset,
+                        PlayRecorder.PlayablesOn(rig.animator)),
+                    "the layer names picked the wrong playable out of the two");
+
+                var recorder = PlayRecorder.On(rig.animator, effects.asset);
+                Assert.IsTrue(recorder.Matched);
+
+                rig.Step();
+                Look(recorder);
+                rig.Playable(1).SetInteger("GestureLeft", 1);
+                rig.Playable(0).SetFloat("VelocityX", 1f);
+                // The same name in both slots, deliberately disagreeing — which the tools this
+                // is for never let happen, and which the rule has to have an answer for anyway.
+                rig.Playable(0).SetFloat("Shared", 3f);
+                rig.Playable(1).SetFloat("Shared", 7f);
+                rig.Step(2);
+                Look(recorder);
+
+                var gesture = recorder.Trace.Find(Simulation.PlayScope, "GestureLeft");
+                Assert.IsNotNull(gesture, "the matched slot's own parameter is missing");
+                Assert.AreEqual(0f, gesture.At(0));
+                Assert.AreEqual(1f, gesture.At(1));
+
+                var velocity = recorder.Trace.Find(Simulation.PlayScope, "VelocityX");
+                Assert.IsNotNull(velocity,
+                    "the other slot's parameter has no row, so a recording of a real avatar "
+                    + "would carry one slot's parameters and silently lose the rest");
+                Assert.AreEqual(0f, velocity.At(0));
+                Assert.AreEqual(1f, velocity.At(1));
+
+                var shared = recorder.Trace.Find(Simulation.PlayScope, "Shared");
+                Assert.IsNotNull(shared);
+                Assert.AreEqual(7f, shared.At(1),
+                    "a name both slots declare is read from the matched playable, not from "
+                    + "whichever one came first");
+                Assert.AreEqual(1, Rows(recorder.Trace, "Shared"),
+                    "a name declared twice made two rows");
+
+                // And the states stay with the matched playable alone.
+                Assert.AreEqual("On", TextAt(recorder.Trace, "Hands/state", 1));
+                Assert.IsNull(recorder.Trace.Find(Simulation.PlayScope, "Locomotion/state"),
+                    "a layer of a slot nothing was named from has rows it cannot have labels for");
+            }
+        }
+
+        /// <summary>One VRC playable slot's worth of controller: one layer, one parameter of its
+        /// own, and one both slots share — which is what makes the parameter sets overlap the
+        /// way a real avatar's do without being equal.</summary>
+        static AnimatorController Slot(string layer, string parameter,
+            AnimatorControllerParameterType type)
+        {
+            var controller = new AnimatorController();
+            controller.name = "Rec Slot " + layer;
+            controller.hideFlags = HideFlags.HideAndDontSave;
+            controller.AddLayer(layer);
+            controller.AddParameter(parameter, type);
+            controller.AddParameter("Shared", AnimatorControllerParameterType.Float);
+            var machine = controller.layers[0].stateMachine;
+            var idle = machine.AddState("Idle");
+            var on = machine.AddState("On");
+            machine.defaultState = idle;
+            var transition = idle.AddTransition(on);
+            transition.hasExitTime = false;
+            transition.hasFixedDuration = true;
+            transition.duration = 0f;
+            transition.AddCondition(AnimatorConditionMode.Greater, 0.5f, parameter);
+            return controller;
+        }
+
+        /// <summary>How many rows of this name a scope has. One, always — asked because the
+        /// merge above could quietly answer two.</summary>
+        static int Rows(SignalTrace trace, string row)
+        {
+            int count = 0;
+            foreach (var signal in trace.Signals)
+                if (signal.scope == Simulation.PlayScope && signal.name == row) count++;
+            return count;
         }
 
         /// <summary>
