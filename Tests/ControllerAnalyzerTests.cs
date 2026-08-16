@@ -1042,6 +1042,78 @@ namespace Yozolab.DaerD.Tests
             Object.DestroyImmediate(controller);
         }
 
+        // ---- built-in parameter types -------------------------------------------
+
+        static List<AnalyzerIssue> BuiltInTypeIssues(AnimatorController controller, string name,
+            AnimatorControllerParameterType type)
+        {
+            controller.AddParameter(name, type);
+            return OfKind(controller, IssueKind.VrcParameters);
+        }
+
+        [Test]
+        public void AnIntBuiltInDeclaredFloat_IsReportedWithoutAnyStore()
+        {
+            var controller = NewController(out _);
+
+            // No expression parameter store anywhere: this check reads VRChat's own table, so
+            // it has to run on a controller that belongs to no avatar.
+            var issues = BuiltInTypeIssues(controller, "GestureLeft", AnimatorControllerParameterType.Float);
+
+            Assert.AreEqual(1, issues.Count);
+            Assert.AreEqual(IssueSeverity.Info, issues[0].severity);
+            StringAssert.Contains("GestureLeft", issues[0].message);
+            Assert.IsNull(issues[0].fix, "retyping a parameter would invalidate the conditions on it");
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void ABuiltInDeclaredTheWayVrChatWritesIt_IsNothingToReport()
+        {
+            var controller = NewController(out _);
+
+            Assert.IsEmpty(BuiltInTypeIssues(controller, "GestureLeft", AnimatorControllerParameterType.Int));
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void AFloatBuiltInDeclaredInt_IsReportedToo()
+        {
+            var controller = NewController(out _);
+
+            Assert.AreEqual(1,
+                BuiltInTypeIssues(controller, "VelocityX", AnimatorControllerParameterType.Int).Count);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void ABuiltInDeclaredTrigger_IsReported()
+        {
+            var controller = NewController(out _);
+
+            // Nothing in the official table is a Trigger, so this disagrees by construction.
+            Assert.AreEqual(1,
+                BuiltInTypeIssues(controller, "Grounded", AnimatorControllerParameterType.Trigger).Count);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void AParameterTheAvatarInventedItself_HasNoOfficialTypeToDisagreeWith()
+        {
+            var controller = NewController(out _);
+            controller.AddParameter("Costume", AnimatorControllerParameterType.Int);
+            // VRChat matches built-in names exactly, so this one is the avatar's own too.
+            controller.AddParameter("gestureleft", AnimatorControllerParameterType.Float);
+
+            Assert.IsEmpty(OfKind(controller, IssueKind.VrcParameters));
+
+            Object.DestroyImmediate(controller);
+        }
+
         // ---- what the builders write, read back by the analyzer ----------------
 
         /// <summary>

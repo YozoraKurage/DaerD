@@ -680,23 +680,13 @@ namespace Yozolab.DaerD
             menu.ShowAsContext();
         }
 
-        static AnimatorControllerParameterType ToUnityType(VrcParameters.ParamType type)
-        {
-            switch (type)
-            {
-                case VrcParameters.ParamType.Int: return AnimatorControllerParameterType.Int;
-                case VrcParameters.ParamType.Bool: return AnimatorControllerParameterType.Bool;
-                default: return AnimatorControllerParameterType.Float;
-            }
-        }
-
         void AddVrcParameter(VrcParameters.Definition def)
         {
             var controller = Context.Controller;
             foreach (var p in controller.parameters)
                 if (p.name == def.name) return;   // never duplicate a built-in name
             Undo.RegisterCompleteObjectUndo(controller, "Add VRChat Parameter");
-            controller.AddParameter(def.name, ToUnityType(def.type));
+            controller.AddParameter(def.name, VrcParameters.UnityType(def.type));
             EditorUtility.SetDirty(controller);
             Context.NotifyParametersChanged();
         }
@@ -712,7 +702,7 @@ namespace Yozolab.DaerD
             foreach (var def in VrcParameters.All)
                 if (existing.Add(def.name))
                 {
-                    controller.AddParameter(def.name, ToUnityType(def.type));
+                    controller.AddParameter(def.name, VrcParameters.UnityType(def.type));
                     added++;
                 }
             if (added > 0)

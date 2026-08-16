@@ -1182,6 +1182,9 @@ msgstr "既存のパラメーター '{0}' を再利用します。"
 
 # ---- VRC expression parameters ----
 
+msgid "Built-in parameter '{0}' is declared {1} while VRChat writes it as {2} — the value arrives converted (parameter mismatching), so conditions on it read the converted number; make sure it's intentional."
+msgstr "組み込みパラメーター '{0}' は {1} で宣言されていますが、VRChat が書き込むのは {2} です。値は変換されて届く（parameter mismatching）ため、条件は変換後の数値を読むことになります。意図したものか確認してください。"
+
 msgid "VRC Parameters"
 msgstr "VRC パラメーター"
 

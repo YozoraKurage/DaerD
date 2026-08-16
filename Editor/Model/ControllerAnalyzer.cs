@@ -111,6 +111,8 @@ namespace Yozolab.DaerD
             AddAapDriverIssues(controller, aapWrites, issues);
             AddAapLayerIssues(controller, aapWrites, issues);
 
+            AddBuiltInParameterTypeIssues(controller, issues);
+
             // Parameter-store checks only run against the store the user explicitly
             // associated with this controller (never a scene guess — DaerD is also used on
             // NDMF gimmick controllers that belong to no avatar).
@@ -1117,6 +1119,49 @@ namespace Yozolab.DaerD
             var names = new List<string>(hits.Keys);
             names.Sort(System.StringComparer.Ordinal);
             return names;
+        }
+
+        /// <summary>
+        /// A built-in parameter declared as a type VRChat does not write it as. Nothing breaks
+        /// loudly: the platform converts into whatever the controller declared — a Float
+        /// GestureLeft receives 0..7 as floats, a Bool one collapses to "not zero" — so the
+        /// controller works, differently, and the only sign is that conditions have to be
+        /// written against the converted number (Equals is unavailable on a Float, so an Int
+        /// built-in declared Float needs Greater/Less pairs instead).
+        ///
+        /// Info, in the same voice as the store-vs-controller mismatch check: converted is not
+        /// broken, and declaring a built-in as something else is occasionally deliberate. It is
+        /// a separate row from that one on purpose — that check compares the controller against
+        /// an expression parameter asset, this one against VRChat's own table — so a controller
+        /// with a store can legitimately show both.
+        ///
+        /// Trigger is reported too. The official table has no Trigger built-in, so any built-in
+        /// declared Trigger necessarily disagrees with it, and the semantic distance (a value
+        /// the platform keeps writing versus a flag consumed on read) is worth a row rather than
+        /// an exemption. Names that only differ in case are not reported: VRChat matches
+        /// exactly, so "gestureleft" is simply a parameter of the avatar's own, and spotting
+        /// typos is a different feature.
+        ///
+        /// No fix. Changing a parameter's type invalidates the conditions already written
+        /// against it, and which of them to rewrite is not the analyzer's call.
+        /// </summary>
+        static void AddBuiltInParameterTypeIssues(AnimatorController controller, List<AnalyzerIssue> issues)
+        {
+            // Parameter order, which is stable between runs and matches the panel.
+            foreach (var p in controller.parameters)
+            {
+                if (!VrcParameters.TryOfficialType(p.name, out var official) || p.type == official)
+                    continue;
+                issues.Add(new AnalyzerIssue
+                {
+                    severity = IssueSeverity.Info,
+                    kind = IssueKind.VrcParameters,
+                    message = L.Tr("Built-in parameter '{0}' is declared {1} while VRChat writes it as {2} "
+                        + "— the value arrives converted (parameter mismatching), so conditions on it read "
+                        + "the converted number; make sure it's intentional.", p.name, p.type, official),
+                    context = controller,
+                });
+            }
         }
 
         /// <summary>True when the motion tree contains a Direct blend tree at any depth.</summary>

@@ -150,6 +150,31 @@ namespace Yozolab.DaerD
         public static bool IsBuiltIn(string name) => TryFind(name, out _);
 
         /// <summary>
+        /// The animator parameter type VRChat writes this built-in as, or false for a name the
+        /// avatar invented. The table above is kept in this file's own <see cref="ParamType"/>
+        /// so the file depends on no editor assembly; this is the single place that spelling is
+        /// translated into Unity's, so the Add menu and the analyzer cannot come to disagree
+        /// about what the official type is.
+        /// </summary>
+        public static bool TryOfficialType(string name, out UnityEngine.AnimatorControllerParameterType type)
+        {
+            if (!TryFind(name, out var definition)) { type = default; return false; }
+            type = UnityType(definition.type);
+            return true;
+        }
+
+        /// <summary>Unity's spelling of a <see cref="ParamType"/>.</summary>
+        public static UnityEngine.AnimatorControllerParameterType UnityType(ParamType type)
+        {
+            switch (type)
+            {
+                case ParamType.Int: return UnityEngine.AnimatorControllerParameterType.Int;
+                case ParamType.Bool: return UnityEngine.AnimatorControllerParameterType.Bool;
+                default: return UnityEngine.AnimatorControllerParameterType.Float;
+            }
+        }
+
+        /// <summary>
         /// The ones whose remote reading is not the wearer's own. Playspace movement counts on
         /// somebody else's copy of you and not on yours, so these cross faithfully on the IK
         /// channel and still differ between the two copies — the one shape a wire cannot
