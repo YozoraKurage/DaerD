@@ -10,6 +10,7 @@ namespace Yozolab.DaerD
         UnusedParameter,
         InvalidCondition,
         DeadTransition,
+        ExitTimeZero,
         SoloTransition,
         AnyStateRetrigger,
         UnreachableState,

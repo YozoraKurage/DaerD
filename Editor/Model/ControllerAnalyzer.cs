@@ -16,6 +16,7 @@ namespace Yozolab.DaerD
                 case IssueKind.UnusedParameter: return L.Tr("Unused Parameter");
                 case IssueKind.InvalidCondition: return L.Tr("Invalid Condition");
                 case IssueKind.DeadTransition: return L.Tr("Dead Transition");
+                case IssueKind.ExitTimeZero: return L.Tr("Exit Time 0");
                 case IssueKind.SoloTransition: return L.Tr("Soloed Transition");
                 case IssueKind.AnyStateRetrigger: return L.Tr("Any State Retrigger");
                 case IssueKind.UnreachableState: return L.Tr("Unreachable State");
@@ -87,6 +88,7 @@ namespace Yozolab.DaerD
             AddUnusedParameterIssues(controller, issues);
             AddConditionIssues(controller, issues);
             AddDeadTransitionIssues(controller, issues);
+            AddExitTimeZeroIssues(controller, issues);
             AddSoloTransitionIssues(controller, issues);
             AddAnyStateRetriggerIssues(controller, issues);
             AddUnreachableStateIssues(controller, issues);
@@ -333,6 +335,78 @@ namespace Yozolab.DaerD
             fixTooltip = L.Tr("Delete this transition"),
             fix = fix,
         };
+
+        /// <summary>
+        /// Exit Time 0, which reads as "leave the moment you get here" and is not that. Unity
+        /// treats it exactly like Exit Time 1 and fires on the loop boundary — once per length
+        /// of the source state's clip, and once a second for a state with no motion at all.
+        /// Measured rather than reasoned: PlayModeProbeTests pins "exitTime 0 and exitTime 1 are
+        /// the same instruction" in AnExitTimeOfZeroWaitsForTheEndOfALap.
+        ///
+        /// Kept out of <see cref="IssueKind.DeadTransition"/> on purpose. That box means "this
+        /// never fires"; these do fire, just late, and filing them together would make the
+        /// category a lie in both directions.
+        ///
+        /// Any State transitions are left alone: what Exit Time counts against for a transition
+        /// with no source state of its own was never measured, and the analyzer does not guess.
+        /// Entry, Exit and state-machine transitions carry no exit time to begin with, so they
+        /// fall out by themselves.
+        /// </summary>
+        static void AddExitTimeZeroIssues(AnimatorController controller, List<AnalyzerIssue> issues)
+        {
+            foreach (var state in controller.AllStates())
+                foreach (var t in state.transitions)
+                {
+                    if (t == null || !t.hasExitTime || t.exitTime > 0f) continue;
+
+                    // With conditions the intent is legible — somebody wanted "when this holds,
+                    // go" and wrote the zero to mean "at once" — so the repair is legible too.
+                    if (t.conditions.Length > 0)
+                    {
+                        var transition = t;
+                        issues.Add(new AnalyzerIssue
+                        {
+                            severity = IssueSeverity.Warning,
+                            kind = IssueKind.ExitTimeZero,
+                            message = L.Tr("Transition '{0}' {1} waits for the loop boundary even once its "
+                                + "conditions hold: Exit Time 0 means the same as Exit Time 1 — once per clip "
+                                + "length, once a second in a state with no motion — and never 'immediately'.",
+                                state.name, ParameterConverter.DescribeTransition(t)),
+                            context = t,
+                            fixLabel = L.Tr("Turn Off Exit Time"),
+                            fixTooltip = L.Tr("Clear Exit Time so the conditions alone decide when it fires"),
+                            fix = () => ClearExitTime(transition),
+                        });
+                        continue;
+                    }
+
+                    // No conditions: this is a fall-through that repeats, which is a real shape
+                    // and not necessarily a mistake — hence Info, and hence no Fix. Clearing
+                    // Exit Time here would leave a transition with neither conditions nor exit
+                    // time, i.e. trade this row for a Dead Transition one. Which of the two
+                    // repairs is right depends on whether the author wanted the loop or wanted
+                    // "immediately", and that is not on the asset to read.
+                    issues.Add(new AnalyzerIssue
+                    {
+                        severity = IssueSeverity.Info,
+                        kind = IssueKind.ExitTimeZero,
+                        message = L.Tr("Transition '{0}' {1} has Exit Time 0, which behaves exactly like Exit "
+                            + "Time 1: it falls through at every loop boundary (once per clip length, once a "
+                            + "second in a state with no motion). If it was meant to fire immediately, give it "
+                            + "a condition that always holds and turn Exit Time off.",
+                            state.name, ParameterConverter.DescribeTransition(t)),
+                        context = t,
+                    });
+                }
+        }
+
+        static void ClearExitTime(AnimatorStateTransition transition)
+        {
+            if (transition == null) return;
+            Undo.RegisterCompleteObjectUndo(transition, "Turn Off Exit Time");
+            transition.hasExitTime = false;
+            EditorUtility.SetDirty(transition);
+        }
 
         /// <summary>
         /// Solo left switched on. It is a debugging aid — one soloed transition makes the

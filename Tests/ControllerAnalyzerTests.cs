@@ -191,6 +191,112 @@ namespace Yozolab.DaerD.Tests
             Object.DestroyImmediate(controller);
         }
 
+        /// <summary>An exit time of 0 is not "leave at once" — it is Unity's way of writing
+        /// "leave at the end of a lap", the same as 1. Measured in PlayModeProbeTests; these
+        /// only pin what the analyzer says about it.</summary>
+        static AnimatorStateTransition ExitTimeTransition(AnimatorState from, AnimatorState to, float exitTime)
+        {
+            var t = from.AddTransition(to);
+            t.hasExitTime = true;
+            t.exitTime = exitTime;
+            return t;
+        }
+
+        [Test]
+        public void ExitTimeZero_WithAConditionOnIt_IsAWarningTheFixClears()
+        {
+            var controller = NewController(out var sm);
+            controller.AddParameter("Go", AnimatorControllerParameterType.Bool);
+            var a = sm.AddState("A");
+            var b = sm.AddState("B");
+            var t = ExitTimeTransition(a, b, 0f);
+            t.AddCondition(AnimatorConditionMode.If, 0f, "Go");
+
+            var issues = OfKind(controller, IssueKind.ExitTimeZero);
+
+            Assert.AreEqual(1, issues.Count);
+            Assert.AreEqual(IssueSeverity.Warning, issues[0].severity);
+            Assert.IsNotNull(issues[0].fix);
+            issues[0].fix();
+
+            Assert.IsFalse(t.hasExitTime);
+            Assert.IsEmpty(OfKind(controller, IssueKind.ExitTimeZero));
+            // The condition is what keeps the repair honest: clearing exit time off a
+            // transition that had none would only trade this row for a dead-transition one.
+            Assert.IsEmpty(OfKind(controller, IssueKind.DeadTransition));
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void ExitTimeZero_WithNoCondition_IsInfoWithNoFixToOffer()
+        {
+            var controller = NewController(out var sm);
+            var a = sm.AddState("A");
+            var b = sm.AddState("B");
+            ExitTimeTransition(a, b, 0f);
+
+            var issues = OfKind(controller, IssueKind.ExitTimeZero);
+
+            Assert.AreEqual(1, issues.Count);
+            Assert.AreEqual(IssueSeverity.Info, issues[0].severity);
+            Assert.IsNull(issues[0].fix, "which of the two repairs is right depends on the intent");
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void AnExitTimePartWayThroughTheLap_IsNothingToSayAnythingAbout()
+        {
+            var controller = NewController(out var sm);
+            controller.AddParameter("Go", AnimatorControllerParameterType.Bool);
+            var a = sm.AddState("A");
+            var b = sm.AddState("B");
+            var c = sm.AddState("C");
+            ExitTimeTransition(a, b, 0.5f).AddCondition(AnimatorConditionMode.If, 0f, "Go");
+            ExitTimeTransition(b, c, 0.5f);
+
+            Assert.IsEmpty(OfKind(controller, IssueKind.ExitTimeZero));
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void ATransitionWithExitTimeSwitchedOff_IsNotAnExitTimeZero()
+        {
+            var controller = NewController(out var sm);
+            controller.AddParameter("Go", AnimatorControllerParameterType.Bool);
+            var a = sm.AddState("A");
+            var b = sm.AddState("B");
+            var t = a.AddTransition(b);
+            t.hasExitTime = false;
+            t.exitTime = 0f;            // the field keeps its value; nothing reads it
+            t.AddCondition(AnimatorConditionMode.If, 0f, "Go");
+
+            Assert.IsEmpty(OfKind(controller, IssueKind.ExitTimeZero));
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void ExitTimeZero_OnAnAnyStateTransition_IsLeftAlone()
+        {
+            var controller = NewController(out var sm);
+            controller.AddParameter("Go", AnimatorControllerParameterType.Bool);
+            sm.AddState("A");
+            var z = sm.AddState("Z");
+            var t = sm.AddAnyStateTransition(z);
+            t.hasExitTime = true;
+            t.exitTime = 0f;
+            t.AddCondition(AnimatorConditionMode.If, 0f, "Go");
+
+            // What exit time counts against with no source state of its own was never
+            // measured, so the analyzer says nothing rather than guessing.
+            Assert.IsEmpty(OfKind(controller, IssueKind.ExitTimeZero));
+
+            Object.DestroyImmediate(controller);
+        }
+
         [Test]
         public void ASoloedTransition_IsReportedWithWhatItShutsOut()
         {

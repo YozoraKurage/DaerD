@@ -52,6 +52,9 @@ msgstr "無効な条件"
 msgid "Dead Transition"
 msgstr "発火しない遷移"
 
+msgid "Exit Time 0"
+msgstr "Exit Time 0"
+
 msgid "Soloed Transition"
 msgstr "Solo された遷移"
 
@@ -98,6 +101,18 @@ msgstr "モード '{0}' は {1} 型パラメーター '{2}' に対して無効�
 
 msgid "Transition {0} has no conditions and no exit time; it can never fire."
 msgstr "遷移 {0} には条件も Exit Time もないため、発火することがありません。"
+
+msgid "Transition '{0}' {1} waits for the loop boundary even once its conditions hold: Exit Time 0 means the same as Exit Time 1 — once per clip length, once a second in a state with no motion — and never 'immediately'."
+msgstr "State '{0}' の遷移 {1} は、条件が成立してもループ境界まで待ちます。Exit Time 0 は Exit Time 1 と同じ意味（クリップ長ごと、モーションの無い State では 1 秒ごと）で、「即座」には決してなりません。"
+
+msgid "Transition '{0}' {1} has Exit Time 0, which behaves exactly like Exit Time 1: it falls through at every loop boundary (once per clip length, once a second in a state with no motion). If it was meant to fire immediately, give it a condition that always holds and turn Exit Time off."
+msgstr "State '{0}' の遷移 {1} の Exit Time 0 は、Exit Time 1 とまったく同じ動きをします（ループ境界ごと＝クリップ長ごと、モーションの無い State では 1 秒ごとに fall-through します）。即座に遷移させるつもりだったなら、常に成立する条件を足したうえで Exit Time を切ってください。"
+
+msgid "Turn Off Exit Time"
+msgstr "Exit Time を切る"
+
+msgid "Clear Exit Time so the conditions alone decide when it fires"
+msgstr "Exit Time を外し、発火タイミングを条件だけで決めるようにします"
 
 msgid "'{0}' has a soloed transition, so its other {1} transition(s) never run."
 msgstr "'{0}' には Solo された遷移があるため、他の {1} 本は評価されません。"
