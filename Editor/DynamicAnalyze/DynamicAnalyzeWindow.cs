@@ -35,7 +35,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
             window.Show();
         }
 
-        /// <summary>One line of the Timed inputs list — written by hand, loaded from a clip, or
+        /// <summary>One line of the Timed inputs list — written by hand, taken off a saved run, or
         /// taken down from a live session. Internal only so the rule about which live writes
         /// become one can be tested; nothing outside this window edits the list.</summary>
         [System.Serializable]
@@ -206,9 +206,9 @@ namespace Yozolab.DaerD.DynamicAnalyze
         // dropped where the trace is replaced rather than watched for. _ranWith is the
         // experiment that produced it, kept because the settings fields go on being edited
         // after a run and a finding about what was synced has to be about what WAS synced.
-        // It is also what a Save writes into the clip, which is why a live session sets it too
+        // It is also what a Save writes into the file, which is why a live session sets it too
         // even though findings never speak there. Null only when the trace in hand came from
-        // somewhere that did not say — a clip saved before settings travelled.
+        // somewhere that did not say — a run saved before settings travelled.
         List<string> _findings;
         SimSettings _ranWith;
 
@@ -471,9 +471,15 @@ namespace Yozolab.DaerD.DynamicAnalyze
         }
 
         /// <summary>
-        /// A run is a set of values over time, which is what an AnimationClip is, so that is
-        /// what it saves as: openable in the Animation window, diffable, and — the point —
-        /// loadable again either as a run to look at or as the input to the next one.
+        /// Everything a run does with a file.
+        ///
+        /// A run saves as a .ddrun — its own format, because a recording is mostly rows that do
+        /// not move and a clip charges for every frame of every one of them (see
+        /// <see cref="TraceFile"/>). Opening accepts both that and the .anim runs used to save
+        /// as, in every place that opens one, because the files somebody already has are the
+        /// whole reason to be able to open anything. And a run can still be EXPORTED to a clip,
+        /// which is the one thing the old format was genuinely better at: Unity's own curve
+        /// editor will show it.
         /// </summary>
         void DrawClipMenu(bool has)
         {
@@ -481,10 +487,17 @@ namespace Yozolab.DaerD.DynamicAnalyze
                 return;
             var menu = new GenericMenu();
             if (has)
-                menu.AddItem(new GUIContent(L.Tr("Save Run…")), false, SaveClip);
+                menu.AddItem(new GUIContent(L.Tr("Save Run…")), false, SaveRun);
             else menu.AddDisabledItem(new GUIContent(L.Tr("Save Run…")));
-            menu.AddItem(new GUIContent(L.Tr("Open Run…")), false, OpenClip);
+            menu.AddItem(new GUIContent(L.Tr("Open Run…")), false, OpenRun);
             menu.AddItem(new GUIContent(L.Tr("Load As Timed Inputs…")), false, LoadAsInputs);
+            menu.AddSeparator(string.Empty);
+            // Below the line that saving and opening are above: an export is not a saved run,
+            // it is a copy of one in somebody else's format, and nothing re-opens it expecting
+            // to find the experiment.
+            if (has)
+                menu.AddItem(new GUIContent(L.Tr("Export As AnimationClip…")), false, ExportClip);
+            else menu.AddDisabledItem(new GUIContent(L.Tr("Export As AnimationClip…")));
             menu.AddSeparator(string.Empty);
             // A saved run laid under the one in hand. "It worked yesterday" and "did that
             // setting change anything" are both questions about two runs, and a viewer that
@@ -513,38 +526,59 @@ namespace Yozolab.DaerD.DynamicAnalyze
 
         void CompareWith()
         {
-            var clip = PickClip(L.Tr("Compare With"));
-            if (clip == null) return;
-            _view.ghost = TraceClip.Load(clip);
+            var run = PickRun(L.Tr("Compare With"));
+            if (run == null) return;
+            _view.ghost = run.trace;
             Repaint();
         }
 
-        void SaveClip()
+        void SaveRun()
         {
             string path = EditorUtility.SaveFilePanelInProject(L.Tr("Save Run"),
-                "DD Run", "anim", L.Tr("Where to keep this run."));
+                "DD Run", TraceFile.Extension, L.Tr("Where to keep this run."));
             if (string.IsNullOrEmpty(path)) return;
             // The experiment that produced this trace, not the fields as they stand: the panel
             // goes on being edited after a run, and settings saved beside a result they did not
             // produce would be a file that lies in the one way this one exists to prevent.
+            TraceFile.Save(_view.trace, path, _ranWith);
+            // Nothing imports a .ddrun — it lands as a DefaultAsset — but the Project window
+            // does not show a file it has not been told about, and a saved run nobody can see
+            // reads as a save that did not happen.
+            AssetDatabase.ImportAsset(path);
+        }
+
+        /// <summary>
+        /// The run as a clip, for Unity's curve editor and for anything else that speaks clips.
+        ///
+        /// A copy rather than a save: the .anim it writes carries the same manifest, so it can
+        /// be opened again as a run, but nothing in this window treats it as where the run now
+        /// lives. What it is for is looking at a recording in the Animation window, which is
+        /// the one thing the format runs used to be saved in did better than the one they are
+        /// saved in now.
+        /// </summary>
+        void ExportClip()
+        {
+            string path = EditorUtility.SaveFilePanelInProject(L.Tr("Export As AnimationClip"),
+                "DD Run", "anim", L.Tr("Where to put the exported clip."));
+            if (string.IsNullOrEmpty(path)) return;
             TraceClip.Save(_view.trace, path, _ranWith);
         }
 
-        void OpenClip()
+        void OpenRun()
         {
-            var clip = PickClip(L.Tr("Open Run"));
-            if (clip == null) return;
+            var run = PickRun(L.Tr("Open Run"));
+            if (run == null) return;
             _playing = false;
             SwitchTo(false, false);
-            // The clip's own settings if it carries any, and then the findings that need to
+            // The file's own settings if it carries any, and then the findings that need to
             // know what the wire was can speak about it. Without them the window keeps the
             // settings it had and _ranWith stays null: the findings a trace answers on its own
             // still appear, and a finding about a wire that did not carry this run would be a
             // confident lie.
             _findings = null;
-            _ranWith = TraceClip.SettingsOf(clip);
+            _ranWith = run.settings;
             if (_ranWith != null) Restore(_ranWith);
-            _view.trace = TraceClip.Load(clip);
+            _view.trace = run.trace;
             _view.cursorFrame = 0;
             _view.Invalidate();
             _view.Fit(position.width);
@@ -559,7 +593,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// only a dialog. The cost is that unsaved settings in the form are lost, which is the
         /// same cost every Open has ever had.
         ///
-        /// The timed inputs go with it: they are the experiment, not a preference. What a clip
+        /// The timed inputs go with it: they are the experiment, not a preference. What a run
         /// without a wire does NOT do is clear the wire fields — there is nothing to restore
         /// them to, the panel hides them anyway, and blanking a form on a run that had no
         /// opinion about it would lose settings for no reason.
@@ -624,9 +658,9 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// </summary>
         void LoadAsInputs()
         {
-            var clip = PickClip(L.Tr("Load As Timed Inputs"));
-            if (clip == null) return;
-            Extract(clip, null);
+            var run = PickRun(L.Tr("Load As Timed Inputs"));
+            if (run == null) return;
+            Extract(run.trace, null);
             _inputsOpen = true;
         }
 
@@ -639,9 +673,9 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// keeping the previous recording's rows would be the one lie that makes the comparison
         /// afterwards meaningless.
         /// </summary>
-        void Extract(AnimationClip clip, string only)
+        void Extract(SignalTrace trace, string only)
         {
-            var extraction = InputSurface.Of(clip, string.Empty, _controller, InputNames(),
+            var extraction = InputSurface.Of(trace, string.Empty, _controller, InputNames(),
                 MenuNames());
             int taken = 0;
             foreach (var track in extraction.stimulus.tracks)
@@ -757,13 +791,55 @@ namespace Yozolab.DaerD.DynamicAnalyze
             return StoredSynced() ?? new List<string>();
         }
 
-        static AnimationClip PickClip(string title)
+        /// <summary>
+        /// A saved run off disk, in either of the two formats a saved run has ever been in.
+        ///
+        /// One filter listing both extensions rather than two menu items, because "open the run
+        /// I saved" is one intention and which format a file happens to be in is this window's
+        /// problem rather than the reader's. Null for a cancelled dialog and null for a file
+        /// that could not be read — the difference is that the second one says why first.
+        /// </summary>
+        static TraceFile.Run PickRun(string title)
         {
-            string path = EditorUtility.OpenFilePanel(title, "Assets", "anim");
-            if (string.IsNullOrEmpty(path)) return null;
-            string relative = FileUtil.GetProjectRelativePath(path);
-            return AssetDatabase.LoadAssetAtPath<AnimationClip>(
-                string.IsNullOrEmpty(relative) ? path : relative);
+            string path = EditorUtility.OpenFilePanelWithFilters(title, "Assets",
+                new[] { L.Tr("DD runs"), TraceFile.Extension + ",anim" });
+            return string.IsNullOrEmpty(path) ? null : Opened(path, title);
+        }
+
+        /// <summary>
+        /// The file, whichever format it is in — by extension, because that is what the reader
+        /// picked it by and reading the first bytes of a clip to find out it is a clip would
+        /// be a disk read to learn what its name already said.
+        ///
+        /// A .anim is loaded through the AssetDatabase because that is the only way to reach
+        /// its manifest sub-asset, which is why a clip from outside the project comes back as
+        /// bare curves. A .ddrun is read straight off disk and has no such limit.
+        /// </summary>
+        static TraceFile.Run Opened(string path, string title)
+        {
+            try
+            {
+                if (TraceFile.Is(path)) return TraceFile.Read(path);
+                string relative = FileUtil.GetProjectRelativePath(path);
+                var clip = AssetDatabase.LoadAssetAtPath<AnimationClip>(
+                    string.IsNullOrEmpty(relative) ? path : relative);
+                if (clip == null) return null;
+                return new TraceFile.Run
+                {
+                    trace = TraceClip.Load(clip),
+                    settings = TraceClip.SettingsOf(clip),
+                };
+            }
+            catch (System.Exception error)
+                when (error is System.IO.IOException
+                    || error is System.IO.InvalidDataException)
+            {
+                // The reader picked this file and is owed the reason it did not open, which is
+                // never anything they could have seen from the outside of it — a run from a
+                // later build and a truncated one look identical in a file panel.
+                EditorUtility.DisplayDialog(title, error.Message, L.Tr("OK"));
+                return null;
+            }
         }
 
         /// <summary>
@@ -1135,7 +1211,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
 
             // Muted travels with the experiment; soloed does not. Drawn side by side anyway,
             // because from the reader's side they are the same gesture — this run, without that
-            // — and which of them a saved clip remembers is not something to make them guess at
+            // — and which of them a saved run remembers is not something to make them guess at
             // from the layout.
             track.muted = GUILayout.Toggle(track.muted, new GUIContent(L.Tr("Mute"),
                     L.Tr("Leave this track out of the run. Part of the experiment and saved with it: a run of the recording without its gestures is a question, and a saved answer has to be able to say it was asked.")),
@@ -1158,8 +1234,8 @@ namespace Yozolab.DaerD.DynamicAnalyze
                         L.Tr("Take this one track down from a recording again and leave the rest of the list alone. What it holds now is replaced by what that recording has in it, including nothing.")),
                         EditorStyles.miniButton, GUILayout.Width(58f)))
                 {
-                    var clip = PickClip(L.Tr("Load As Timed Inputs"));
-                    if (clip != null) Extract(clip, track.name);
+                    var run = PickRun(L.Tr("Load As Timed Inputs"));
+                    if (run != null) Extract(run.trace, track.name);
                 }
 
             if (GUILayout.Button(new GUIContent("-",
@@ -1433,8 +1509,8 @@ namespace Yozolab.DaerD.DynamicAnalyze
             _playing = false;
             _findings = null;
             // A recording is not an experiment this window set up, so there are no settings
-            // that produced it. A clip saved from one carries the rows and no claim about a
-            // wire that was never there — see TraceClip.Save and DrawFindings.
+            // that produced it. A file saved from one carries the rows and no claim about a
+            // wire that was never there — see TraceFile.Save and DrawFindings.
             _ranWith = null;
             _view.trace = _recorder.Trace;
             _view.cursorFrame = 0;
@@ -1617,7 +1693,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
                     lines.Add(L.Tr("Reading {0} more copy(s) of this avatar as other people see it — their rows are under {1} and the scopes after it.",
                         _recorder.Sources - 1, Simulation.PlayRemoteScope));
                 if (!_recording && _recorder.Frames > 0)
-                    lines.Add(L.Tr("{0} frame(s) recorded. Entering Play mode again drops them — save the run as a clip to keep it.",
+                    lines.Add(L.Tr("{0} frame(s) recorded. Entering Play mode again drops them — save the run to keep it.",
                         _recorder.Frames));
             }
             SendState(lines);
@@ -1820,7 +1896,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
             {
                 var into = stimulus.Named(track.name);
                 // Solo mutes on the way out and never in the list itself, which is what keeps
-                // it out of a saved run: a clip written while one track was soloed says the
+                // it out of a saved run: a file written while one track was soloed says the
                 // others were muted, because for that run they were.
                 into.muted = track.muted || (solo != null && track.name != solo);
                 foreach (var poke in track.entries)

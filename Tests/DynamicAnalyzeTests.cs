@@ -2836,7 +2836,7 @@ namespace Yozolab.DaerD.Tests
             try
             {
                 var clip = TraceClip.Save(first, path);
-                var stimulus = TraceClip.ToStimulus(clip, string.Empty,
+                var stimulus = InputSurface.ToStimulus(clip, string.Empty,
                     new[] { "Go", "N", "X" });
 
                 // One poke where the value started, and one at each change — not one per
@@ -3326,6 +3326,198 @@ namespace Yozolab.DaerD.Tests
                 "a row that never moves is one change point and a row that moves at every frame "
                 + "is six hundred of them — a format that charged for the samples would price "
                 + "the two the same (" + still + " B still, " + busy + " B moving)");
+        }
+
+        // ---- both formats, and the doors between them --------------------------
+
+        [Test]
+        public void Formats_AreToldApartByTheirName_AndBothStillOpen()
+        {
+            Assert.IsTrue(TraceFile.Is("Assets/A Run.ddrun"));
+            Assert.IsTrue(TraceFile.Is("Assets/A Run.DDRUN"), "a name is not case work");
+            Assert.IsFalse(TraceFile.Is("Assets/A Run.anim"));
+            Assert.IsFalse(TraceFile.Is(null));
+
+            var trace = Simulation.Run(NewController(), Clock(0.3f),
+                new Stimulus().At(0.05f, "Go", true));
+            string ddrun = TempRun();
+            const string anim = "Assets/DDTraceTwoFormatsTest.anim";
+            try
+            {
+                TraceFile.Save(trace, ddrun);
+                var clip = TraceClip.Save(trace, anim);
+
+                // The wedge under the older format: a run saved as a clip goes on reading
+                // exactly as it read, scopes, kinds and a state's names included. The point of
+                // keeping the reader at all is the files somebody already has.
+                var fromClip = TraceClip.Load(clip);
+                Assert.AreEqual(trace.Frames, fromClip.Frames);
+                Assert.AreEqual(trace.Signals.Count, fromClip.Signals.Count);
+                var state = fromClip.Find(Simulation.LocalScope, "Base/state");
+                CollectionAssert.AreEqual(new[] { "Idle", "On" }, state.labels);
+                Assert.AreEqual("On", state.TextAt(fromClip.Frames - 1));
+
+                SameRun(trace, TraceFile.Load(ddrun));
+            }
+            finally
+            {
+                System.IO.File.Delete(ddrun);
+                AssetDatabase.DeleteAsset(anim);
+            }
+        }
+
+        [Test]
+        public void Extract_ReadsARunOutOfEitherFormatAsTheSameInputs()
+        {
+            // The extraction reads a TRACE rather than a file, so a run out of either container
+            // has to arrive at it as the same thing. Saved both ways from one recording and
+            // split both ways, which is the assertion that catches the two doors drifting.
+            var controller = Faces();
+            var trace = Moved("Toggle", "GestureLeft", "Touched");
+            var names = new[] { "Toggle", "GestureLeft", "Touched" };
+            var synced = new[] { "Toggle" };
+
+            string ddrun = TempRun();
+            const string anim = "Assets/DDTraceEitherFormatTest.anim";
+            try
+            {
+                TraceFile.Save(trace, ddrun);
+                var clip = TraceClip.Save(trace, anim);
+
+                var fromFile = InputSurface.Of(TraceFile.Load(ddrun), string.Empty, controller,
+                    names, synced);
+                var fromClip = InputSurface.Of(clip, string.Empty, controller, names, synced);
+
+                CollectionAssert.AreEqual(
+                    new[] { Stimulus.MenuTrack, Stimulus.BuiltInTrack, Stimulus.WorldTrack },
+                    fromFile.stimulus.tracks.ConvertAll(track => track.name),
+                    "the three faces, off the new format");
+                CollectionAssert.AreEqual(
+                    fromClip.stimulus.tracks.ConvertAll(track => track.name),
+                    fromFile.stimulus.tracks.ConvertAll(track => track.name));
+
+                var here = fromFile.stimulus.InOrder();
+                var there = fromClip.stimulus.InOrder();
+                Assert.AreEqual(there.Count, here.Count, "the same pokes, in the same order");
+                for (int i = 0; i < there.Count; i++)
+                {
+                    Assert.AreEqual(there[i].parameter, here[i].parameter, "poke " + i);
+                    Assert.AreEqual(there[i].value, here[i].value, 1e-6f, "poke " + i);
+                    Assert.AreEqual(there[i].atSeconds, here[i].atSeconds, 1e-6f, "poke " + i);
+                    Assert.AreEqual(there[i].scope, here[i].scope, "poke " + i);
+                }
+            }
+            finally
+            {
+                System.IO.File.Delete(ddrun);
+                AssetDatabase.DeleteAsset(anim);
+            }
+        }
+
+        [Test]
+        public void File_ExportedAsAClip_OpensAgainThroughTheOlderPath()
+        {
+            // What the Clip menu's Export As AnimationClip… does: the run in hand, whichever
+            // file it came out of, written into the format Unity's own curve editor can draw.
+            var settings = Elaborate();
+            var trace = Simulation.Run(NewController(), settings);
+
+            string ddrun = TempRun();
+            const string anim = "Assets/DDTraceExportTest.anim";
+            try
+            {
+                TraceFile.Save(trace, ddrun, settings);
+                var run = TraceFile.Read(ddrun);
+                var clip = TraceClip.Save(run.trace, anim, run.settings);
+                Assert.IsNotNull(TraceClip.ManifestOf(clip),
+                    "an export is still readable as a run rather than as bare curves");
+
+                var back = TraceClip.Load(clip);
+                Assert.AreEqual(trace.Frames, back.Frames);
+                foreach (var signal in trace.Signals)
+                {
+                    var twin = back.Find(signal.scope, signal.name);
+                    Assert.IsNotNull(twin, signal.Path + " came through both formats");
+                    Assert.AreEqual(signal.kind, twin.kind, signal.Path + "'s kind");
+                    for (int frame = 0; frame < trace.Frames; frame++)
+                        Assert.AreEqual(signal.At(frame), twin.At(frame), 1e-3f,
+                            signal.Path + " at " + frame);
+                }
+
+                // And the experiment went with it, so an export is not a one-way door either.
+                var read = TraceClip.SettingsOf(clip);
+                Assert.IsNotNull(read);
+                Assert.AreEqual(45f, read.clock.fps, 1e-6f);
+                Assert.AreEqual(99, read.wire.seed);
+            }
+            finally
+            {
+                System.IO.File.Delete(ddrun);
+                AssetDatabase.DeleteAsset(anim);
+            }
+        }
+
+        [Test]
+        public void File_OpenedAgain_LetsTheFindingsSpeakAboutTheWire()
+        {
+            // "Go" is pressed on the wearer and is not on the wire — a finding nothing in a
+            // trace can reach, because nothing in a trace says what was pressed rather than
+            // what moved, or what the wire was carrying.
+            var wire = new SyncWire { intervalSeconds = 0.1f }.Syncs("X");
+            var settings = Wired(0.4f, wire, new Stimulus().At(0.05f, "Go", true));
+            var trace = Simulation.Run(NewController(), settings);
+
+            string path = TempRun();
+            try
+            {
+                TraceFile.Save(trace, path, settings);
+                var run = TraceFile.Read(path);
+
+                var alone = RunFindings.For(run.trace, null);
+                var told = RunFindings.For(run.trace, run.settings);
+                Assert.Greater(told.Count, alone.Count,
+                    "the settings the file carries are worth findings the trace cannot reach");
+                Assert.IsTrue(told.Exists(finding => finding.Contains("never leave the wearer")),
+                    "an input that goes nowhere is one of them:\n  "
+                    + string.Join("\n  ", told.ToArray()));
+            }
+            finally
+            {
+                System.IO.File.Delete(path);
+            }
+        }
+
+        [Test]
+        public void File_OpenedAsAGhost_LiesUnderTheRunInHand()
+        {
+            var view = new WaveformView
+            {
+                trace = Simulation.Run(NewController(), Clock(0.5f),
+                    new Stimulus().At(0.05f, "X", 4f)),
+            };
+            int before = view.Visible().Count;
+
+            string path = TempRun();
+            try
+            {
+                TraceFile.Save(Simulation.Run(NewController(), Clock(0.5f),
+                    new Stimulus().At(0.05f, "X", 1f)), path);
+                view.ghost = TraceFile.Load(path);
+                view.Invalidate();
+                view.Measure();
+
+                Assert.AreEqual(before, view.Visible().Count,
+                    "a ghost is another reading of the same rows, not more rows");
+                var mine = view.trace.Find(Simulation.LocalScope, "X");
+                Assert.AreEqual(4f, view.RangeOf(mine).y, 1e-4f, "one row, one scale");
+                var theirs = view.ghost.Find(Simulation.LocalScope, "X");
+                Assert.AreEqual(1f, theirs.At(theirs.Frames - 1), 1e-4f,
+                    "and the ghost really is the run that was on disk");
+            }
+            finally
+            {
+                System.IO.File.Delete(path);
+            }
         }
 
         // ---- the inputs, in tracks -------------------------------------------

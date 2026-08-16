@@ -371,7 +371,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// could not answer it: they would have different frame numbers and different starting
         /// instants, and lining them up afterwards would be arithmetic nobody should have to
         /// trust. One trace, one clock, a scope each — which is the shape a simulated run
-        /// already has, so the viewer, the findings and the saved clip all take it as they are.
+        /// already has, so the viewer, the findings and the saved run all take it as they are.
         ///
         /// <para>WHO IS IN IT IS DECIDED ONCE.</para>
         /// The list is taken when the recording starts and never looked at again. A clone that

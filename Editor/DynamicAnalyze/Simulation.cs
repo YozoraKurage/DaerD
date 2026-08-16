@@ -76,7 +76,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// <summary>
         /// What to call the nth other person. "Remote", then "Remote 2", "Remote 3" — the first
         /// keeps the bare name because a single-remote run is still what most questions are, and
-        /// every trace, saved clip and test that already says "Remote" goes on meaning it.
+        /// every trace, saved run and test that already says "Remote" goes on meaning it.
         /// </summary>
         public static string RemoteScopeAt(int index) =>
             index <= 0 ? RemoteScope : RemoteScope + " " + (index + 1);

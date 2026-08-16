@@ -4,9 +4,15 @@ using UnityEngine;
 
 namespace Yozolab.DaerD.DynamicAnalyze
 {
-    /// <summary>What a clip cannot say about a curve: whose it is, what its numbers
-    /// mean, and what was asked to produce it. Rides along as a sub-asset so a saved run is
-    /// still one file.</summary>
+    /// <summary>
+    /// What a column of numbers cannot say about itself: whose it is, what its values mean, and
+    /// what was asked to produce them.
+    ///
+    /// One shape written by two containers — a sub-asset beside a clip, a JSON block inside a
+    /// <see cref="TraceFile"/> — so that there is one answer to "what does a saved run say" and
+    /// one set of compatibility rules for it. A ScriptableObject because the older of the two
+    /// containers needs it to be one; nothing about the fields depends on that.
+    /// </summary>
     sealed class TraceManifest : ScriptableObject
     {
         [System.Serializable]
@@ -53,17 +59,17 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// asked cannot be re-asked, compared against a changed setting, or handed to anyone.
         ///
         /// Flat and by value rather than a serialized <see cref="SimSettings"/>: this is a file
-        /// format, and every field here is one a person could read in the .anim's YAML. The
-        /// window's own shape is derived on the way back in (see
-        /// <see cref="TraceClip.SettingsOf"/>) rather than stored, so a form that grows a
-        /// checkbox does not grow the format.
+        /// format, and the engine's own shape is free to change with the engine while a file's
+        /// is not. The window's shape is derived on the way back in (see
+        /// <see cref="Restored"/>) rather than stored, so a form that grows a checkbox does not
+        /// grow the format.
         /// </summary>
         [System.Serializable]
         public sealed class Settings
         {
             /// <summary>What this build writes. Bumped when a field's MEANING changes, which
             /// is the only change a reader cannot survive: adding one is already survivable,
-            /// because a clip written before it deserializes with that field's default.
+            /// because a file written before it deserializes with that field's default.
             ///
             /// Two is the timed inputs in tracks. <see cref="stimulus"/> did not change shape
             /// and did not need to; what changed is that it is no longer where they are, and a
@@ -74,7 +80,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
 
             /// <summary>Zero is a run saved before settings travelled at all — and, because
             /// Unity gives a missing block its defaults rather than a null, it is also how such
-            /// a run says so. A clip with version 0 has no settings, not settings of zero.</summary>
+            /// a run says so. A file with version 0 has no settings, not settings of zero.</summary>
             public int version;
 
             public float fps = 60f;
@@ -267,23 +273,31 @@ namespace Yozolab.DaerD.DynamicAnalyze
     }
 
     /// <summary>
-    /// A run, as an AnimationClip. Not a container invented for the purpose — a clip IS a set
-    /// of values over time, which is what a trace is, and Unity already has a curve editor, a
-    /// diff, a meta file and a Ctrl+Z for one.
+    /// A run as an AnimationClip: the format runs used to be SAVED in, and the one they are
+    /// still READ from and can still be EXPORTED to.
     ///
-    /// It reads both ways on purpose. A saved run opens again as a run, and a saved run also
-    /// opens as INPUT: the values one experiment recorded become the pokes the next one is
-    /// driven by. Being able to write a stimulus by hand and not being able to capture one
-    /// would have been a strange place to stop.
+    /// <para>WHY IT IS NO LONGER WHERE A RUN GOES.</para>
+    /// A clip is a set of values over time, which is what a trace is — but it is also a key on
+    /// every curve at every frame whether the value moved or not, and a recording is a few
+    /// hundred rows of which a handful ever change. <see cref="TraceFile"/> is the shape that
+    /// argument actually leads to, and the commit that introduced it has the measurements.
     ///
-    /// The question travels with the answer. A file carries the settings the run was made with
-    /// (<see cref="TraceManifest.Settings"/>), so a saved run can be re-asked, asked again with
-    /// one thing changed, or read by the findings that need to know what the wire was — none of
-    /// which a bare curve can be.
+    /// <para>WHY IT IS STILL HERE, BOTH WAYS.</para>
+    /// Reading, because every run anybody has already saved is one of these and a tool that
+    /// stopped opening its own old files would be a tool that ate an afternoon's work. Writing,
+    /// because the one genuinely good thing about a clip is that the Animation window will show
+    /// it — so Export As AnimationClip… stays on the menu, for reading a run in Unity's own
+    /// curve editor and for handing one to anything that speaks clips. What an export is NOT is
+    /// a saved run: nothing re-opens it expecting to find the run it came from, and a person
+    /// who exports and then edits the curves has an animation rather than a record.
+    ///
+    /// The question travels with the answer here too. A clip carries the settings the run was
+    /// made with (<see cref="TraceManifest.Settings"/>) as a sub-asset, which is the same block
+    /// the new format writes as JSON — one shape, two containers.
     ///
     /// The curves are bound the way an animated animator parameter is bound — path "", type
-    /// Animator, the signal's own name — so the Animation window shows a saved run without
-    /// being told anything about DaerD.
+    /// Animator, the signal's own name — so the Animation window shows a run without being told
+    /// anything about DaerD.
     /// </summary>
     static class TraceClip
     {
@@ -338,8 +352,15 @@ namespace Yozolab.DaerD.DynamicAnalyze
             return manifest;
         }
 
-        /// <summary>Writes the run to a .anim, with its signal list and the experiment that
-        /// produced it beside it in the same file. Returns the clip that is now on disk.</summary>
+        /// <summary>
+        /// Exports the run to a .anim, with its signal list and the experiment that produced it
+        /// beside it in the same file. Returns the clip that is now on disk.
+        ///
+        /// Still writes the manifest, although nothing re-opens an export expecting a run: a
+        /// clip whose curves are named "Local/GestureLeft" and whose state rows are bare
+        /// integers is unreadable without one, and an export that could not be read back is a
+        /// worse thing to hand somebody than one that can.
+        /// </summary>
         public static AnimationClip Save(SignalTrace trace, string path,
             SimSettings settings = null)
         {
@@ -397,71 +418,6 @@ namespace Yozolab.DaerD.DynamicAnalyze
                     declared[i].Push(curves[i].Evaluate(time));
             }
             return trace;
-        }
-
-        /// <summary>
-        /// The clip as input rather than as a record: every moment one of these parameters
-        /// changed becomes a poke at that second. What a run recorded can then drive the next
-        /// one — the same experiment against a different wire, a different frame rate, a
-        /// different seed.
-        ///
-        /// Everything in one track, under the name a run saved before there were tracks reads
-        /// back as. Which face of the recording each row belongs to is a question about the
-        /// controller rather than about the clip, and <see cref="InputSurface"/> is where it is
-        /// asked; this is the whole of it, for the caller that wants the whole of it.
-        /// </summary>
-        public static Stimulus ToStimulus(AnimationClip clip, string scope,
-            ICollection<string> parameters)
-        {
-            var stimulus = new Stimulus();
-            var trace = Load(clip);
-            var track = stimulus.Named(Stimulus.OneTrack);
-            foreach (var signal in trace.Signals)
-                if (CanDrive(signal, parameters)) Changes(trace, signal, scope, track);
-            return stimulus;
-        }
-
-        /// <summary>
-        /// Whether this row is something a run could be told rather than something it works
-        /// out. Only what the target controller can actually be told, and only the wearer's
-        /// side of a two-client recording: a remote's values are what the run works out, not
-        /// what it is given. A state row is never an input at all — a layer arrives at a state,
-        /// it is not put in one.
-        /// </summary>
-        public static bool CanDrive(SignalTrace.Signal signal, ICollection<string> parameters)
-        {
-            if (signal == null || signal.kind == SignalKind.State) return false;
-            if (parameters != null && !parameters.Contains(signal.name)) return false;
-            return string.IsNullOrEmpty(signal.scope) || signal.scope == Simulation.LocalScope;
-        }
-
-        /// <summary>
-        /// Every moment this signal changed, written into a track as an input at that second.
-        /// One place rather than two, because the arithmetic below is the whole difference
-        /// between a stimulus that replays onto the same frames and one that lands a frame late.
-        /// </summary>
-        public static void Changes(SignalTrace trace, SignalTrace.Signal signal, string scope,
-            Stimulus.Track track)
-        {
-            if (trace == null || signal == null || track == null) return;
-            for (int frame = 0; frame < trace.Frames; frame++)
-            {
-                if (frame != 0 && !signal.ChangedAt(frame)) continue;
-                // The start of the frame the change was seen in, not its end: a sample is
-                // taken after the frame ran, so what caused it was already true when the
-                // frame began. A quarter of a frame earlier still, so that repeating the
-                // run lands the poke on the same frame and not on the one after it however
-                // the arithmetic rounds.
-                float at = Mathf.Max(0f,
-                    trace.StartOfFrame(frame) - trace.StepAt(frame) * 0.25f);
-                track.entries.Add(new Stimulus.Entry
-                {
-                    atSeconds = at,
-                    parameter = signal.name,
-                    value = signal.At(frame),
-                    scope = scope ?? string.Empty,
-                });
-            }
         }
 
         /// <summary>The experiment a saved clip was made with, or null when it does not say —

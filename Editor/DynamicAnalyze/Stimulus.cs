@@ -53,7 +53,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// Untranslated on purpose, and the same decision <c>PlayTools.Name</c> made for the
         /// same reason: these are written into a saved run and matched on when a track is taken
         /// from the recording again, so a name that changed with the editor's language would
-        /// make a clip written in one language unreadable as an experiment in another. What a
+        /// make a run written in one language unreadable as an experiment in another. What a
         /// person renames a track to is theirs, in whatever language they typed it.
         /// </summary>
         public const string HandTrack = "Hand";

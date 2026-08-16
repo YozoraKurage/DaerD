@@ -44,7 +44,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
     {
         /// <summary>The row a layer's current state is recorded on, and the row naming the
         /// transition it is blending through. Findings are matched by row name because the trace
-        /// is the product: a run reloaded from a clip has the same rows and no controller
+        /// is the product: a run reloaded from a file has the same rows and no controller
         /// behind them.</summary>
         const string StateRow = "/state";
 

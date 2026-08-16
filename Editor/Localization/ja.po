@@ -3078,6 +3078,18 @@ msgstr "実行を開く"
 msgid "Load As Timed Inputs"
 msgstr "時刻指定の入力として読み込む"
 
+msgid "Export As AnimationClip…"
+msgstr "AnimationClip として書き出す…"
+
+msgid "Export As AnimationClip"
+msgstr "AnimationClip として書き出す"
+
+msgid "Where to put the exported clip."
+msgstr "書き出したクリップの保存先です。"
+
+msgid "DD runs"
+msgstr "DD の実行"
+
 msgid "Compare With…"
 msgstr "重ねて比較…"
 
@@ -3285,8 +3297,8 @@ msgstr "この Animator を駆動しているグラフが無いため、Animator
 msgid "Reading {0} more copy(s) of this avatar as other people see it — their rows are under {1} and the scopes after it."
 msgstr "他人から見えているこのアバターのコピーを、さらに {0} 体読んでいます。その行は {1} 以降のスコープに入ります。"
 
-msgid "{0} frame(s) recorded. Entering Play mode again drops them — save the run as a clip to keep it."
-msgstr "{0} フレーム記録しました。次に Play モードへ入ると失われます。残すならクリップとして保存してください。"
+msgid "{0} frame(s) recorded. Entering Play mode again drops them — save the run to keep it."
+msgstr "{0} フレーム記録しました。次に Play モードへ入ると失われます。残すなら実行を保存してください。"
 
 msgid "Nothing in the scene is being driven by a graph."
 msgstr "グラフに駆動されているものがシーンにありません。"
