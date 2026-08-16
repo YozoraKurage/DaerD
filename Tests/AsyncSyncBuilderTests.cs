@@ -406,6 +406,39 @@ namespace Yozolab.DaerD.Tests
             Assert.IsFalse(AsyncSyncBuilder.Warnings(worthwhile).Exists(w => w.Contains("saves nothing")));
         }
 
+        /// <summary>
+        /// A type with one target pays for a channel and multiplexes nothing — the channel
+        /// costs what syncing that parameter directly costs, and the value now waits its turn
+        /// on top. The lone Int in an otherwise Float setup is the shape this catches.
+        /// </summary>
+        [Test]
+        public void Warnings_CallOutATypeWithOnlyOneTarget()
+        {
+            var controller = new AnimatorController();
+            controller.AddLayer("Base");
+            controller.AddParameter("F1", AnimatorControllerParameterType.Float);
+            controller.AddParameter("F2", AnimatorControllerParameterType.Float);
+            controller.AddParameter("I", AnimatorControllerParameterType.Int);
+            controller.AddParameter("B", AnimatorControllerParameterType.Bool);
+
+            var lonely = NewRequest(controller, "F1", "F2", "I");
+            Assert.IsTrue(AsyncSyncBuilder.Warnings(lonely)
+                .Exists(w => w.Contains("'I' is the only Int")), "the lone Int");
+            Assert.IsFalse(AsyncSyncBuilder.Warnings(lonely)
+                .Exists(w => w.Contains("is the only Float")), "two Floats take turns");
+
+            // One of each is every type alone, and each of them is worth its own sentence:
+            // the bits differ, and so does what to do about it.
+            var allAlone = NewRequest(controller, "F1", "I", "B");
+            Assert.AreEqual(3, AsyncSyncBuilder.Warnings(allAlone)
+                .FindAll(w => w.Contains("is the only ")).Count);
+            Assert.IsTrue(AsyncSyncBuilder.Warnings(allAlone)
+                .Exists(w => w.Contains("'B' is the only Bool") && w.Contains("1 synced bit")),
+                "a Bool channel costs one bit, not eight");
+
+            Object.DestroyImmediate(controller);
+        }
+
         [Test]
         public void Warnings_CallOutATargetAnimationWrites()
         {
@@ -447,6 +480,32 @@ namespace Yozolab.DaerD.Tests
             // An empty set is an answer ("nothing is animated"), not a request to go and look.
             Assert.IsFalse(AsyncSyncBuilder.Warnings(request, new HashSet<string>())
                 .Exists(w => w.Contains("(AAP")));
+
+            Object.DestroyImmediate(controller);
+        }
+
+        /// <summary>
+        /// The same for the type split, and for the same reason: the wizard quotes it in a
+        /// warning and offers it as a button in one draw, and working it out is the most
+        /// expensive thing that draw asks for. Believing the caller has to produce exactly
+        /// the warnings that looking it up would.
+        /// </summary>
+        [Test]
+        public void Warnings_TakeAPrecomputedTypeSplit()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+
+            var looked = AsyncSyncBuilder.Warnings(request, new HashSet<string>());
+            var passed = AsyncSyncBuilder.Warnings(request, new HashSet<string>(),
+                AsyncSyncSplit.ByType(request));
+            CollectionAssert.AreEqual(looked, passed);
+
+            // And an empty split is an answer ("this one does not divide"), not a request to
+            // go and look — otherwise the caller's own decision would be quietly overruled.
+            var refused = AsyncSyncBuilder.Warnings(request, new HashSet<string>(),
+                new List<AsyncSyncBuilder.Request>());
+            Assert.IsFalse(refused.Exists(w => w.Contains("Split By Type")));
 
             Object.DestroyImmediate(controller);
         }
@@ -1582,47 +1641,128 @@ namespace Yozolab.DaerD.Tests
             var collision = NewRequest(controller, "F", "B");
             collision.requestTargets.Add("B");
             Assert.IsNotNull(AsyncSyncBuilder.Validate(collision));
+
+            Object.DestroyImmediate(controller);
         }
 
+        /// <summary>
+        /// Which steps may start a detour. Two exclusions, and the second is the one that keeps
+        /// the pass decodable: the detour comes back to the step after the one it left, so a
+        /// successor repeating the index the detour just wrote is a step nobody would see.
+        /// </summary>
         [Test]
-        public void Apply_WithRequests_AddsRedirectRoutesAheadOfTheRing()
+        public void RequestOrigins_SkipTheSlotItself_AndASuccessorThatRepeatsTheIndex()
         {
             var controller = NewController();
-            var request = NewRequest(controller, "F", "B", "I");
+            controller.AddParameter("F2", AnimatorControllerParameterType.Float);
+            var request = NewRequest(controller, "F", "B", "I", "F2");
+            var slots = AsyncSyncBuilder.BuildSlots(request);
+            var schedule = AsyncSyncBuilder.EffectiveSchedule(request, slots);
+            var clock = AsyncSyncBuilder.BuildClock(request, slots, schedule);
+            CollectionAssert.AreEqual(new[] { 0, 1, 2, 3 }, schedule, "the premise: one step each");
+
+            // Slot 1 is sent by step 1, so step 1 is out (its flag is already down) and step 0
+            // is out (returning to step 1 would repeat the index the detour wrote).
+            CollectionAssert.AreEqual(new[] { 2, 3 },
+                AsyncSyncBuilder.RequestOrigins(schedule, clock, 1));
+            CollectionAssert.AreEqual(new[] { 1, 2 },
+                AsyncSyncBuilder.RequestOrigins(schedule, clock, 0));
+
+            Object.DestroyImmediate(controller);
+        }
+
+        /// <summary>
+        /// A request is a detour, not a jump: it spends one extra step on the requested slot
+        /// and then hands the ring back the step it was standing on, so the pass keeps its
+        /// place. Without that, a flag raised at the same point of the cycle would pin the ring
+        /// to one stretch of the pass and starve everything outside it.
+        /// </summary>
+        [Test]
+        public void Apply_WithRequests_TakesADetourAndGivesTheRingItsPlaceBack()
+        {
+            var controller = NewController();
+            controller.AddParameter("F2", AnimatorControllerParameterType.Float);
+            var request = NewRequest(controller, "F", "B", "I", "F2");
             request.requestTargets.Add("B");
             Assert.IsTrue(AsyncSyncBuilder.Apply(request));
 
             Assert.AreEqual(AnimatorControllerParameterType.Bool,
                 DbtBuilder.FindParameter(controller, "Async/Req/B").type);
+            Assert.AreEqual(AnimatorControllerParameterType.Int,
+                DbtBuilder.FindParameter(controller, "Async/Return").type);
 
             var sm = controller.layers[1].stateMachine;
-            var sendF = FindState(sm, "Send F");
-            var sendB = FindState(sm, "Send B");
-            var sendI = FindState(sm, "Send I");
+            var sendF = FindState(sm, "Send F");        // step 0
+            var sendB = FindState(sm, "Send B");        // step 1
+            var sendI = FindState(sm, "Send I");        // step 2
+            var sendF2 = FindState(sm, "Send F2");      // step 3
+            var detour = FindState(sm, "Send B (req)");
 
-            // Every OTHER step gets a redirect to Send B ahead of its ring transition —
-            // same step timing, gated on the flag; the ring stays the unconditional fallback.
-            Assert.AreEqual(2, sendF.transitions.Length);
-            var redirect = sendF.transitions[0];
-            Assert.AreEqual(sendB, redirect.destinationState);
-            Assert.IsTrue(redirect.hasExitTime);
-            Assert.AreEqual(0.3f, redirect.exitTime);
-            Assert.AreEqual(0f, redirect.duration);
-            Assert.IsTrue(HasCondition(redirect, "Async/Req/B", AnimatorConditionMode.If, 0f));
-            Assert.AreEqual(0, sendF.transitions[1].conditions.Length);
+            // The steps a detour may start from get it ahead of their ring transition, on the
+            // ring's own exit time — the running step still spends its full dwell.
+            foreach (var origin in new[] { sendI, sendF2 })
+            {
+                Assert.AreEqual(2, origin.transitions.Length, origin.name);
+                var redirect = origin.transitions[0];
+                Assert.AreEqual(detour, redirect.destinationState, origin.name);
+                Assert.IsTrue(redirect.hasExitTime);
+                Assert.AreEqual(0.3f, redirect.exitTime, 0.0001f);
+                Assert.AreEqual(0f, redirect.duration);
+                Assert.IsTrue(HasCondition(redirect, "Async/Req/B", AnimatorConditionMode.If, 0f));
+                Assert.AreEqual(0, origin.transitions[1].conditions.Length, "the ring is the fallback");
+            }
 
-            Assert.AreEqual(2, sendI.transitions.Length);
-            Assert.AreEqual(sendB, sendI.transitions[0].destinationState);
-
-            // No self-redirect: back-to-back sends of one slot are invisible to the decoder
-            // (canTransitionToSelf is off there); the next step picks the flag up instead.
+            // Step 1 sends the slot itself, and step 0's successor is step 1 — neither can
+            // start a detour, so both keep the ring alone.
+            Assert.AreEqual(1, sendF.transitions.Length);
             Assert.AreEqual(1, sendB.transitions.Length);
-            Assert.AreEqual(sendI, sendB.transitions[0].destinationState);
+
+            // And back: one route per origin, to the step AFTER it.
+            var returns = new Dictionary<int, string>();
+            foreach (var transition in detour.transitions)
+                foreach (var condition in transition.conditions)
+                    if (condition.parameter == "Async/Return")
+                    {
+                        Assert.AreEqual(AnimatorConditionMode.Equals, condition.mode);
+                        returns[(int)condition.threshold] = transition.destinationState.name;
+                    }
+            Assert.AreEqual(2, returns.Count);
+            Assert.AreEqual("Send F2", returns[2], "left step 2, so the ring resumes at step 3");
+            Assert.AreEqual("Send F", returns[3], "left step 3, so the ring wraps to step 0");
+
+            Object.DestroyImmediate(controller);
         }
 
         /// <summary>
-        /// Requests queue instead of interrupting. Every redirect carries the ring's exit time,
-        /// so the running step always spends its full dwell and the jump happens at the step
+        /// The starvation guarantee, pinned: a detour carries no request routes of its own, so
+        /// requests cannot chain. The worst a pass can be driven to is detour, step, detour,
+        /// step — the ring advances on every other step, and every slot still comes around.
+        /// </summary>
+        [Test]
+        public void Apply_WithRequests_DetoursCarryNoRequestRoutesOfTheirOwn()
+        {
+            var controller = NewController();
+            controller.AddParameter("F2", AnimatorControllerParameterType.Float);
+            var request = NewRequest(controller, "F", "B", "I", "F2");
+            request.requestTargets.AddRange(new[] { "B", "I" });
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var sm = controller.layers[1].stateMachine;
+            foreach (var name in new[] { "Send B (req)", "Send I (req)" })
+                foreach (var transition in FindState(sm, name).transitions)
+                    foreach (var condition in transition.conditions)
+                        Assert.IsFalse(condition.parameter.StartsWith("Async/Req/"),
+                            name + " must not start another detour");
+
+            Assert.AreEqual(2f * AsyncSyncBuilder.CycleSeconds(request),
+                AsyncSyncBuilder.WorstCycleSeconds(request), 0.0001f);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        /// <summary>
+        /// Requests queue instead of interrupting. Every route carries the ring's exit time, so
+        /// the running step always spends its full dwell and the detour happens at the step
         /// boundary; at that boundary the routes are tried in cycle order, so exactly one
         /// pending request is served and the others keep their flag raised for the next one.
         /// </summary>
@@ -1630,100 +1770,177 @@ namespace Yozolab.DaerD.Tests
         public void Apply_WithMultipleRequests_QueuesOnePerStepBoundary()
         {
             var controller = NewController();
-            var request = NewRequest(controller, "F", "B", "I");
+            controller.AddParameter("F2", AnimatorControllerParameterType.Float);
+            var request = NewRequest(controller, "F", "B", "I", "F2");
             request.requestTargets.AddRange(new[] { "B", "I" });
             Assert.IsTrue(AsyncSyncBuilder.Apply(request));
 
             var sm = controller.layers[1].stateMachine;
-            var sendF = FindState(sm, "Send F");
-            var sendB = FindState(sm, "Send B");
-            var sendI = FindState(sm, "Send I");
+            var sendF2 = FindState(sm, "Send F2");   // step 3: an origin for both slots
 
             // With both flags up, the transition order decides — and it is the cycle order.
-            Assert.AreEqual(3, sendF.transitions.Length);
-            Assert.AreEqual(sendB, sendF.transitions[0].destinationState);
-            Assert.IsTrue(HasCondition(sendF.transitions[0], "Async/Req/B",
+            Assert.AreEqual(3, sendF2.transitions.Length);
+            Assert.AreEqual("Send B (req)", sendF2.transitions[0].destinationState.name);
+            Assert.IsTrue(HasCondition(sendF2.transitions[0], "Async/Req/B",
                 AnimatorConditionMode.If, 0f));
-            Assert.AreEqual(sendI, sendF.transitions[1].destinationState);
-            Assert.IsTrue(HasCondition(sendF.transitions[1], "Async/Req/I",
+            Assert.AreEqual("Send I (req)", sendF2.transitions[1].destinationState.name);
+            Assert.IsTrue(HasCondition(sendF2.transitions[1], "Async/Req/I",
                 AnimatorConditionMode.If, 0f));
-            Assert.AreEqual(sendB, sendF.transitions[2].destinationState);
-            Assert.AreEqual(0, sendF.transitions[2].conditions.Length, "the ring is the fallback");
+            Assert.AreEqual(0, sendF2.transitions[2].conditions.Length, "the ring is the fallback");
 
-            // No redirect shortens a step: the values just sent still need their sync window,
-            // so a request raised mid-step waits out the dwell like the ring does.
-            foreach (var state in new[] { sendF, sendB, sendI })
-                foreach (var transition in state.transitions)
+            // No route shortens a step: the values just sent still need their sync window, so a
+            // request raised mid-step waits out the dwell like the ring does.
+            foreach (var child in sm.states)
+                foreach (var transition in child.state.transitions)
                 {
-                    Assert.IsTrue(transition.hasExitTime, state.name + " leaves before its dwell");
+                    Assert.IsTrue(transition.hasExitTime, child.state.name + " leaves before its dwell");
                     Assert.AreEqual(0.3f, transition.exitTime, 0.0001f);
                     Assert.AreEqual(0f, transition.duration);
                 }
 
-            // The step that just served B routes only to the other request; its own flag is
-            // already down, and a repeat of the same index would be invisible to the decoder.
-            Assert.AreEqual(2, sendB.transitions.Length);
-            Assert.AreEqual(sendI, sendB.transitions[0].destinationState);
-            Assert.IsTrue(HasCondition(sendB.transitions[0], "Async/Req/I",
-                AnimatorConditionMode.If, 0f));
-            Assert.AreEqual(0, sendB.transitions[1].conditions.Length);
+            Object.DestroyImmediate(controller);
         }
 
         [Test]
-        public void Apply_RequestFlags_AreCreatedButNeverSynced()
+        public void Apply_RequestMachinery_IsCreatedButNeverSynced()
         {
             var controller = NewController();
             var asset = ScriptableObject.CreateInstance<VRCExpressionParameters>();
-            var request = NewRequest(controller, "F", "B");
+            var request = NewRequest(controller, "F", "B", "I");
             request.requestTargets.Add("F");
             request.store = ParameterStore.TryWrap(asset);
             Assert.IsTrue(AsyncSyncBuilder.Apply(request));
 
             Assert.IsNotNull(DbtBuilder.FindParameter(controller, "Async/Req/F"));
+            Assert.IsNotNull(DbtBuilder.FindParameter(controller, "Async/Return"));
             Assert.IsNotNull(VrcExpressionParameters.Find(asset, "Async/Index"));
-            Assert.IsNull(VrcExpressionParameters.Find(asset, "Async/Req/F"),
-                "request flags are local machinery — they must not cost synced bits");
+            foreach (var name in new[] { "Async/Req/F", "Async/Return" })
+                Assert.IsNull(VrcExpressionParameters.Find(asset, name),
+                    name + " is local machinery — it must not cost synced bits");
+
+            Object.DestroyImmediate(asset);
+            Object.DestroyImmediate(controller);
         }
 
-        /// <summary>Driver contents via the test stub: the serving state clears its own flag
-        /// after copying the value and setting the index.</summary>
+        /// <summary>A setup nobody can request from builds exactly what it always did: no
+        /// detour states, no return parameter, one transition per step.</summary>
         [Test]
-        public void Apply_WithDrivers_ServingAStepClearsItsRequestFlag()
+        public void Apply_WithoutRequests_BuildsNoDetourMachinery()
         {
             var controller = NewController();
             var request = NewRequest(controller, "F", "B", "I");
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            Assert.IsNull(DbtBuilder.FindParameter(controller, "Async/Return"));
+            var sm = controller.layers[1].stateMachine;
+            foreach (var child in sm.states)
+            {
+                StringAssert.DoesNotContain("(req)", child.state.name);
+                if (child.state.name.StartsWith("Send "))
+                    Assert.AreEqual(1, child.state.transitions.Length, child.state.name);
+            }
+            Assert.AreEqual(AsyncSyncBuilder.CycleSeconds(request),
+                AsyncSyncBuilder.WorstCycleSeconds(request), 0.0001f);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        /// <summary>Driver contents via the test stub: a step copies its slot, writes the index,
+        /// lowers any flag it just served, and records where the ring stands. The detour does
+        /// the first three and not the fourth — the step it left is exactly what it carries.</summary>
+        [Test]
+        public void Apply_WithDrivers_AStepRecordsThePlaceTheDetourGivesBack()
+        {
+            var controller = NewController();
+            controller.AddParameter("F2", AnimatorControllerParameterType.Float);
+            var request = NewRequest(controller, "F", "B", "I", "F2");
             request.skipDrivers = false;
             request.requestTargets.Add("B");
             Assert.IsTrue(AsyncSyncBuilder.Apply(request));
 
-            var sendB = FindState(controller.layers[1].stateMachine, "Send B");
-            var driver = DriverOn(sendB);
-            Assert.IsTrue(driver.localOnly);
+            var sm = controller.layers[1].stateMachine;
+            var sendB = DriverOn(FindState(sm, "Send B")).entries;
+            Assert.AreEqual(4, sendB.Count);
+            Assert.AreEqual(3, sendB[0].kind);                  // Copy: B -> channel
+            Assert.AreEqual("B", sendB[0].source);
+            Assert.AreEqual("Async/Index", sendB[1].name);
+            Assert.AreEqual(1f, sendB[1].value);
+            Assert.AreEqual("Async/Req/B", sendB[2].name);      // Set: flag down
+            Assert.AreEqual(0f, sendB[2].value);
+            Assert.AreEqual("Async/Return", sendB[3].name);     // Set: step 1
+            Assert.AreEqual(1f, sendB[3].value);
 
-            Assert.AreEqual(3, driver.entries.Count);
-            Assert.AreEqual(3, driver.entries[0].kind);   // Copy: B -> channel
-            Assert.AreEqual("B", driver.entries[0].source);
-            Assert.AreEqual("Async/Index", driver.entries[1].name);
-            Assert.AreEqual(1f, driver.entries[1].value);
-            Assert.AreEqual(0, driver.entries[2].kind);   // Set: flag down
-            Assert.AreEqual("Async/Req/B", driver.entries[2].name);
-            Assert.AreEqual(0f, driver.entries[2].value);
+            // Every step records its own number, including the ones no detour starts from.
+            Assert.AreEqual(0f, DriverOn(FindState(sm, "Send F")).entries
+                .Find(e => e.name == "Async/Return").value);
+            Assert.AreEqual(3f, DriverOn(FindState(sm, "Send F2")).entries
+                .Find(e => e.name == "Async/Return").value);
 
-            // States that don't serve the slot don't touch the flag.
-            var sendF = FindState(controller.layers[1].stateMachine, "Send F");
-            Assert.IsFalse(DriverOn(sendF).entries.Exists(e => e.name == "Async/Req/B"));
+            // The detour sends the same payload under the same index and lowers the same flag,
+            // and leaves Return alone so the ring's place survives it.
+            var served = DriverOn(FindState(sm, "Send B (req)")).entries;
+            Assert.AreEqual(3, served.Count);
+            Assert.AreEqual("B", served[0].source);
+            Assert.AreEqual("Async/Index", served[1].name);
+            Assert.AreEqual(1f, served[1].value);
+            Assert.AreEqual("Async/Req/B", served[2].name);
+            Assert.IsFalse(served.Exists(e => e.name == "Async/Return"));
+
+            Object.DestroyImmediate(controller);
         }
 
         /// <summary>
-        /// Requests and a hand-built grid, together. The redirect machinery was written for a
-        /// pass that visits each slot once, and a grid may visit one several times — so every
-        /// step that is not the requested slot still gets a route, and they all land on the
-        /// slot's FIRST appearance rather than the nearest one. Landing anywhere is correct
-        /// (the ring resumes from wherever it arrives); landing consistently is what makes the
-        /// route buildable at all, since a step has no notion of which visit is "next".
+        /// A slot the pass already visits every other step has no boundary a detour could be
+        /// inserted at — and does not need one, since the cycle reaches it as fast as a request
+        /// could. The flag is still built (anything may raise it), but nothing routes on it.
         /// </summary>
         [Test]
-        public void Apply_WithRequests_AndAGrid_RedirectsToTheSlotsFirstVisit()
+        public void Apply_WithARequestForASlotSentEveryOtherStep_SaysSoAndBuildsNoDetour()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B");
+            request.requestTargets.Add("B");
+
+            Assert.IsNull(AsyncSyncBuilder.Validate(request));
+            Assert.IsTrue(AsyncSyncBuilder.Warnings(request)
+                .Exists(w => w.Contains("no step is left to request it from")));
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            foreach (var child in controller.layers[1].stateMachine.states)
+                StringAssert.DoesNotContain("(req)", child.state.name);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void ExpectedStateNames_CountTheDetours()
+        {
+            var controller = NewController();
+            controller.AddParameter("F2", AnimatorControllerParameterType.Float);
+            var request = NewRequest(controller, "F", "B", "I", "F2");
+            request.requestTargets.AddRange(new[] { "B", "I" });
+
+            var expected = AsyncSyncApplier.ExpectedStateNames(request);
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var built = new List<string>();
+            foreach (var child in controller.layers[1].stateMachine.states)
+                built.Add(child.state.name);
+            expected.Sort(System.StringComparer.Ordinal);
+            built.Sort(System.StringComparer.Ordinal);
+            CollectionAssert.AreEqual(built, expected);
+            CollectionAssert.Contains(expected, "Send B (req)");
+
+            Object.DestroyImmediate(controller);
+        }
+
+        /// <summary>
+        /// Requests and a hand-built grid, together. A grid may visit one slot several times,
+        /// and the detour is still one state for the whole slot — every step the origins rule
+        /// allows routes to that one state, and it comes back to wherever it was called from.
+        /// </summary>
+        [Test]
+        public void Apply_WithRequests_AndAGrid_ShareOneDetourPerSlot()
         {
             var controller = NewController();
             var request = NewRequest(controller, "F", "B", "I");
@@ -1735,23 +1952,28 @@ namespace Yozolab.DaerD.Tests
             Assert.IsTrue(AsyncSyncBuilder.Apply(request));
 
             var sm = controller.layers[1].stateMachine;
-            var sendF = FindState(sm, "Send F");
-            var sendB = FindState(sm, "Send B");
-            var sendFAgain = FindState(sm, "Send F (2)");
-            var sendI = FindState(sm, "Send I");
+            var detour = FindState(sm, "Send B (req)");
 
-            foreach (var state in new[] { sendF, sendFAgain, sendI })
+            // Steps 0 and 1 are out (step 1 sends B, step 0's successor is step 1); steps 2
+            // and 3 route, and come back to steps 3 and 0.
+            Assert.AreEqual(1, FindState(sm, "Send F").transitions.Length);
+            Assert.AreEqual(1, FindState(sm, "Send B").transitions.Length);
+            foreach (var name in new[] { "Send F (2)", "Send I" })
             {
-                Assert.AreEqual(2, state.transitions.Length, state.name + " keeps redirect + ring");
-                Assert.AreEqual(sendB, state.transitions[0].destinationState,
-                    state.name + " redirects to the first visit of B's slot");
-                Assert.IsTrue(HasCondition(state.transitions[0], "Async/Req/B",
-                    AnimatorConditionMode.If, 0f));
-                Assert.AreEqual(0, state.transitions[1].conditions.Length, "the ring is the fallback");
+                var origin = FindState(sm, name);
+                Assert.AreEqual(2, origin.transitions.Length, name);
+                Assert.AreEqual(detour, origin.transitions[0].destinationState, name);
             }
 
-            // Still no self-redirect, and a repeated slot does not become one by repeating.
-            Assert.AreEqual(1, sendB.transitions.Length);
+            var returns = new Dictionary<int, string>();
+            foreach (var transition in detour.transitions)
+                foreach (var condition in transition.conditions)
+                    if (condition.parameter == "Async/Return")
+                        returns[(int)condition.threshold] = transition.destinationState.name;
+            Assert.AreEqual("Send I", returns[2]);
+            Assert.AreEqual("Send F", returns[3]);
+
+            Object.DestroyImmediate(controller);
         }
 
         /// <summary>
@@ -1764,40 +1986,37 @@ namespace Yozolab.DaerD.Tests
         public void Apply_WithRequests_ForARepeatedSlot_ClearsTheFlagAtEveryVisit()
         {
             var controller = NewController();
-            var request = NewRequest(controller, "F", "B", "I");
+            controller.AddParameter("F2", AnimatorControllerParameterType.Float);
+            var request = NewRequest(controller, "F", "B", "I", "F2");
             request.skipDrivers = false;
             Sends(request, "F");
             Sends(request, "B");
             Sends(request, "F");
             Sends(request, "I");
+            Sends(request, "F2");   // so F is not simply every other step, which has no origins
             request.requestTargets.Add("F");
             Assert.IsTrue(AsyncSyncBuilder.Apply(request));
 
             var sm = controller.layers[1].stateMachine;
-            foreach (var name in new[] { "Send F", "Send F (2)" })
+            foreach (var name in new[] { "Send F", "Send F (2)", "Send F (req)" })
             {
                 var entries = DriverOn(FindState(sm, name)).entries;
                 Assert.IsTrue(entries.Exists(e => e.name == "Async/Req/F" && e.value == 0f),
                     name + " serves the request too, so it lowers the flag");
             }
 
-            // And the steps that are not F route to F's first visit.
-            var sendF = FindState(sm, "Send F");
-            foreach (var name in new[] { "Send B", "Send I" })
-                Assert.AreEqual(sendF, FindState(sm, name).transitions[0].destinationState);
+            Object.DestroyImmediate(controller);
         }
 
         /// <summary>
-        /// The one configuration where a jump to the state's own slot would be legal — a grid
-        /// that visits a slot in neighbouring steps, with a clock giving those two visits
-        /// opposite phases, so the index does change. It is still not built, and that is the
-        /// decision this pins rather than an oversight: the only such jump worth having runs
-        /// from the run's last step back to its first, and a flag raised again during each
-        /// dwell would walk that pair forever with every other slot starved. One other slot
-        /// gets a turn between two services of the same one, however hard a request is driven.
+        /// The rule that decides where a detour may start is about INDEX values, not slots, and
+        /// a clock is what makes the two differ: a grid visiting one slot in neighbouring steps
+        /// gives those visits opposite phases, so the successor of one of them no longer
+        /// repeats the index a detour writes — and that step becomes an origin where the same
+        /// pass without a clock had none.
         /// </summary>
         [Test]
-        public void Apply_WithAClockAndARepeatedSlot_StillNeverRedirectsToItsOwnSlot()
+        public void Apply_WithAClock_TheOriginRuleFollowsTheIndexRatherThanTheSlot()
         {
             var controller = NewController();
             var request = NewRequest(controller, "F", "B", "I");
@@ -1810,23 +2029,24 @@ namespace Yozolab.DaerD.Tests
             Assert.IsTrue(AsyncSyncBuilder.Apply(request));
 
             var slots = AsyncSyncBuilder.BuildSlots(request);
-            var clock = AsyncSyncBuilder.BuildClock(request, slots,
-                AsyncSyncBuilder.EffectiveSchedule(request, slots));
+            var schedule = AsyncSyncBuilder.EffectiveSchedule(request, slots);
+            var clock = AsyncSyncBuilder.BuildClock(request, slots, schedule);
             Assert.AreNotEqual(clock.stepPhases[0], clock.stepPhases[1],
                 "the premise: the decoder can tell these two sends of one slot apart");
 
+            // Steps 0 and 1 send the slot itself. Step 3's successor is step 0, which sends the
+            // phase a detour writes — so step 2 is the only origin left.
+            CollectionAssert.AreEqual(new[] { 2 },
+                AsyncSyncBuilder.RequestOrigins(schedule, clock, 0));
+
             var sm = controller.layers[1].stateMachine;
-            var sendF = FindState(sm, "Send F");
-            var sendFAgain = FindState(sm, "Send F (2)");
+            var detour = FindState(sm, "Send F (req)");
+            Assert.AreEqual(detour, FindState(sm, "Send B").transitions[0].destinationState);
+            foreach (var name in new[] { "Send F", "Send F (2)", "Send I" })
+                Assert.AreEqual(1, FindState(sm, name).transitions.Length,
+                    name + " keeps the ring alone");
 
-            // Both F steps keep the ring alone — no route back into their own slot.
-            Assert.AreEqual(1, sendF.transitions.Length);
-            Assert.AreEqual(1, sendFAgain.transitions.Length);
-            Assert.AreEqual(0, sendF.transitions[0].conditions.Length, "the ring is unconditional");
-
-            // The steps that are not F still route to it, so the request is served either way.
-            Assert.AreEqual(sendF, FindState(sm, "Send B").transitions[0].destinationState);
-            Assert.AreEqual(sendF, FindState(sm, "Send I").transitions[0].destinationState);
+            Object.DestroyImmediate(controller);
         }
 
         /// <summary>
@@ -1848,6 +2068,8 @@ namespace Yozolab.DaerD.Tests
             Assert.IsNotNull(refusal, "a target no step carries cannot be built");
             StringAssert.Contains("'B'", refusal);
             Assert.IsFalse(AsyncSyncBuilder.Apply(request));
+
+            Object.DestroyImmediate(controller);
         }
 
         // ---- Empty clip -----------------------------------------------------
@@ -1903,6 +2125,67 @@ namespace Yozolab.DaerD.Tests
             Assert.AreEqual(0.45f, send.transitions[0].exitTime, 0.0001f);
 
             Object.DestroyImmediate(controller);
+        }
+
+        /// <summary>
+        /// The two unconditioned routes out of a watcher. Neither may be left without an exit
+        /// time — a transition with no condition and no exit time is never taken at all — and
+        /// neither may carry zero, which reads as "at once" and fires at the loop boundary
+        /// instead. That is not a style rule: the commit's route was written as a zero, and
+        /// stood for a second of every lap for as long as nobody measured it.
+        ///
+        /// Both now take a millisecond, written in seconds and normalized to the motion the way
+        /// the cycle's dwell is, so both stay a millisecond with or without the Empty clip. The
+        /// commit's used to be the loop it was mistaken for, kept deliberately while the group
+        /// leaned on the odds it improved; the send-side latch is what made it pointless.
+        /// AsyncSyncDwellTests measures what each of them costs on a running Animator.
+        /// </summary>
+        [Test]
+        public void Apply_SpellsTheTwoUnconditionedRoutesOutOfAWatcherApart()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.stale = true;
+            request.groups.Add(Group("Outfit", "F", "B"));
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var judged = FindState(FindLayer(controller, "Async Stale"), "Judge").transitions[2];
+            var committed = FindState(FindLayer(controller, "Async Outfit"), "Commit")
+                .transitions[0];
+            foreach (var transition in new[] { judged, committed })
+            {
+                Assert.AreEqual(0, transition.conditions.Length, "there is nothing to wait for");
+                Assert.IsTrue(transition.hasExitTime,
+                    "a route with neither a condition nor an exit time is never taken");
+                Assert.AreNotEqual(0f, transition.exitTime,
+                    "zero is the loop boundary, whatever it reads as");
+            }
+            // Motion-less states: normalized time is a second, so an exit time reads as seconds.
+            Assert.AreEqual(0.001f, judged.exitTime, 1e-6f);
+            Assert.AreEqual(0.001f, committed.exitTime, 1e-6f,
+                "the commit is back to waiting for the next whole set and nothing else");
+            Object.DestroyImmediate(controller);
+
+            // ...and with the Empty clip on them, the millisecond becomes a fraction of it,
+            // because a route meant to be over at once has to be written as a fraction of
+            // whatever motion the state happens to carry.
+            var filled = NewController();
+            var clip = NewEmptyClip(0.5f);
+            var withClip = NewRequest(filled, "F", "B", "I");
+            withClip.emptyClip = clip;
+            withClip.stale = true;
+            withClip.groups.Add(Group("Outfit", "F", "B"));
+            Assert.IsTrue(AsyncSyncBuilder.Apply(withClip));
+
+            Assert.AreEqual(0.001f / 0.5f,
+                FindState(FindLayer(filled, "Async Stale"), "Judge").transitions[2].exitTime,
+                1e-6f);
+            Assert.AreEqual(0.001f / 0.5f,
+                FindState(FindLayer(filled, "Async Outfit"), "Commit").transitions[0].exitTime,
+                1e-6f);
+
+            Object.DestroyImmediate(clip);
+            Object.DestroyImmediate(filled);
         }
 
         [Test]
@@ -1972,6 +2255,940 @@ namespace Yozolab.DaerD.Tests
             {
                 AssetDatabase.DeleteAsset(path);
             }
+        }
+
+        // ---- remote initialized flag ----------------------------------------
+
+        static AnimatorStateMachine FindLayer(AnimatorController controller, string name)
+        {
+            foreach (var layer in controller.layers)
+                if (layer.name == name)
+                    return layer.stateMachine;
+            return null;
+        }
+
+        [Test]
+        public void ReadyParameters_AreOneFlagAndOneBitPerSlot()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            CollectionAssert.IsEmpty(AsyncSyncBuilder.ReadyParameters(request),
+                "a setup that doesn't ask for the flag mints nothing");
+
+            request.ready = true;
+            var names = new List<string>();
+            foreach (var (name, type) in AsyncSyncBuilder.ReadyParameters(request))
+            {
+                Assert.AreEqual(AnimatorControllerParameterType.Bool, type);
+                names.Add(name);
+            }
+            CollectionAssert.AreEqual(
+                new[] { "Async/Ready", "Async/Seen/F", "Async/Seen/B", "Async/Seen/I" }, names);
+        }
+
+        [Test]
+        public void ReadyParameters_NameTheSlot_NotEveryTargetRidingIt()
+        {
+            var controller = NewController();
+            controller.AddParameter("B2", AnimatorControllerParameterType.Bool);
+            var request = NewRequest(controller, "F", "B", "B2");
+            request.boolChannels = 2;                      // B and B2 share one slot
+            request.ready = true;
+
+            var names = new List<string>();
+            foreach (var (name, _) in AsyncSyncBuilder.ReadyParameters(request)) names.Add(name);
+            // One bit for the pair, spelled the way their shared states are.
+            CollectionAssert.AreEqual(new[] { "Async/Ready", "Async/Seen/F", "Async/Seen/B +1" },
+                names);
+        }
+
+        [Test]
+        public void Apply_WithReady_BuildsAWatcherThatLatchesOnEverySlot()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.ready = true;
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var watcher = FindLayer(controller, "Async Ready");
+            Assert.IsNotNull(watcher, "the flag gets a layer of its own");
+            Assert.AreEqual(3, watcher.states.Length);
+
+            // Everyone starts watching; the wearer leaves on its first frame. A route out of
+            // the default state rather than a condition on Entry, which is evaluated at a
+            // moment nothing here controls and is observed not to be taken at all.
+            var watch = FindState(watcher, "Watch");
+            Assert.AreEqual(watch, watcher.defaultState);
+            Assert.AreEqual(0, watcher.entryTransitions.Length);
+            Assert.AreEqual(2, watch.transitions.Length);
+            Assert.AreEqual("Local", watch.transitions[0].destinationState.name);
+            Assert.IsTrue(HasCondition(watch.transitions[0], "IsLocal",
+                AnimatorConditionMode.If, 0f));
+
+            // One condition per slot, all on the same transition: they are read together.
+            var toReady = watch.transitions[1];
+            Assert.AreEqual("Ready", toReady.destinationState.name);
+            Assert.IsFalse(toReady.hasExitTime);
+            Assert.AreEqual(3, toReady.conditions.Length);
+            foreach (var slot in new[] { "F", "B", "I" })
+                Assert.IsTrue(HasCondition(toReady, "Async/Seen/" + slot,
+                    AnimatorConditionMode.If, 0f), "no condition on " + slot);
+
+            // Nothing leaves Ready or Local — that is the latch.
+            Assert.AreEqual(0, FindState(watcher, "Ready").transitions.Length);
+            Assert.AreEqual(0, FindState(watcher, "Local").transitions.Length);
+        }
+
+        [Test]
+        public void Apply_WithoutReady_BuildsNoWatcher()
+        {
+            var controller = NewController();
+            Assert.IsTrue(AsyncSyncBuilder.Apply(NewRequest(controller, "F", "B", "I")));
+
+            Assert.AreEqual(2, controller.layers.Length);
+            Assert.IsNull(FindLayer(controller, "Async Ready"));
+            CollectionAssert.IsEmpty(AsyncSyncBuilder.ReadyParameters(
+                NewRequest(controller, "F", "B", "I")));
+        }
+
+        [Test]
+        public void Apply_WithReadyTurnedOffAgain_TakesTheWatcherAway()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.ready = true;
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+            Assert.AreEqual(3, controller.layers.Length);
+
+            // Regenerating the same layer without the flag: a watcher left behind would hold
+            // whatever it last latched, which is worse than not having one.
+            var again = NewRequest(controller, "F", "B", "I");
+            again.layerIndex = 1;
+            Assert.IsTrue(AsyncSyncBuilder.Apply(again));
+
+            Assert.AreEqual(2, controller.layers.Length);
+            Assert.IsNull(FindLayer(controller, "Async Ready"));
+        }
+
+        [Test]
+        public void Apply_WithReadyTwice_RegeneratesTheOneWatcher()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.ready = true;
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var again = NewRequest(controller, "F", "B", "I");
+            again.ready = true;
+            again.layerIndex = 1;
+            Assert.IsTrue(AsyncSyncBuilder.Apply(again));
+
+            Assert.AreEqual(3, controller.layers.Length, "the watcher is rebuilt, not stacked");
+            Assert.AreEqual(3, FindLayer(controller, "Async Ready").states.Length);
+        }
+
+        [Test]
+        public void Apply_WithReadyAndDrivers_EachRecvRaisesItsOwnBit()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.ready = true;
+            request.skipDrivers = false;
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var sm = controller.layers[1].stateMachine;
+            foreach (var slot in new[] { "F", "B", "I" })
+            {
+                var entries = DriverOn(FindState(sm, "Recv " + slot)).entries;
+                var seen = entries[entries.Count - 1];
+                Assert.AreEqual("Async/Seen/" + slot, seen.name, "on Recv " + slot);
+                Assert.AreEqual(0, seen.kind);                  // Set
+                Assert.AreEqual(1f, seen.value);
+            }
+
+            // Nothing anywhere puts a bit back down: the reading is cumulative, which is what
+            // spares it a window to size and a clear to race against.
+            foreach (var child in sm.states)
+                foreach (var behaviour in child.state.behaviours)
+                    foreach (var entry in VrcParameterDriver.ReadSpec(behaviour).entries)
+                        if (entry.name != null && entry.name.StartsWith("Async/Seen/"))
+                            Assert.AreEqual(1f, entry.value, "on " + child.state.name);
+        }
+
+        [Test]
+        public void Apply_WithReadyAndDrivers_TheWearerIsReadyWithoutWaiting()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.ready = true;
+            request.skipDrivers = false;
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var watcher = FindLayer(controller, "Async Ready");
+            foreach (var name in new[] { "Local", "Ready" })
+            {
+                var driver = DriverOn(FindState(watcher, name));
+                // Not localOnly: every client runs this on its own copy of the avatar, and
+                // each of them is answering for itself.
+                Assert.IsFalse(driver.localOnly, "on " + name);
+                Assert.AreEqual(1, driver.entries.Count);
+                Assert.AreEqual("Async/Ready", driver.entries[0].name);
+                Assert.AreEqual(1f, driver.entries[0].value);
+            }
+            Assert.AreEqual(0, FindState(watcher, "Watch").behaviours.Length);
+        }
+
+        [Test]
+        public void Apply_WithReadyAndAClock_BothPhasesOfASlotRaiseTheOneBit()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.allowRepeatSteps = true;
+            request.ready = true;
+            request.skipDrivers = false;
+            Sends(request, "F");                    // F beside itself: two phases, one slot
+            Sends(request, "F");
+            Sends(request, "B");
+            Sends(request, "I");
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            // Two decoder states for F, one bit between them: a slot arrives whole, and
+            // either index proves it did.
+            var sm = controller.layers[1].stateMachine;
+            foreach (var name in new[] { "Recv F", "Recv F (2)" })
+            {
+                var entries = DriverOn(FindState(sm, name)).entries;
+                Assert.AreEqual("Async/Seen/F", entries[entries.Count - 1].name);
+            }
+            // Three slots, so three conditions on the route to Ready — the repeat costs an
+            // index value, not a bit. (transitions[0] is the wearer's way out.)
+            Assert.AreEqual(3, FindState(FindLayer(controller, "Async Ready"), "Watch")
+                .transitions[1].conditions.Length);
+        }
+
+        [Test]
+        public void FromConfig_CarriesReady()
+        {
+            var controller = NewController();
+            var config = new GraphFrameData.AsyncSyncConfig
+            {
+                baseName = "Async",
+                stepSeconds = 0.3f,
+                targets = new List<string> { "F", "B", "I" },
+                ready = true,
+            };
+            Assert.IsTrue(AsyncSyncBuilder.FromConfig(controller, config).ready);
+            config.ready = false;
+            Assert.IsFalse(AsyncSyncBuilder.FromConfig(controller, config).ready);
+
+            config.stale = true;
+            Assert.IsTrue(AsyncSyncBuilder.FromConfig(controller, config).stale);
+            config.stale = false;
+            Assert.IsFalse(AsyncSyncBuilder.FromConfig(controller, config).stale);
+        }
+
+        [Test]
+        public void Warnings_WithReady_SayWhenItLatches()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            Assert.IsFalse(AsyncSyncBuilder.Warnings(request)
+                .Exists(w => w.Contains("Async/Ready")));
+
+            request.ready = true;
+            Assert.IsTrue(AsyncSyncBuilder.Warnings(request)
+                .Exists(w => w.Contains("Async/Ready") && w.Contains("0.9")));
+        }
+
+        // ---- drift suspicion flag -------------------------------------------
+
+        [Test]
+        public void LapMarker_IsASlotSentOnce_AndNeverOneAnythingCanRequest()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            Assert.AreEqual(0, AsyncSyncBuilder.LapMarkerSlot(request), "first in cycle order");
+
+            // Sent twice a pass, so its arrival says nothing about where the pass is.
+            request.rates["F"] = 2;
+            Assert.AreEqual(1, AsyncSyncBuilder.LapMarkerSlot(request));
+
+            // Sent once, but a detour can send it again inside the same pass.
+            request.rates.Remove("F");
+            request.requestTargets.Add("F");
+            Assert.AreEqual(1, AsyncSyncBuilder.LapMarkerSlot(request));
+
+            request.requestTargets.AddRange(new[] { "B", "I" });
+            Assert.AreEqual(-1, AsyncSyncBuilder.LapMarkerSlot(request));
+        }
+
+        /// <summary>
+        /// A pass with no slot to spare buys a marker instead of going without the flag: one
+        /// step is given an index value of its own, which costs an index value and a decoder
+        /// state and changes nothing else about the pass.
+        /// </summary>
+        [Test]
+        public void LapMarker_IsBoughtWhenThePassHasNoneToSpare()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.requestTargets.AddRange(new[] { "F", "B", "I" });
+            int plain = AsyncSyncBuilder.IndexValues(request);
+
+            // Nothing marks a lap while the flag is off, and nothing is paid for either.
+            Assert.AreEqual(-1, AsyncSyncBuilder.LapMarkerSlot(request));
+            Assert.AreEqual(3, plain);
+
+            request.stale = true;
+            Assert.IsNull(AsyncSyncBuilder.Validate(request),
+                "a bought marker is what lets any pass carry the flag");
+            Assert.GreaterOrEqual(AsyncSyncBuilder.LapMarkerSlot(request), 0);
+            Assert.AreEqual(plain + 1, AsyncSyncBuilder.IndexValues(request),
+                "exactly one index value, and only while the flag is on");
+
+            var slots = AsyncSyncBuilder.BuildSlots(request);
+            var clock = AsyncSyncBuilder.BuildClock(request, slots,
+                AsyncSyncBuilder.EffectiveSchedule(request, slots));
+            Assert.IsTrue(clock.markerDedicated);
+            // The value the ring writes at that step, and one no detour writes: a request
+            // sends its slot in the request phase, so it cannot make a lap look over.
+            Assert.AreNotEqual(clock.MarkerIndex,
+                clock.Index(clock.markerSlot, AsyncSyncSchedule.RequestPhase));
+
+            Assert.IsTrue(AsyncSyncBuilder.Warnings(request)
+                .Exists(w => w.Contains("an index value of its own")),
+                "what it costs is said, not discovered");
+        }
+
+        /// <summary>The marker is free where the pass already has a slot to spare, and the
+        /// index is exactly as wide as it was — regenerating an existing setup with the flag
+        /// on must not move its parameters.</summary>
+        [Test]
+        public void LapMarker_CostsNothingWhenThePassAlreadyClosesALap()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            int plain = AsyncSyncBuilder.IndexValues(request);
+
+            request.stale = true;
+            Assert.AreEqual(plain, AsyncSyncBuilder.IndexValues(request));
+            Assert.AreEqual(0, AsyncSyncBuilder.LapMarkerSlot(request));
+
+            var slots = AsyncSyncBuilder.BuildSlots(request);
+            var clock = AsyncSyncBuilder.BuildClock(request, slots,
+                AsyncSyncBuilder.EffectiveSchedule(request, slots));
+            Assert.IsFalse(clock.markerDedicated);
+            Assert.AreEqual(clock.Index(0, 0), clock.MarkerIndex);
+        }
+
+        /// <summary>The one pass that cannot carry the flag: a lap with a single slot in it
+        /// has nothing that could go missing. Refused rather than dropped, because a Stale
+        /// that never comes up is worse than no flag at all.</summary>
+        [Test]
+        public void Validate_RefusesStale_OnAPassOfOneSlot()
+        {
+            var controller = new AnimatorController();
+            controller.AddLayer("Base");
+            controller.AddParameter("F1", AnimatorControllerParameterType.Float);
+            controller.AddParameter("F2", AnimatorControllerParameterType.Float);
+
+            // Two Floats in two channels are one slot, and one slot only builds with a clock.
+            var request = NewRequest(controller, "F1", "F2");
+            request.floatChannels = 2;
+            request.allowRepeatSteps = true;
+            Assert.AreEqual(1, AsyncSyncBuilder.BuildSlots(request).Count);
+            Assert.IsNull(AsyncSyncBuilder.Validate(request));
+
+            request.stale = true;
+            var error = AsyncSyncBuilder.Validate(request);
+            Assert.IsNotNull(error);
+            StringAssert.Contains("same slot", error);
+
+            // ...and the same setup without the flag is fine, which is the point of refusing
+            // rather than dropping it: nothing else about the pass is wrong.
+            request.stale = false;
+            Assert.IsNull(AsyncSyncBuilder.Validate(request));
+        }
+
+        [Test]
+        public void Apply_WithStale_JudgesOnceALapAndArmsAgainOnTheWayOut()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.stale = true;
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var watcher = FindLayer(controller, "Async Stale");
+            Assert.IsNotNull(watcher);
+            Assert.AreEqual(4, watcher.states.Length);
+
+            var idle = FindState(watcher, "Idle");
+            Assert.AreEqual(idle, watcher.defaultState);
+            // Armed by the marker's own index, and only on a remote.
+            Assert.AreEqual(1, idle.transitions.Length);
+            Assert.AreEqual("Judge", idle.transitions[0].destinationState.name);
+            Assert.IsTrue(HasCondition(idle.transitions[0], "IsLocal",
+                AnimatorConditionMode.IfNot, 0f));
+            Assert.IsTrue(HasCondition(idle.transitions[0], "Async/Index",
+                AnimatorConditionMode.Equals, 0f));
+
+            // One route per slot that could be missing, then the fall-through. The marker is
+            // not among them: being here is its arrival.
+            var judge = FindState(watcher, "Judge");
+            Assert.AreEqual(3, judge.transitions.Length);
+            Assert.AreEqual("Dirty", judge.transitions[0].destinationState.name);
+            Assert.IsTrue(HasCondition(judge.transitions[0], "Async/Fresh/B",
+                AnimatorConditionMode.IfNot, 0f));
+            Assert.IsTrue(HasCondition(judge.transitions[1], "Async/Fresh/I",
+                AnimatorConditionMode.IfNot, 0f));
+            Assert.AreEqual("Clean", judge.transitions[2].destinationState.name);
+            Assert.AreEqual(0, judge.transitions[2].conditions.Length, "the last one is the else");
+            foreach (var transition in judge.transitions)
+                Assert.IsFalse(HasCondition(transition, "Async/Fresh/F",
+                    AnimatorConditionMode.IfNot, 0f), "the marker judges nobody but the rest");
+
+            // Both verdicts wait for the index to move on — the marker holds it for a whole
+            // dwell, and re-judging every frame of that would read a lap that isn't over.
+            foreach (var name in new[] { "Dirty", "Clean" })
+            {
+                var verdict = FindState(watcher, name);
+                Assert.AreEqual(1, verdict.transitions.Length, "on " + name);
+                Assert.AreEqual("Idle", verdict.transitions[0].destinationState.name);
+                Assert.IsTrue(HasCondition(verdict.transitions[0], "Async/Index",
+                    AnimatorConditionMode.NotEqual, 0f));
+            }
+            Assert.AreEqual(0, watcher.anyStateTransitions.Length,
+                "an Any-State route would re-judge on every frame of the marker's dwell");
+        }
+
+        [Test]
+        public void Apply_WithStale_AndABoolIndex_SpellsTheMarkerLeavingOverTheBits()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.encoding = AsyncSyncBuilder.IndexEncoding.Bool;   // 3 slots -> 2 bits
+            request.stale = true;
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var watcher = FindLayer(controller, "Async Stale");
+            // Index 0 is both bits down, so arming wants both down...
+            var arm = FindState(watcher, "Idle").transitions[0];
+            Assert.IsTrue(HasCondition(arm, "Async/Index/b0", AnimatorConditionMode.IfNot, 0f));
+            Assert.IsTrue(HasCondition(arm, "Async/Index/b1", AnimatorConditionMode.IfNot, 0f));
+
+            // ...and leaving wants EITHER up, which is a disjunction and so a route each.
+            var dirty = FindState(watcher, "Dirty");
+            Assert.AreEqual(2, dirty.transitions.Length);
+            Assert.IsTrue(HasCondition(dirty.transitions[0], "Async/Index/b0",
+                AnimatorConditionMode.If, 0f));
+            Assert.IsTrue(HasCondition(dirty.transitions[1], "Async/Index/b1",
+                AnimatorConditionMode.If, 0f));
+        }
+
+        [Test]
+        public void Apply_WithStaleAndDrivers_EveryVerdictOpensTheNextLap()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.stale = true;
+            request.skipDrivers = false;
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var watcher = FindLayer(controller, "Async Stale");
+            foreach (var (name, verdict) in new[] { ("Dirty", 1f), ("Clean", 0f) })
+            {
+                var driver = DriverOn(FindState(watcher, name));
+                Assert.IsFalse(driver.localOnly, "on " + name);
+                Assert.AreEqual(4, driver.entries.Count, "on " + name);
+                Assert.AreEqual("Async/Stale", driver.entries[0].name);
+                Assert.AreEqual(verdict, driver.entries[0].value);
+                // Every bit, the marker's included: the next lap has to start from nothing.
+                for (int i = 1; i < 4; i++)
+                    Assert.AreEqual(0f, driver.entries[i].value, "on " + name);
+                Assert.AreEqual("Async/Fresh/F", driver.entries[1].name);
+            }
+            Assert.AreEqual(0, FindState(watcher, "Idle").behaviours.Length);
+            Assert.AreEqual(0, FindState(watcher, "Judge").behaviours.Length);
+        }
+
+        [Test]
+        public void Apply_WithStaleAndDrivers_EachRecvRaisesItsFreshBit()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.stale = true;
+            request.skipDrivers = false;
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var sm = controller.layers[1].stateMachine;
+            foreach (var slot in new[] { "F", "B", "I" })
+            {
+                var entries = DriverOn(FindState(sm, "Recv " + slot)).entries;
+                var fresh = entries[entries.Count - 1];
+                Assert.AreEqual("Async/Fresh/" + slot, fresh.name);
+                Assert.AreEqual(1f, fresh.value);
+            }
+        }
+
+        [Test]
+        public void Apply_WithReadyAndStale_KeepsTwoBitSetsAndTwoWatchers()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.ready = true;
+            request.stale = true;
+            request.skipDrivers = false;
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            // One accumulates and one is cleared every lap, so one set cannot be both.
+            Assert.IsNotNull(DbtBuilder.FindParameter(controller, "Async/Seen/F"));
+            Assert.IsNotNull(DbtBuilder.FindParameter(controller, "Async/Fresh/F"));
+            Assert.AreEqual(4, controller.layers.Length);
+
+            var entries = DriverOn(FindState(controller.layers[1].stateMachine, "Recv F")).entries;
+            Assert.AreEqual("Async/Seen/F", entries[entries.Count - 2].name);
+            Assert.AreEqual("Async/Fresh/F", entries[entries.Count - 1].name);
+        }
+
+        [Test]
+        public void Apply_WithoutStale_BuildsNoWatcher_AndTurningItOffTakesItAway()
+        {
+            var controller = NewController();
+            Assert.IsTrue(AsyncSyncBuilder.Apply(NewRequest(controller, "F", "B", "I")));
+            Assert.IsNull(FindLayer(controller, "Async Stale"));
+
+            var on = NewRequest(controller, "F", "B", "I");
+            on.stale = true;
+            on.layerIndex = 1;
+            Assert.IsTrue(AsyncSyncBuilder.Apply(on));
+            Assert.AreEqual(3, controller.layers.Length);
+
+            var off = NewRequest(controller, "F", "B", "I");
+            off.layerIndex = 1;
+            Assert.IsTrue(AsyncSyncBuilder.Apply(off));
+            Assert.AreEqual(2, controller.layers.Length);
+            Assert.IsNull(FindLayer(controller, "Async Stale"));
+        }
+
+        [Test]
+        public void Warnings_WithStale_NameTheSlotThatClosesTheLap()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.stale = true;
+            Assert.IsTrue(AsyncSyncBuilder.Warnings(request)
+                .Exists(w => w.Contains("Async/Stale") && w.Contains("'F'")));
+        }
+
+        // ---- groups ---------------------------------------------------------
+
+        static GraphFrameData.AsyncSyncConfig.SyncGroup Group(string name,
+            params string[] members)
+        {
+            var group = new GraphFrameData.AsyncSyncConfig.SyncGroup { name = name };
+            group.members.AddRange(members);
+            return group;
+        }
+
+        [Test]
+        public void EffectiveGroups_FollowCycleOrder_AndDropWhatCannotBeAGroup()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.groups.Add(Group("Outfit", "I", "F", "Gone"));   // listed out of order
+            request.groups.Add(Group("Other", "F", "B"));            // F is already claimed
+            request.groups.Add(Group("Alone", "B"));
+
+            var groups = AsyncSyncBuilder.EffectiveGroups(request);
+            Assert.AreEqual(1, groups.Count, "only the first group has two usable members");
+            Assert.AreEqual("Outfit", groups[0].name);
+            CollectionAssert.AreEqual(new[] { "F", "I" }, groups[0].members);
+
+            // A group too small to build gives its member back rather than eating it.
+            request.groups.Clear();
+            request.groups.Add(Group("Alone", "F"));
+            request.groups.Add(Group("Real", "F", "B"));
+            groups = AsyncSyncBuilder.EffectiveGroups(request);
+            Assert.AreEqual(1, groups.Count);
+            CollectionAssert.AreEqual(new[] { "F", "B" }, groups[0].members);
+        }
+
+        [Test]
+        public void GroupParameters_ShadowEachMemberInItsOwnType()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            CollectionAssert.IsEmpty(AsyncSyncBuilder.GroupParameters(request));
+
+            request.groups.Add(Group("Outfit", "F", "I"));
+            var generated = AsyncSyncBuilder.GroupParameters(request);
+            CollectionAssert.AreEqual(
+                new[]
+                {
+                    "Async/Latch/F", "Async/Hold/F", "Async/Held/F",
+                    "Async/Latch/I", "Async/Hold/I", "Async/Held/I",
+                },
+                generated.ConvertAll(entry => entry.name));
+            // The latch and the shadow both stand in for the target, so both have to be able
+            // to hold what it holds; the flag between them is a flag.
+            Assert.AreEqual(AnimatorControllerParameterType.Float, generated[0].type);
+            Assert.AreEqual(AnimatorControllerParameterType.Float, generated[1].type);
+            Assert.AreEqual(AnimatorControllerParameterType.Bool, generated[2].type);
+            Assert.AreEqual(AnimatorControllerParameterType.Int, generated[3].type);
+            Assert.AreEqual(AnimatorControllerParameterType.Int, generated[4].type);
+            Assert.AreEqual(AnimatorControllerParameterType.Bool, generated[5].type);
+        }
+
+        /// <summary>
+        /// None of a group's three parameters per member is ever synced, and a regenerate does
+        /// not make a second set of them. The wire is what a group must not cost — the whole
+        /// mechanism is two local pieces of reasoning about values that travel exactly as they
+        /// did — so the store gets the index and the channels and nothing else.
+        /// </summary>
+        [Test]
+        public void Apply_WithAGroup_CreatesItsLatchesLocallyAndOnlyOnce()
+        {
+            var controller = NewController();
+            var asset = ScriptableObject.CreateInstance<VRCExpressionParameters>();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.groups.Add(Group("Outfit", "F", "I"));
+            request.store = ParameterStore.TryWrap(asset);
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            foreach (var name in new[]
+            {
+                "Async/Latch/F", "Async/Latch/I", "Async/Hold/F", "Async/Hold/I",
+                "Async/Held/F", "Async/Held/I",
+            })
+            {
+                Assert.IsNotNull(DbtBuilder.FindParameter(controller, name),
+                    name + " was never created on the controller");
+                Assert.IsNull(VrcExpressionParameters.Find(asset, name),
+                    name + " reached the parameter store, so a group is costing bits");
+            }
+            Assert.AreEqual(AnimatorControllerParameterType.Float,
+                DbtBuilder.FindParameter(controller, "Async/Latch/F").type);
+            Assert.AreEqual(AnimatorControllerParameterType.Int,
+                DbtBuilder.FindParameter(controller, "Async/Latch/I").type);
+            // What DOES sync is the index and the channels, exactly as it did before groups
+            // learnt to latch anything.
+            foreach (var (name, _) in AsyncSyncBuilder.GeneratedParameters(request))
+                Assert.IsNotNull(VrcExpressionParameters.Find(asset, name),
+                    name + " should be synced");
+
+            int before = controller.parameters.Length;
+            var again = NewRequest(controller, "F", "B", "I");
+            again.groups.Add(Group("Outfit", "F", "I"));
+            again.layerIndex = 1;
+            Assert.IsTrue(AsyncSyncBuilder.Apply(again));
+            Assert.AreEqual(before, controller.parameters.Length,
+                "regenerating grew the parameter list, so something is being made twice");
+
+            Object.DestroyImmediate(asset);
+        }
+
+        [Test]
+        public void Apply_WithAGroup_HoldsWhatArrivesAndCommitsTheSetAtOnce()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.groups.Add(Group("Outfit", "F", "B"));
+            request.skipDrivers = false;
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            // The arriving direction is diverted; the flag goes up after the value is in. Recv F
+            // is also the group's latch point — F is the first member the ring sends — so it
+            // opens the lap window by putting every member's flag down before anything else.
+            var sm = controller.layers[1].stateMachine;
+            var recvF = DriverOn(FindState(sm, "Recv F")).entries;
+            Assert.AreEqual(4, recvF.Count);
+            Assert.AreEqual("Async/Held/F", recvF[0].name);
+            Assert.AreEqual(0f, recvF[0].value);
+            Assert.AreEqual("Async/Held/B", recvF[1].name);
+            Assert.AreEqual(0f, recvF[1].value);
+            Assert.AreEqual(3, recvF[2].kind);                       // Copy
+            Assert.AreEqual("Async/Float", recvF[2].source);
+            Assert.AreEqual("Async/Hold/F", recvF[2].name);
+            Assert.AreEqual("Async/Held/F", recvF[3].name);
+            Assert.AreEqual(1f, recvF[3].value);
+            // The other member's arrival only counts itself in — the window is opened once a
+            // lap and by one slot.
+            var recvB = DriverOn(FindState(sm, "Recv B")).entries;
+            Assert.AreEqual(2, recvB.Count);
+            Assert.AreEqual("Async/Hold/B", recvB[0].name);
+            Assert.AreEqual("Async/Held/B", recvB[1].name);
+            // An ungrouped target still lands in its own parameter.
+            Assert.AreEqual("I", DriverOn(FindState(sm, "Recv I")).entries[0].name);
+
+            // The leaving direction is diverted too, and at the same slot: the first member's
+            // step reads the whole group into its latches in one driver, and the channels are
+            // then filled from those rather than from the parameters.
+            var sendF = DriverOn(FindState(sm, "Send F")).entries;
+            Assert.AreEqual("F", sendF[0].source);
+            Assert.AreEqual("Async/Latch/F", sendF[0].name);
+            Assert.AreEqual("B", sendF[1].source);
+            Assert.AreEqual("Async/Latch/B", sendF[1].name);
+            Assert.AreEqual("Async/Latch/F", sendF[2].source);
+            Assert.AreEqual("Async/Float", sendF[2].name);
+            // Every later step sends its member out of the latch and takes no reading of its
+            // own, which is what makes one lap one moment.
+            var sendB = DriverOn(FindState(sm, "Send B")).entries;
+            Assert.AreEqual("Async/Latch/B", sendB[0].source);
+            Assert.AreEqual("Async/Bool", sendB[0].name);
+            // And an ungrouped target is sent from itself, as fresh as it ever was.
+            Assert.AreEqual("I", DriverOn(FindState(sm, "Send I")).entries[0].source);
+
+            var commitLayer = FindLayer(controller, "Async Outfit");
+            Assert.IsNotNull(commitLayer);
+            Assert.AreEqual(2, commitLayer.states.Length);
+            var idle = FindState(commitLayer, "Idle");
+            Assert.AreEqual(idle, commitLayer.defaultState);
+            Assert.AreEqual(1, idle.transitions.Length);
+            Assert.AreEqual(2, idle.transitions[0].conditions.Length, "one per member");
+            Assert.IsTrue(HasCondition(idle.transitions[0], "Async/Held/F",
+                AnimatorConditionMode.If, 0f));
+            Assert.IsTrue(HasCondition(idle.transitions[0], "Async/Held/B",
+                AnimatorConditionMode.If, 0f));
+
+            // One driver: the copies and the clears run in the same frame, which is the whole
+            // guarantee — and the clears come after the copies.
+            var commit = FindState(commitLayer, "Commit");
+            var driver = DriverOn(commit);
+            Assert.IsFalse(driver.localOnly);
+            Assert.AreEqual(4, driver.entries.Count);
+            Assert.AreEqual("Async/Hold/F", driver.entries[0].source);
+            Assert.AreEqual("F", driver.entries[0].name);
+            Assert.AreEqual("Async/Hold/B", driver.entries[1].source);
+            Assert.AreEqual("B", driver.entries[1].name);
+            Assert.AreEqual("Async/Held/F", driver.entries[2].name);
+            Assert.AreEqual(0f, driver.entries[2].value);
+            Assert.AreEqual("Async/Held/B", driver.entries[3].name);
+            Assert.AreEqual(0f, driver.entries[3].value);
+
+            Assert.AreEqual(1, commit.transitions.Length);
+            Assert.AreEqual("Idle", commit.transitions[0].destinationState.name);
+            Assert.AreEqual(0, commit.transitions[0].conditions.Length);
+        }
+
+        /// <summary>
+        /// The commit guard with the remote initialized flag on: the flag as well as the
+        /// members, and the latch putting the arrival flags down as it goes. Both halves, in
+        /// one test, because either alone leaves the hole open — the flag on its own latches in
+        /// the same frame the flags a client's first frames raised complete a commit, and
+        /// putting them down on its own leaves nothing guarding the frames before the latch.
+        /// AsyncSyncRuntimeTests runs the thing the pair is for.
+        /// </summary>
+        [Test]
+        public void Apply_WithAGroupAndReady_WaitsForTheFlagAndStartsTheFlagsFromNothing()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.groups.Add(Group("Outfit", "F", "B"));
+            request.ready = true;
+            request.skipDrivers = false;
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var arm = FindState(FindLayer(controller, "Async Outfit"), "Idle").transitions[0];
+            Assert.AreEqual(3, arm.conditions.Length, "the flag on top of one per member");
+            Assert.IsTrue(HasCondition(arm, "Async/Ready", AnimatorConditionMode.If, 0f));
+            Assert.IsTrue(HasCondition(arm, "Async/Held/F", AnimatorConditionMode.If, 0f));
+            Assert.IsTrue(HasCondition(arm, "Async/Held/B", AnimatorConditionMode.If, 0f));
+
+            // One driver again, so the flag and the clears land in the same frame as each
+            // other — a commit cannot slip between them.
+            var latched = DriverOn(FindState(FindLayer(controller, "Async Ready"), "Ready"));
+            Assert.AreEqual(3, latched.entries.Count);
+            Assert.AreEqual("Async/Ready", latched.entries[0].name);
+            Assert.AreEqual(1f, latched.entries[0].value);
+            Assert.AreEqual("Async/Held/F", latched.entries[1].name);
+            Assert.AreEqual(0f, latched.entries[1].value);
+            Assert.AreEqual("Async/Held/B", latched.entries[2].name);
+            Assert.AreEqual(0f, latched.entries[2].value);
+
+            // The wearer's side of the watcher is untouched: nothing on their copy ever raises
+            // those flags, so there is nothing there to put down.
+            var wearer = DriverOn(FindState(FindLayer(controller, "Async Ready"), "Local"));
+            Assert.AreEqual(1, wearer.entries.Count);
+            Assert.AreEqual("Async/Ready", wearer.entries[0].name);
+        }
+
+        [Test]
+        public void Apply_WithAGroupAndNoReady_LeavesTheGuardAsItWas()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.groups.Add(Group("Outfit", "F", "B"));
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            // No flag to ask for, so the guard is the members alone — and the warning names the
+            // switch that would close the first commit off instead of leaving it to be read.
+            var arm = FindState(FindLayer(controller, "Async Outfit"), "Idle").transitions[0];
+            Assert.AreEqual(2, arm.conditions.Length);
+            Assert.IsFalse(HasCondition(arm, "Async/Ready", AnimatorConditionMode.If, 0f));
+            Assert.IsTrue(AsyncSyncBuilder.Warnings(request)
+                .Exists(w => w.Contains("carry a value nobody sent")
+                    && w.Contains("remote initialized flag")));
+
+            request.ready = true;
+            Assert.IsFalse(AsyncSyncBuilder.Warnings(request)
+                .Exists(w => w.Contains("carry a value nobody sent")),
+                "the flag is on — there is nothing left to warn about");
+        }
+
+        /// <summary>
+        /// The latch point is the first member the RING sends, and it is the same slot on both
+        /// sides: the step that reads the group into its latches is the arrival that puts the
+        /// group's flags down. A group whose members start later in the pass moves both — they
+        /// are one decision, and a build where they disagreed would open the window against a
+        /// reading the wearer had already replaced.
+        /// </summary>
+        [Test]
+        public void Apply_WithAGroup_LatchesAtItsFirstMembersStep_OnBothSides()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.groups.Add(Group("Outfit", "B", "I"));   // F is not a member at all
+            request.skipDrivers = false;
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var sm = controller.layers[1].stateMachine;
+            // F is sent before either member and is nobody's latch point: no latch entries, and
+            // its own value on the wire.
+            var sendF = DriverOn(FindState(sm, "Send F")).entries;
+            Assert.AreEqual("F", sendF[0].source);
+            Assert.AreEqual("Async/Float", sendF[0].name);
+            var recvF = DriverOn(FindState(sm, "Recv F")).entries;
+            Assert.AreEqual("Async/Float", recvF[0].source);
+            Assert.AreEqual("F", recvF[0].name, "an ungrouped slot opened somebody's window");
+
+            // B is the first member the ring reaches, so the reading is taken there.
+            var sendB = DriverOn(FindState(sm, "Send B")).entries;
+            Assert.AreEqual("B", sendB[0].source);
+            Assert.AreEqual("Async/Latch/B", sendB[0].name);
+            Assert.AreEqual("I", sendB[1].source);
+            Assert.AreEqual("Async/Latch/I", sendB[1].name);
+            Assert.AreEqual("Async/Latch/B", sendB[2].source);
+            Assert.AreEqual("Async/Bool", sendB[2].name);
+
+            var recvB = DriverOn(FindState(sm, "Recv B")).entries;
+            Assert.AreEqual("Async/Held/B", recvB[0].name);
+            Assert.AreEqual(0f, recvB[0].value);
+            Assert.AreEqual("Async/Held/I", recvB[1].name);
+            Assert.AreEqual(0f, recvB[1].value);
+            Assert.AreEqual("Async/Hold/B", recvB[2].name);
+            Assert.AreEqual("Async/Held/B", recvB[3].name);
+            Assert.AreEqual(1f, recvB[3].value);
+        }
+
+        /// <summary>
+        /// A detour sends the latch and does not take one. A request is a slot sent out of
+        /// turn, so a reading taken there would be a reading half the group had already been
+        /// sent from — the tear the latch exists to close, at a moment nothing schedules. So a
+        /// requested member arrives sooner and still belongs to the lap it was read in.
+        /// </summary>
+        [Test]
+        public void Apply_WithARequestableGroupMember_SendsTheLatchFromTheDetour()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.groups.Add(Group("Outfit", "F", "I"));
+            request.requestTargets.Add("I");
+            request.skipDrivers = false;
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var sm = controller.layers[1].stateMachine;
+            var detour = DriverOn(FindState(sm, "Send I (req)")).entries;
+            Assert.AreEqual("Async/Latch/I", detour[0].source,
+                "the detour read a fresh value instead of sending the group's own");
+            Assert.AreEqual("Async/Int", detour[0].name);
+            // No latch of its own: the next entry is the index, not a copy into a latch.
+            Assert.AreEqual("Async/Index", detour[1].name);
+            Assert.AreEqual("Async/Req/I", detour[2].name);
+            Assert.AreEqual(0f, detour[2].value);
+            Assert.AreEqual(3, detour.Count);
+        }
+
+        [Test]
+        public void Apply_WithTwoGroups_GivesEachItsOwnWait()
+        {
+            var controller = NewController();
+            controller.AddParameter("F2", AnimatorControllerParameterType.Float);
+            controller.AddParameter("B2", AnimatorControllerParameterType.Bool);
+            var request = NewRequest(controller, "F", "B", "I", "F2", "B2");
+            request.groups.Add(Group("Outfit", "F", "B"));
+            request.groups.Add(Group("Face", "F2", "B2"));
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            Assert.IsNotNull(FindLayer(controller, "Async Outfit"));
+            Assert.IsNotNull(FindLayer(controller, "Async Face"));
+            Assert.AreEqual(4, controller.layers.Length);
+        }
+
+        [Test]
+        public void Apply_WithoutGroups_BuildsNone_AndDroppingOneTakesItsLayerAway()
+        {
+            var controller = NewController();
+            Assert.IsTrue(AsyncSyncBuilder.Apply(NewRequest(controller, "F", "B", "I")));
+            Assert.AreEqual(2, controller.layers.Length);
+
+            var on = NewRequest(controller, "F", "B", "I");
+            on.groups.Add(Group("Outfit", "F", "B"));
+            on.layerIndex = 1;
+            Assert.IsTrue(AsyncSyncBuilder.Apply(on));
+            Assert.AreEqual(3, controller.layers.Length);
+
+            // Emptied down to one member: gone from the build, and its layer with it.
+            var emptied = NewRequest(controller, "F", "B", "I");
+            emptied.groups.Add(Group("Outfit", "F"));
+            emptied.layerIndex = 1;
+            Assert.IsTrue(AsyncSyncBuilder.Apply(emptied));
+            Assert.AreEqual(2, controller.layers.Length);
+            Assert.IsNull(FindLayer(controller, "Async Outfit"));
+        }
+
+        [Test]
+        public void Apply_WithAGroupTwice_RegeneratesTheOneLayer()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.groups.Add(Group("Outfit", "F", "B"));
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+
+            var again = NewRequest(controller, "F", "B", "I");
+            again.groups.Add(Group("Outfit", "F", "B"));
+            again.layerIndex = 1;
+            Assert.IsTrue(AsyncSyncBuilder.Apply(again));
+            Assert.AreEqual(3, controller.layers.Length);
+            Assert.AreEqual(2, FindLayer(controller, "Async Outfit").states.Length);
+        }
+
+        [Test]
+        public void Validate_RefusesTwoGroupsUnderOneName()
+        {
+            var controller = NewController();
+            var request = NewRequest(controller, "F", "B", "I");
+            request.groups.Add(Group("Outfit", "F", "B"));
+            request.groups.Add(Group("Outfit", "I", "F"));
+            var error = AsyncSyncBuilder.Validate(request);
+            Assert.IsNotNull(error);
+            StringAssert.Contains("Outfit", error);
+        }
+
+        [Test]
+        public void Warnings_WhenAGroupsMembersAlreadyShareAStep()
+        {
+            var controller = NewController();
+            controller.AddParameter("B2", AnimatorControllerParameterType.Bool);
+            var request = NewRequest(controller, "F", "B", "B2");
+            request.boolChannels = 2;                    // B and B2 ride one slot
+            request.groups.Add(Group("Pair", "B", "B2"));
+            Assert.IsTrue(AsyncSyncBuilder.Warnings(request)
+                .Exists(w => w.Contains("Pair") && w.Contains("already share a step")));
+
+            // Split them and the group is doing something again.
+            request.slotBreaks.Add("B2");
+            Assert.IsFalse(AsyncSyncBuilder.Warnings(request)
+                .Exists(w => w.Contains("already share a step")));
         }
     }
 }

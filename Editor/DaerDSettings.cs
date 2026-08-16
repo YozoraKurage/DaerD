@@ -263,6 +263,9 @@ namespace Yozolab.DaerD
             EditorGUILayout.Space(10);
             if (GUILayout.Button(L.Tr("Reset To Defaults"), GUILayout.Width(160)))
                 DaerDSettings.ResetAll();
+
+            DaerDShortcutsGui.Draw();
         }
+
     }
 }

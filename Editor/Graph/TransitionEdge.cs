@@ -30,7 +30,10 @@ namespace Yozolab.DaerD
         readonly Label _badge;
         readonly Label _conditionLabel;
         bool _highlighted;
+        bool _hovered;
         bool _allMuted;
+        bool _sourceHasSolo;
+        bool _shutOutBySolo;
         bool _runtimeActive;
 
         public TransitionEdge()
@@ -62,6 +65,21 @@ namespace Yozolab.DaerD
             ApplyColor();
         }
 
+        /// <summary>
+        /// Tells the edge whether some transition leaving the same node is soloed. Solo is a
+        /// property of the source's whole list — one soloed transition shuts out every other
+        /// transition leaving that node — so no edge can work this out on its own.
+        /// </summary>
+        public void SetSoloContext(bool sourceHasSolo) => _sourceHasSolo = sourceHasSolo;
+
+        /// <summary>The pointer is over the inspector row that names one of these transitions.</summary>
+        public void SetHover(bool on)
+        {
+            if (_hovered == on) return;
+            _hovered = on;
+            ApplyColor();
+        }
+
         /// <summary>The crossfade running right now travels this edge. Called every tick while
         /// the editor plays, so it does nothing when the answer has not changed.</summary>
         public void SetRuntimeActive(bool on)
@@ -88,7 +106,6 @@ namespace Yozolab.DaerD
             if (IsDefaultEdge)
             {
                 capabilities &= ~Capabilities.Deletable;
-                tooltip = L.Tr("Default state");
                 _badge.style.display = DisplayStyle.None;
                 _conditionLabel.style.display = DisplayStyle.None;
                 ApplyColor();
@@ -101,7 +118,7 @@ namespace Yozolab.DaerD
                 && Transitions.Count == 1 && Transitions[0] != null;
             if (showConditions)
             {
-                _conditionLabel.text = Summarize(Transitions[0]);
+                _conditionLabel.text = ParameterConverter.SummarizeConditions(Transitions[0]);
                 _conditionLabel.style.display = string.IsNullOrEmpty(_conditionLabel.text)
                     ? DisplayStyle.None
                     : DisplayStyle.Flex;
@@ -117,9 +134,11 @@ namespace Yozolab.DaerD
                 if (t == null || !t.mute) { _allMuted = false; break; }
             }
 
-            tooltip = _allMuted
-                ? Transitions.Count + " muted transition(s)"
-                : Transitions.Count + " transition(s)";
+            // Muting beats soloing, so a soloed-but-muted transition keeps nothing alive.
+            bool carriesSolo = false;
+            foreach (var t in Transitions)
+                if (t != null && t.solo && !t.mute) { carriesSolo = true; break; }
+            _shutOutBySolo = _sourceHasSolo && !carriesSolo && !_allMuted;
 
             if (Transitions.Count > 1)
             {
@@ -139,16 +158,29 @@ namespace Yozolab.DaerD
         void ApplyColor()
         {
             Color color;
-            if (selected) color = DaerDColors.Selected;
+            // First, above selection itself. Hover answers "which line is the row under my
+            // pointer", and the question is asked precisely when several rows are selected at
+            // once — if selection outranked it, the answer would be invisible exactly when it
+            // is needed.
+            if (_hovered) color = DaerDColors.Hovered;
+            else if (selected) color = DaerDColors.Selected;
             // Above the rest: it is the one thing on screen that is only true for a few frames.
             else if (_runtimeActive) color = DaerDColors.PlayingEdge;
             else if (IsDefaultEdge) color = DaerDColors.DefaultEdge;
             else if (_highlighted) color = DaerDColors.FoundByQuery;
-            else if (_allMuted) color = DaerDColors.Muted;
+            // Same meaning as muted, arrived at from the other side: nothing on this line can
+            // fire. Solo has no colour of its own — it is only ever visible in what it disables.
+            else if (_allMuted || _shutOutBySolo) color = DaerDColors.Muted;
             else color = DaerDColors.Edge;
 
             edgeControl.inputColor = color;
             edgeControl.outputColor = color;
+            // Thicker as well as recoloured. A hovered edge can be one of a dozen selected at
+            // once, all the same colour a moment ago; weight reads across a zoomed-out graph
+            // where a hue change on a one-pixel line does not.
+            edgeControl.edgeWidth = (int)(_hovered
+                ? TransitionEdgeControl.HoverWidth : TransitionEdgeControl.LineWidth);
+            edgeControl.MarkDirtyRepaint();
         }
 
         /// <summary>
@@ -283,46 +315,6 @@ namespace Yozolab.DaerD
         }
 
         /// <summary>One-line human-readable summary of a transition's firing rule.</summary>
-        static string Summarize(AnimatorTransitionBase transition)
-        {
-            var conditions = transition.conditions;
-            if (conditions.Length == 0)
-            {
-                if (transition is AnimatorStateTransition st && st.hasExitTime)
-                    return "exit @ " + st.exitTime.ToString("0.##");
-                return "(no conditions)";
-            }
-            string text = Describe(conditions[0]);
-            if (conditions.Length == 2) text += "  ·  " + Describe(conditions[1]);
-            else if (conditions.Length > 2) text += "  +" + (conditions.Length - 1);
-            return text;
-        }
-
-        static string Describe(AnimatorCondition condition)
-        {
-            switch (condition.mode)
-            {
-                case AnimatorConditionMode.If: return condition.parameter;
-                case AnimatorConditionMode.IfNot: return "!" + condition.parameter;
-                case AnimatorConditionMode.Greater: return condition.parameter + " > " + DescribeThreshold(condition);
-                case AnimatorConditionMode.Less: return condition.parameter + " < " + DescribeThreshold(condition);
-                case AnimatorConditionMode.Equals: return condition.parameter + " = " + DescribeThreshold(condition);
-                case AnimatorConditionMode.NotEqual: return condition.parameter + " ≠ " + DescribeThreshold(condition);
-                default: return condition.parameter;
-            }
-        }
-
-        /// <summary>GestureLeft / GestureRight values read as gesture names ("Fist"), other
-        /// thresholds as plain numbers.</summary>
-        static string DescribeThreshold(AnimatorCondition condition)
-        {
-            if (VrcParameters.IsGestureParameter(condition.parameter))
-            {
-                var gesture = VrcParameters.GestureLabel(condition.threshold);
-                if (gesture != null) return gesture;
-            }
-            return condition.threshold.ToString("0.##");
-        }
     }
 
     /// <summary>
@@ -333,7 +325,9 @@ namespace Yozolab.DaerD
     /// </summary>
     class TransitionEdgeControl : EdgeControl
     {
-        const float LineWidth = 3f;
+        public const float LineWidth = 3f;
+        /// <summary>Width while an inspector row naming this edge is under the pointer.</summary>
+        public const float HoverWidth = 6f;
         const float ArrowLength = 13f;
         const float ArrowHalfWidth = 7f;
 

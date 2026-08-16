@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
+using UnityEngine.UIElements;
 
 namespace Yozolab.DaerD
 {
@@ -47,6 +48,11 @@ namespace Yozolab.DaerD
             context.GraphStructureChanged += Refresh;
             context.GraphRebuilt += Refresh;
             context.ParametersChanged += Refresh;
+
+            // The rows highlight their edge while the pointer is over them; a pointer that
+            // leaves the panel altogether produces no further row repaints, so the last
+            // highlight would stay lit on the graph until something else redrew it.
+            RegisterCallback<MouseLeaveEvent>(_ => sync.SetHoveredTransition(null));
         }
 
         void OnSelectionChanged()
@@ -115,7 +121,14 @@ namespace Yozolab.DaerD
             }
             else if (selection is SpecialNodeKind kind)
             {
-                EditorGUILayout.HelpBox(L.Tr("{0} node. Drag from its port to create transitions.", kind), MessageType.Info);
+                // Entry and Any State own transition lists of their own — and lists with a
+                // priority order, which is only visible if something draws them. Exit owns
+                // none: it is where transitions end.
+                if (kind == SpecialNodeKind.Exit)
+                    EditorGUILayout.HelpBox(L.Tr("{0} node. Drag from its port to create transitions.", kind), MessageType.Info);
+                else
+                    _transitions.DrawSourceContext(kind == SpecialNodeKind.Entry
+                        ? TransitionEnd.Entry : TransitionEnd.AnyState);
             }
             else
             {

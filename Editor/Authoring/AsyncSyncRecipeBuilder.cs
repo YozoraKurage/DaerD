@@ -13,8 +13,8 @@ namespace Yozolab.DaerD.Authoring
     ///
     ///   c.AsyncSync()
     ///    .Targets("Hue", "Outfit", "TailState")
-    ///    .Rate("Hue", 2)                      // or spell the cycle out yourself:
-    ///    .Schedule("Hue", "Outfit", "Hue", "TailState")
+    ///    .Rate("Hue", 2)                      // weight: two of the pass's places. Or spell
+    ///    .Schedule("Hue", "Outfit", "Hue", "TailState")   // the cycle out yourself:
     ///    .FloatChannels(2).Step(0.3f);
     ///
     /// Sends() goes one deeper still, saying what each step carries rather than which slot it
@@ -80,10 +80,34 @@ namespace Yozolab.DaerD.Authoring
                 string layer = string.IsNullOrEmpty(_request.layerName)
                     ? _request.baseName : _request.layerName;
                 if (!root.PostLayers.Contains(layer)) root.PostLayers.Add(layer);
+                // The Ready watcher is the same call's output and is rebuilt with it. Read
+                // back off the saved setup rather than derived from the name, which the
+                // builder may have had to make unique.
+                foreach (var watcher in WatcherLayerNames(controller, _request.baseName))
+                    if (!root.PostLayers.Contains(watcher)) root.PostLayers.Add(watcher);
 
                 warnings.AddRange(AsyncSyncBuilder.Warnings(_request));
                 return warnings;
             });
+        }
+
+        /// <summary>The layer names the setup's watchers ended up with — the builder
+        /// uniquifies the names it creates, so only the saved setup knows them.</summary>
+        static List<string> WatcherLayerNames(AnimatorController controller, string baseName)
+        {
+            var names = new List<string>();
+            var config = GraphFrameData.FindAsyncSync(controller, baseName);
+            if (config == null) return names;
+            var owned = new HashSet<AnimatorStateMachine>();
+            if (config.readyLayer != null) owned.Add(config.readyLayer);
+            if (config.staleLayer != null) owned.Add(config.staleLayer);
+            if (config.groups != null)
+                foreach (var group in config.groups)
+                    if (group?.layer != null) owned.Add(group.layer);
+            foreach (var layer in controller.layers)
+                if (layer.stateMachine != null && owned.Contains(layer.stateMachine))
+                    names.Add(layer.name);
+            return names;
         }
 
         /// <summary>
@@ -128,8 +152,20 @@ namespace Yozolab.DaerD.Authoring
             return Record("Targets", Names(parameters));
         }
 
-        /// <summary>Sync this parameter <paramref name="timesPerPass"/> times per pass
-        /// (spread as evenly as the other slots allow). Ignored under an explicit Schedule.</summary>
+        /// <summary>
+        /// Give this parameter <paramref name="timesPerPass"/> of the pass's places, spread as
+        /// evenly as the other slots allow. A weight rather than a speed: the pass is however
+        /// many places it has, so raising one target's share lengthens the pass for everyone
+        /// else, and raising every target's changes nothing at all (a common factor is divided
+        /// out). Ignored under an explicit <see cref="Schedule"/>.
+        ///
+        /// For "send this the moment it changes" reach for <see cref="Requestable"/> instead —
+        /// a weight buys a target places in every pass, whether or not anything moved. That is
+        /// why the wizard stopped offering weights and this call did not: a recipe author is
+        /// spelling a pass out and can mean this, while a form that hands the control to
+        /// everyone mostly hands out a longer pass. Setups that carry weights are still loaded,
+        /// built and exported unchanged.
+        /// </summary>
         public AsyncSyncRecipeBuilder Rate(string parameter, int timesPerPass)
         {
             _request.rates[parameter] = timesPerPass;
@@ -149,6 +185,81 @@ namespace Yozolab.DaerD.Authoring
         }
 
         /// <summary>
+        /// Generate the remote-initialized flag: a local, unsynced Bool ("base/Ready") that
+        /// turns on once a client has decoded every slot at least once, and never turns off
+        /// again. It is what a remote has instead of a way to ask — nothing it observes can
+        /// reach the wearer — so read it to hold back anything that would look wrong with
+        /// half the values in place.
+        ///
+        /// The wearer reads it as on from the start: their own values were never anywhere
+        /// else. Write <c>Ready &amp;&amp; !IsLocal</c> for "a remote that has finished
+        /// initializing" specifically.
+        /// </summary>
+        public AsyncSyncRecipeBuilder Ready()
+        {
+            _request.ready = true;
+            return Record("Ready");
+        }
+
+        /// <summary>
+        /// Generate the drift-suspicion flag: a local, unsynced Bool ("base/Stale") that turns
+        /// on when a lap did not bring every slot and off again when one does. Read it to hold
+        /// back anything that would look wrong on values that may have stopped arriving.
+        ///
+        /// Judged when a slot the pass sends exactly once comes round, so it needs no timer
+        /// and no margin, and a pass stretched by a request cannot make it wrong. A pass with
+        /// no such slot — every slot sent more than once, or open to requests — cannot carry
+        /// the flag, and Generate says so instead of applying.
+        ///
+        /// A remote that arrives mid-pass reads it as on for the rest of that pass; pair it
+        /// with <see cref="Ready"/> to tell that apart from a cycle that has started dropping.
+        /// </summary>
+        public AsyncSyncRecipeBuilder Stale()
+        {
+            _request.stale = true;
+            return Record("Stale");
+        }
+
+        /// <summary>
+        /// Assign these targets together, however far apart the pass sends them: the wearer
+        /// reads the whole set in one driver when the pass reaches the first of them and sends
+        /// every member from that reading, and a remote holds each one aside as it arrives and
+        /// copies the set into the real parameters once they are all in. One driver at each
+        /// end, so the values leave together and land together, and what the far side shows is
+        /// a set the wearer really held at one moment.
+        ///
+        /// For targets that could share a step, batching already does this and does it sooner —
+        /// one driver sends them, so they were never going to arrive apart. Reach for a group
+        /// when they cannot share one: different types, or more of a type than the channels
+        /// carry.
+        ///
+        /// The cost is freshness, both ways. A change made just after the group's reading was
+        /// taken is not sent until the pass comes round to it again, and a lap that loses a
+        /// member commits nothing and leaves the remote on the last complete set. That is the
+        /// trade in one sentence: a whole set that is up to a pass old, rather than a fresh
+        /// half of one. It costs no synced bits — a latch, a shadow and a flag per member, all
+        /// local, and a two-state layer per group.
+        ///
+        /// Pair it with <see cref="Ready"/>. Without the flag the guarantee only starts after
+        /// the first full pass: a client decodes the index it arrived to — zero, because
+        /// nothing has reached it yet — as that slot arriving, so its first commit can carry a
+        /// value nobody sent. With the flag the commit waits for it, and there is no such first
+        /// commit to distrust.
+        ///
+        ///   c.AsyncSync("Zip").Targets("Hue", "Mesh", "Shape")
+        ///    .Group("Outfit", "Hue", "Mesh", "Shape").Ready();
+        /// </summary>
+        public AsyncSyncRecipeBuilder Group(string name, params string[] members)
+        {
+            var group = new GraphFrameData.AsyncSyncConfig.SyncGroup { name = name };
+            group.members.AddRange(members);
+            _request.groups.Add(group);
+            var args = new List<string> { RecipeScript.S(name) };
+            args.AddRange(Names(members));
+            return Record("Group", args.ToArray());
+        }
+
+        /// <summary>
         /// Spell the cycle out step by step, naming one target per step (a batched target
         /// stands for its whole slot). Every multiplexed parameter must appear at least once
         /// and no slot may occupy adjacent steps (including the wrap); Generate reports
@@ -164,7 +275,7 @@ namespace Yozolab.DaerD.Authoring
 
         /// <summary>
         /// Spell one step out as the set of targets it sends, and call it once per step. This
-        /// replaces the batching, the rates and <see cref="Schedule"/> together: the slots
+        /// replaces the batching, the weights and <see cref="Schedule"/> together: the slots
         /// become the distinct sets, so the call says which targets share a step as well as
         /// when each step comes round.
         ///

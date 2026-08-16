@@ -16,6 +16,8 @@ namespace Yozolab.DaerD
                 case IssueKind.UnusedParameter: return L.Tr("Unused Parameter");
                 case IssueKind.InvalidCondition: return L.Tr("Invalid Condition");
                 case IssueKind.DeadTransition: return L.Tr("Dead Transition");
+                case IssueKind.SoloTransition: return L.Tr("Soloed Transition");
+                case IssueKind.AnyStateRetrigger: return L.Tr("Any State Retrigger");
                 case IssueKind.UnreachableState: return L.Tr("Unreachable State");
                 case IssueKind.DuplicateName: return L.Tr("Duplicate Name");
                 case IssueKind.TerminalStates: return L.Tr("Terminal States");
@@ -85,6 +87,8 @@ namespace Yozolab.DaerD
             AddUnusedParameterIssues(controller, issues);
             AddConditionIssues(controller, issues);
             AddDeadTransitionIssues(controller, issues);
+            AddSoloTransitionIssues(controller, issues);
+            AddAnyStateRetriggerIssues(controller, issues);
             AddUnreachableStateIssues(controller, issues);
             AddDuplicateNameIssues(controller, issues);
 
@@ -228,28 +232,226 @@ namespace Yozolab.DaerD
             // transition from the state / state machine that holds it.
             foreach (var sm in controller.AllStateMachines())
                 foreach (var t in sm.anyStateTransitions)
-                    if (IsDeadTransition(t))
-                        issues.Add(MakeDeadTransitionIssue(t, () => RemoveOwnedTransition(sm, t)));
+                    AddDeadTransitionIssue(t, () => RemoveOwnedTransition(sm, t), issues);
             foreach (var state in controller.AllStates())
                 foreach (var t in state.transitions)
-                    if (IsDeadTransition(t))
-                        issues.Add(MakeDeadTransitionIssue(t, () => RemoveOwnedTransition(state, t)));
+                    AddDeadTransitionIssue(t, () => RemoveOwnedTransition(state, t), issues);
+        }
+
+        /// <summary>
+        /// The two ways a transition can be unable to fire: nothing tells it to (no conditions,
+        /// no exit time), or its own conditions rule each other out. Same consequence, same
+        /// repair, so they share a category and differ only in what the message says.
+        /// </summary>
+        static void AddDeadTransitionIssue(AnimatorStateTransition t, System.Action fix,
+            List<AnalyzerIssue> issues)
+        {
+            if (t == null) return;
+            if (IsDeadTransition(t))
+            {
+                issues.Add(MakeDeadTransitionIssue(t,
+                    L.Tr("Transition {0} has no conditions and no exit time; it can never fire.",
+                        ParameterConverter.DescribeTransition(t)), fix));
+                return;
+            }
+            string contradiction = ContradictionIn(t);
+            if (contradiction != null)
+                issues.Add(MakeDeadTransitionIssue(t,
+                    L.Tr("Transition {0} asks for {1} at the same time; it can never fire.",
+                        ParameterConverter.DescribeTransition(t), contradiction), fix));
         }
 
         static bool IsDeadTransition(AnimatorStateTransition t) =>
             t != null && t.conditions.Length == 0 && !t.hasExitTime;
 
-        static AnalyzerIssue MakeDeadTransitionIssue(AnimatorStateTransition t, System.Action fix) => new AnalyzerIssue
+        /// <summary>
+        /// The first pair of conditions on a transition that cannot both hold at once. All of a
+        /// transition's conditions are ANDed, so one such pair makes the whole transition
+        /// unreachable however the parameters move.
+        ///
+        /// Deliberately blind to parameter types, which keeps it free of false positives at the
+        /// cost of a case: "Greater 0 and Less 1" is impossible for an Int and perfectly normal
+        /// for a Float, and it is not worth reporting the Int one if the price is ever crying
+        /// wolf about the Float.
+        /// </summary>
+        public static bool Contradict(AnimatorCondition a, AnimatorCondition b)
+        {
+            if (a.parameter != b.parameter) return false;
+            switch (a.mode)
+            {
+                case AnimatorConditionMode.If:
+                    return b.mode == AnimatorConditionMode.IfNot;
+                case AnimatorConditionMode.IfNot:
+                    return b.mode == AnimatorConditionMode.If;
+                case AnimatorConditionMode.Equals:
+                    switch (b.mode)
+                    {
+                        // Two different values at once, or the one value it must not be.
+                        case AnimatorConditionMode.Equals: return !Mathf.Approximately(a.threshold, b.threshold);
+                        case AnimatorConditionMode.NotEqual: return Mathf.Approximately(a.threshold, b.threshold);
+                        case AnimatorConditionMode.Greater: return a.threshold <= b.threshold;
+                        case AnimatorConditionMode.Less: return a.threshold >= b.threshold;
+                        default: return false;
+                    }
+                case AnimatorConditionMode.NotEqual:
+                    return b.mode == AnimatorConditionMode.Equals
+                        && Mathf.Approximately(a.threshold, b.threshold);
+                case AnimatorConditionMode.Greater:
+                    // Greater and Less are both strict, so a window that does not open is empty.
+                    if (b.mode == AnimatorConditionMode.Less) return b.threshold <= a.threshold;
+                    if (b.mode == AnimatorConditionMode.Equals) return b.threshold <= a.threshold;
+                    return false;
+                case AnimatorConditionMode.Less:
+                    if (b.mode == AnimatorConditionMode.Greater) return b.threshold >= a.threshold;
+                    if (b.mode == AnimatorConditionMode.Equals) return b.threshold >= a.threshold;
+                    return false;
+                default:
+                    return false;
+            }
+        }
+
+        /// <summary>The first contradicting pair on a transition, rendered, or null.</summary>
+        static string ContradictionIn(AnimatorTransitionBase transition)
+        {
+            var conditions = transition.conditions;
+            for (int i = 0; i < conditions.Length; i++)
+                for (int j = i + 1; j < conditions.Length; j++)
+                    if (Contradict(conditions[i], conditions[j]))
+                        return ParameterConverter.DescribeCondition(conditions[i]) + "  /  "
+                            + ParameterConverter.DescribeCondition(conditions[j]);
+            return null;
+        }
+
+        static AnalyzerIssue MakeDeadTransitionIssue(AnimatorStateTransition t, string message,
+            System.Action fix) => new AnalyzerIssue
         {
             severity = IssueSeverity.Warning,
             kind = IssueKind.DeadTransition,
-            message = L.Tr("Transition {0} has no conditions and no exit time; it can never fire.",
-                ParameterConverter.DescribeTransition(t)),
+            message = message,
             context = t,
             fixLabel = L.Tr("Delete"),
             fixTooltip = L.Tr("Delete this transition"),
             fix = fix,
         };
+
+        /// <summary>
+        /// Solo left switched on. It is a debugging aid — one soloed transition makes the
+        /// Animator ignore every other transition leaving the same node — and it survives being
+        /// saved, so a controller can ship with most of a state's transitions silently disabled
+        /// and nothing on screen saying so. Reported per source, and only when it actually
+        /// shuts something out: soloing the only transition a state has changes nothing.
+        /// </summary>
+        static void AddSoloTransitionIssues(AnimatorController controller, List<AnalyzerIssue> issues)
+        {
+            foreach (var sm in controller.AllStateMachines())
+            {
+                AddSoloIssue(sm.anyStateTransitions, "Any State", sm, issues);
+                foreach (var state in sm.states)
+                    AddSoloIssue(state.state.transitions, state.state.name, state.state, issues);
+            }
+        }
+
+        static void AddSoloIssue(AnimatorStateTransition[] transitions, string sourceName, Object owner,
+            List<AnalyzerIssue> issues)
+        {
+            if (!EdgeCommands.HasLiveSolo(transitions)) return;
+
+            int shutOut = 0;
+            foreach (var t in transitions)
+                if (t != null && !t.solo && !t.mute) shutOut++;
+            if (shutOut == 0) return;
+
+            issues.Add(new AnalyzerIssue
+            {
+                severity = IssueSeverity.Warning,
+                kind = IssueKind.SoloTransition,
+                message = L.Tr("'{0}' has a soloed transition, so its other {1} transition(s) never run.",
+                    sourceName, shutOut),
+                context = owner,
+                fixLabel = L.Tr("Clear Solo"),
+                fixTooltip = L.Tr("Turn Solo off on every transition leaving this node"),
+                fix = () => ClearSolo(transitions, owner),
+            });
+        }
+
+        static void ClearSolo(AnimatorStateTransition[] transitions, Object owner)
+        {
+            using (new UndoScope("Clear Solo"))
+            {
+                foreach (var t in transitions)
+                {
+                    if (t == null || !t.solo) continue;
+                    Undo.RegisterCompleteObjectUndo(t, "Clear Solo");
+                    t.solo = false;
+                    EditorUtility.SetDirty(t);
+                }
+                if (owner != null) EditorUtility.SetDirty(owner);
+            }
+        }
+
+        /// <summary>
+        /// An Any State transition that may interrupt its own destination. While the condition
+        /// still holds, the Animator keeps taking the transition, so the destination state
+        /// restarts from the beginning instead of playing on — the clip never gets past its
+        /// first frames and nothing on screen says why.
+        ///
+        /// Transitions gated on a Trigger are left alone: a Trigger is consumed when it is read,
+        /// so the condition stops holding by itself. Reported once per state machine, with the
+        /// count, because a gesture layer holds a dozen of these and a row each would bury the
+        /// rest of the report.
+        /// </summary>
+        static void AddAnyStateRetriggerIssues(AnimatorController controller, List<AnalyzerIssue> issues)
+        {
+            var triggers = new HashSet<string>();
+            foreach (var parameter in controller.parameters)
+                if (parameter.type == AnimatorControllerParameterType.Trigger) triggers.Add(parameter.name);
+
+            foreach (var sm in controller.AllStateMachines())
+            {
+                var retriggering = new List<AnimatorStateTransition>();
+                foreach (var t in sm.anyStateTransitions)
+                    if (Retriggers(t, triggers)) retriggering.Add(t);
+                if (retriggering.Count == 0) continue;
+
+                issues.Add(new AnalyzerIssue
+                {
+                    severity = IssueSeverity.Warning,
+                    kind = IssueKind.AnyStateRetrigger,
+                    message = L.Tr("{0} Any State transition(s) can interrupt themselves; while the "
+                        + "condition still holds, the destination state restarts instead of playing on.",
+                        retriggering.Count),
+                    context = sm,
+                    fixLabel = L.Tr("Turn Off"),
+                    fixTooltip = L.Tr("Clear Can Transition To Self on these transitions"),
+                    fix = () => ClearSelfTransition(retriggering, sm),
+                });
+            }
+        }
+
+        static bool Retriggers(AnimatorStateTransition t, HashSet<string> triggers)
+        {
+            if (t == null || t.mute || !t.canTransitionToSelf) return false;
+            if (t.destinationState == null) return false;
+            // No condition at all is the dead / always-on case, reported elsewhere.
+            if (t.conditions.Length == 0) return false;
+            foreach (var condition in t.conditions)
+                if (triggers.Contains(condition.parameter)) return false;
+            return true;
+        }
+
+        static void ClearSelfTransition(List<AnimatorStateTransition> transitions, Object owner)
+        {
+            using (new UndoScope("Clear Can Transition To Self"))
+            {
+                foreach (var t in transitions)
+                {
+                    Undo.RegisterCompleteObjectUndo(t, "Clear Can Transition To Self");
+                    t.canTransitionToSelf = false;
+                    EditorUtility.SetDirty(t);
+                }
+                if (owner != null) EditorUtility.SetDirty(owner);
+            }
+        }
 
         static void RemoveOwnedTransition(AnimatorStateMachine anyStateOwner, AnimatorStateTransition transition)
         {

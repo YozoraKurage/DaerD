@@ -237,5 +237,144 @@ namespace Yozolab.DaerD.Tests
             Assert.IsTrue(TransitionEnd.Entry.SameAs(TransitionEnd.Entry));
             Assert.IsFalse(TransitionEnd.Entry.SameAs(TransitionEnd.Exit));
         }
+        // ---- order ------------------------------------------------------------
+
+        static List<string> Destinations(AnimatorTransitionBase[] transitions)
+        {
+            var names = new List<string>();
+            foreach (var t in transitions)
+                names.Add(t.destinationState != null ? t.destinationState.name : "?");
+            return names;
+        }
+
+        [Test]
+        public void Reorder_ChangesWhichTransitionTheAnimatorTriesFirst()
+        {
+            _a.AddTransition(_b);
+            _a.AddTransition(_c);
+            _a.AddTransition(_d);
+            var source = TransitionEnd.Of(_a);
+
+            Assert.IsTrue(EdgeCommands.Reorder(source, _sm, 2, 0));
+
+            CollectionAssert.AreEqual(new[] { "D", "B", "C" },
+                Destinations(EdgeCommands.TransitionsFrom(source, _sm)));
+        }
+
+        [Test]
+        public void Reorder_KeepsTheSameTransitionObjects()
+        {
+            var first = _a.AddTransition(_b);
+            var second = _a.AddTransition(_c);
+
+            EdgeCommands.Reorder(TransitionEnd.Of(_a), _sm, 0, 1);
+
+            // The conditions and settings live on these objects, and the graph edges point at
+            // them: rebuilding the list out of copies would silently drop both.
+            Assert.AreSame(second, _a.transitions[0]);
+            Assert.AreSame(first, _a.transitions[1]);
+        }
+
+        [Test]
+        public void Reorder_OfAnyStateTransitions_RewritesTheStateMachinesList()
+        {
+            _sm.AddAnyStateTransition(_b);
+            _sm.AddAnyStateTransition(_c);
+            var source = TransitionEnd.AnyState;
+
+            Assert.IsTrue(EdgeCommands.Reorder(source, _sm, 1, 0));
+
+            CollectionAssert.AreEqual(new[] { "C", "B" },
+                Destinations(EdgeCommands.TransitionsFrom(source, _sm)));
+        }
+
+        [Test]
+        public void Reorder_OfEntryTransitions_RewritesTheEntryList()
+        {
+            _sm.AddEntryTransition(_b);
+            _sm.AddEntryTransition(_c);
+            _sm.AddEntryTransition(_d);
+            var source = TransitionEnd.Entry;
+
+            // Entry transitions are AnimatorTransition, not AnimatorStateTransition — writing
+            // them back through the wrong array type would empty the list instead of ordering it.
+            Assert.IsTrue(EdgeCommands.Reorder(source, _sm, 0, 2));
+
+            CollectionAssert.AreEqual(new[] { "C", "D", "B" },
+                Destinations(EdgeCommands.TransitionsFrom(source, _sm)));
+        }
+
+        [Test]
+        public void Reorder_OfASubStateMachinesTransitions_RewritesThatMachinesList()
+        {
+            var nested = _sm.AddStateMachine("Nested");
+            _sm.AddStateMachineTransition(nested, _b);
+            _sm.AddStateMachineTransition(nested, _c);
+            var source = TransitionEnd.Of(nested);
+
+            Assert.IsTrue(EdgeCommands.Reorder(source, _sm, 1, 0));
+
+            CollectionAssert.AreEqual(new[] { "C", "B" },
+                Destinations(EdgeCommands.TransitionsFrom(source, _sm)));
+        }
+
+        [Test]
+        public void Reorder_ThatMovesNothing_SaysSo()
+        {
+            _a.AddTransition(_b);
+            _a.AddTransition(_c);
+            var source = TransitionEnd.Of(_a);
+
+            Assert.IsFalse(EdgeCommands.Reorder(source, _sm, 1, 1), "onto its own slot");
+            Assert.IsFalse(EdgeCommands.Reorder(source, _sm, 0, 5), "past the end");
+            Assert.IsFalse(EdgeCommands.Reorder(source, _sm, -1, 0), "from nowhere");
+            CollectionAssert.AreEqual(new[] { "B", "C" },
+                Destinations(EdgeCommands.TransitionsFrom(source, _sm)));
+        }
+
+        [Test]
+        public void TransitionsFrom_AnEndThatCannotBeASource_IsEmpty()
+        {
+            Assert.AreEqual(0, EdgeCommands.TransitionsFrom(TransitionEnd.Exit, _sm).Length);
+            Assert.AreEqual(0, EdgeCommands.TransitionsFrom(TransitionEnd.None, _sm).Length);
+        }
+
+        // ---- rows ---------------------------------------------------------------
+
+        [Test]
+        public void ARowNumbersATransitionByWhereItReallyIs_NotByWhereItIsDrawn()
+        {
+            _a.AddTransition(_b);
+            var second = _a.AddTransition(_c);
+            _a.AddTransition(_d);
+            var fourth = _a.AddTransition(_b);
+
+            // What the inspector had before: one edge's transitions, which for A→B is the
+            // first and the fourth of A's four. Numbering them 1 and 2 would say the second
+            // one is tried before A→C and A→D, and it is not.
+            var group = new TransitionGroup(TransitionEnd.Of(_a), false,
+                new List<AnimatorTransitionBase> { _a.transitions[0], fourth });
+            var rows = TransitionListGui.RowsFor(group.Transitions,
+                new List<TransitionGroup> { group }, _sm);
+
+            Assert.AreEqual(2, rows.Count);
+            Assert.AreEqual(1, rows[0].Priority);
+            Assert.AreEqual(4, rows[1].Priority);
+            Assert.AreNotSame(second, rows[1].Transition);
+        }
+
+        [Test]
+        public void RowsOfASource_AreItsWholeListInOrder()
+        {
+            _a.AddTransition(_b);
+            _a.AddTransition(_c);
+
+            var rows = TransitionListGui.RowsOf(TransitionEnd.Of(_a), _sm);
+
+            Assert.AreEqual(2, rows.Count);
+            Assert.AreEqual(1, rows[0].Priority);
+            Assert.AreEqual(2, rows[1].Priority);
+            Assert.AreEqual("A", rows[0].Source.Label);
+        }
     }
 }

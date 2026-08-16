@@ -41,6 +41,28 @@ namespace Yozolab.DaerD
         public static readonly TransitionEnd Exit = new TransitionEnd(TransitionEndKind.Exit, null, null);
         public static readonly TransitionEnd AnyState = new TransitionEnd(TransitionEndKind.AnyState, null, null);
 
+        /// <summary>
+        /// How this end reads in a menu, a sorted list or a transition row. Entry, Exit and Any
+        /// State are spelled the way their nodes are labelled in the graph rather than
+        /// translated, so a row and the node it points at say the same word in every language.
+        /// </summary>
+        public string Label
+        {
+            get
+            {
+                switch (Kind)
+                {
+                    case TransitionEndKind.State: return State != null ? State.name : "(state)";
+                    case TransitionEndKind.SubStateMachine:
+                        return StateMachine != null ? StateMachine.name : "(sub-state machine)";
+                    case TransitionEndKind.Entry: return "Entry";
+                    case TransitionEndKind.Exit: return "Exit";
+                    case TransitionEndKind.AnyState: return "Any State";
+                    default: return "?";
+                }
+            }
+        }
+
         /// <summary>An end no transition can start from or land on — what an unknown node maps to.</summary>
         public static readonly TransitionEnd None = new TransitionEnd(TransitionEndKind.None, null, null);
 

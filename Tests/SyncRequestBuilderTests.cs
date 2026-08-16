@@ -95,13 +95,14 @@ namespace Yozolab.DaerD.Tests
             Assert.AreEqual(0, driver.entries[0].kind);
             Assert.AreEqual(1f, driver.entries[0].value);
 
-            // "B" was not requestable yet, so the sync layer was regenerated to listen:
-            // flag parameter plus redirect routes ahead of the ring.
+            // "B" was not requestable yet, so the sync layer was regenerated to listen: flag
+            // parameter, the detour state, and a route to it ahead of the ring. In an F,B,I
+            // pass only Send I may start one — Send F is followed by Send B itself.
             Assert.AreEqual(AnimatorControllerParameterType.Bool,
                 DbtBuilder.FindParameter(controller, "Async/Req/B").type);
-            var sendF = FindState(controller.layers[1].stateMachine, "Send F");
-            Assert.AreEqual(2, sendF.transitions.Length);
-            Assert.AreEqual("Send B", sendF.transitions[0].destinationState.name);
+            var sendI = FindState(controller.layers[1].stateMachine, "Send I");
+            Assert.AreEqual(2, sendI.transitions.Length);
+            Assert.AreEqual("Send B (req)", sendI.transitions[0].destinationState.name);
         }
 
         [Test]

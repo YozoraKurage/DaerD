@@ -9,9 +9,9 @@ namespace Yozolab.DaerD
     /// <summary>
     /// Wizard for <see cref="AsyncSyncBuilder"/>: tick the parameters to multiplex (with a
     /// search filter), then arrange them in the Sync Order section — drag rows to set the
-    /// cycle order, give a row a ×N rate to sync it N times per pass, mark it Req to accept
-    /// sync requests, and read the resulting refresh interval next to each row, with the
-    /// whole cycle previewed underneath. The form itself lives in <see cref="AsyncSyncForm"/>
+    /// cycle order, mark a row Req to accept sync requests, and read the resulting refresh
+    /// interval next to each row, with the whole cycle previewed underneath. The form itself
+    /// lives in <see cref="AsyncSyncForm"/>
     /// (shared with the sync layer's dedicated panel); the wizard adds the layer choice —
     /// create a new layer, or regenerate a saved setup's layer in place.
     /// </summary>
@@ -85,8 +85,20 @@ namespace Yozolab.DaerD
 
             _form.DrawPreview(request);
             _form.DrawBlockingProblem(request);
-            foreach (var warning in AsyncSyncBuilder.Warnings(request, _form.AnimatedParameters()))
+            // Worked out once and read twice: the warnings quote it and the button below acts
+            // on it, and it is the most expensive answer this draw asks for.
+            var byType = AsyncSyncSplit.ByType(request);
+            foreach (var warning in AsyncSyncBuilder.Warnings(request, _form.AnimatedParameters(), byType))
                 EditorGUILayout.HelpBox(warning, MessageType.Warning);
+            // A split builds every ring itself, so there is nothing left for this window to
+            // create — it reports the layer it kept and gets out of the way.
+            if (_form.DrawSplitProposal(request, byType))
+            {
+                _onApplied?.Invoke(request.layerIndex >= 0
+                    ? request.layerIndex : _controller.layers.Length - 1);
+                Close();
+                GUIUtility.ExitGUI();
+            }
             _form.DrawStoreFix(request);
 
             EditorGUILayout.Space(8);

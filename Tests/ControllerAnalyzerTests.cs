@@ -192,6 +192,187 @@ namespace Yozolab.DaerD.Tests
         }
 
         [Test]
+        public void ASoloedTransition_IsReportedWithWhatItShutsOut()
+        {
+            var controller = NewController(out var sm);
+            var a = sm.AddState("A");
+            var b = sm.AddState("B");
+            var c = sm.AddState("C");
+            var d = sm.AddState("D");
+            var soloed = a.AddTransition(b);
+            soloed.solo = true;
+            a.AddTransition(c);
+            a.AddTransition(d);
+
+            var issues = OfKind(controller, IssueKind.SoloTransition);
+
+            Assert.AreEqual(1, issues.Count);
+            StringAssert.Contains("'A'", issues[0].message);
+            StringAssert.Contains("2", issues[0].message, "the two transitions solo shuts out");
+
+            issues[0].fix();
+            Assert.IsFalse(soloed.solo);
+            Assert.IsEmpty(OfKind(controller, IssueKind.SoloTransition));
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void SoloOnTheOnlyTransitionThatCouldRun_ShutsNothingOut()
+        {
+            var controller = NewController(out var sm);
+            var a = sm.AddState("A");
+            var b = sm.AddState("B");
+            var c = sm.AddState("C");
+            a.AddTransition(b).solo = true;
+            a.AddTransition(c).mute = true;   // already disabled, so solo takes nothing from it
+
+            Assert.IsEmpty(OfKind(controller, IssueKind.SoloTransition));
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void ASoloThatIsAlsoMuted_KeepsNothingAlive()
+        {
+            var controller = NewController(out var sm);
+            var a = sm.AddState("A");
+            var b = sm.AddState("B");
+            var c = sm.AddState("C");
+            var soloed = a.AddTransition(b);
+            soloed.solo = true;
+            soloed.mute = true;   // muting beats soloing
+            a.AddTransition(c);
+
+            // With the solo muted, nothing is soloed any more and A→C runs as usual.
+            Assert.IsEmpty(OfKind(controller, IssueKind.SoloTransition));
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void SoloOnAnAnyStateTransition_IsReportedAgainstTheStateMachine()
+        {
+            var controller = NewController(out var sm);
+            var b = sm.AddState("B");
+            var c = sm.AddState("C");
+            sm.AddAnyStateTransition(b).solo = true;
+            sm.AddAnyStateTransition(c);
+
+            var issues = OfKind(controller, IssueKind.SoloTransition);
+
+            Assert.AreEqual(1, issues.Count);
+            Assert.AreSame(sm, issues[0].context);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void ATransitionThatAsksForTwoIncompatibleThings_CanNeverFire()
+        {
+            var controller = NewController(out var sm);
+            controller.AddParameter("Wet", AnimatorControllerParameterType.Float);
+            var a = sm.AddState("A");
+            var b = sm.AddState("B");
+            var t = a.AddTransition(b);
+            t.AddCondition(AnimatorConditionMode.Greater, 0.8f, "Wet");
+            t.AddCondition(AnimatorConditionMode.Less, 0.2f, "Wet");   // window never opens
+
+            var issues = OfKind(controller, IssueKind.DeadTransition);
+
+            Assert.AreEqual(1, issues.Count);
+            StringAssert.Contains("Wet > 0.8", issues[0].message);
+            StringAssert.Contains("Wet < 0.2", issues[0].message);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void ARangeThatDoesOpen_IsLeftAlone()
+        {
+            var controller = NewController(out var sm);
+            controller.AddParameter("Wet", AnimatorControllerParameterType.Float);
+            var a = sm.AddState("A");
+            var b = sm.AddState("B");
+            var t = a.AddTransition(b);
+            t.AddCondition(AnimatorConditionMode.Greater, 0.2f, "Wet");
+            t.AddCondition(AnimatorConditionMode.Less, 0.8f, "Wet");
+
+            Assert.IsEmpty(OfKind(controller, IssueKind.DeadTransition));
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void ContradictionsAreOnlyReadWithinOneParameter()
+        {
+            var wet = new AnimatorCondition { parameter = "Wet", mode = AnimatorConditionMode.Greater, threshold = 1f };
+            var dry = new AnimatorCondition { parameter = "Dry", mode = AnimatorConditionMode.Less, threshold = 0f };
+            Assert.IsFalse(ControllerAnalyzer.Contradict(wet, dry));
+
+            var on = new AnimatorCondition { parameter = "On", mode = AnimatorConditionMode.If };
+            var off = new AnimatorCondition { parameter = "On", mode = AnimatorConditionMode.IfNot };
+            Assert.IsTrue(ControllerAnalyzer.Contradict(on, off));
+            Assert.IsTrue(ControllerAnalyzer.Contradict(off, on), "and the other way round");
+
+            var isTwo = new AnimatorCondition { parameter = "N", mode = AnimatorConditionMode.Equals, threshold = 2f };
+            var isThree = new AnimatorCondition { parameter = "N", mode = AnimatorConditionMode.Equals, threshold = 3f };
+            var notTwo = new AnimatorCondition { parameter = "N", mode = AnimatorConditionMode.NotEqual, threshold = 2f };
+            Assert.IsTrue(ControllerAnalyzer.Contradict(isTwo, isThree));
+            Assert.IsTrue(ControllerAnalyzer.Contradict(isTwo, notTwo));
+            Assert.IsFalse(ControllerAnalyzer.Contradict(isTwo, isTwo), "the same twice over is a duplicate, not a contradiction");
+
+            // Reported for neither type: impossible for an Int, ordinary for a Float, and the
+            // check deliberately does not know which one this is.
+            var over = new AnimatorCondition { parameter = "N", mode = AnimatorConditionMode.Greater, threshold = 0f };
+            var under = new AnimatorCondition { parameter = "N", mode = AnimatorConditionMode.Less, threshold = 1f };
+            Assert.IsFalse(ControllerAnalyzer.Contradict(over, under));
+        }
+
+        [Test]
+        public void AnyStateTransitionsThatCanInterruptThemselves_AreReportedTogether()
+        {
+            var controller = NewController(out var sm);
+            controller.AddParameter("On", AnimatorControllerParameterType.Bool);
+            var b = sm.AddState("B");
+            var c = sm.AddState("C");
+            foreach (var target in new[] { b, c })
+            {
+                var t = sm.AddAnyStateTransition(target);
+                t.canTransitionToSelf = true;
+                t.AddCondition(AnimatorConditionMode.If, 0f, "On");
+            }
+
+            var issues = OfKind(controller, IssueKind.AnyStateRetrigger);
+
+            Assert.AreEqual(1, issues.Count, "one row per state machine, not per transition");
+            StringAssert.Contains("2", issues[0].message);
+
+            issues[0].fix();
+            Assert.IsEmpty(OfKind(controller, IssueKind.AnyStateRetrigger));
+            foreach (var t in sm.anyStateTransitions)
+                Assert.IsFalse(t.canTransitionToSelf);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void AnyStateOnATrigger_IsLeftAlone()
+        {
+            var controller = NewController(out var sm);
+            controller.AddParameter("Fire", AnimatorControllerParameterType.Trigger);
+            var b = sm.AddState("B");
+            var t = sm.AddAnyStateTransition(b);
+            t.canTransitionToSelf = true;
+            t.AddCondition(AnimatorConditionMode.If, 0f, "Fire");
+
+            // A Trigger is consumed when it is read, so the condition stops holding by itself.
+            Assert.IsEmpty(OfKind(controller, IssueKind.AnyStateRetrigger));
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
         public void DuplicateCondition_FixKeepsOneOfEach()
         {
             var controller = NewController(out var sm);
@@ -634,6 +815,167 @@ namespace Yozolab.DaerD.Tests
 
             Assert.AreEqual(1, issues.Count);
             StringAssert.Contains("no incoming transition", issues[0].message);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        // ---- what the builders write, read back by the analyzer ----------------
+
+        /// <summary>
+        /// The one category a generator is never allowed to produce: a transition with neither
+        /// a condition nor an exit time is a transition that is never taken, so a watcher
+        /// wired that way is simply deaf — it looks right in the graph and does nothing at
+        /// runtime. 0e91fc3 fixed a handful of those by hand; this is the wiring that says so
+        /// the next time, for every setup a generator can be asked to build.
+        ///
+        /// Only this category. The rest of the analyzer's lint is about shapes an author might
+        /// mean (a motion-less machinery state, a layer at weight 0), and holding generated
+        /// output to all of it would fail on things that are correct.
+        /// </summary>
+        static void AssertNothingIsWiredDeaf(AnimatorController controller, string what)
+        {
+            var deaf = new List<string>();
+            foreach (var issue in OfKind(controller, IssueKind.DeadTransition))
+                if (issue.message.Contains("no conditions and no exit time"))
+                    deaf.Add("  " + issue.message);
+
+            Assert.IsEmpty(deaf, what + " built " + deaf.Count
+                + " transition(s) nothing can ever fire:\n" + string.Join("\n", deaf));
+        }
+
+        static AnimatorController MultiplexedController(
+            System.Action<AsyncSyncBuilder.Request> tweak)
+        {
+            var controller = new AnimatorController();
+            controller.AddLayer("Base");
+            controller.AddParameter("F", AnimatorControllerParameterType.Float);
+            controller.AddParameter("G", AnimatorControllerParameterType.Float);
+            controller.AddParameter("B", AnimatorControllerParameterType.Bool);
+            controller.AddParameter("I", AnimatorControllerParameterType.Int);
+
+            var request = new AsyncSyncBuilder.Request
+            {
+                controller = controller,
+                baseName = "Async",
+                encoding = AsyncSyncBuilder.IndexEncoding.Int,
+                stepSeconds = 0.3f,
+                assignEmptyClip = false,
+                addToStore = false,
+                // The drivers carry values, not routing — every transition this test is about
+                // is built either way, and skipping them is what lets the check run with the
+                // VRChat SDK absent as well as present.
+                skipDrivers = true,
+                layerIndex = -1,
+            };
+            request.targets.AddRange(new[] { "F", "G", "B", "I" });
+            tweak?.Invoke(request);
+
+            Assert.IsNull(AsyncSyncBuilder.Validate(request), "the setup itself is not buildable");
+            Assert.IsTrue(AsyncSyncBuilder.Apply(request));
+            return controller;
+        }
+
+        static GraphFrameData.AsyncSyncConfig.SyncGroup Grouped(string name,
+            params string[] members)
+        {
+            var group = new GraphFrameData.AsyncSyncConfig.SyncGroup { name = name };
+            group.members.AddRange(members);
+            return group;
+        }
+
+        [Test]
+        public void AsyncSync_BuildsNoTransitionThatCanNeverFire()
+        {
+            // The plain pass, and then each of the things that add a layer or a route of their
+            // own — the watcher layers are where a deaf transition has actually happened.
+            var cases = new Dictionary<string, System.Action<AsyncSyncBuilder.Request>>
+            {
+                { "a plain cycle", null },
+                { "the remote initialized flag", r => r.ready = true },
+                { "the drift flag", r => r.stale = true },
+                { "both flags", r => { r.ready = true; r.stale = true; } },
+                { "sync requests", r => r.requestTargets.AddRange(new[] { "B", "I" }) },
+                {
+                    "requests and both flags",
+                    r =>
+                    {
+                        r.ready = true;
+                        r.stale = true;
+                        r.requestTargets.Add("I");
+                    }
+                },
+                { "a group", r => r.groups.Add(Grouped("Outfit", "F", "I")) },
+                {
+                    // The commit guard leans on the flag here, which is a condition on a
+                    // transition that is otherwise the one route out of Idle.
+                    "a group and the remote initialized flag",
+                    r =>
+                    {
+                        r.ready = true;
+                        r.groups.Add(Grouped("Outfit", "F", "I"));
+                    }
+                },
+                { "a repeat-step clock", r => r.allowRepeatSteps = true },
+                { "two float channels", r => r.floatChannels = 2 },
+                { "a weight no control hands out", r => r.rates["F"] = 3 },
+            };
+
+            foreach (var pair in cases)
+            {
+                var controller = MultiplexedController(pair.Value);
+                AssertNothingIsWiredDeaf(controller, "async sync with " + pair.Key);
+                Object.DestroyImmediate(controller);
+            }
+        }
+
+        [Test]
+        public void NetworkSync_BuildsNoTransitionThatCanNeverFire()
+        {
+            var controller = new AnimatorController();
+            controller.AddLayer("Base");
+            controller.AddLayer("Target");
+            controller.AddParameter("Go", AnimatorControllerParameterType.Bool);
+            var machine = controller.layers[1].stateMachine;
+            var first = machine.AddState("S0");
+            var second = machine.AddState("S1");
+            first.AddTransition(second).AddCondition(AnimatorConditionMode.If, 0f, "Go");
+
+            var request = new NetworkSyncBuilder.Request
+            {
+                controller = controller,
+                layerIndex = 1,
+                syncParameter = "Target/Sync",
+                packIntoSubMachine = false,
+                skipDrivers = true,
+            };
+            Assert.IsNull(NetworkSyncBuilder.Validate(request));
+            Assert.IsTrue(NetworkSyncBuilder.Apply(request));
+
+            AssertNothingIsWiredDeaf(controller, "network sync");
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void ObjectToggle_BuildsNoTransitionThatCanNeverFire()
+        {
+            var controller = new AnimatorController();
+            controller.AddLayer("Base");
+
+            var request = new ToggleBuilder.Request
+            {
+                controller = controller,
+                mode = ToggleBuilder.Mode.Layer,
+                toggleName = "Hat",
+                parameter = "Hat",
+                layerIndex = -1,
+                newLayerName = "Toggles",
+            };
+            request.targets.Add(new ToggleBuilder.Target { path = "Armature/Head/Hat" });
+            Assert.IsNull(ToggleBuilder.Validate(request));
+            Assert.IsTrue(ToggleBuilder.Apply(request));
+
+            AssertNothingIsWiredDeaf(controller, "the object toggle");
 
             Object.DestroyImmediate(controller);
         }

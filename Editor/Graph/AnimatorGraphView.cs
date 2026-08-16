@@ -15,6 +15,7 @@ namespace Yozolab.DaerD
         readonly NodeSearchProvider _searchProvider;
         readonly GraphContextMenu _menu;
 
+        readonly Label _hint;
         bool _syncingSelection;
         Vector2 _lastMouseGraphPosition;
         Vector2 _lastMouseWorld;
@@ -44,6 +45,13 @@ namespace Yozolab.DaerD
             Insert(0, grid);
             grid.StretchToParentSize();
 
+            // Added to the hierarchy rather than through Add: the content container is what
+            // pans and zooms, and a line of status text has to stay in the corner.
+            _hint = new Label { pickingMode = PickingMode.Ignore };
+            _hint.AddToClassList("dd-graph-hint");
+            _hint.style.display = DisplayStyle.None;
+            hierarchy.Add(_hint);
+
             _searchProvider = ScriptableObject.CreateInstance<NodeSearchProvider>();
             _searchProvider.Init(OnSearchSelect);
 
@@ -70,6 +78,8 @@ namespace Yozolab.DaerD
             // point at a state of another layer or controller.
             context.ControllerChanged += GraphContextMenu.ClearMarkedSources;
             context.LayerChanged += GraphContextMenu.ClearMarkedSources;
+            context.ControllerChanged += RefreshHint;
+            context.LayerChanged += RefreshHint;
             context.StateMachinePathChanged += _sync.RequestRebuild;
             context.LayersChanged += _sync.RequestRebuild;
             context.GraphStructureChanged += _sync.RequestRebuild;
@@ -81,6 +91,29 @@ namespace Yozolab.DaerD
             // selection — see the provider fields on DaerDContext for why a push would go stale.
             context.SelectedStatesProvider = GetSelectedStates;
             context.SelectedTransitionGroupsProvider = SelectedTransitionGroups;
+        }
+
+        /// <summary>
+        /// The one line of status the graph shows, bottom left: what is marked and what to press
+        /// next. It stays put while the marks do — a mark survives changing the selection, which
+        /// is the whole point of it, and a message that fades cannot answer "what is marked" a
+        /// minute later when the question is actually asked.
+        /// </summary>
+        public void RefreshHint()
+        {
+            int marked = GraphContextMenu.MarkedSourceCount;
+            if (marked == 0)
+            {
+                _hint.style.display = DisplayStyle.None;
+                return;
+            }
+            // Read off the table rather than written into the sentence: the key that connects
+            // can be rebound, and a hint naming the wrong one sends the reader nowhere.
+            string keys = DaerDShortcuts.KeysOf(ShortcutScope.Graph, DaerDCommand.Connect);
+            _hint.text = string.IsNullOrEmpty(keys)
+                ? L.Tr("{0} marked as sources — select the destinations and connect them", marked)
+                : L.Tr("{0} marked as sources — select the destinations and press {1}", marked, keys);
+            _hint.style.display = DisplayStyle.Flex;
         }
 
         /// <summary>
@@ -119,8 +152,7 @@ namespace Yozolab.DaerD
                     _sync.RefreshAllStateNodes();
                     break;
                 case DaerDContext.GraphVisuals.AllEdges:
-                    foreach (var edge in _sync.Edges)
-                        edge.Refresh();
+                    _sync.RefreshAllEdges();
                     break;
             }
         }
@@ -364,7 +396,7 @@ namespace Yozolab.DaerD
         /// <see cref="DaerDContext.Selection"/>: the shared selection can name a transition (or an
         /// edge) that the graph itself is not highlighting.
         /// </summary>
-        List<(bool isDefault, IList<AnimatorTransitionBase> transitions)> SelectedTransitionGroups()
+        List<TransitionGroup> SelectedTransitionGroups()
         {
             var edges = GetSelectedEdges();
             if (edges.Count == 0)
@@ -373,9 +405,11 @@ namespace Yozolab.DaerD
                     ?? (_context.Selection is AnimatorTransitionBase tb ? _sync.FindEdge(tb) : null);
                 if (fallback != null) edges.Add(fallback);
             }
-            var groups = new List<(bool isDefault, IList<AnimatorTransitionBase> transitions)>(edges.Count);
+            var groups = new List<TransitionGroup>(edges.Count);
             foreach (var edge in edges)
-                groups.Add((edge.IsDefaultEdge, edge.Transitions));
+                groups.Add(new TransitionGroup(
+                    GraphNodeBase.EndOf(edge.output?.node as GraphNodeBase),
+                    edge.IsDefaultEdge, edge.Transitions));
             return groups;
         }
 
@@ -402,106 +436,280 @@ namespace Yozolab.DaerD
         {
             // While an inline rename (or any text field) has focus, leave the keyboard to it.
             if (IsEditingText()) return;
+            if (Run(DaerDShortcuts.Resolve(ShortcutScope.Graph, evt)))
+                evt.StopPropagation();
+        }
 
-            if (evt.keyCode == KeyCode.F2)
+        /// <summary>
+        /// Carries out one command. False means "nothing happened", which is how a key falls
+        /// through to whatever else might want it — an arrow with nothing in that direction, or
+        /// T with only one node selected.
+        /// </summary>
+        bool Run(DaerDCommand command)
+        {
+            switch (command)
             {
-                // F2 renames the selected state (Ctrl/Cmd+F2: its clip), retitles the selected
-                // frame, or edits the selected note — whichever single element is selected.
-                if (selection.Count == 1 && selection[0] is FrameNode frameNode)
-                {
-                    frameNode.BeginRename();
-                    evt.StopPropagation();
-                    return;
-                }
-                if (selection.Count == 1 && selection[0] is NoteNode noteNode)
-                {
-                    noteNode.BeginEdit();
-                    evt.StopPropagation();
-                    return;
-                }
-                if (BeginRenameSelectedState(clip: evt.ctrlKey || evt.commandKey))
-                    evt.StopPropagation();
-                return;
+                // F2 retitles the selected frame, edits the selected note, or renames the
+                // selected state — whichever single element is selected.
+                case DaerDCommand.Rename:
+                    if (selection.Count == 1 && selection[0] is FrameNode frameNode)
+                    {
+                        frameNode.BeginRename();
+                        return true;
+                    }
+                    if (selection.Count == 1 && selection[0] is NoteNode noteNode)
+                    {
+                        noteNode.BeginEdit();
+                        return true;
+                    }
+                    return BeginRenameSelectedState(clip: false);
+                case DaerDCommand.RenameClip:
+                    return BeginRenameSelectedState(clip: true);
+
+                case DaerDCommand.SelectIncoming:
+                    return SelectTransitionsOfSelection(incoming: true, outgoing: false);
+                case DaerDCommand.SelectOutgoing:
+                    return SelectTransitionsOfSelection(incoming: false, outgoing: true);
+                case DaerDCommand.SelectConnected:
+                    return SelectTransitionsOfSelection(incoming: true, outgoing: true);
+
+                // F with nothing selected has nothing to aim at, so it falls through to
+                // framing everything rather than doing nothing.
+                case DaerDCommand.FrameSelection:
+                    if (selection.Count > 0) FrameSelection();
+                    else FrameAll();
+                    return true;
+                case DaerDCommand.FrameAll:
+                    FrameAll();
+                    return true;
+
+                case DaerDCommand.MarkSources:
+                    if (!_menu.MarkSelectedAsSources()) return false;
+                    RefreshHint();
+                    return true;
+                case DaerDCommand.Connect:
+                    if (!_menu.ConnectSelection()) return false;
+                    RefreshHint();
+                    return true;
+
+                case DaerDCommand.MoveUp: return MoveSelection(new Vector2(0f, -1f));
+                case DaerDCommand.MoveDown: return MoveSelection(new Vector2(0f, 1f));
+                case DaerDCommand.MoveLeft: return MoveSelection(new Vector2(-1f, 0f));
+                case DaerDCommand.MoveRight: return MoveSelection(new Vector2(1f, 0f));
+
+                // The search box lives in the toolbar, which the graph cannot reach; the
+                // context carries the request to whoever owns the box.
+                case DaerDCommand.FocusSearch:
+                    _context.RequestSearch();
+                    return true;
+
+                case DaerDCommand.Copy:
+                    CopySelection();
+                    return true;
+                case DaerDCommand.Paste:
+                    PasteSelection();
+                    return true;
+                case DaerDCommand.PasteAsNew:
+                    PasteTransitionsAsNew();
+                    return true;
+                case DaerDCommand.Duplicate:
+                    DuplicateSelectedStates();
+                    return true;
+                case DaerDCommand.SelectAllNodes:
+                    SelectAllNodes();
+                    return true;
+                case DaerDCommand.SelectAllTransitions:
+                    SelectAllTransitions();
+                    return true;
+
+                default:
+                    return false;
+            }
+        }
+
+        /// <summary>
+        /// Arrow keys walk from the selected node to its neighbour in that direction. Only from a
+        /// single node: with several selected there is no "from" to measure against.
+        ///
+        /// Nodes are scored by how far along the direction they sit plus twice how far off to the
+        /// side, so a near neighbour slightly off-axis beats a distant one dead ahead. Anything
+        /// more sideways than forwards is held back and used only when nothing is ahead of it —
+        /// otherwise pressing Up in a wide layout would jump to something that is really beside.
+        /// </summary>
+        bool MoveSelection(Vector2 direction)
+        {
+            if (selection.Count != 1 || !(selection[0] is GraphNodeBase current)) return false;
+
+            var candidates = new List<GraphNodeBase>();
+            var centres = new List<Vector2>();
+            nodes.ForEach(node =>
+            {
+                if (!(node is GraphNodeBase candidate) || candidate == current) return;
+                candidates.Add(candidate);
+                centres.Add(candidate.GetPosition().center);
+            });
+
+            int index = PickNeighbour(current.GetPosition().center, centres, direction);
+            if (index < 0) return false;
+
+            ReplaceSelection(new List<GraphElement> { candidates[index] });
+            ScrollIntoView(candidates[index]);
+            return true;
+        }
+
+        /// <summary>
+        /// Which of <paramref name="centres"/> the arrow key lands on, or -1 when nothing lies
+        /// that way. Scored by distance along the direction plus twice the distance off to the
+        /// side, so a near neighbour slightly off-axis beats a distant one dead ahead.
+        /// </summary>
+        public static int PickNeighbour(Vector2 from, IList<Vector2> centres, Vector2 direction)
+        {
+            var sideways = new Vector2(-direction.y, direction.x);
+            int ahead = -1, beside = -1;
+            float aheadScore = float.MaxValue, besideScore = float.MaxValue;
+
+            for (int i = 0; i < centres.Count; i++)
+            {
+                Vector2 delta = centres[i] - from;
+                float along = Vector2.Dot(delta, direction);
+                if (along <= 1f) continue;
+                float across = Mathf.Abs(Vector2.Dot(delta, sideways));
+                float score = along + across * 2f;
+                if (score < besideScore) { besideScore = score; beside = i; }
+                // More sideways than forwards is not "the one above" — kept only for when
+                // nothing is properly ahead, so an arrow key in a wide layout still moves.
+                if (across > along * 2f) continue;
+                if (score < aheadScore) { aheadScore = score; ahead = i; }
             }
 
-            if (!(evt.ctrlKey || evt.commandKey))
-            {
-                // I / O / P select the incoming / outgoing / all transitions of the selected
-                // state nodes — quick keyboard access to the context-menu selections.
-                if (evt.keyCode == KeyCode.I && SelectTransitionsOfSelection(incoming: true, outgoing: false))
-                    evt.StopPropagation();
-                else if (evt.keyCode == KeyCode.O && SelectTransitionsOfSelection(incoming: false, outgoing: true))
-                    evt.StopPropagation();
-                else if (evt.keyCode == KeyCode.P && SelectTransitionsOfSelection(incoming: true, outgoing: true))
-                    evt.StopPropagation();
-                return;
-            }
-            if (evt.keyCode == KeyCode.C)
-            {
-                CopySelection();
-                evt.StopPropagation();
-            }
-            else if (evt.keyCode == KeyCode.V)
-            {
-                if (evt.shiftKey) PasteTransitionsAsNew();
-                else PasteSelection();
-                evt.StopPropagation();
-            }
-            else if (evt.keyCode == KeyCode.D)
-            {
-                DuplicateSelectedStates();
-                evt.StopPropagation();
-            }
-            else if (evt.keyCode == KeyCode.A)
-            {
-                if (evt.shiftKey) SelectAllTransitions();
-                else SelectAllNodes();
-                evt.StopPropagation();
-            }
+            return ahead >= 0 ? ahead : beside;
+        }
+
+        /// <summary>
+        /// Pans just enough to bring a node inside the viewport, keeping the zoom. Framing it
+        /// instead would re-zoom on every arrow press, which turns walking a state machine into
+        /// a series of lurches.
+        /// </summary>
+        void ScrollIntoView(GraphNodeBase node)
+        {
+            const float Margin = 48f;
+            float scale = viewTransform.scale.x;
+            if (scale <= 0f) return;
+            Vector2 origin = viewTransform.position;
+
+            Rect placed = node.GetPosition();
+            var onScreen = new Rect(placed.position * scale + origin, placed.size * scale);
+            var viewport = new Rect(Margin, Margin, layout.width - Margin * 2f, layout.height - Margin * 2f);
+            if (viewport.width <= 0f || viewport.height <= 0f) return;
+
+            Vector2 shift = Vector2.zero;
+            if (onScreen.xMin < viewport.xMin) shift.x = viewport.xMin - onScreen.xMin;
+            else if (onScreen.xMax > viewport.xMax) shift.x = viewport.xMax - onScreen.xMax;
+            if (onScreen.yMin < viewport.yMin) shift.y = viewport.yMin - onScreen.yMin;
+            else if (onScreen.yMax > viewport.yMax) shift.y = viewport.yMax - onScreen.yMax;
+            if (shift == Vector2.zero) return;
+
+            UpdateViewTransform(origin + shift, viewTransform.scale);
         }
 
         /// <summary>Ctrl+A: every node (states, sub-state machines, special nodes).</summary>
         void SelectAllNodes()
         {
-            ClearSelection();
+            var wanted = new List<GraphElement>();
             nodes.ForEach(node =>
             {
                 if (node is StateNode || node is SubStateMachineNode || node is SpecialNode)
-                    AddToSelection(node);
+                    wanted.Add(node);
             });
+            ReplaceSelection(wanted);
         }
 
         /// <summary>Ctrl+Shift+A: every transition edge (the default-state link is not one).</summary>
         void SelectAllTransitions()
         {
-            ClearSelection();
+            var wanted = new List<GraphElement>();
             edges.ForEach(edge =>
             {
                 if (edge is TransitionEdge transitionEdge && !transitionEdge.IsDefaultEdge)
-                    AddToSelection(transitionEdge);
+                    wanted.Add(transitionEdge);
             });
+            ReplaceSelection(wanted);
         }
 
-        /// <summary>Selects the transitions touching any selected state node; false when no
-        /// state is selected (so the key can fall through).</summary>
-        bool SelectTransitionsOfSelection(bool incoming, bool outgoing)
+        /// <summary>
+        /// Selects exactly <paramref name="elements"/>, which must already have been collected.
+        /// Selecting a node brings it to the front of its parent, and reordering the visual tree
+        /// while a UQuery is still walking it makes the walk skip elements and revisit others —
+        /// the same key press then selects a different set every time. Gathering first and
+        /// selecting afterwards is what makes the answer the same twice running.
+        /// </summary>
+        void ReplaceSelection(List<GraphElement> elements)
         {
-            var stateNodes = new HashSet<StateNode>();
-            foreach (var selected in selection)
-                if (selected is StateNode stateNode)
-                    stateNodes.Add(stateNode);
-            if (stateNodes.Count == 0) return false;
-
             ClearSelection();
+            foreach (var element in elements)
+                AddToSelection(element);
+        }
+
+        /// <summary>
+        /// Every selected node a transition can start from or land on. Not only states: a
+        /// sub-state machine and the Entry / Any State nodes carry transitions too, and asking
+        /// for "the transitions connected to what I have selected" means those as well.
+        /// </summary>
+        public HashSet<Node> SelectedTransitionEndpoints()
+        {
+            var endpoints = new HashSet<Node>();
+            foreach (var selected in selection)
+                if (selected is GraphNodeBase node) endpoints.Add(node);
+            return endpoints;
+        }
+
+        /// <summary>Counts the non-default transition edges entering, leaving and touching any
+        /// of <paramref name="endpoints"/>. An edge between two of them is incoming and outgoing
+        /// at once, and is one connection.</summary>
+        public void CountConnectedTransitions(HashSet<Node> endpoints,
+            out int incoming, out int outgoing, out int connected)
+        {
+            int inc = 0, outg = 0, conn = 0;
             edges.ForEach(edge =>
             {
-                if (!(edge is TransitionEdge transitionEdge) || transitionEdge.IsDefaultEdge) return;
-                if ((incoming && transitionEdge.input?.node is StateNode into && stateNodes.Contains(into))
-                    || (outgoing && transitionEdge.output?.node is StateNode from && stateNodes.Contains(from)))
-                    AddToSelection(transitionEdge);
+                if (!(edge is TransitionEdge te) || te.IsDefaultEdge) return;
+                bool into = te.input?.node != null && endpoints.Contains(te.input.node);
+                bool from = te.output?.node != null && endpoints.Contains(te.output.node);
+                if (into) inc++;
+                if (from) outg++;
+                if (into || from) conn++;
             });
+            incoming = inc;
+            outgoing = outg;
+            connected = conn;
+        }
+
+        /// <summary>
+        /// Replaces the selection with the transitions touching <paramref name="endpoints"/>.
+        /// False when that would select nothing — the keyboard shortcut then falls through
+        /// instead of clearing what the user had.
+        /// </summary>
+        public bool SelectTransitionsOf(HashSet<Node> endpoints, bool incoming, bool outgoing)
+        {
+            if (endpoints.Count == 0) return false;
+
+            var wanted = new List<GraphElement>();
+            edges.ForEach(edge =>
+            {
+                if (!(edge is TransitionEdge te) || te.IsDefaultEdge) return;
+                if ((incoming && te.input?.node != null && endpoints.Contains(te.input.node))
+                    || (outgoing && te.output?.node != null && endpoints.Contains(te.output.node)))
+                    wanted.Add(te);
+            });
+            if (wanted.Count == 0) return false;
+
+            ReplaceSelection(wanted);
             return true;
         }
+
+        /// <summary>I / O / P: the transitions touching whatever is selected right now.</summary>
+        bool SelectTransitionsOfSelection(bool incoming, bool outgoing) =>
+            SelectTransitionsOf(SelectedTransitionEndpoints(), incoming, outgoing);
 
         /// <summary>Duplicates the selected states in place (Ctrl+D), keeping their internal transitions.</summary>
         public void DuplicateSelectedStates()

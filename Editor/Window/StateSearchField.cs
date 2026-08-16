@@ -19,6 +19,10 @@ namespace Yozolab.DaerD
         readonly ToolbarSearchField _field;
         VisualElement _popup;
         List<StateSearch.Result> _results = new List<StateSearch.Result>();
+        readonly List<Label> _rows = new List<Label>();
+        // Which result Enter would take. Kept as an index rather than a reference so it
+        // survives the list being rebuilt on every keystroke.
+        int _highlight;
 
         public StateSearchField(DaerDContext context, VisualElement popupHost)
         {
@@ -38,6 +42,7 @@ namespace Yozolab.DaerD
             // or a later Enter would navigate with a stale path into the new controller.
             _context.ControllerChanged += ResetSearch;
             _context.LayerChanged += ResetSearch;
+            _context.SearchRequested += TakeFocus;
 
             // The popup must not outlive the toolbar (window closed) — it lives on the
             // window root, not under this element.
@@ -46,11 +51,27 @@ namespace Yozolab.DaerD
                 ClosePopup();
                 _context.ControllerChanged -= ResetSearch;
                 _context.LayerChanged -= ResetSearch;
+                _context.SearchRequested -= TakeFocus;
             });
         }
 
         /// <summary>Re-reads the localized tooltip; called by the window on language change.</summary>
-        public void RefreshTooltip() => _field.tooltip = L.Tr("Search states (name or motion)");
+        // The shortcut is appended rather than written into the message, so translating the
+        // sentence never has to carry a key name that is the same in every language.
+        public void RefreshTooltip() =>
+            _field.tooltip = L.Tr("Search states (name or motion)")
+                + DaerDShortcuts.Hint(ShortcutScope.Graph, DaerDCommand.FocusSearch);
+
+        /// <summary>
+        /// Puts the caret in the box (Ctrl+F from the graph). The inner text field is what
+        /// actually takes keystrokes; focusing the wrapper alone leaves the caret nowhere.
+        /// </summary>
+        void TakeFocus()
+        {
+            var input = _field.Q<TextField>();
+            if (input != null) input.Focus();
+            else _field.Focus();
+        }
 
         /// <summary>Clears the query, the cached results and the popup.</summary>
         void ResetSearch()
@@ -67,16 +88,45 @@ namespace Yozolab.DaerD
                 ClosePopup();
                 evt.StopPropagation();
             }
-            else if ((evt.keyCode == KeyCode.Return || evt.keyCode == KeyCode.KeypadEnter) && _results.Count > 0)
+            else if (evt.keyCode == KeyCode.DownArrow && _results.Count > 0)
             {
-                NavigateTo(_results[0]);
+                MoveHighlight(1);
                 evt.StopPropagation();
             }
+            else if (evt.keyCode == KeyCode.UpArrow && _results.Count > 0)
+            {
+                MoveHighlight(-1);
+                evt.StopPropagation();
+            }
+            else if ((evt.keyCode == KeyCode.Return || evt.keyCode == KeyCode.KeypadEnter) && _results.Count > 0)
+            {
+                NavigateTo(_results[Mathf.Clamp(_highlight, 0, _results.Count - 1)]);
+                evt.StopPropagation();
+            }
+        }
+
+        /// <summary>Moves the highlight and scrolls it into view; stops at both ends rather
+        /// than wrapping, so holding an arrow key settles somewhere instead of cycling.</summary>
+        void MoveHighlight(int delta)
+        {
+            _highlight = Mathf.Clamp(_highlight + delta, 0, _results.Count - 1);
+            ApplyHighlight();
+            if (_highlight >= 0 && _highlight < _rows.Count)
+                (_popup as ScrollView)?.ScrollTo(_rows[_highlight]);
+        }
+
+        void ApplyHighlight()
+        {
+            for (int i = 0; i < _rows.Count; i++)
+                _rows[i].EnableInClassList("dd-search-result--active", i == _highlight);
         }
 
         void RefreshResults(string query)
         {
             _results = StateSearch.Find(_context.Controller, query, MaxResults);
+            // A new query means a new list; Enter has to mean its best match, not whatever
+            // row number the last one had been walked down to.
+            _highlight = 0;
             if (string.IsNullOrWhiteSpace(query))
             {
                 ClosePopup();
@@ -113,6 +163,7 @@ namespace Yozolab.DaerD
         void BuildPopupContent()
         {
             _popup.Clear();
+            _rows.Clear();
             if (_results.Count == 0)
             {
                 var empty = new Label(L.Tr("No matches."));
@@ -132,7 +183,9 @@ namespace Yozolab.DaerD
                     evt.StopPropagation();
                 });
                 _popup.Add(row);
+                _rows.Add(row);
             }
+            ApplyHighlight();
         }
 
         void NavigateTo(StateSearch.Result result)

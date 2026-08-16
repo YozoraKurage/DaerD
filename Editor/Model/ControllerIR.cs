@@ -183,6 +183,9 @@ namespace Yozolab.DaerD
             public float min;
             public float max;
             public float chance = 1f;
+            /// <summary>Random only: don't roll the value it just rolled. The SDK's own field,
+            /// carried so a controller that had it still has it after a round trip.</summary>
+            public bool preventRepeats;
             public bool convertRange;
             public float sourceMin;
             public float sourceMax;

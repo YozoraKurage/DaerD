@@ -94,6 +94,25 @@ namespace Yozolab.DaerD
                 }
                 GUIUtility.ExitGUI();
             }
+            // Beside Detect rather than inside it: a gimmick that is a prefab and nothing else
+            // is invisible to the scene search, and a walk over every prefab in the project is
+            // not something to do silently on the chance that it helps. Two buttons say which
+            // search is about to run and let the cheap one stay the reflex.
+            if (GUILayout.Button(new GUIContent(L.Tr("In Prefabs"),
+                    L.Tr("Search the project's prefabs for an MA Merge Animator referencing this controller, and take the MA Parameters beside it. Only prefabs that already reference this controller are opened, and the answer is remembered until something in the project changes.")),
+                    EditorStyles.miniButton, GUILayout.Width(70)))
+            {
+                var found = ParameterStore.DetectInPrefabs(controller);
+                if (found == null)
+                    EditorUtility.DisplayDialog(L.Tr("Parameter Store"),
+                        L.Tr("No prefab in this project has an MA Merge Animator referencing this controller."), "OK");
+                else
+                {
+                    GraphFrameData.SetParameterStore(controller, found);
+                    onChanged?.Invoke();
+                }
+                GUIUtility.ExitGUI();
+            }
             EditorGUILayout.EndHorizontal();
         }
 
@@ -111,11 +130,17 @@ namespace Yozolab.DaerD
             }
         }
 
+        /// <summary>
+        /// The comparison names as Unity writes them — Greater, Less, Equals, NotEqual — and
+        /// deliberately not translated. They are the words on the same popup in the Animator
+        /// window and in every guide written about it; a translated pair like "より大 / より小"
+        /// reads as a different control than the one being described.
+        /// </summary>
         public static string[] ModeLabels(AnimatorConditionMode[] modes)
         {
             var labels = new string[modes.Length];
             for (int i = 0; i < modes.Length; i++)
-                labels[i] = L.Tr(modes[i].ToString());
+                labels[i] = modes[i].ToString();
             return labels;
         }
 

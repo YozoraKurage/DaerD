@@ -5,6 +5,7 @@ using UnityEngine;
 // One step of an explicit grid is saved data first and a request field second, so the shape
 // is declared with the rest of the saved setup; the alias keeps the request reading plainly.
 using StepSpec = Yozolab.DaerD.GraphFrameData.AsyncSyncConfig.StepSpec;
+using SyncGroup = Yozolab.DaerD.GraphFrameData.AsyncSyncConfig.SyncGroup;
 
 namespace Yozolab.DaerD
 {
@@ -43,24 +44,38 @@ namespace Yozolab.DaerD
     /// Targets marked requestable additionally accept sync REQUESTS: a local, unsynced Bool
     /// ("base/Req/target") that anything on the avatar can raise — DaerD's per-state sync
     /// request drives it from a Parameter Driver. At each step boundary the cycle checks the
-    /// flags and jumps to a requested slot instead of the ring's next step, so a fresh value
-    /// reaches remotes after at most one step instead of a full pass; the slot's send driver
-    /// clears the flag as it services it. A request for the slot that just sent is picked up
-    /// one step later — never back-to-back, which the decoder couldn't see.
+    /// flags and takes a DETOUR: one extra step that sends the requested slot and then rejoins
+    /// the ring where it left, so a fresh value reaches remotes after at most one step instead
+    /// of a full pass. The detour state clears the flag as it services it.
     ///
-    /// Requests queue, they don't interrupt: a redirect carries the ring's exit time, so the
-    /// step that was running when a flag went up still spends its full dwell and the jump
+    /// Rejoining where it left is what makes the pass survive being interrupted. A jump that
+    /// simply resumed from the requested slot's own position would move the ring's place in
+    /// the pass, and a request that keeps being raised at the same point would then pin the
+    /// cycle to one stretch of the pass and starve everything outside it — remotes would wait
+    /// forever for values that are never sent. The detour spends a step and gives the place
+    /// back, so the pass always advances: the step it left from is written to
+    /// "base/Return" by every send state, and the request state reads it on the way back.
+    ///
+    /// A detour carries no routes of its own, so requests never chain. That bounds the whole
+    /// cost of them: worst case the pass alternates detour, step, detour, step, which is one
+    /// pass in twice the time — and never more, however hard the flags are driven.
+    ///
+    /// Requests queue, they don't interrupt: a detour carries the ring's exit time, so the
+    /// step that was running when a flag went up still spends its full dwell and the detour
     /// happens at the boundary. One request is serviced per boundary — the first in cycle
     /// order — and flags that lost the boundary stay raised for the next one.
+    /// <see cref="AsyncSyncSchedule.RequestOrigins"/> says which steps may start a detour: not
+    /// the ones already sending that slot, and not the ones whose successor would repeat the
+    /// index the detour wrote.
     ///
     /// A slot may not send twice in a row, because the decoder fires on the index CHANGING
     /// and a repeated index is a step nobody sees. <see cref="Request.allowRepeatSteps"/>
     /// buys that restriction off with a clock: a phase folded into the index, alternating
     /// between neighbouring steps, so one slot twice running still shows the decoder two
     /// different values. It is paid for in decoder states — a slot that repeats needs one per
-    /// phase — which is why it is asked for rather than assumed. It does not lift the
-    /// back-to-back rule on requests: a redirect would have to land on a send state of the
-    /// opposite phase, and the ring has no second state for a slot it visits once.
+    /// phase — which is why it is asked for rather than assumed. A detour sends its slot in
+    /// one fixed phase (<see cref="AsyncSyncSchedule.RequestPhase"/>), so a clock changes
+    /// which steps may start one rather than whether any may.
     /// </summary>
     static class AsyncSyncBuilder
     {
@@ -106,6 +121,76 @@ namespace Yozolab.DaerD
             /// send driver resets the flag once the value is on the wire.
             /// </summary>
             public List<string> requestTargets = new List<string>();
+
+            /// <summary>
+            /// Generate the remote-initialized flag: a local, unsynced Bool ("base/Ready")
+            /// that reads 0 until this client has decoded every slot at least once, and 1
+            /// from then on. The wearer reads 1 immediately — their own values were never
+            /// anywhere else — so "a remote that has finished initializing" is
+            /// <c>Ready &amp;&amp; !IsLocal</c>.
+            ///
+            /// Off by default: it costs a slot's worth of local Bools and a second layer,
+            /// and a setup nobody reads it from would pay for both.
+            /// </summary>
+            public bool ready;
+
+            /// <summary>
+            /// Generate the drift-suspicion flag: a local, unsynced Bool ("base/Stale") that
+            /// reads 1 when the lap that just closed did not bring every slot, and 0 when it
+            /// did. Unlike <see cref="ready"/> it falls again — it is a reading of the last
+            /// lap, not of the whole session.
+            ///
+            /// Measured by watching the lap marker — one step of the pass, which by definition
+            /// comes round once a lap — rather than by timing anything: no window to size, no
+            /// margin to guess, and a pass stretched by a request cannot make it wrong. A pass
+            /// that already sends some slot exactly once carries the marker for free; one that
+            /// does not has an index value bought for a step of it
+            /// (<see cref="Clock.markerDedicated"/>), which is what lets any pass carry the
+            /// flag. The exception is a pass of one slot, where a lap has nothing in it that
+            /// could go missing, and <see cref="Validate"/> says so.
+            /// </summary>
+            public bool stale;
+
+            /// <summary>
+            /// Sets of targets that must reach a remote's real parameters together, as a set
+            /// the wearer really held at one moment. The step that sends the first member
+            /// reads every member into a latch in one driver, and the pass sends them all from
+            /// there; the decoder puts the group's arrival flags down when that same step
+            /// arrives, holds each member aside as it comes, and one driver copies the whole
+            /// set across once they are all in.
+            ///
+            /// It takes both ends. Holding alone makes the members CHANGE together — the far
+            /// side is never caught mid-copy — but the pair they change to can still be two
+            /// halves of two readings, because the members leave in different steps and a
+            /// change made between two of those steps is half on the wire already. Latching
+            /// alone makes each lap send one reading, but a lap that lost a member on the way
+            /// would be completed by the next lap's. A driver's entries all run in one frame,
+            /// which is what makes both halves structural rather than a matter of timing.
+            ///
+            /// Members that share a step already arrive together and need no group; this is
+            /// for the ones that cannot share one, because their types differ or the channels
+            /// are too narrow.
+            ///
+            /// The price is freshness, at both ends and bounded by a pass: a change made just
+            /// after a group's reading waits for the pass to come round to it, and a lap that
+            /// loses a member commits nothing and leaves the remote on the last complete set.
+            /// Costs nothing on the wire — a latch, a shadow and a flag per member, all
+            /// animator-local, and a two-state layer per group.
+            ///
+            /// The first commit of a session is the one with a hole in it, and
+            /// <see cref="ready"/> is what closes it. A client whose copy starts before
+            /// anything has reached it decodes whatever index it finds — zero, because nothing
+            /// has — as that slot arriving, so without the flag its first commit can carry a
+            /// value nobody sent, and only after a full pass does the guarantee hold.
+            ///
+            /// With the flag on, the commit itself waits for it: the guard asks for Ready as
+            /// well as for the members, and the Ready watcher puts the arrival flags down as it
+            /// latches, so every flag the guard then sees stands for a decode taken after the
+            /// latch — and every decode after the first frame came from an index change
+            /// somebody actually sent. The hole is gone rather than documented, at the price of
+            /// a first commit that waits for one more visit of each member.
+            /// </summary>
+            public List<SyncGroup> groups = new List<SyncGroup>();
 
             /// <summary>
             /// Targets that start a slot of their own instead of joining the batch the target
@@ -215,14 +300,35 @@ namespace Yozolab.DaerD
             /// which two phases cannot colour. <see cref="Validate"/> refuses it.
             /// </summary>
             public readonly bool separates;
+            /// <summary>
+            /// The step of the pass whose arrival closes a lap, or -1 when the pass has none.
+            /// A STEP rather than a slot: a step happens exactly once a pass whatever its slot
+            /// does elsewhere, which is the whole of what a lap needs to be measurable, and it
+            /// is why a marker can be had on any pass at all.
+            /// </summary>
+            public readonly int markerStep;
+            /// <summary>The slot that step sends — the one the drift judgement leaves out,
+            /// because being there IS its arrival.</summary>
+            public readonly int markerSlot;
+            /// <summary>
+            /// Whether the marker is a phase bought for the purpose rather than a slot the
+            /// pass happened to send exactly once. Bought only when the setup asks for the
+            /// drift flag and the pass has no such slot, because it costs an index value —
+            /// and under a Bool index that is sometimes a synced bit.
+            /// </summary>
+            public readonly bool markerDedicated;
             /// <summary>Each slot's first index value: the phases before it, added up.</summary>
             readonly int[] _first;
 
-            internal Clock(int[] stepPhases, int[] slotPhases, bool separates)
+            internal Clock(int[] stepPhases, int[] slotPhases, bool separates,
+                int markerStep = -1, int markerSlot = -1, bool markerDedicated = false)
             {
                 this.stepPhases = stepPhases;
                 this.slotPhases = slotPhases;
                 this.separates = separates;
+                this.markerStep = markerStep;
+                this.markerSlot = markerSlot;
+                this.markerDedicated = markerDedicated;
                 _first = new int[slotPhases.Length];
                 for (int i = 0; i < slotPhases.Length; i++)
                 {
@@ -233,6 +339,13 @@ namespace Yozolab.DaerD
 
             /// <summary>The index value one slot sends in one of its phases.</summary>
             public int Index(int slot, int phase) => _first[slot] + phase;
+
+            /// <summary>The index value the lap marker puts on the wire, or -1 when the pass
+            /// has no marker. What the drift watcher waits for — and a value no detour ever
+            /// writes, since a request sends its slot in <see cref="AsyncSyncSchedule.RequestPhase"/>,
+            /// so a request cannot make a lap look over.</summary>
+            public int MarkerIndex =>
+                markerStep < 0 ? -1 : Index(markerSlot, stepPhases[markerStep]);
         }
 
         // Spelled out in AsyncSyncNaming; the facade keeps the names its callers know.
@@ -254,6 +367,39 @@ namespace Yozolab.DaerD
 
         public static string RequestParameter(string baseName, string target) =>
             AsyncSyncNaming.RequestParameter(baseName, target);
+
+        public static string ReturnParameter(string baseName) =>
+            AsyncSyncNaming.ReturnParameter(baseName);
+
+        public static string ReadyParameter(string baseName) =>
+            AsyncSyncNaming.ReadyParameter(baseName);
+
+        public static string SeenParameter(string baseName, string slotName) =>
+            AsyncSyncNaming.SeenParameter(baseName, slotName);
+
+        public static string ReadyLayerName(string layerName) =>
+            AsyncSyncNaming.ReadyLayerName(layerName);
+
+        public static string StaleParameter(string baseName) =>
+            AsyncSyncNaming.StaleParameter(baseName);
+
+        public static string FreshParameter(string baseName, string slotName) =>
+            AsyncSyncNaming.FreshParameter(baseName, slotName);
+
+        public static string StaleLayerName(string layerName) =>
+            AsyncSyncNaming.StaleLayerName(layerName);
+
+        public static string LatchParameter(string baseName, string target) =>
+            AsyncSyncNaming.LatchParameter(baseName, target);
+
+        public static string HoldParameter(string baseName, string target) =>
+            AsyncSyncNaming.HoldParameter(baseName, target);
+
+        public static string HeldParameter(string baseName, string target) =>
+            AsyncSyncNaming.HeldParameter(baseName, target);
+
+        public static string GroupLayerName(string layerName, string groupName) =>
+            AsyncSyncNaming.GroupLayerName(layerName, groupName);
 
         public static string DefaultBaseName(AnimatorController controller) =>
             AsyncSyncNaming.DefaultBaseName(controller);
@@ -297,8 +443,8 @@ namespace Yozolab.DaerD
             AnimatorControllerParameterType type) =>
             AsyncSyncSchedule.StepHasRoom(r, members, type);
 
-        public static int NextStepSlot(List<int> steps, int slotCount) =>
-            AsyncSyncSchedule.NextStepSlot(steps, slotCount);
+        public static List<int> RequestOrigins(List<int> schedule, Clock clock, int slot) =>
+            AsyncSyncSchedule.RequestOrigins(schedule, clock, slot);
 
         // ---- resolution and cost ---------------------------------------------
 
@@ -314,8 +460,13 @@ namespace Yozolab.DaerD
 
         public static float CycleSeconds(Request r) => AsyncSyncCost.CycleSeconds(r);
 
+        public static float WorstCycleSeconds(Request r) => AsyncSyncCost.WorstCycleSeconds(r);
+
         public static Dictionary<string, float> RefreshIntervals(Request r) =>
             AsyncSyncCost.RefreshIntervals(r);
+
+        public static Dictionary<string, float> RefreshWindows(Request r) =>
+            AsyncSyncCost.RefreshWindows(r);
 
         public static int FreeSlots(Request r) => AsyncSyncCost.FreeSlots(r);
 
@@ -397,11 +548,14 @@ namespace Yozolab.DaerD
                 return L.Tr("The target layer no longer exists.");
 
             var seen = new HashSet<string>();
+            // The indexed lookup, not FindParameter: this loop runs on every repaint of the
+            // wizard, and the plain one rebuilds the controller's parameter array per call.
+            var byName = DbtBuilder.ParametersByName(controller);
             foreach (var name in r.targets)
             {
                 if (!seen.Add(name))
                     return L.Tr("Parameter '{0}' is listed more than once.", name);
-                var parameter = DbtBuilder.FindParameter(controller, name);
+                var parameter = byName.Find(name);
                 if (parameter == null)
                     return L.Tr("Parameter '{0}' does not exist.", name);
                 if (parameter.type == AnimatorControllerParameterType.Trigger)
@@ -415,7 +569,7 @@ namespace Yozolab.DaerD
             if (r.rates != null)
                 foreach (var rate in r.rates)
                     if (rate.Value < 1 || rate.Value > MaxRate)
-                        return L.Tr("Sync rates must be between 1 and {0} ('{1}').", MaxRate, rate.Key);
+                        return L.Tr("Sync weights must be between 1 and {0} ('{1}').", MaxRate, rate.Key);
 
             if (r.steps != null && r.steps.Count > 0)
             {
@@ -453,17 +607,40 @@ namespace Yozolab.DaerD
                     return errors[0];
             }
 
-            var isLocal = DbtBuilder.FindParameter(controller, NetworkSyncBuilder.IsLocalParameter);
+            // Two groups under one name would want one layer between them, and the saved
+            // setup could not tell them apart afterwards either.
+            if (r.groups != null)
+            {
+                var names = new HashSet<string>();
+                foreach (var group in r.groups)
+                    if (group != null && !string.IsNullOrEmpty(group.name)
+                        && !names.Add(group.name))
+                        return L.Tr("Two groups are called '{0}'. Give them different names.",
+                            group.name);
+            }
+
+            // A pass with more than one slot can always be given a marker, bought if it has
+            // none to spare, so the only setup left that cannot carry the flag is one whose
+            // every step sends the same slot — where a lap contains nothing that could be
+            // missing. Refused rather than quietly dropped: a Stale that never comes up is
+            // worse than no flag at all.
+            if (r.stale && LapMarkerSlot(r) < 0)
+                return L.Tr("Every step of this pass sends the same slot, so a lap has nothing in it that could go missing and the drift flag would never come up. Give the pass a second slot, or take the flag off.");
+
+            var isLocal = byName.Find(NetworkSyncBuilder.IsLocalParameter);
             if (isLocal != null && isLocal.type != AnimatorControllerParameterType.Bool)
                 return L.Tr("Parameter '{0}' exists but is not a Bool.", NetworkSyncBuilder.IsLocalParameter);
 
             var machineParameters = GeneratedParameters(r);
             machineParameters.AddRange(RequestParameters(r));
+            machineParameters.AddRange(ReadyParameters(r));
+            machineParameters.AddRange(StaleParameters(r));
+            machineParameters.AddRange(GroupParameters(r));
             foreach (var (name, type) in machineParameters)
             {
                 if (seen.Contains(name))
                     return L.Tr("Generated parameter '{0}' collides with a target.", name);
-                var existing = DbtBuilder.FindParameter(controller, name);
+                var existing = byName.Find(name);
                 if (existing != null && existing.type != type)
                     return L.Tr("Parameter '{0}' exists with a different type.", name);
             }
@@ -549,7 +726,11 @@ namespace Yozolab.DaerD
         /// Null means "work it out", which is what the one-shot callers (a recipe's build, the
         /// tests) want and what keeps this method answerable on its own.
         /// </summary>
-        public static List<string> Warnings(Request r, HashSet<string> animated = null)
+        /// <param name="split">The type split this pass would become, when the caller has
+        /// already worked it out. Both this and the wizard's button want the same answer, and
+        /// it is the most expensive thing either of them asks for.</param>
+        public static List<string> Warnings(Request r, HashSet<string> animated = null,
+            List<Request> split = null)
         {
             var warnings = new List<string>();
             if (r.controller == null || r.targets == null) return warnings;
@@ -566,6 +747,26 @@ namespace Yozolab.DaerD
                         r.targets.Count, compressed, direct));
             }
 
+            // A type with one target is not multiplexed at all. Its channel carries that one
+            // parameter and nothing else, for the bits syncing it directly would cost, and
+            // the value reaches remotes no sooner for having gone round the ring — later, if
+            // anything, since it now waits its turn. Said per type, because the bits differ
+            // and because the fix ("multiplex another one of these, or leave this one out")
+            // is a different sentence for each.
+            var lone = DbtBuilder.ParametersByName(r.controller);
+            foreach (var type in ChannelTypes(r))
+            {
+                string only = null;
+                int count = 0;
+                foreach (var name in r.targets)
+                    if (lone.Find(name)?.type == type) { count++; only = name; }
+                if (count != 1) continue;
+                warnings.Add(L.Tr(
+                    "'{0}' is the only {1} here, and a type with one target multiplexes nothing: its channel costs the {2} synced bit(s) that syncing '{0}' directly would, and the value reaches remotes no sooner for the trip. Sync it directly, or multiplex another {1} beside it.",
+                    only, type,
+                    type == AnimatorControllerParameterType.Bool ? 1 : 8));
+            }
+
             // Refused outright without a clock; with one it builds and decodes, and is still
             // every target on the wire every step — direct sync wearing a cycle.
             if (r.allowRepeatSteps && r.targets.Count >= 2 && BuildSlots(r).Count < 2)
@@ -577,6 +778,12 @@ namespace Yozolab.DaerD
                 warnings.Add(L.Tr(
                     "One full pass takes {0:0.#} s ({1} steps × {2:0.##} s), so a remote can be that far behind on any one value.",
                     cycle, EffectiveSchedule(r, BuildSlots(r)).Count, r.stepSeconds));
+
+            // The one structural change that shortens every pass at once, offered only when it
+            // would actually build and actually help — AsyncSyncSplit.ByType decides both, and
+            // says nothing at all otherwise.
+            var byType = split ?? AsyncSyncSplit.ByType(r);
+            if (byType.Count > 1) warnings.Add(AsyncSyncSplit.Advice(r, byType));
 
             // Say when a rate could not be honored: normalization (common factor) is
             // intentional and invisible, but a cap changes what the user asked for. An
@@ -601,10 +808,33 @@ namespace Yozolab.DaerD
                     if (occurrences[i] < asked)
                     {
                         warnings.Add(L.Tr(
-                            "The ×{0} rate on '{1}' can't be separated by the other slots; it effectively runs at ×{2}. Add parameters or lower the rate.",
+                            "The ×{0} weight on '{1}' can't be separated by the other slots; it effectively runs at ×{2}. Mark it Req instead: a sync request puts the value on the wire at the next step boundary, which is what the weight was reaching for. Adding parameters gives the pass more to space it against; the weight itself is only settable from a C# recipe, with .Rate().",
                             slots[i].rate, slots[i].targets[0], Mathf.Max(1, occurrences[i])));
                         break;
                     }
+                }
+
+                // The other half of a weight not being honoured, and the invisible one: the
+                // places are all there and they are not evenly spaced, so the target is sent
+                // as often as it asked and is stale for longer than that suggests. A pass is
+                // exactly as long as the weights add up to, so every window is a share of a
+                // cycle with no slack in it — and a set of windows that fills a cycle
+                // completely often cannot be arranged at all. Rounding is expected; a target
+                // waiting half again as long as its share suggests is the weights asking for
+                // something no arrangement gives.
+                var windows = RefreshWindows(r);
+                var intervals = RefreshIntervals(r);
+                for (int i = 0; i < slots.Count; i++)
+                {
+                    string name = slots[i].targets[0];
+                    if (occurrences[i] < 2 || !windows.TryGetValue(name, out float window)
+                        || !intervals.TryGetValue(name, out float actual)
+                        || actual < window * 1.5f)
+                        continue;
+                    warnings.Add(L.Tr(
+                        "'{0}' is sent {1} times a pass, which reads as a value no older than {2:0.##} s — but the other weights leave nowhere evenly spaced to put those sends, so the worst wait is really {3:0.##} s. Mark it Req instead: a sync request puts its value on the wire at the next step boundary, which is what a heavier weight was reaching for. Evening the weights out also works, but only from a C# recipe — .Rate() is what wrote them.",
+                        name, occurrences[i], window, actual));
+                    break;
                 }
             }
 
@@ -663,6 +893,95 @@ namespace Yozolab.DaerD
                         break;
                     }
 
+            var requestable = RequestableTargets(r);
+            if (requestable.Count > 0)
+            {
+                // The price of requests, said in seconds rather than left to be discovered:
+                // a detour is an extra step, and the pass is what waits for it.
+                warnings.Add(L.Tr(
+                    "Sync requests make a pass take up to {0:0.#} s instead of {1:0.#} s — a request spends an extra step before the cycle carries on where it left. That is the ceiling however often they are raised, but a target driven on every state change spends it.",
+                    WorstCycleSeconds(r), CycleSeconds(r)));
+
+                // A slot the pass already visits every other step has no boundary a detour
+                // could be inserted at without repeating an index the decoder would miss.
+                var requestSlots = BuildSlots(r);
+                var requestSchedule = EffectiveSchedule(r, requestSlots);
+                var requestClock = BuildClock(r, requestSlots, requestSchedule);
+                for (int i = 0; i < requestSlots.Count; i++)
+                {
+                    bool asked = false;
+                    foreach (var name in requestSlots[i].targets)
+                        if (requestable.Contains(name)) asked = true;
+                    if (!asked) continue;
+                    if (RequestOrigins(requestSchedule, requestClock, i).Count > 0) continue;
+                    warnings.Add(L.Tr(
+                        "'{0}' is sent so often that no step is left to request it from — the flag is built, but the cycle reaches the slot as fast as a request could. Drop the request: the cycle already delivers this one as fast as asking would. Lowering the weight that sends it this often would leave a step to ask from, but the weight is only settable from a C# recipe, with .Rate().",
+                        requestSlots[i].targets[0]));
+                    break;
+                }
+            }
+
+            // Ready's own number, since the flag is invisible until someone else is in the
+            // instance: a remote has decoded every slot within one pass of arriving, so that
+            // is when it latches — later if the wire drops a step, never earlier.
+            if (r.ready)
+                warnings.Add(L.Tr(
+                    "'{0}' turns on once a remote has decoded every slot — within {1:0.#} s of arriving when nothing is lost, and later when something is. It never turns off again, and the wearer reads it as on from the start.",
+                    ReadyParameter(r.baseName), WorstCycleSeconds(r)));
+
+            // What the flag reads on a remote that has only just arrived, said here rather
+            // than left to be discovered in an instance with someone else in it.
+            if (r.stale)
+            {
+                var staleSlots = BuildSlots(r);
+                var staleClock = BuildClock(r, staleSlots,
+                    EffectiveSchedule(r, staleSlots));
+                if (staleClock.markerSlot >= 0)
+                    warnings.Add(L.Tr(
+                        "'{0}' is judged every time '{1}' comes round, which is once per pass. A remote that arrives mid-pass reads it as on for the rest of that pass — pair it with the remote initialized flag to tell that apart from a cycle that has actually started dropping steps.",
+                        StaleParameter(r.baseName),
+                        staleSlots[staleClock.markerSlot].targets[0]));
+                // What the flag costs when the pass had no lap marker to spare. Said because
+                // it is the one thing about this option that moves the synced bill, and it
+                // moves it as an index value — which under a Bool index is a bit only when it
+                // pushes the count past the power of two the pass was sitting under.
+                if (staleClock.markerDedicated)
+                    warnings.Add(L.Tr(
+                        "No slot of this pass closes a lap on its own — every one of them is either sent more than once or open to requests — so the flag is measured by giving one step an index value of its own. That costs one index value ({0} in all) and one more decoder state; the pass, the payload and the timing are unchanged.",
+                        IndexValues(r)));
+            }
+
+            // A group whose members already share a step is machinery for a guarantee the
+            // step itself is already making — one driver copies them, so they were never
+            // going to arrive apart.
+            var groups = EffectiveGroups(r);
+            if (groups.Count > 0)
+            {
+                var groupSlots = BuildSlots(r);
+                var slotOfTarget = new Dictionary<string, int>();
+                for (int i = 0; i < groupSlots.Count; i++)
+                    foreach (var name in groupSlots[i].targets)
+                        slotOfTarget[name] = i;
+                foreach (var group in groups)
+                {
+                    var seen = new HashSet<int>();
+                    foreach (var name in group.members)
+                        if (slotOfTarget.TryGetValue(name, out int slot)) seen.Add(slot);
+                    if (seen.Count > 1) continue;
+                    warnings.Add(L.Tr(
+                        "'{0}' groups parameters that already share a step, so they were never going to arrive apart. The group holds them back for nothing — drop it, or split the step.",
+                        group.name));
+                    break;
+                }
+
+                // The one commit a group cannot get right on its own, and the switch that takes
+                // it away. Said rather than left in the doc, because the setup that needs to
+                // hear it is exactly the one being built here.
+                if (!r.ready)
+                    warnings.Add(L.Tr(
+                        "The first commit of a session can carry a value nobody sent: a client whose copy starts before anything has reached it reads the index it finds — zero, which is a real slot — and decodes the channels beside it as that slot arriving. Turn on the remote initialized flag and the commit waits for it, which closes this off for good; leave it off and only the commits after the first full pass are whole."));
+            }
+
             if (r.stepSeconds < 0.3f)
                 warnings.Add(L.Tr("Steps shorter than VRChat's ~0.3 s sync cadence risk remotes skipping slots."));
             foreach (var type in ChannelTypes(r))
@@ -719,10 +1038,11 @@ namespace Yozolab.DaerD
         }
 
         /// <summary>
-        /// The request flags this request will create (all Bool). Unlike
-        /// <see cref="GeneratedParameters"/> these stay local: they are never synced and never
-        /// added to the parameter store — a request is raised and serviced on the wearer's
-        /// client, and remotes just see the slot arrive early.
+        /// What the request machinery needs: one Bool flag per requestable target, and the Int
+        /// holding the step a detour has to come back to. Unlike <see cref="GeneratedParameters"/>
+        /// these stay local: they are never synced and never added to the parameter store — a
+        /// request is raised and serviced on the wearer's client, and remotes just see the slot
+        /// arrive early. A setup nobody can request from creates none of them.
         /// </summary>
         public static List<(string name, AnimatorControllerParameterType type)> RequestParameters(Request r)
         {
@@ -730,7 +1050,146 @@ namespace Yozolab.DaerD
             foreach (var target in RequestableTargets(r))
                 generated.Add((RequestParameter(r.baseName, target),
                     AnimatorControllerParameterType.Bool));
+            if (generated.Count > 0)
+                generated.Add((ReturnParameter(r.baseName), AnimatorControllerParameterType.Int));
             return generated;
+        }
+
+        /// <summary>
+        /// The Ready flag and the per-slot bits behind it, or nothing when the setup does not
+        /// ask for it. Local like the request flags: a remote cannot tell the wearer what it
+        /// has received, so this whole mechanism is each client reading its own decoder.
+        ///
+        /// One bit per SLOT rather than per target, because a slot arrives whole — and per
+        /// slot rather than per index value, because a clock gives one slot two indices and
+        /// either of them proves the values came.
+        /// </summary>
+        public static List<(string name, AnimatorControllerParameterType type)> ReadyParameters(Request r)
+        {
+            var generated = new List<(string, AnimatorControllerParameterType)>();
+            if (r == null || !r.ready) return generated;
+            var slots = BuildSlots(r);
+            if (slots.Count == 0) return generated;
+            generated.Add((ReadyParameter(r.baseName), AnimatorControllerParameterType.Bool));
+            foreach (var slotName in AsyncSyncApplier.SlotNames(slots))
+                generated.Add((SeenParameter(r.baseName, slotName),
+                    AnimatorControllerParameterType.Bool));
+            return generated;
+        }
+
+        /// <summary>
+        /// The Stale flag and the per-lap bits behind it, or nothing when the setup does not
+        /// ask for it. Local, like everything else the remote reads about its own decoding.
+        ///
+        /// Its own bits rather than <see cref="ReadyParameters"/>'s: those accumulate and
+        /// these are cleared every lap, and one set cannot be both. Bools cost nothing on the
+        /// wire, which is the only reason that trade is cheap.
+        /// </summary>
+        public static List<(string name, AnimatorControllerParameterType type)> StaleParameters(Request r)
+        {
+            var generated = new List<(string, AnimatorControllerParameterType)>();
+            if (r == null || !r.stale) return generated;
+            var slots = BuildSlots(r);
+            if (slots.Count == 0) return generated;
+            generated.Add((StaleParameter(r.baseName), AnimatorControllerParameterType.Bool));
+            foreach (var slotName in AsyncSyncApplier.SlotNames(slots))
+                generated.Add((FreshParameter(r.baseName, slotName),
+                    AnimatorControllerParameterType.Bool));
+            return generated;
+        }
+
+        /// <summary>
+        /// The groups the setup actually builds: members restricted to real targets,
+        /// deduplicated, and each target left in the FIRST group that claims it — a target can
+        /// only be held in one place, and a second claim would have two commits writing it.
+        /// A group with fewer than two usable members is dropped: holding one target back
+        /// until it arrives is what the decoder does anyway.
+        ///
+        /// Same "a stale saved entry must not block regeneration" contract as
+        /// <see cref="Request.rates"/>, which is why this filters rather than refuses.
+        /// </summary>
+        public static List<SyncGroup> EffectiveGroups(Request r)
+        {
+            var groups = new List<SyncGroup>();
+            if (r?.groups == null || r.targets == null) return groups;
+            var claimed = new HashSet<string>();
+            foreach (var group in r.groups)
+            {
+                if (group == null) continue;
+                var kept = new SyncGroup { name = group.name };
+                // In cycle order, so the members read as the pass visits them rather than as
+                // they were typed — and so the commit driver's entries do too.
+                foreach (var name in r.targets)
+                    if (group.members != null && group.members.Contains(name)
+                        && claimed.Add(name))
+                        kept.members.Add(name);
+                if (kept.members.Count < 2)
+                {
+                    // Put the names back: a group too small to build must not eat a member the
+                    // next group could still hold.
+                    foreach (var name in kept.members) claimed.Remove(name);
+                    continue;
+                }
+                if (string.IsNullOrEmpty(kept.name))
+                    kept.name = "Group " + (groups.Count + 1);
+                groups.Add(kept);
+            }
+            return groups;
+        }
+
+        /// <summary>Every target held by some group — what the decoder checks to know whether
+        /// a value goes to its parameter or to the parameter's shadow.</summary>
+        public static HashSet<string> GroupMembers(Request r)
+        {
+            var members = new HashSet<string>();
+            foreach (var group in EffectiveGroups(r))
+                foreach (var name in group.members)
+                    members.Add(name);
+            return members;
+        }
+
+        /// <summary>
+        /// A latch, a shadow and a flag per grouped member, in the order the value passes
+        /// through them: read into the latch on the wearer's side, sent, put in the shadow on
+        /// the far side, and flagged as waiting there. The latch and the shadow carry the
+        /// target's own type — they stand in for it — and none of the three is ever synced.
+        /// The wire carries the ordinary channels and nothing extra, which is the whole reason
+        /// a group costs no bits: both halves of the mechanism are local reasoning, one on each
+        /// client, about values that travel exactly as they did before.
+        /// </summary>
+        public static List<(string name, AnimatorControllerParameterType type)> GroupParameters(Request r)
+        {
+            var generated = new List<(string, AnimatorControllerParameterType)>();
+            if (r?.controller == null) return generated;
+            var byName = DbtBuilder.ParametersByName(r.controller);
+            foreach (var group in EffectiveGroups(r))
+                foreach (var name in group.members)
+                {
+                    var parameter = byName.Find(name);
+                    if (parameter == null) continue;
+                    generated.Add((LatchParameter(r.baseName, name), parameter.type));
+                    generated.Add((HoldParameter(r.baseName, name), parameter.type));
+                    generated.Add((HeldParameter(r.baseName, name),
+                        AnimatorControllerParameterType.Bool));
+                }
+            return generated;
+        }
+
+        /// <summary>
+        /// The slot whose arrival closes a lap, or -1 when the pass has none.
+        ///
+        /// Free when the pass already sends some slot exactly once and nothing can request it
+        /// — rates always leave such a slot, a cycle written by hand need not. A setup that
+        /// asks for the drift flag and has no such slot gets a marker bought for it instead
+        /// (<see cref="Clock.markerDedicated"/>), so this is -1 for such a setup only while
+        /// the flag is off. The one pass with no marker to be had either way is one sending a
+        /// single slot from end to end, where a lap has nothing in it to be missing.
+        /// </summary>
+        public static int LapMarkerSlot(Request r)
+        {
+            var slots = BuildSlots(r);
+            if (slots.Count == 0) return -1;
+            return BuildClock(r, slots, EffectiveSchedule(r, slots)).markerSlot;
         }
 
         /// <summary>Request targets in cycle order, deduplicated, restricted to actual
@@ -768,6 +1227,8 @@ namespace Yozolab.DaerD
                 floatChannels = Mathf.Clamp(config.FloatChannelsOrDefault, 1, 8),
                 boolChannels = Mathf.Clamp(config.BoolChannelsOrDefault, 1, 8),
                 allowRepeatSteps = config.allowRepeatSteps,
+                ready = config.ready,
+                stale = config.stale,
                 store = ParameterStore.Of(controller),
                 emptyClip = GraphFrameData.GetEmptyClip(controller),
                 layerIndex = LayerIndexOf(controller, config),
@@ -781,6 +1242,16 @@ namespace Yozolab.DaerD
                 request.scheduleOverride.AddRange(config.schedule);
             if (config.slotBreaks != null)
                 request.slotBreaks.AddRange(config.slotBreaks);
+            // Copied down to the member lists, for the reason the grid is: this request is
+            // handed to editors that go on rewriting it, and the saved setup must not move.
+            if (config.groups != null)
+                foreach (var group in config.groups)
+                {
+                    if (group == null) continue;
+                    var copy = new SyncGroup { name = group.name };
+                    if (group.members != null) copy.members.AddRange(group.members);
+                    request.groups.Add(copy);
+                }
             // Copied down to the step lists: this request is handed to editors that go on
             // rewriting its grid, and the saved setup must not move with them.
             if (config.steps != null)
