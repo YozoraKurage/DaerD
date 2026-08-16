@@ -79,6 +79,7 @@ namespace Yozolab.DaerD
             _nestedStateOwners.Clear();
             _nestedMachineOwners.Clear();
             _edges.Clear();
+            _hoveredEdge = null;
             _frameNodes.Clear();
             _noteNodes.Clear();
             foreach (var element in _graphView.graphElements.ToList())
@@ -163,8 +164,7 @@ namespace Yozolab.DaerD
                 foreach (var t in sm.GetStateMachineTransitions(pair.Key))
                     AddTransitionEdge(pair.Value, ResolveDestination(t), t, edgeMap);
 
-            foreach (var edge in _edges)
-                edge.Refresh();
+            RefreshAllEdges();
 
             RestoreSelection(capturedSelection);
             // Deleting a node can leave the shared selection pointing at a destroyed object
@@ -361,6 +361,48 @@ namespace Yozolab.DaerD
             foreach (var pair in _stateNodes)
                 pair.Value.RefreshLabels();
         }
+
+        /// <summary>
+        /// Re-reads every edge, first working out what solo is doing to each one. A soloed
+        /// transition shuts out every other transition leaving the same node, so the answer
+        /// belongs to the source's whole list; the list is read from the model rather than
+        /// from the edges, because that is the list the Animator evaluates.
+        /// </summary>
+        public void RefreshAllEdges()
+        {
+            var sm = _context.CurrentStateMachine;
+            var soloBySource = new Dictionary<Node, bool>();
+            foreach (var edge in _edges)
+            {
+                bool sourceHasSolo = false;
+                var node = edge.output?.node;
+                if (node != null && !edge.IsDefaultEdge && !soloBySource.TryGetValue(node, out sourceHasSolo))
+                {
+                    sourceHasSolo = EdgeCommands.HasLiveSolo(
+                        EdgeCommands.TransitionsFrom(GraphNodeBase.EndOf(node as GraphNodeBase), sm));
+                    soloBySource[node] = sourceHasSolo;
+                }
+                edge.SetSoloContext(sourceHasSolo);
+                edge.Refresh();
+            }
+        }
+
+        /// <summary>
+        /// Colours the edge carrying <paramref name="transition"/> as hovered and un-colours
+        /// whichever one held that role before. Called from an inspector row's repaint, so it
+        /// has to be free when the answer has not changed — which is why the previous edge is
+        /// remembered rather than every edge asked.
+        /// </summary>
+        public void SetHoveredTransition(AnimatorTransitionBase transition)
+        {
+            var edge = transition != null ? FindEdge(transition) : null;
+            if (ReferenceEquals(edge, _hoveredEdge)) return;
+            _hoveredEdge?.SetHover(false);
+            _hoveredEdge = edge;
+            _hoveredEdge?.SetHover(true);
+        }
+
+        TransitionEdge _hoveredEdge;
 
         public TransitionEdge FindEdge(AnimatorTransitionBase transition)
         {
@@ -619,17 +661,10 @@ namespace Yozolab.DaerD
         static bool IsConnectableState(GraphNodeBase node) =>
             node is StateNode || node is SubStateMachineNode;
 
-        /// <summary>Human-readable name of a node, used for menu labels and sorting.</summary>
-        public static string NodeLabel(GraphNodeBase node)
-        {
-            switch (node)
-            {
-                case StateNode sn: return sn.State != null ? sn.State.name : "(state)";
-                case SubStateMachineNode mn: return mn.StateMachine != null ? mn.StateMachine.name : "(sub-state machine)";
-                case SpecialNode spn: return spn.Kind.ToString();
-                default: return "?";
-            }
-        }
+        /// <summary>Human-readable name of a node, used for menu labels and sorting. The node
+        /// becomes the end it stands for, so a menu entry and a transition row naming the same
+        /// state read identically.</summary>
+        public static string NodeLabel(GraphNodeBase node) => GraphNodeBase.EndOf(node).Label;
 
         // ---- node creation ---------------------------------------------------
 

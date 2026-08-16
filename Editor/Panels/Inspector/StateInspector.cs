@@ -15,6 +15,7 @@ namespace Yozolab.DaerD
         readonly GraphSync _sync;
         readonly SyncRequestInspector _syncRequests;
         readonly BehaviourInspector _behaviours;
+        readonly TransitionListGui _list = new TransitionListGui();
 
         bool _showBlendTree = true;
 
@@ -64,23 +65,7 @@ namespace Yozolab.DaerD
             DrawStateParameters(state, controller);
 
             EditorGUILayout.Space(4);
-            var transitions = state.transitions;
-            EditorGUILayout.LabelField(L.Tr("Transitions") + " (" + transitions.Length + ")", EditorStyles.boldLabel);
-            foreach (var t in transitions)
-            {
-                EditorGUILayout.BeginHorizontal();
-                EditorGUILayout.LabelField(ParameterConverter.DescribeTransition(t));
-                if (GUILayout.Button(L.Tr("Select"), EditorStyles.miniButton, GUILayout.Width(56)))
-                {
-                    var edge = _sync.FindEdge(t);
-                    _context.Select((object)edge ?? t);
-                    // Also center the graph view on the edge so the user can see what they
-                    // selected — clicking "Select" without a follow-up frame leaves the user
-                    // hunting for the highlighted edge on a large state machine.
-                    _context.RequestFrameOn((object)edge ?? t);
-                }
-                EditorGUILayout.EndHorizontal();
-            }
+            DrawTransitions(state);
 
             if (state.motion is BlendTree blendTree)
             {
@@ -96,6 +81,47 @@ namespace Yozolab.DaerD
 
             _syncRequests.DrawSyncRequests(state);
             _behaviours.DrawBehaviours(state);
+        }
+
+        /// <summary>
+        /// The state's outgoing transitions in the order the Animator tries them. Drag a row to
+        /// change that order — it decides which transition wins when two of them could fire on
+        /// the same frame, and it is not visible anywhere else in DaerD.
+        /// </summary>
+        void DrawTransitions(AnimatorState state)
+        {
+            var source = TransitionEnd.Of(state);
+            var rows = TransitionListGui.RowsOf(source, _context.CurrentStateMachine);
+            EditorGUILayout.LabelField(L.Tr("Transitions") + " (" + rows.Count + ")", EditorStyles.boldLabel);
+            if (rows.Count == 0) return;
+
+            Action<int, int> onMove = rows.Count > 1
+                ? (from, to) =>
+                {
+                    if (EdgeCommands.Reorder(source, _context.CurrentStateMachine, from, to))
+                        _context.NotifyGraphStructureChanged();
+                }
+                : (Action<int, int>)null;
+
+            var result = _list.Draw(rows, null, () => _context.NotifyGraphVisualsChanged(DaerDContext.GraphVisuals.AllEdges), onMove);
+            if (result.hoverKnown) _sync.SetHoveredTransition(result.hovered);
+
+            if (result.clicked >= 0)
+            {
+                var picked = rows[result.clicked].Transition;
+                var edge = _sync.FindEdge(picked);
+                _context.Select((object)edge ?? picked);
+                // Also center the graph view on the edge so the user can see what they
+                // selected — picking a row without a follow-up frame leaves the user hunting
+                // for the highlighted edge on a large state machine.
+                _context.RequestFrameOn((object)edge ?? picked);
+            }
+            else if (result.deleted != null)
+            {
+                var edge = _sync.FindEdge(result.deleted);
+                if (edge != null) _sync.DeleteTransition(edge, result.deleted);
+                GUIUtility.ExitGUI();
+            }
         }
 
         /// <summary>

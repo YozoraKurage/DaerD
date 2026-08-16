@@ -111,8 +111,8 @@ namespace Yozolab.DaerD
                 paramIndex = EditorGUILayout.Popup(paramIndex, paramNames);
                 working.parameter = paramNames[paramIndex];
                 var type = typeByName.TryGetValue(working.parameter, out var ty) ? ty : AnimatorControllerParameterType.Float;
-                ConditionGui.DrawConditionValue(working, type, delayed: true);
-                bool edited = EditorGUI.EndChangeCheck();
+                bool wheeled = ConditionGui.DrawConditionValue(working, type, delayed: true);
+                bool edited = EditorGUI.EndChangeCheck() || wheeled;
 
                 bool remove = GUILayout.Button("X", EditorStyles.miniButton, GUILayout.Width(DaerDLayout.GlyphButton));
                 EditorGUILayout.EndHorizontal();

@@ -243,6 +243,11 @@ namespace Yozolab.DaerD.Authoring
             public readonly Dictionary<string, AsyncSyncBuilder.Request> layers =
                 new Dictionary<string, AsyncSyncBuilder.Request>();
 
+            /// <summary>Layers a planned setup also rebuilds — today the Ready watcher. They
+            /// have no call of their own: the AsyncSync call that owns them puts them back,
+            /// and emitting their states would build the machinery a second time.</summary>
+            public readonly HashSet<string> supporting = new HashSet<string>();
+
             /// <summary>
             /// Whether a planned setup generated this parameter — the index, the value
             /// channels, the request flags, all of which live under its base name. The call
@@ -295,6 +300,15 @@ namespace Yozolab.DaerD.Authoring
                     continue;
                 }
                 plan.layers[layer.name] = request;
+                var owned = new HashSet<AnimatorStateMachine>();
+                if (config.readyLayer != null) owned.Add(config.readyLayer);
+                if (config.staleLayer != null) owned.Add(config.staleLayer);
+                if (config.groups != null)
+                    foreach (var group in config.groups)
+                        if (group?.layer != null) owned.Add(group.layer);
+                foreach (var other in controller.layers)
+                    if (other.stateMachine != null && owned.Contains(other.stateMachine))
+                        plan.supporting.Add(other.name);
             }
 
             // Same post-step caveat the gadget layers carry: this one is rebuilt at the end of
@@ -384,7 +398,8 @@ namespace Yozolab.DaerD.Authoring
                     continue;
                 // Same for a sync layer: its states play the controller's Empty clip, which the
                 // call resolves (or creates) at Generate time rather than through a field.
-                if (asyncSyncs.layers.ContainsKey(layer.name)) continue;
+                if (asyncSyncs.layers.ContainsKey(layer.name)
+                    || asyncSyncs.supporting.Contains(layer.name)) continue;
                 Register(layer.mask);
                 Machine(layer.machine);
                 foreach (var entry in layer.syncedMotions)

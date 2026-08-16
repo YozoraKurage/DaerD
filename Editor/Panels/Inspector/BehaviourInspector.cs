@@ -60,7 +60,10 @@ namespace Yozolab.DaerD
             EditorGUILayout.EndHorizontal();
             if (behaviours.Length > 0)
                 EditorGUILayout.LabelField(
-                    L.Tr("Click a title to select (Ctrl / Shift for multi-select); Ctrl+C / Ctrl+V copies and pastes the selected behaviours."),
+                    L.Tr("Click a title to select (Ctrl / Shift for multi-select).")
+                        + DaerDShortcuts.Sentence(ShortcutScope.Inspector,
+                            DaerDCommand.Copy, DaerDCommand.Paste,
+                            L.Tr("{0} / {1} copies and pastes the selected behaviours.")),
                     EditorStyles.miniLabel);
 
             for (int i = 0; i < behaviours.Length; i++)
@@ -202,19 +205,18 @@ namespace Yozolab.DaerD
         void HandleBehaviourShortcuts(AnimatorState state, StateMachineBehaviour[] behaviours)
         {
             var e = Event.current;
-            if (e == null || e.type != EventType.KeyDown || !(e.control || e.command))
-                return;
-            if (_selectedBehaviours.Count == 0) return;
+            var command = DaerDShortcuts.Resolve(ShortcutScope.Inspector, e);
+            if (command == DaerDCommand.None || _selectedBehaviours.Count == 0) return;
             // A behaviour field being typed in (driver parameter name, instance name) owns the
             // keys — Ctrl+C there means "copy the text", not "copy the behaviour".
             if (EditorGUIUtility.editingTextField) return;
 
-            if (e.keyCode == KeyCode.C)
+            if (command == DaerDCommand.Copy)
             {
                 CopyBehaviours(behaviours);
                 e.Use();
             }
-            else if (e.keyCode == KeyCode.V && VrcBehaviours.ClipboardCount > 0)
+            else if (command == DaerDCommand.Paste && VrcBehaviours.ClipboardCount > 0)
             {
                 PasteBehaviours(state);
                 e.Use();

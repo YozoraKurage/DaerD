@@ -159,5 +159,100 @@ namespace Yozolab.DaerD.Tests
 
             Object.DestroyImmediate(controller);
         }
+        /// <summary>The flags have controls, but they are still fields the round trip can
+        /// drop — and dropping one takes its watcher layer away on the next Apply.</summary>
+        [Test]
+        public void ReadyAndStale_SurviveTheRoundTrip()
+        {
+            var controller = NewController();
+            var config = Config();
+            config.ready = true;
+            Assert.IsTrue(Rebuild(controller, config).ready);
+
+            config.ready = false;
+            Assert.IsFalse(Rebuild(controller, config).ready);
+
+            config.stale = true;
+            Assert.IsTrue(Rebuild(controller, config).stale);
+            config.stale = false;
+            Assert.IsFalse(Rebuild(controller, config).stale);
+        }
+
+        /// <summary>
+        /// Weights are no longer handed out by this form, which makes carrying them faithfully
+        /// the whole of its job with them. They used to be clamped on the way in to what the
+        /// ×N popup could show, so a recipe's <c>.Rate("F", 8)</c> came back out as a ×4 —
+        /// opening the layer's panel and pressing Apply was enough to halve it, silently, with
+        /// no control touched.
+        /// </summary>
+        [Test]
+        public void SavedWeightsSurviveTheRoundTrip_EvenAboveWhatTheFormEverOffered()
+        {
+            var controller = NewController();
+            var config = Config();
+            config.rates.Add(new GraphFrameData.AsyncSyncConfig.SyncRate { name = "F", rate = 8 });
+            config.rates.Add(new GraphFrameData.AsyncSyncConfig.SyncRate { name = "B", rate = 2 });
+
+            var rebuilt = Rebuild(controller, config);
+
+            Assert.AreEqual(8, rebuilt.RateOf("F"));
+            Assert.AreEqual(2, rebuilt.RateOf("B"));
+            Assert.AreEqual(1, rebuilt.RateOf("I"), "an unweighted target stays unweighted");
+
+            Object.DestroyImmediate(controller);
+        }
+
+        /// <summary>
+        /// The other half of the same promise, on the way through the form rather than into it.
+        /// Unticking a row used to reset its weight to ×1, which was recoverable while the ×N
+        /// popup existed and is not now: with no control that hands weights out, a stray click
+        /// on the tick box, a second one to put it back, and an Apply is enough to lose a
+        /// recipe's ×8 for good — silently, having touched nothing that says "weight".
+        /// </summary>
+        [Test]
+        public void SavedWeights_SurviveBeingUntickedAndTickedAgain()
+        {
+            var controller = NewController();
+            var config = Config();
+            config.rates.Add(new GraphFrameData.AsyncSyncConfig.SyncRate { name = "F", rate = 8 });
+
+            var form = new AsyncSyncForm();
+            form.SetController(controller);
+            form.LoadConfig(config);
+
+            form.SetSelected("F", false);
+            // While it is out of the cycle it is not in the setup at all — a weight held on an
+            // unticked row must not reach the built layer.
+            var without = form.BuildRequest(-1);
+            CollectionAssert.DoesNotContain(without.targets, "F");
+            Assert.AreEqual(1, without.RateOf("F"));
+
+            form.SetSelected("F", true);
+            var rebuilt = form.BuildRequest(-1);
+
+            CollectionAssert.Contains(rebuilt.targets, "F");
+            Assert.AreEqual(8, rebuilt.RateOf("F"), "the weight came back with the row");
+
+            Object.DestroyImmediate(controller);
+        }
+
+        /// <summary>Groups live on the rows in the form and as a list in the setup, and the
+        /// translation between the two is the only place either shape is written.</summary>
+        [Test]
+        public void Groups_SurviveTheRoundTrip()
+        {
+            var controller = NewController();
+            var config = Config();
+            var group = new GraphFrameData.AsyncSyncConfig.SyncGroup { name = "Outfit" };
+            group.members.AddRange(new[] { "I", "F" });
+            config.groups.Add(group);
+
+            var rebuilt = Rebuild(controller, config);
+            Assert.AreEqual(1, rebuilt.groups.Count);
+            Assert.AreEqual("Outfit", rebuilt.groups[0].name);
+            // Cycle order, not the order the members were listed in.
+            CollectionAssert.AreEqual(new[] { "F", "I" }, rebuilt.groups[0].members);
+        }
+
     }
 }

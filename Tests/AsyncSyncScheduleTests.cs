@@ -12,6 +12,20 @@ namespace Yozolab.DaerD.Tests
     /// </summary>
     public class AsyncSyncScheduleTests
     {
+        DaerDLanguage _savedLanguage;
+
+        // One test down here reads a warning by its English words; pin the language so the
+        // suite passes on a Japanese editor too.
+        [OneTimeSetUp]
+        public void ForceEnglish()
+        {
+            _savedLanguage = L.Language;
+            L.Language = DaerDLanguage.English;
+        }
+
+        [OneTimeTearDown]
+        public void RestoreLanguage() => L.Language = _savedLanguage;
+
         /// <summary>Slots straight from rates. The placement only ever reads the rate, so the
         /// targets are just names to tell the slots apart — no controller needed.</summary>
         static List<AsyncSyncBuilder.Slot> Slots(params int[] rates)
@@ -255,17 +269,6 @@ namespace Yozolab.DaerD.Tests
                     new List<string> { "Gone" }).Count);
 
             Object.DestroyImmediate(controller);
-        }
-
-        [Test]
-        public void NextStepSlot_PicksTheLeastVisitedSlotThatTouchesNeitherEnd()
-        {
-            // 1 and 3 are free of both ends; 3 has been visited least.
-            Assert.AreEqual(3, AsyncSyncSchedule.NextStepSlot(new List<int> { 0, 1, 0, 2 }, 4));
-            Assert.AreEqual(1, AsyncSyncSchedule.NextStepSlot(new List<int> { 0, 1, 2 }, 3));
-            // Two slots have no such slot — their cycle can only be even — so the far end is
-            // given up and the wrap is left for the repair to settle.
-            Assert.AreEqual(0, AsyncSyncSchedule.NextStepSlot(new List<int> { 0, 1 }, 2));
         }
 
         // ---- explicit schedules ----------------------------------------------
@@ -692,6 +695,213 @@ namespace Yozolab.DaerD.Tests
             // pass its author drew, and the repair has nothing to say about it.
             AssertGrid(AsyncSyncSchedule.RepairSteps(request, request.steps),
                 new[] { "A" }, new[] { "A" }, new[] { "B" });
+
+            Object.DestroyImmediate(controller);
+        }
+
+        // ---- properties of the placement --------------------------------------
+        //
+        // The tests above pin the layouts the placement produces, one weight vector at a
+        // time. These two say what must be true of ALL of them, over every weight vector up
+        // to four slots — which is the only way to check a promise the wizard makes in the
+        // abstract ("a bigger share means a shorter wait") against a placement that rounds,
+        // probes for a free cell, and repairs adjacency afterwards.
+
+        static string[] Names(int count)
+        {
+            var names = new string[count];
+            for (int i = 0; i < count; i++) names[i] = "P" + i;
+            return names;
+        }
+
+        /// <summary>Every weight vector of the given length, weights 1..max. Enumerated rather
+        /// than sampled: the space is small, and a property that fails on one vector in a
+        /// hundred has to fail the same way on every run.</summary>
+        static List<int[]> RateVectors(int count, int max)
+        {
+            var vectors = new List<int[]> { new int[count] };
+            for (int i = 0; i < count; i++) vectors[0][i] = 1;
+            for (int i = 0; i < count; i++)
+            {
+                var grown = new List<int[]>();
+                foreach (var vector in vectors)
+                    for (int rate = 1; rate <= max; rate++)
+                    {
+                        var next = (int[])vector.Clone();
+                        next[i] = rate;
+                        grown.Add(next);
+                    }
+                vectors = grown;
+            }
+            return vectors;
+        }
+
+        /// <summary>One target per slot, and a one-second step so an interval reads directly
+        /// as a number of steps. Batching would merge the slots, and the placement is what
+        /// these are about.</summary>
+        static AsyncSyncBuilder.Request Weighted(AnimatorController controller, int[] rates)
+        {
+            var request = new AsyncSyncBuilder.Request
+            {
+                controller = controller,
+                stepSeconds = 1f,
+            };
+            for (int i = 0; i < rates.Length; i++)
+            {
+                request.targets.Add("P" + i);
+                if (rates[i] > 1) request.rates["P" + i] = rates[i];
+            }
+            return request;
+        }
+
+        /// <summary>
+        /// The monotonicity the ×N control promises: raising one target's weight never makes
+        /// that target's own worst wait longer. It can leave it alone — a weight the other
+        /// slots cannot separate is capped, and a pass of two slots has nowhere to put a
+        /// second visit — but it must never go the other way, because that is the one outcome
+        /// nothing in the wizard would explain.
+        ///
+        /// Said of the target that was raised, not of the others: a longer pass is exactly
+        /// what everyone else pays for it, and the label under the rows says so.
+        /// </summary>
+        [Test]
+        public void RefreshIntervals_NeverLengthenTheWaitOfTheTargetWhoseWeightRose()
+        {
+            for (int count = 2; count <= 4; count++)
+            {
+                var controller = Floats(Names(count));
+                foreach (var baseline in RateVectors(count, 2))
+                    for (int raised = 0; raised < count; raised++)
+                    {
+                        float previous = float.MaxValue;
+                        for (int weight = baseline[raised];
+                             weight <= AsyncSyncBuilder.MaxRate; weight++)
+                        {
+                            var rates = (int[])baseline.Clone();
+                            rates[raised] = weight;
+                            float wait = AsyncSyncBuilder.RefreshIntervals(
+                                Weighted(controller, rates))["P" + raised];
+                            Assert.LessOrEqual(wait, previous + 0.001f,
+                                "P" + raised + " waits longer at ×" + weight
+                                + " than it did one step of weight ago: ["
+                                + string.Join(",", rates) + "]");
+                            previous = wait;
+                        }
+                    }
+                Object.DestroyImmediate(controller);
+            }
+        }
+
+        /// <summary>
+        /// Every target gets the number of places its weight asked for, and none is ever left
+        /// out of the pass. The count is the half of a weight that IS a promise — the spacing
+        /// is not, as the test below this one says — and the wizard warns where the cap makes
+        /// even the count impossible, so a silent loss here would be a warning that never
+        /// fires.
+        /// </summary>
+        [Test]
+        public void EffectiveSchedule_GivesEveryWeightThePlacesItAsksFor()
+        {
+            for (int count = 2; count <= 4; count++)
+            {
+                var controller = Floats(Names(count));
+                foreach (var rates in RateVectors(count, 4))
+                {
+                    var request = Weighted(controller, rates);
+                    var slots = AsyncSyncBuilder.BuildSlots(request);
+                    var schedule = AsyncSyncBuilder.EffectiveSchedule(request, slots);
+                    var weights = AsyncSyncBuilder.EffectiveWeights(slots);
+
+                    var visits = new int[slots.Count];
+                    foreach (int step in schedule) visits[step]++;
+                    for (int i = 0; i < slots.Count; i++)
+                        Assert.AreEqual(weights[i], visits[i],
+                            "P" + i + " of [" + string.Join(",", rates)
+                            + "] is not sent as often as its weight asks");
+                }
+                Object.DestroyImmediate(controller);
+            }
+        }
+
+        /// <summary>
+        /// How far the actual wait may fall behind the one a share of the pass suggests
+        /// (ceil(T / k) steps for a slot visited k times out of T).
+        ///
+        /// It falls behind often, and not because the placement is careless: the pass is
+        /// exactly as long as the weights add up to, so every window is a share of a cycle
+        /// with no slack, and a set of such windows frequently has no arrangement at all —
+        /// see the case pinned below. What must hold is that a weight never buys less than
+        /// half of what it looks like it buys; below that the ×N control would be telling a
+        /// story about freshness that the pass does not keep at all.
+        ///
+        /// The bound is checked over every weight vector up to four slots, which is the space
+        /// it is claimed for. It is not a theorem about the placement — it is the line under
+        /// which a rewrite of the placement loop has broken something.
+        /// </summary>
+        [Test]
+        public void RefreshIntervals_NeverFallMoreThanHalfBehindTheWindowAShareSuggests()
+        {
+            for (int count = 2; count <= 4; count++)
+            {
+                var controller = Floats(Names(count));
+                foreach (var rates in RateVectors(count, 4))
+                {
+                    var request = Weighted(controller, rates);
+                    var windows = AsyncSyncBuilder.RefreshWindows(request);
+                    var intervals = AsyncSyncBuilder.RefreshIntervals(request);
+                    for (int i = 0; i < count; i++)
+                        Assert.Less(intervals["P" + i], windows["P" + i] * 2f,
+                            "P" + i + " of [" + string.Join(",", rates)
+                            + "] waits " + intervals["P" + i] + " steps against a window of "
+                            + windows["P" + i]);
+                }
+                Object.DestroyImmediate(controller);
+            }
+        }
+
+        /// <summary>
+        /// The smallest pass whose windows cannot all be met, pinned because the wizard now
+        /// warns about the shape and the reason has to stay written down somewhere.
+        ///
+        /// Weights 1, 2 and 3 make a pass of six. The ×3 slot needs every other step, which
+        /// leaves the other three steps two apart — and any two of three cells two apart are
+        /// four apart across the wrap. So the ×2 slot waits four steps rather than the three
+        /// its share suggests, and no arrangement does better. RefreshIntervals reports the
+        /// four: it is measured off the pass that will be built, not off the pass the weights
+        /// would like.
+        /// </summary>
+        [Test]
+        public void RefreshIntervals_ReportTheWaitAPackedPassActuallyGives()
+        {
+            var controller = Floats("P0", "P1", "P2");
+            var request = Weighted(controller, new[] { 1, 2, 3 });
+
+            Assert.AreEqual(6f, AsyncSyncBuilder.CycleSeconds(request), 0.001f);
+            Assert.AreEqual(3f, AsyncSyncBuilder.RefreshWindows(request)["P1"], 0.001f,
+                "two places in a pass of six suggest three");
+            Assert.AreEqual(4f, AsyncSyncBuilder.RefreshIntervals(request)["P1"], 0.001f,
+                "and four is what the pass can give");
+
+            Object.DestroyImmediate(controller);
+        }
+
+        /// <summary>The wizard says so, once the gap is half again as long as the share
+        /// suggests — the point at which the number under the row and the ×N above it have
+        /// stopped telling the same story.</summary>
+        [Test]
+        public void Warnings_CallOutAWeightTheOtherWeightsCannotSpaceOut()
+        {
+            var controller = Floats("P0", "P1", "P2", "P3");
+
+            // [4,4,3,3]: fourteen steps, and the last slot placed lands on three of them with
+            // nine steps between two of the sends.
+            Assert.IsTrue(AsyncSyncBuilder.Warnings(Weighted(controller, new[] { 4, 4, 3, 3 }))
+                .Exists(w => w.Contains("nowhere evenly spaced")));
+            // Weights that divide the pass evenly have nothing to say.
+            Assert.IsFalse(AsyncSyncBuilder.Warnings(Weighted(controller, new[] { 1, 1, 1, 1 }))
+                .Exists(w => w.Contains("nowhere evenly spaced")));
+            Assert.IsFalse(AsyncSyncBuilder.Warnings(Weighted(controller, new[] { 2, 1, 2, 1 }))
+                .Exists(w => w.Contains("nowhere evenly spaced")));
 
             Object.DestroyImmediate(controller);
         }

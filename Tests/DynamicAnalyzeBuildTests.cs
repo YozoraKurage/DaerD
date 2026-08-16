@@ -1,0 +1,1085 @@
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using NUnit.Framework;
+using UnityEditor;
+using UnityEditor.Animations;
+using UnityEngine;
+using UnityEngine.Animations;
+using UnityEngine.Playables;
+using UnityEngine.TestTools;
+using Yozolab.DaerD.DynamicAnalyze;
+
+namespace Yozolab.DaerD.Tests
+{
+    /// <summary>
+    /// What DD DynamicAnalyze sees by standing in an avatar's build, and how it behaves in a
+    /// project that has no build framework at all.
+    ///
+    /// <para>Both halves are the point.</para> Most projects have neither NDMF nor Modular
+    /// Avatar, and in those the capture has to be a thing that exists, answers "no build has
+    /// been seen" and costs nothing — which is asserted directly, without a <c>#if</c> in
+    /// sight. With both installed, the assertions are about somebody else's machinery: that a
+    /// build really does hand over a merged controller, that the rename table can be had, and
+    /// exactly how long what it hands over lives. Every test here exists in both projects; the
+    /// ones that need a build are skipped by name when there is none, so the count does not
+    /// change between the two runs and a test that vanished cannot be mistaken for one that
+    /// passed.
+    ///
+    /// <para>Half of this file is measurement rather than assertion of our own code.</para>
+    /// Where the capture passes sit, whether the pieces are still alive by the time they are
+    /// read, and what a build leaves behind afterwards are all facts about NDMF and Modular
+    /// Avatar that were checked by running them before <see cref="BuildCapture"/> was designed
+    /// around them. They are pinned here rather than remembered: if an upgrade changes one, the
+    /// thing that fails is this file, and the answer is to re-read the result and re-argue the
+    /// design.
+    ///
+    /// Nothing here names a Modular Avatar type, although the parameter store now does
+    /// (<c>DAERD_MA</c>). The components these tests need are added by type name and configured
+    /// through SerializedObject on purpose: this file is about DD DynamicAnalyze, which stays
+    /// liftable and knows only NDMF — MA appears in it as a plugin qualifier in a string and
+    /// must keep appearing as one, so the rig builds MA's components the way a rig with no MA
+    /// reference would.
+    /// </summary>
+    public class DynamicAnalyzeBuildTests
+    {
+        const string DescriptorType = "VRC.SDK3.Avatars.Components.VRCAvatarDescriptor";
+        const string ExpressionParametersType =
+            "VRC.SDK3.Avatars.ScriptableObjects.VRCExpressionParameters";
+        const string MaParametersType = "nadena.dev.modular_avatar.core.ModularAvatarParameters";
+        const string MaMergeAnimatorType =
+            "nadena.dev.modular_avatar.core.ModularAvatarMergeAnimator";
+        /// <summary>The one avatar here that is an ordinary scene object rather than a hidden
+        /// one, because entering Play mode carries the scene and leaves the rest behind.</summary>
+        const string OnPlay = "DD Build On Play";
+        /// <summary>And the one whose pieces are files rather than objects in memory. Measured:
+        /// entering Play mode serialises the scene, and a reference from it to a controller that
+        /// is not an asset cannot be written down — the avatar comes back with an empty playable
+        /// layer. Real avatars are made of files, so this is the rig catching up with them
+        /// rather than a concession.</summary>
+        const string OnPlayFx = "Assets/DDBuildOnPlayFx.controller";
+        const string OnPlayParameters = "Assets/DDBuildOnPlayParams.asset";
+
+        readonly List<GameObject> _made = new List<GameObject>();
+        readonly List<UnityEngine.Object> _assets = new List<UnityEngine.Object>();
+        readonly List<PlayableGraph> _graphs = new List<PlayableGraph>();
+
+        /// <summary>Deliberately no [SetUp] that empties the registry.
+        ///
+        /// Measured: when an EditMode test enters Play mode, the domain reload it causes makes
+        /// the test framework run this class's SetUp AGAIN before resuming the test — and by
+        /// then the build has already happened, so a SetUp that cleared the registry would throw
+        /// away the very thing the probe below is there to look at. Clearing on the way OUT is
+        /// enough, and it is the half that keeps one test's leftovers out of the next.</summary>
+
+        /// <summary>Everything back: Play mode left, the scene emptied of what was put in it —
+        /// including the one object that is deliberately an ordinary scene object and so cannot
+        /// be found in a list a domain reload took — and the build's own leftovers cleaned.</summary>
+        [TearDown]
+        public void TearDown()
+        {
+            if (EditorApplication.isPlayingOrWillChangePlaymode)
+                EditorApplication.isPlaying = false;
+            BuildCapture.Forget();
+            // Graphs first: a graph left behind is not only a leak, it is a candidate the next
+            // test's look round the scene would find (see DynamicAnalyzeRecTests).
+            foreach (var graph in _graphs)
+                if (graph.IsValid()) graph.Destroy();
+            _graphs.Clear();
+            foreach (var go in _made)
+                if (go != null) UnityEngine.Object.DestroyImmediate(go);
+            _made.Clear();
+            var kept = GameObject.Find(OnPlay);
+            if (kept != null) UnityEngine.Object.DestroyImmediate(kept);
+            CleanBuildLeftovers();
+            AssetDatabase.DeleteAsset(OnPlayFx);
+            AssetDatabase.DeleteAsset(OnPlayParameters);
+            foreach (var asset in _assets)
+                // Measured: with nothing installed that clones controllers first, a build files
+                // the very objects it was handed into its own asset folder — so a rig's own
+                // controller can come back out of one as an asset on disk. Cleaning the build's
+                // leftovers above takes those with it; destroying what is left by hand is for
+                // the ones that never became files.
+                if (asset != null && !AssetDatabase.Contains(asset))
+                    UnityEngine.Object.DestroyImmediate(asset);
+            _assets.Clear();
+        }
+
+        // ---- what a project without any of this gets ---------------------------
+
+        /// <summary>
+        /// The whole of the tool-free behaviour, asserted rather than skipped: every entry point
+        /// answers, none of them throws, and what they answer is "nothing was built".
+        ///
+        /// Null and empty are kept apart deliberately. <see cref="BuildCapture.SyncedFor"/>
+        /// answering null means no build of this avatar was watched; answering an empty list
+        /// would mean a build that syncs nothing, and the panel offering to fill a list from
+        /// the second is right where offering to fill it from the first is not.
+        /// </summary>
+        [Test]
+        public void AnAvatarNoBuildHasSeenIsAnsweredForRatherThanThrownAt()
+        {
+            var animator = Avatar("DD Build Unbuilt");
+            Assert.IsFalse(BuildCapture.Has(animator));
+            Assert.IsNull(BuildCapture.For(animator));
+            Assert.IsEmpty(BuildCapture.ControllersFor(animator));
+            Assert.IsNull(BuildCapture.SyncedFor(animator));
+            Assert.IsEmpty(BuildCapture.KindOf(animator, null));
+            Assert.IsEmpty(BuildCapture.RemapOf(animator.gameObject));
+            Assert.IsEmpty(BuildCapture.PrefixRemapOf(animator.gameObject));
+            Assert.AreEqual(0, BuildCapture.Count);
+
+            // Empty rather than "nothing changed": the panel draws no frame at all on an avatar
+            // no build has been seen of, and an empty list is how it is told to.
+            Assert.IsEmpty(BuildCapture.ChangedFor(animator));
+
+            Assert.IsNull(BuildCapture.For(null));
+            Assert.IsNull(BuildCapture.Of(null));
+            Assert.IsFalse(BuildCapture.Has(null));
+            Assert.IsEmpty(BuildCapture.ControllersFor(null));
+            Assert.IsEmpty(BuildCapture.RemapOf(null));
+            Assert.IsEmpty(BuildCapture.ChangedFor(null));
+            Assert.IsEmpty(BuildCapture.Changed(null));
+        }
+
+        /// <summary>
+        /// The one fact everything else rests on: <c>DAERD_NDMF</c> and <c>DAERD_VRC</c> are on
+        /// when — and only when — the package is in the project. They come from the .asmdef's
+        /// versionDefines rather than from anything a person sets, so the failure this catches
+        /// is the silent one: a package renamed upstream leaves the define off, the plugin
+        /// disappears from the build, and the feature quietly stops existing while every test
+        /// still passes.
+        ///
+        /// Both defines matter and neither implies the other. NDMF builds avatars for platforms
+        /// that are not VRChat, and everything captured here — playable layers, expression
+        /// parameters — is VRChat's shape, so the capture is compiled only when both are there.
+        /// </summary>
+        [Test]
+        public void TheDefinesAreOnExactlyWhenThePackagesAre()
+        {
+            bool ndmf = Loaded("nadena.dev.ndmf");
+            bool vrc = Loaded("VRCSDK3A");
+#if DAERD_NDMF
+            Assert.IsTrue(ndmf, "DAERD_NDMF is defined but NDMF's assembly is not loaded");
+#else
+            Assert.IsFalse(ndmf,
+                "NDMF is installed and DAERD_NDMF is not defined — the versionDefine's package "
+                + "name has stopped matching the package");
+#endif
+#if DAERD_VRC
+            Assert.IsTrue(vrc, "DAERD_VRC is defined but the VRChat avatars SDK is not loaded");
+#else
+            Assert.IsFalse(vrc,
+                "the VRChat avatars SDK is installed and DAERD_VRC is not defined");
+#endif
+        }
+
+        static bool Loaded(string assemblyName)
+        {
+            foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+                if (assembly.GetName().Name == assemblyName) return true;
+            return false;
+        }
+
+        // ---- and what a project with one gets ----------------------------------
+
+        /// <summary>
+        /// The end-to-end: an avatar whose FX is assembled out of two pieces by Modular Avatar,
+        /// built the way a person bakes one, and everything the capture promises taken off the
+        /// registry afterwards.
+        ///
+        /// The controller in the registry is the MERGED one — the layer the gimmick contributed
+        /// is in it, and it is not the object anybody has a reference to in the editor. That is
+        /// the whole reason this feature exists: a recording matched against the FX in the
+        /// window's field would find nothing on this avatar.
+        /// </summary>
+        [Test]
+        public void ABuildLeavesTheMergedControllerAndWhatItSyncsInTheRegistry()
+        {
+#if DAERD_NDMF && DAERD_VRC
+            Skip.WithoutModularAvatar();
+            var avatar = Rig("DD Build Merged");
+            Build(avatar.root);
+
+            var built = BuildCapture.For(avatar.animator);
+            Assert.IsNotNull(built, "the build ran and nothing was captured off it");
+            Assert.AreEqual("DD Build Merged", built.avatar);
+            Assert.AreEqual("Optimizing", built.phase,
+                "the last capture point is the end of the last phase a pass was put in");
+
+            var controllers = BuildCapture.ControllersFor(avatar.animator);
+            Assert.AreEqual(1, controllers.Count, "one playable layer was set up on this avatar");
+            var fx = controllers[0];
+            Assert.AreEqual("FX", BuildCapture.KindOf(avatar.animator, fx));
+            Assert.AreNotSame(avatar.fx, fx,
+                "the built controller is the one in the field, so nothing was assembled");
+            // Contains rather than equals: an assembler puts layers of its own in beside the
+            // ones anybody asked for (Modular Avatar adds a pair for MMD dances), and a test
+            // that pinned the whole list would be pinning somebody else's release notes.
+            var layers = LayerNames(fx);
+            CollectionAssert.Contains(layers, "Base");
+            CollectionAssert.Contains(layers, "Gimmick",
+                "the gimmick's layer is not in the built FX");
+            Assert.AreEqual(1, avatar.fx.layers.Length,
+                "the controller in the field is still the single-layer one it was, which is the "
+                + "whole reason a recording has to be matched against the built one instead");
+#else
+            Assert.Ignore("NDMF and the VRChat avatars SDK are not both installed.");
+#endif
+        }
+
+        /// <summary>
+        /// The bridge itself: the name a person typed, and the name the avatar ended up wearing.
+        ///
+        /// Modular Avatar's internal parameters are renamed to <c>name$<i>hash</i></c>, where
+        /// the hash is derived from the declaring component's path inside the avatar. The exact
+        /// name is asserted rather than a pattern, and computed here from the same rule rather
+        /// than copied off a run: what it is really pinning is that the capture reads the SAME
+        /// mapping the build applies, and a pattern would pass just as happily against a table
+        /// that had drifted a suffix away from what the controller says.
+        /// </summary>
+        [Test]
+        public void TheRenameTableSaysWhatEachNameBecame()
+        {
+#if DAERD_NDMF && DAERD_VRC
+            Skip.WithoutModularAvatar();
+            var avatar = Rig("DD Build Renamed");
+            Build(avatar.root);
+
+            string became = Internal("Wag", "Gimmick");
+            var renames = BuildCapture.RemapOf(avatar.root);
+            Assert.IsTrue(renames.ContainsKey("Wag"),
+                "the parameter the gimmick declares is not in the rename table");
+            Assert.AreEqual(became, renames["Wag"]);
+
+            var fx = BuildCapture.ControllersFor(avatar.animator)[0];
+            CollectionAssert.Contains(ParameterNames(fx), became,
+                "the built controller does not use the name the table says it would");
+            CollectionAssert.DoesNotContain(ParameterNames(fx), "Wag",
+                "the editing-time name survived into the build, so nothing was renamed and this "
+                + "test is measuring the wrong thing");
+
+            var built = BuildCapture.For(avatar.animator);
+            CollectionAssert.Contains(built.synced, became,
+                "the built expression parameters do not carry the renamed parameter");
+            CollectionAssert.DoesNotContain(built.synced, "Wag");
+#else
+            Assert.Ignore("NDMF and the VRChat avatars SDK are not both installed.");
+#endif
+        }
+
+        /// <summary>
+        /// Why the rename table is taken at the end of Resolving and not beside the controllers.
+        ///
+        /// Measured: the components that DECLARE the renames are destroyed by the pass that
+        /// applies them, which runs in Transforming. NDMF's rename API answers by asking those
+        /// components, so by the time the finished controllers exist there is nothing left to
+        /// ask. This is the fact that shape rests on, so it is checked rather than trusted — if
+        /// a release starts leaving the components in place, the capture could move and this is
+        /// what would say so.
+        /// </summary>
+        [Test]
+        public void TheComponentsThatDeclareRenamesDoNotSurviveTheBuild()
+        {
+#if DAERD_NDMF && DAERD_VRC
+            Skip.WithoutModularAvatar();
+            var avatar = Rig("DD Build Declarers");
+            Assert.IsNotNull(Find(avatar.root, MaParametersType),
+                "the rig did not set up the component this is about");
+            Build(avatar.root);
+            Assert.IsNull(Find(avatar.root, MaParametersType),
+                "the declaring components are still there after the build — the rename table "
+                + "could be read later than it is, and the reason for the Resolving pass has "
+                + "gone away");
+            Assert.IsNotEmpty(BuildCapture.RemapOf(avatar.root),
+                "and the table was captured anyway, which is what the early pass is for");
+#else
+            Assert.Ignore("NDMF and the VRChat avatars SDK are not both installed.");
+#endif
+        }
+
+        /// <summary>
+        /// How long a built controller lives, which is the reason nothing here is cloned and
+        /// everything that has to outlive a session is copied out as text.
+        ///
+        /// The controllers a build produces are temporary assets in a folder NDMF owns, and NDMF
+        /// deletes that folder — on leaving Play mode, and whenever anything asks it to. So the
+        /// reference in the registry is alive for exactly as long as the build's leftovers are,
+        /// and a reader that comes back later finds a destroyed object. Everything that has to
+        /// answer afterwards is a string by then: the rename table, what is synced, the
+        /// parameters standing at each phase.
+        /// </summary>
+        [Test]
+        public void TheBuiltControllerIsTemporaryAndTheTextCapturedBesideItIsNot()
+        {
+#if DAERD_NDMF && DAERD_VRC
+            Skip.WithoutModularAvatar();
+            var avatar = Rig("DD Build Lifetime");
+            Build(avatar.root);
+
+            var built = BuildCapture.For(avatar.animator);
+            var fx = BuildCapture.ControllersFor(avatar.animator)[0];
+            Assert.IsTrue(AssetDatabase.Contains(fx),
+                "the built controller is not an asset, so what follows is not measuring what it "
+                + "says it is");
+            int names = built.synced.Count, renames = built.renames.Count;
+            Assert.Greater(names, 0);
+            Assert.Greater(renames, 0);
+
+            nadena.dev.ndmf.AvatarProcessor.CleanTemporaryAssets();
+
+            Assert.IsTrue(fx == null,
+                "the build's leftovers were cleaned and the controller survived — cloning it "
+                + "would be unnecessary and this design note is wrong");
+            Assert.AreEqual(names, built.synced.Count,
+                "what the build syncs was copied out as text and should not depend on the asset");
+            Assert.AreEqual(renames, built.renames.Count);
+            Assert.AreEqual("DD Build Lifetime", built.avatar);
+#else
+            Assert.Ignore("NDMF and the VRChat avatars SDK are not both installed.");
+#endif
+        }
+
+        /// <summary>
+        /// A second build of the same avatar replaces the first rather than sitting beside it.
+        ///
+        /// Which matters because entering Play mode, leaving it and entering it again is the
+        /// ordinary way to use this, and each of those is a build of an object that is new every
+        /// time. Two entries for one avatar would be a reader choosing between two answers to
+        /// one question, and the later one is always the one meant.
+        /// </summary>
+        [Test]
+        public void BuildingTheSameAvatarAgainReplacesWhatWasCapturedOfIt()
+        {
+#if DAERD_NDMF && DAERD_VRC
+            Skip.WithoutModularAvatar();
+            var first = Rig("DD Build Twice");
+            Build(first.root);
+            var was = BuildCapture.ControllersFor(first.animator)[0];
+            UnityEngine.Object.DestroyImmediate(first.root);
+            _made.Remove(first.root);
+
+            var again = Rig("DD Build Twice");
+            Build(again.root);
+            Assert.AreEqual(1, BuildCapture.Count,
+                "the same avatar built twice left two entries behind");
+            var now = BuildCapture.ControllersFor(again.animator)[0];
+            Assert.AreNotSame(was, now, "the entry still holds the first build's controller");
+#else
+            Assert.Ignore("NDMF and the VRChat avatars SDK are not both installed.");
+#endif
+        }
+
+        /// <summary>
+        /// The passes are ordered after Modular Avatar by NAME, which is what lets this file
+        /// avoid referencing it — and a name is a thing that can be absent. Measured here in the
+        /// only way this project can measure it while MA is installed: an avatar with no MA
+        /// components on it at all still gets captured, so the ordering constraint is satisfied
+        /// by a plugin that has nothing to do. The stronger case — MA not installed — is
+        /// measured by running this suite with it taken out of the project.
+        /// </summary>
+        [Test]
+        public void AnAvatarWithNothingAssemblingItIsCapturedJustTheSame()
+        {
+#if DAERD_NDMF && DAERD_VRC
+            var avatar = Rig("DD Build Plain", gimmick: false);
+            Build(avatar.root);
+
+            var built = BuildCapture.For(avatar.animator);
+            Assert.IsNotNull(built, "a plain avatar's build was not captured");
+            Assert.AreEqual(1, BuildCapture.ControllersFor(avatar.animator).Count);
+            CollectionAssert.AreEquivalent(new[] { "Base" },
+                LayerNames(BuildCapture.ControllersFor(avatar.animator)[0]));
+            CollectionAssert.Contains(built.synced, "Wave",
+                "the avatar's own synced parameter is not in the capture");
+            Assert.IsEmpty(built.renames, "nothing renamed anything and a table appeared anyway");
+#else
+            Assert.Ignore("NDMF and the VRChat avatars SDK are not both installed.");
+#endif
+        }
+
+        /// <summary>
+        /// A parameter set per phase, which is the material for saying what a build added,
+        /// renamed or took away. Nothing shows it yet — this wave collects it — so what is
+        /// asserted is that the collecting happens at every point a pass was put, and that the
+        /// sets really do differ across the phase the assembling happens in.
+        /// </summary>
+        [Test]
+        public void EveryCapturePointLeavesTheParametersAsTheyStoodInIt()
+        {
+#if DAERD_NDMF && DAERD_VRC
+            Skip.WithoutModularAvatar();
+            var avatar = Rig("DD Build Phases");
+            Build(avatar.root);
+
+            var built = BuildCapture.For(avatar.animator);
+            CollectionAssert.AreEquivalent(new[] { "Resolving", "Transforming", "Optimizing" },
+                new List<string>(built.parametersAt.Keys));
+            CollectionAssert.DoesNotContain(built.parametersAt["Resolving"],
+                Internal("Wag", "Gimmick"),
+                "the renamed parameter was already there before anything was assembled");
+            CollectionAssert.Contains(built.parametersAt["Transforming"],
+                Internal("Wag", "Gimmick"),
+                "the assembling phase did not add the parameter the merge brings with it");
+#else
+            Assert.Ignore("NDMF and the VRChat avatars SDK are not both installed.");
+#endif
+        }
+
+        // ---- what a build changed, read back off the capture ---------------------
+
+        /// <summary>
+        /// The reading itself, over a capture written out by hand.
+        ///
+        /// By hand on purpose, and this is the half of the feature that has to be tested this
+        /// way: <see cref="BuildCapture.Changed"/> is a pure function of one entry, so the cases
+        /// worth pinning — a parameter that goes away again, a phase no pass reached, two rename
+        /// tables that must not be poured together — are all cases a real build of the rig below
+        /// does not produce and could not be made to produce without writing somebody else's
+        /// plugin. The end-to-end below then checks that a real build fills the entry with the
+        /// shape these assume.
+        ///
+        /// The lines are user-facing sentences, so the assertions are on their text. The
+        /// language is pinned for the whole suite (see <c>TestLanguage</c>).
+        /// </summary>
+        [Test]
+        public void WhatTheBuildChangedNamesThePhaseAParameterArrivedInAndTheOneItLeftIn()
+        {
+            var built = new BuildCapture.Built();
+            built.parametersAt[BuildCapture.Resolving] = new List<string> { "Wave" };
+            built.parametersAt[BuildCapture.Transforming] =
+                new List<string> { "Wag$1f4c2b", "Wave" };
+            built.parametersAt[BuildCapture.Optimizing] = new List<string> { "Wag$1f4c2b" };
+            built.synced.Add("Wag$1f4c2b");
+
+            var lines = BuildCapture.Changed(built);
+            Assert.AreEqual(3, lines.Count,
+                "nothing was renamed, so the three lines are one arrival, one departure and "
+                + "what travels:\n  " + string.Join("\n  ", lines.ToArray()));
+            Assert.IsTrue(Says(lines, "Transforming added 1 parameter(s) (Wag$1f4c2b)"),
+                "the phase the parameter turned up in is not named");
+            Assert.IsTrue(Says(lines, "Optimizing took 1 parameter(s) away (Wave)"),
+                "a parameter that stopped being declared is not reported, or is reported "
+                + "against the wrong phase");
+            Assert.IsTrue(Says(lines, "1 parameter(s) travel in the end"));
+            Assert.IsFalse(Says(lines, "Resolving"),
+                "the first captured phase has nothing before it to differ from, so everything "
+                + "the avatar already had would be reported as an addition");
+            Assert.Less(Index(lines, "added"), Index(lines, "took"),
+                "everything that arrived is meant to be read before everything that left");
+        }
+
+        /// <summary>
+        /// Both rename tables are read, and neither is poured into the other.
+        ///
+        /// A PhysBone prefix and a parameter are different namespaces that can share a name (see
+        /// <see cref="BuildCapture.Built.prefixRenames"/>), so one list of both would tell a
+        /// reader that a parameter they can look for in the animator was renamed when no such
+        /// parameter exists. Sorted by the editing-time name, which is the half somebody is
+        /// scanning for.
+        /// </summary>
+        [Test]
+        public void WhatTheBuildChangedKeepsTheTwoRenameTablesApart()
+        {
+            var built = new BuildCapture.Built();
+            built.renames["Wag"] = "Wag$1f4c2b";
+            built.renames["Hat"] = "Hat$8842aa";
+            built.prefixRenames["Wag"] = "Wag$99cc10";
+
+            var lines = BuildCapture.Changed(built);
+            Assert.IsTrue(Says(lines,
+                    "renamed 2 parameter(s) (Hat → Hat$8842aa, Wag → Wag$1f4c2b)"),
+                "the parameter table is not read, or is not sorted by the name a person typed");
+            Assert.IsTrue(Says(lines, "renamed 1 PhysBone prefix(es) (Wag → Wag$99cc10)"),
+                "the prefix table is not read at all");
+            Assert.IsFalse(Says(lines, "renamed 3 "),
+                "the two tables were counted as one, so a prefix is being offered as a "
+                + "parameter to look for");
+            // And nothing was declared at any phase, so there is no arrival or departure to
+            // report — what travels is still said, because zero is an answer.
+            Assert.AreEqual(3, lines.Count,
+                string.Join("\n  ", lines.ToArray()));
+            Assert.IsTrue(Says(lines, "0 parameter(s) travel in the end"));
+        }
+
+        /// <summary>
+        /// A phase no capture point reached is skipped rather than read as an avatar that
+        /// declared nothing — which would report the entire avatar as taken away and then added
+        /// straight back.
+        ///
+        /// Not hypothetical: the capture overwrites in place at each point, and a build that
+        /// fails or is cut short partway through leaves exactly this. What is compared is then
+        /// the last phase that was reached, which is the only honest before-and-after available.
+        /// </summary>
+        [Test]
+        public void WhatTheBuildChangedSkipsAPhaseNoCapturePointReached()
+        {
+            var built = new BuildCapture.Built();
+            built.parametersAt[BuildCapture.Resolving] = new List<string> { "Wave" };
+            built.parametersAt[BuildCapture.Optimizing] = new List<string> { "Extra", "Wave" };
+
+            var lines = BuildCapture.Changed(built);
+            Assert.IsTrue(Says(lines, "Optimizing added 1 parameter(s) (Extra)"),
+                "the phase that was reached is not compared against the last one that was");
+            Assert.IsFalse(Says(lines, "Transforming"),
+                "a phase nothing was captured in was read as an avatar declaring nothing");
+            Assert.IsFalse(Says(lines, "away"),
+                "and the whole avatar was reported as taken away with it");
+        }
+
+        /// <summary>
+        /// And the same reading over a capture a real build wrote: an avatar assembled by
+        /// Modular Avatar, and the two things a person looks for afterwards — what the parameter
+        /// they typed is called now, and what the merge brought with it.
+        ///
+        /// The phase is asserted by name because that is the grain of the answer and the thing
+        /// most likely to drift: the passes sit at the end of a phase, so an upgrade that moved
+        /// the assembling out of Transforming would make every line here true of the wrong one.
+        /// </summary>
+        [Test]
+        public void WhatTheBuildChangedReadsARealBuildsRenamesAndAdditions()
+        {
+#if DAERD_NDMF && DAERD_VRC
+            Skip.WithoutModularAvatar();
+            var avatar = Rig("DD Build Diff");
+            Build(avatar.root);
+
+            string became = Internal("Wag", "Gimmick");
+            var lines = BuildCapture.ChangedFor(avatar.animator);
+            Assert.IsNotEmpty(lines, "the build ran and the capture has nothing to say about it");
+            Assert.IsTrue(Says(lines, "Wag → " + became),
+                "the rename a person needs to read a recording by is not in the difference:\n  "
+                + string.Join("\n  ", lines.ToArray()));
+            Assert.IsTrue(Says(lines, "Transforming added"),
+                "the phase the merge happens in added nothing, so either the capture or the "
+                + "difference has stopped seeing what a build assembles:\n  "
+                + string.Join("\n  ", lines.ToArray()));
+            Assert.IsTrue(Says(lines, became),
+                "the name the avatar ends up wearing is nowhere in what is shown");
+
+            var built = BuildCapture.For(avatar.animator);
+            Assert.IsTrue(Says(lines, built.synced.Count + " parameter(s) travel in the end"),
+                "what travels is not the count the capture holds");
+#else
+            Assert.Ignore("NDMF and the VRChat avatars SDK are not both installed.");
+#endif
+        }
+
+        /// <summary>Whether any line says this. Substrings rather than whole lines: each line
+        /// carries a sentence explaining what it means as well as the fact, and pinning that
+        /// prose would make every reword a test failure.</summary>
+        static bool Says(List<string> lines, string fragment)
+        {
+            foreach (string line in lines)
+                if (line.Contains(fragment)) return true;
+            return false;
+        }
+
+        static int Index(List<string> lines, string fragment)
+        {
+            for (int i = 0; i < lines.Count; i++)
+                if (lines[i].Contains(fragment)) return i;
+            return -1;
+        }
+
+        // ---- and what a recording then reads ------------------------------------
+
+        /// <summary>
+        /// The bridge, end to end: an avatar assembled by a build, a graph running what the
+        /// build produced, and a recorder pointed at the controller in the WINDOW's field —
+        /// which is not what is playing and does not match it.
+        ///
+        /// Every row this is about is one the recorder could not have had otherwise. The merged
+        /// layer has states, the built layer names are the ones on screen, and the recording
+        /// says out loud which controller it was named from so nobody has to guess.
+        /// </summary>
+        [Test]
+        public void ARecordingIsNamedFromTheBuiltControllerRatherThanTheOneInTheField()
+        {
+#if DAERD_NDMF && DAERD_VRC
+            Skip.WithoutModularAvatar();
+            var avatar = Rig("DD Build Rec");
+            Build(avatar.root);
+            var fx = BuildCapture.ControllersFor(avatar.animator)[0];
+            Assert.AreEqual(-1, PlayRecorder.Matching(avatar.fx, PlayRecorder.PlayablesOn(
+                    Drive(avatar.animator, fx))),
+                "the controller in the field matches the graph after all, so this proves nothing");
+
+            var recorder = PlayRecorder.On(avatar.animator, avatar.fx);
+            Assert.IsTrue(recorder.Matched,
+                "the built controller was never tried against the graph, so the recording lost "
+                + "its state rows on exactly the avatar this feature is for");
+            Assert.AreEqual("FX", recorder.Built,
+                "the recording does not say which playable layer it was named from");
+            recorder.Sample(1, 0f);
+            Assert.IsNotNull(recorder.Trace.Find(Simulation.PlayScope, "Gimmick/state"),
+                "the merged layer has no rows, so the naming came from the field's controller");
+            Assert.IsNotNull(recorder.Trace.Find(Simulation.PlayScope, "Base/state"));
+            Assert.IsNotNull(recorder.Trace.Find(Simulation.PlayScope,
+                    Internal("Wag", "Gimmick")),
+                "the parameter is recorded under the name the avatar wears, which is the whole "
+                + "of what a build changes about it");
+
+            // And the other half of the bridge: what the panel's second button fills from.
+            var synced = BuildCapture.SyncedFor(avatar.animator);
+            CollectionAssert.Contains(synced, Internal("Wag", "Gimmick"));
+            CollectionAssert.DoesNotContain(synced, "Wag");
+#else
+            Assert.Ignore("NDMF and the VRChat avatars SDK are not both installed.");
+#endif
+        }
+
+        /// <summary>
+        /// And WHICH of the built controllers, on an avatar whose build filled more than one
+        /// playable slot — which is every avatar somebody actually wears.
+        ///
+        /// The graph runs all of them, so every slot matches a playable of its own and "the
+        /// first one that matches" is an answer rather than the answer. It used to be taken,
+        /// and on a real avatar the first slot is Base: a locomotion controller nobody was
+        /// pointing at, whose states are the walk cycle. A recording of it named the wrong
+        /// layers and had none of the states the person was looking for.
+        ///
+        /// So the slot is chosen on the only evidence there is — the layer names the field's
+        /// controller and each candidate have in common. Asserted with the Base slot deliberately
+        /// FIRST, because the pick is only worth making where the old rule would have made the
+        /// other one.
+        /// </summary>
+        [Test]
+        public void WithSeveralSlotsBuiltTheRecordingIsNamedFromTheOneTheFieldsLayersAreIn()
+        {
+#if DAERD_NDMF && DAERD_VRC
+            var avatar = Rig("DD Build Slots", under: Controller("Locomotion", "Grounded"));
+            Build(avatar.root);
+
+            var built = BuildCapture.ControllersFor(avatar.animator);
+            Assert.GreaterOrEqual(built.Count, 2,
+                "the build left one slot, so there is nothing here to choose between");
+            Assert.Greater(built.FindIndex(
+                    slot => BuildCapture.KindOf(avatar.animator, slot) == BuildCapture.Fx), 0,
+                "the rig is meant to put the locomotion slot first — with FX first there is no "
+                + "wrong answer for this to avoid");
+
+            var playables = PlayRecorder.PlayablesOn(Drive(avatar.animator, built.ToArray()));
+            Assert.GreaterOrEqual(PlayRecorder.Matching(built[0], playables), 0,
+                "the first slot matches nothing, so the old rule would not have taken it either");
+
+            var recorder = PlayRecorder.On(avatar.animator, avatar.fx);
+            Assert.AreEqual("FX", recorder.Built,
+                "the recording was named from a slot the field's controller has no layer in");
+            recorder.Sample(1, 0f);
+            Assert.IsNotNull(recorder.Trace.Find(Simulation.PlayScope, "Base/state"),
+                "the layer the field's controller is about has no state row");
+            Assert.IsNull(recorder.Trace.Find(Simulation.PlayScope, "Locomotion/state"),
+                "a layer of a slot nothing was named from has rows it has no labels for");
+            // And the other half: the slot that was NOT named from still contributes its
+            // parameters, which is the whole of what a person watching gestures needs.
+            Assert.IsNotNull(recorder.Trace.Find(Simulation.PlayScope, "Grounded"),
+                "the locomotion slot's parameter is missing, so a recording of a real avatar "
+                + "carries one slot's parameters and loses the rest");
+            Assert.IsNotNull(recorder.Trace.Find(Simulation.PlayScope, "Wave"));
+#else
+            Assert.Ignore("NDMF and the VRChat avatars SDK are not both installed.");
+#endif
+        }
+
+        /// <summary>
+        /// An avatar running its own build counts as running the controller in the field, which
+        /// is what the arm toggle and the candidate list's tick are decided by. Without it,
+        /// arming would wait forever on the avatars this is for: they never run the field's
+        /// controller, by construction.
+        /// </summary>
+        [Test]
+        public void AnAvatarRunningItsOwnBuildCountsAsRunningTheControllerItWasBuiltBeside()
+        {
+#if DAERD_NDMF && DAERD_VRC
+            Skip.WithoutModularAvatar();
+            var avatar = Rig("DD Build Arms");
+            Build(avatar.root);
+            Drive(avatar.animator, BuildCapture.ControllersFor(avatar.animator)[0]);
+
+            Assert.IsTrue(PlayRecorder.Runs(avatar.fx, avatar.animator));
+            Assert.AreSame(avatar.animator, PlayRecorder.Likeliest(avatar.fx),
+                "nothing else in the scene is running anything, and the built avatar was not "
+                + "picked");
+#else
+            Assert.Ignore("NDMF and the VRChat avatars SDK are not both installed.");
+#endif
+        }
+
+        /// <summary>
+        /// And it is never preferred over an avatar running the field's controller outright.
+        ///
+        /// The scene that decides it is the one somebody actually has open: the gimmick being
+        /// edited, playing on its own, beside the assembled avatar it is part of. The plain one
+        /// is what the window is pointed at, so it stays the pick.
+        /// </summary>
+        [Test]
+        public void AnAvatarRunningTheFieldsControllerOutrightIsStillPreferred()
+        {
+#if DAERD_NDMF && DAERD_VRC
+            Skip.WithoutModularAvatar();
+            var avatar = Rig("DD Build Second");
+            Build(avatar.root);
+            Drive(avatar.animator, BuildCapture.ControllersFor(avatar.animator)[0]);
+            var plain = Avatar("DD Build First");
+            Drive(plain, avatar.fx);
+
+            Assert.AreSame(plain, PlayRecorder.Likeliest(avatar.fx),
+                "the built avatar was preferred over the one running the very controller in the "
+                + "field");
+#else
+            Assert.Ignore("NDMF and the VRChat avatars SDK are not both installed.");
+#endif
+        }
+
+        /// <summary>
+        /// With no build anywhere — most projects — a recording is exactly the recording it was:
+        /// named from the controller in the field, and saying nothing about a build. Asserted
+        /// directly rather than skipped, because "unchanged where nothing is installed" is the
+        /// half of this that everybody gets.
+        /// </summary>
+        [Test]
+        public void WithNoBuildWatchedARecordingIsNamedTheWayItAlwaysWas()
+        {
+            var animator = Avatar("DD Build Unwatched");
+            var controller = Controller("Base", "Wave");
+            Drive(animator, controller);
+
+            Assert.IsTrue(PlayRecorder.Runs(controller, animator));
+            var recorder = PlayRecorder.On(animator, controller);
+            Assert.IsTrue(recorder.Matched);
+            Assert.IsEmpty(recorder.Built,
+                "a recording named from the field's own controller claimed a build made it");
+            recorder.Sample(1, 0f);
+            Assert.IsNotNull(recorder.Trace.Find(Simulation.PlayScope, "Base/state"));
+        }
+
+        // ---- in a real Play mode ------------------------------------------------
+
+        /// <summary>
+        /// The order the whole design rests on, in the mode it actually happens in.
+        ///
+        /// Entering Play mode reloads the domain, which empties every static in the editor —
+        /// including this registry. The build that ApplyOnPlay runs happens in the Awake of the
+        /// scene that comes back AFTER that reload, so the registry is filled rather than
+        /// emptied, and a plain static field is enough; nothing has to be squirrelled away in
+        /// SessionState. Leaving Play mode does NOT reload, which is the other half: a recording
+        /// is read after Play mode ends, and what it was matched against has to still be there.
+        ///
+        /// Everything is therefore built BEFORE entering — an avatar in the scene is what
+        /// ApplyOnPlay looks for — and read after. The object is found by name on the way out
+        /// rather than held in a variable: a domain reload takes the test's own locals with it.
+        /// </summary>
+        [UnityTest]
+        [Category("PlayModeProbe")]
+        public IEnumerator EnteringPlayModeFillsTheRegistryAndLeavingItDoesNotEmptyIt()
+        {
+#if DAERD_NDMF && DAERD_VRC
+            var avatar = Rig(OnPlay, keep: true, saved: true);
+            Assert.AreEqual(0, BuildCapture.Count, "something was captured before Play mode");
+
+            yield return new EnterPlayMode();
+
+            Assert.IsTrue(Application.isPlaying);
+            Assert.AreEqual(1, BuildCapture.Count,
+                "entering Play mode did not build the avatar, or the capture landed before the "
+                + "domain reload that empties this registry");
+            var animator = GameObject.Find(OnPlay)?.GetComponent<Animator>();
+            Assert.IsNotNull(animator, "the avatar did not survive into Play mode");
+            var built = BuildCapture.For(animator);
+            Assert.IsNotNull(built, "the avatar in the Play mode scene is not the one captured");
+            Assert.AreEqual(1, BuildCapture.ControllersFor(animator).Count);
+            int synced = built.synced.Count;
+            Assert.Greater(synced, 0);
+
+            yield return new ExitPlayMode();
+
+            Assert.AreEqual(1, BuildCapture.Count,
+                "leaving Play mode emptied the registry, so a recording made in it can no longer "
+                + "be told what it was matched against");
+            Assert.AreEqual(synced, BuildCapture.For(GameObject.Find("DD Build On Play")
+                ?.GetComponent<Animator>())?.synced.Count ?? -1,
+                "the avatar came back out of Play mode as a different object than the registry "
+                + "has, so the entry can no longer be found for it");
+#else
+            Assert.Ignore("NDMF and the VRChat avatars SDK are not both installed.");
+            yield break;
+#endif
+        }
+
+        // ---- the rig -------------------------------------------------------------
+
+        /// <summary>An avatar with nothing on it but an Animator — enough to ask the capture
+        /// about, and nothing a build would look at twice.</summary>
+        Animator Avatar(string name)
+        {
+            var go = new GameObject(name);
+            go.hideFlags = HideFlags.HideAndDontSave;
+            _made.Add(go);
+            return go.AddComponent<Animator>();
+        }
+
+        /// <summary>Idle → On when the named parameter goes up, on a layer of the given name —
+        /// in memory, or as a file when a path is given. The file is built after the asset
+        /// exists rather than saved afterwards, which is what puts the state machine inside it
+        /// instead of leaving it a dangling object.</summary>
+        AnimatorController Controller(string layer, string parameter, string path = null)
+        {
+            AnimatorController controller;
+            if (path == null)
+            {
+                controller = new AnimatorController();
+                controller.name = "DD Build " + layer;
+                controller.hideFlags = HideFlags.HideAndDontSave;
+                _assets.Add(controller);
+            }
+            else
+            {
+                AssetDatabase.DeleteAsset(path);
+                AssetDatabase.CreateAsset(new AnimatorController(), path);
+                controller = AssetDatabase.LoadAssetAtPath<AnimatorController>(path);
+            }
+            controller.AddLayer(layer);
+            controller.AddParameter(parameter, AnimatorControllerParameterType.Bool);
+            var machine = controller.layers[0].stateMachine;
+            var idle = machine.AddState("Idle");
+            var on = machine.AddState("On");
+            machine.defaultState = idle;
+            var transition = idle.AddTransition(on);
+            transition.hasExitTime = false;
+            transition.duration = 0f;
+            transition.AddCondition(AnimatorConditionMode.If, 0f, parameter);
+            return controller;
+        }
+
+        /// <summary>A graph of the shape the tools that wear an avatar build: a layer mixer
+        /// with a controller playable under it, written out to an Animator that holds no
+        /// controller of its own. Returns the Animator so a call can be written inside an
+        /// expression about it.</summary>
+        Animator Drive(Animator animator, params AnimatorController[] controllers)
+        {
+            var graph = PlayableGraph.Create("DD Build Graph");
+            _graphs.Add(graph);
+            var mixer = AnimationLayerMixerPlayable.Create(graph, controllers.Length);
+            for (int i = 0; i < controllers.Length; i++)
+            {
+                var playable = AnimatorControllerPlayable.Create(graph, controllers[i]);
+                graph.Connect(playable, 0, mixer, i);
+                mixer.SetInputWeight(i, 1f);
+            }
+            var output = AnimationPlayableOutput.Create(graph, "o", animator);
+            output.SetSourcePlayable(mixer);
+            graph.Play();
+            return animator;
+        }
+
+        internal struct Avatars
+        {
+            public GameObject root;
+            public Animator animator;
+            public AnimatorController fx;
+            public AnimatorController gimmick;
+        }
+
+        static List<string> LayerNames(AnimatorController controller)
+        {
+            var names = new List<string>();
+            foreach (var layer in controller.layers) names.Add(layer.name);
+            return names;
+        }
+
+        static List<string> ParameterNames(AnimatorController controller)
+        {
+            var names = new List<string>();
+            foreach (var parameter in controller.parameters) names.Add(parameter.name);
+            return names;
+        }
+
+        static Component Find(GameObject root, string typeName)
+        {
+            foreach (var component in root.GetComponentsInChildren<Component>(true))
+                if (component != null && component.GetType().FullName == typeName) return component;
+            return null;
+        }
+
+        static Type ByName(string fullName)
+        {
+            foreach (var type in TypeCache.GetTypesDerivedFrom<MonoBehaviour>())
+                if (type.FullName == fullName) return type;
+            foreach (var type in TypeCache.GetTypesDerivedFrom<ScriptableObject>())
+                if (type.FullName == fullName) return type;
+            return null;
+        }
+
+        /// <summary>Skips a test that needs a package this project has not got, by name, so the
+        /// two runs have the same number of tests in them.</summary>
+        static class Skip
+        {
+            public static void WithoutModularAvatar()
+            {
+                if (ByName(MaParametersType) == null)
+                    Assert.Ignore("Modular Avatar is not installed in this project.");
+            }
+        }
+
+        /// <summary>
+        /// An avatar of the shape this whole feature is about: a descriptor with an FX layer and
+        /// an expression parameters asset of its own, and — unless asked otherwise — a child
+        /// carrying a gimmick that merges a second layer in and declares an internal parameter
+        /// that has to be renamed for it.
+        ///
+        /// <paramref name="under"/> puts a second playable slot — Base, the locomotion one —
+        /// AHEAD of the FX slot, which is the arrangement every real avatar has and the one the
+        /// slot order used to be decided by. The array is emptied first so the order is this
+        /// rig's statement rather than whatever the descriptor happened to come with.
+        /// </summary>
+        Avatars Rig(string name, bool gimmick = true, bool keep = false, bool saved = false,
+            AnimatorController under = null)
+        {
+            var made = new Avatars();
+            made.root = new GameObject(name);
+            // A build looks for avatars in the SCENE, and an object flagged not to be saved is
+            // not carried into Play mode — so the probe that enters Play mode asks for an
+            // ordinary object and cleans up after itself.
+            if (!keep) made.root.hideFlags = HideFlags.DontSave;
+            _made.Add(made.root);
+            made.animator = made.root.AddComponent<Animator>();
+            made.fx = Controller("Base", "Wave", saved ? OnPlayFx : null);
+
+            var descriptorType = ByName(DescriptorType);
+            if (descriptorType == null) return made;
+            var descriptor = made.root.AddComponent(descriptorType);
+            var so = new SerializedObject(descriptor);
+            so.FindProperty("customizeAnimationLayers").boolValue = true;
+            so.FindProperty("customExpressions").boolValue = true;
+            so.FindProperty("expressionParameters").objectReferenceValue =
+                Parameters("Wave", saved ? OnPlayParameters : null);
+            if (under != null)
+            {
+                so.FindProperty("baseAnimationLayers").arraySize = 0;
+                Slot(so, "Base").FindPropertyRelative("animatorController").objectReferenceValue =
+                    under;
+                Slot(so, "Base").FindPropertyRelative("isDefault").boolValue = false;
+            }
+            Slot(so, "FX").FindPropertyRelative("animatorController").objectReferenceValue = made.fx;
+            Slot(so, "FX").FindPropertyRelative("isDefault").boolValue = false;
+            so.ApplyModifiedPropertiesWithoutUndo();
+
+            // No gimmick without the package that provides one. The tests that are ABOUT the
+            // gimmick skip themselves by name (see Skip); the ones that are not — the plain
+            // capture, the Play mode probe — are worth running in a project that has NDMF and
+            // nothing else, because that is where the ordering constraints are pointed at
+            // plugins nobody has installed.
+            if (!gimmick || ByName(MaMergeAnimatorType) == null
+                || ByName(MaParametersType) == null) return made;
+            made.gimmick = Controller("Gimmick", "Wag");
+            var child = new GameObject("Gimmick");
+            child.transform.SetParent(made.root.transform, false);
+
+            var merge = child.AddComponent(ByName(MaMergeAnimatorType));
+            var mergeSo = new SerializedObject(merge);
+            mergeSo.FindProperty("animator").objectReferenceValue = made.gimmick;
+            mergeSo.ApplyModifiedPropertiesWithoutUndo();
+
+            var parameters = child.AddComponent(ByName(MaParametersType));
+            var parametersSo = new SerializedObject(parameters);
+            var list = parametersSo.FindProperty("parameters");
+            list.arraySize = 1;
+            var row = list.GetArrayElementAtIndex(0);
+            row.FindPropertyRelative("nameOrPrefix").stringValue = "Wag";
+            row.FindPropertyRelative("internalParameter").boolValue = true;
+            row.FindPropertyRelative("isPrefix").boolValue = false;
+            row.FindPropertyRelative("localOnly").boolValue = false;
+            // NotSynced = 0, Int = 1, Float = 2, Bool = 3 — MA's own order, the one DaerD's
+            // parameter store already reads.
+            row.FindPropertyRelative("syncType").enumValueIndex = 3;
+            parametersSo.ApplyModifiedPropertiesWithoutUndo();
+            return made;
+        }
+
+        /// <summary>The playable layer slot of this kind, added if the descriptor came without
+        /// one. The kind is matched against the serialized enum's own names rather than an
+        /// index, for the same reason the capture reads it that way.</summary>
+        static SerializedProperty Slot(SerializedObject descriptor, string kind)
+        {
+            var layers = descriptor.FindProperty("baseAnimationLayers");
+            for (int i = 0; i < layers.arraySize; i++)
+            {
+                var element = layers.GetArrayElementAtIndex(i);
+                var type = element.FindPropertyRelative("type");
+                if (type != null && type.enumValueIndex >= 0
+                    && type.enumNames[type.enumValueIndex] == kind) return element;
+            }
+            layers.arraySize++;
+            var added = layers.GetArrayElementAtIndex(layers.arraySize - 1);
+            var kinds = added.FindPropertyRelative("type");
+            for (int i = 0; i < kinds.enumNames.Length; i++)
+                if (kinds.enumNames[i] == kind) kinds.enumValueIndex = i;
+            return added;
+        }
+
+        /// <summary>An expression parameters asset syncing one named bool, in memory or as a
+        /// file — see <see cref="OnPlayFx"/> for why the difference matters.</summary>
+        UnityEngine.Object Parameters(string name, string path = null)
+        {
+            var type = ByName(ExpressionParametersType);
+            if (type == null) return null;
+            var asset = ScriptableObject.CreateInstance(type);
+            asset.name = "DD Build Params";
+            // Left savable on purpose: a build instantiates this asset and writes the copy to
+            // disk, and Instantiate carries the flags over — an asset marked not to be saved
+            // would make the build fail on a detail of the test rig.
+            if (path != null)
+            {
+                AssetDatabase.DeleteAsset(path);
+                AssetDatabase.CreateAsset(asset, path);
+            }
+            else _assets.Add(asset);
+            var so = new SerializedObject(asset);
+            var list = so.FindProperty("parameters");
+            list.arraySize = 1;
+            var row = list.GetArrayElementAtIndex(0);
+            row.FindPropertyRelative("name").stringValue = name;
+            // Bool = 2 in the SDK's own value type enum, which DaerD's parameter store reads the
+            // same way everywhere else.
+            row.FindPropertyRelative("valueType").enumValueIndex = 2;
+            // Absent on very old SDKs, where everything is synced — the same allowance DaerD's
+            // own reader of this asset makes.
+            var synced = row.FindPropertyRelative("networkSynced");
+            if (synced != null) synced.boolValue = true;
+            row.FindPropertyRelative("saved").boolValue = false;
+            so.ApplyModifiedPropertiesWithoutUndo();
+            return asset;
+        }
+
+        /// <summary>What Modular Avatar renames an internal parameter to: the name, a dollar,
+        /// and the first six bytes of the SHA-256 of the declaring component's path inside the
+        /// avatar. Written out here rather than read off a run — see
+        /// <see cref="TheRenameTableSaysWhatEachNameBecame"/> for why.</summary>
+        static string Internal(string name, string path)
+        {
+            using (var sha = System.Security.Cryptography.SHA256.Create())
+            {
+                var hash = sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(path));
+                var text = new System.Text.StringBuilder();
+                for (int i = 0; i < 6; i++) text.AppendFormat("{0:x2}", hash[i]);
+                return name + "$" + text;
+            }
+        }
+
+#if DAERD_NDMF && DAERD_VRC
+        /// <summary>Builds the avatar the way pressing bake does, in place.</summary>
+        static void Build(GameObject root) => nadena.dev.ndmf.AvatarProcessor.ProcessAvatar(root);
+#endif
+
+        /// <summary>The build's temporary assets, which are real files in a folder NDMF owns.
+        /// Cleared after every test that made any, so one test's leftovers cannot be found by
+        /// the next.</summary>
+        static void CleanBuildLeftovers()
+        {
+#if DAERD_NDMF && DAERD_VRC
+            nadena.dev.ndmf.AvatarProcessor.CleanTemporaryAssets();
+#endif
+        }
+    }
+}

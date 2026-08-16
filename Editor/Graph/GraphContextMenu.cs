@@ -85,18 +85,13 @@ namespace Yozolab.DaerD
             {
                 var stateNode = FirstSelected<StateNode>();
                 evt.menu.AppendAction(L.Tr("Set as Default State"), _ => _sync.SetDefaultState(stateNode.State));
+            }
 
-                CountConnectedTransitions(stateNode, out int incoming, out int outgoing, out int connected);
-                evt.menu.AppendAction(MenuPath(L.Tr("Select Transitions"), L.Tr("Incoming")) + " (" + incoming + ")",
-                    _ => SelectTransitions(stateNode, incoming: true, outgoing: false),
-                    incoming > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
-                evt.menu.AppendAction(MenuPath(L.Tr("Select Transitions"), L.Tr("Outgoing")) + " (" + outgoing + ")",
-                    _ => SelectTransitions(stateNode, incoming: false, outgoing: true),
-                    outgoing > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
-                evt.menu.AppendAction(MenuPath(L.Tr("Select Transitions"), L.Tr("All Connected")) + " (" + connected + ")",
-                    _ => SelectTransitions(stateNode, incoming: true, outgoing: true),
-                    connected > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+            BuildSelectTransitionsMenu(evt);
 
+            if (stateCount == 1)
+            {
+                var stateNode = FirstSelected<StateNode>();
                 int pasted = TransitionClipboard.Count;
                 string pasteSuffix = pasted > 1 ? " (" + pasted + ")" : string.Empty;
                 evt.menu.AppendAction(
@@ -240,6 +235,44 @@ namespace Yozolab.DaerD
         // the live GraphNodeBase visuals so the marks survive a rebuild.
         static List<object> s_markedSources;
 
+        public static int MarkedSourceCount => s_markedSources?.Count ?? 0;
+
+        /// <summary>
+        /// M: remember the selection as the source set of a wiring pass. Nothing is created yet —
+        /// the marks survive changing the selection, which is the whole point of them.
+        /// </summary>
+        public bool MarkSelectedAsSources()
+        {
+            var selected = _view.GetSelectedConnectables();
+            if (selected.Count == 0) return false;
+            s_markedSources = ToModels(selected);
+            return true;
+        }
+
+        /// <summary>
+        /// T: the one wiring key. With sources marked it connects every marked node to every
+        /// selected one and drops the marks; with nothing marked it chains the selection in the
+        /// order it was clicked, which is the two-node case that needs no marking at all.
+        /// Returns false when there is nothing it could mean, so the key falls through.
+        /// </summary>
+        public bool ConnectSelection()
+        {
+            s_markedSources?.RemoveAll(IsMarkedSourceStale);
+            var selected = _view.GetSelectedConnectables();
+            if (selected.Count == 0) return false;
+
+            if (MarkedSourceCount > 0)
+            {
+                _sync.CrossProductNodes(ResolveMarkedSources(), selected);
+                s_markedSources = null;
+                return true;
+            }
+
+            if (selected.Count < 2) return false;
+            _sync.ChainNodes(selected);
+            return true;
+        }
+
         public static void ClearMarkedSources() => s_markedSources = null;
 
         /// <summary>
@@ -257,7 +290,8 @@ namespace Yozolab.DaerD
                 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled;
 
             evt.menu.AppendAction(
-                MenuPath(group, L.Tr("Chain in click order ({0})", selected.Count)),
+                MenuPath(group, L.Tr("Chain in click order ({0})", selected.Count)
+                    + DaerDShortcuts.Hint(ShortcutScope.Graph, DaerDCommand.Connect)),
                 _ => _sync.ChainNodes(_view.GetSelectedConnectables()), chainStatus);
 
             BuildFanEntries(evt, selected, group);
@@ -293,6 +327,7 @@ namespace Yozolab.DaerD
                     {
                         _sync.CrossProductNodes(ResolveMarkedSources(), _view.GetSelectedConnectables(), seeded: true);
                         s_markedSources = null;
+                        _view.RefreshHint();
                     });
         }
 
@@ -342,22 +377,33 @@ namespace Yozolab.DaerD
             // Numbered, because this is the one flow in the menu that takes two passes: mark a set,
             // change the selection, then connect. Without the numbers nobody guesses the order.
             evt.menu.AppendAction(
-                MenuPath(group, L.Tr("Step 1: mark the selected {0} as sources", selected.Count)),
-                _ => s_markedSources = ToModels(_view.GetSelectedConnectables()),
+                MenuPath(group, L.Tr("Step 1: mark the selected {0} as sources", selected.Count)
+                    + DaerDShortcuts.Hint(ShortcutScope.Graph, DaerDCommand.MarkSources)),
+                _ =>
+                {
+                    s_markedSources = ToModels(_view.GetSelectedConnectables());
+                    _view.RefreshHint();
+                },
                 selected.Count > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
             evt.menu.AppendAction(
-                MenuPath(group, L.Tr("Step 2: marked ({0}) → selected ({1})", marked, selected.Count)),
+                MenuPath(group, L.Tr("Step 2: marked ({0}) → selected ({1})", marked, selected.Count)
+                    + DaerDShortcuts.Hint(ShortcutScope.Graph, DaerDCommand.Connect)),
                 _ =>
                 {
                     _sync.CrossProductNodes(ResolveMarkedSources(), _view.GetSelectedConnectables());
                     s_markedSources = null;
+                    _view.RefreshHint();
                 },
                 marked > 0 && selected.Count > 0
                     ? DropdownMenuAction.Status.Normal
                     : DropdownMenuAction.Status.Disabled);
             if (marked > 0)
                 evt.menu.AppendAction(MenuPath(group, L.Tr("Clear the source marks ({0})", marked)),
-                    _ => s_markedSources = null);
+                    _ =>
+                    {
+                        s_markedSources = null;
+                        _view.RefreshHint();
+                    });
         }
 
         static List<object> ToModels(IList<GraphNodeBase> nodes)
@@ -558,36 +604,32 @@ namespace Yozolab.DaerD
 
         // ---- transition bulk selection ---------------------------------------
 
-        /// <summary>Counts the non-default transition edges entering, leaving and touching the state.</summary>
-        void CountConnectedTransitions(StateNode stateNode, out int incoming, out int outgoing, out int connected)
+        /// <summary>
+        /// Select Transitions, over the whole selection rather than one state. The counts are
+        /// what the entry would select, so "Incoming (0)" is greyed out and says why. The
+        /// keyboard's I / O / P run the same code over the same set.
+        /// </summary>
+        void BuildSelectTransitionsMenu(ContextualMenuPopulateEvent evt)
         {
-            int inc = 0, outg = 0, conn = 0;
-            _view.edges.ForEach(e =>
-            {
-                if (!(e is TransitionEdge te) || te.IsDefaultEdge) return;
-                bool isIncoming = te.input?.node == stateNode;
-                bool isOutgoing = te.output?.node == stateNode;
-                if (isIncoming) inc++;
-                if (isOutgoing) outg++;
-                if (isIncoming || isOutgoing) conn++;
-            });
-            incoming = inc;
-            outgoing = outg;
-            connected = conn;
+            var endpoints = _view.SelectedTransitionEndpoints();
+            if (endpoints.Count == 0) return;
+
+            _view.CountConnectedTransitions(endpoints, out int incoming, out int outgoing, out int connected);
+            string group = L.Tr("Select Transitions");
+            evt.menu.AppendAction(MenuPath(group, L.Tr("Incoming")) + " (" + incoming + ")",
+                _ => _view.SelectTransitionsOf(endpoints, incoming: true, outgoing: false),
+                incoming > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+            evt.menu.AppendAction(MenuPath(group, L.Tr("Outgoing")) + " (" + outgoing + ")",
+                _ => _view.SelectTransitionsOf(endpoints, incoming: false, outgoing: true),
+                outgoing > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+            evt.menu.AppendAction(MenuPath(group, L.Tr("All Connected")) + " (" + connected + ")",
+                _ => _view.SelectTransitionsOf(endpoints, incoming: true, outgoing: true),
+                connected > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
         }
 
-        /// <summary>Replaces the graph selection with the transition edges connected to the state.</summary>
-        void SelectTransitions(StateNode stateNode, bool incoming, bool outgoing)
-        {
-            _view.ClearSelection();
-            _view.edges.ForEach(e =>
-            {
-                if (!(e is TransitionEdge te) || te.IsDefaultEdge) return;
-                if ((incoming && te.input?.node == stateNode) ||
-                    (outgoing && te.output?.node == stateNode))
-                    _view.AddToSelection(te);
-            });
-        }
+        /// <summary>What one node alone is connected to, for the commands that stay single-state.</summary>
+        void CountConnectedTransitions(StateNode stateNode, out int incoming, out int outgoing, out int connected) =>
+            _view.CountConnectedTransitions(new HashSet<Node> { stateNode }, out incoming, out outgoing, out connected);
 
         // ---- transition edge menu --------------------------------------------
 

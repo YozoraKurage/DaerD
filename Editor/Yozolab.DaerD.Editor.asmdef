@@ -1,7 +1,14 @@
 {
     "name": "Yozolab.DaerD.Editor",
     "rootNamespace": "Yozolab.DaerD",
-    "references": [],
+    "references": [
+        "vrchat.blackstartx.gesture-manager",
+        "vrchat.blackstartx.gesture-manager.editor",
+        "lyuma.av3emulator",
+        "nadena.dev.ndmf",
+        "nadena.dev.ndmf.vrchat",
+        "nadena.dev.modular-avatar.core"
+    ],
     "includePlatforms": [
         "Editor"
     ],
@@ -13,6 +20,32 @@
     "defineConstraints": [
         "UNITY_EDITOR"
     ],
-    "versionDefines": [],
+    "versionDefines": [
+        {
+            "name": "vrchat.blackstartx.gesture-manager",
+            "expression": "",
+            "define": "DAERD_GM"
+        },
+        {
+            "name": "lyuma.av3emulator",
+            "expression": "",
+            "define": "DAERD_AV3E"
+        },
+        {
+            "name": "nadena.dev.ndmf",
+            "expression": "",
+            "define": "DAERD_NDMF"
+        },
+        {
+            "name": "nadena.dev.modular-avatar",
+            "expression": "",
+            "define": "DAERD_MA"
+        },
+        {
+            "name": "com.vrchat.avatars",
+            "expression": "",
+            "define": "DAERD_VRC"
+        }
+    ],
     "noEngineReferences": false
 }

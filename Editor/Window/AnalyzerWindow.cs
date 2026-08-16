@@ -77,7 +77,7 @@ namespace Yozolab.DaerD
             Repaint();
         }
 
-        void ApplyTitle() => titleContent = new GUIContent(L.Tr("DaerD Analyzer"));
+        void ApplyTitle() => titleContent = new GUIContent(L.Tr("DD StaticAnalyze"));
 
         void OnGUI()
         {

@@ -20,6 +20,18 @@ namespace Yozolab.DaerD.Tests
             public int type;
             public float value;
             public bool convertRange;
+            // The range conversion's own four, so a test that copies through it means the
+            // same thing with the SDK absent as with it present. Without them the writer
+            // finds no property, the reader sees a conversion with no range, and the copy
+            // quietly lands on zero — the shape of bug the SDK-less run exists to catch.
+            public float sourceMin;
+            public float sourceMax;
+            public float destMin;
+            public float destMax;
+            public float chance;
+            public float valueMin;
+            public float valueMax;
+            public bool preventRepeats;
         }
 
         public bool localOnly;

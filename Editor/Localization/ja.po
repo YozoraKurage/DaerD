@@ -52,6 +52,9 @@ msgstr "無効な条件"
 msgid "Dead Transition"
 msgstr "発火しない遷移"
 
+msgid "Soloed Transition"
+msgstr "Solo された遷移"
+
 msgid "Unreachable State"
 msgstr "到達不能 State"
 
@@ -95,6 +98,15 @@ msgstr "モード '{0}' は {1} 型パラメーター '{2}' に対して無効�
 
 msgid "Transition {0} has no conditions and no exit time; it can never fire."
 msgstr "遷移 {0} には条件も Exit Time もないため、発火することがありません。"
+
+msgid "'{0}' has a soloed transition, so its other {1} transition(s) never run."
+msgstr "'{0}' には Solo された遷移があるため、他の {1} 本は評価されません。"
+
+msgid "Clear Solo"
+msgstr "Solo を解除"
+
+msgid "Turn Solo off on every transition leaving this node"
+msgstr "このノードから出る全ての遷移の Solo を解除します"
 
 msgid "State '{0}' has no incoming transition and is not a default state."
 msgstr "State '{0}' には入ってくる遷移がなく、Default State でもありません。"
@@ -306,8 +318,8 @@ msgstr "未使用パラメーター・壊れた条件・到達不能 State な�
 msgid "No issues found."
 msgstr "問題は見つかりませんでした。"
 
-msgid "DaerD Analyzer"
-msgstr "DaerD 解析"
+msgid "DD StaticAnalyze"
+msgstr "DD 静的解析"
 
 msgid "Assign an Animator Controller to analyze."
 msgstr "解析する Animator Controller を指定してください。"
@@ -954,6 +966,24 @@ msgstr "ストアで対象を非同期化"
 msgid "Clear the synced flag on the multiplexed targets in the parameter store. Their values travel through the generated channels instead, which is the whole point of the setup."
 msgstr "パラメーターストア側で、多重化する対象の synced を外します。値は生成されたチャンネル経由で送られるため、対象そのものを同期する必要はありません。"
 
+msgid "A step carries one type, so at every step of this pass the other {0} type(s) of channel sit idle and the values waiting in them wait behind steps that could not have carried them. One ring per type would run passes of {1} instead of one pass of {2:0.#} s, for {3} synced bit(s) instead of {4}."
+msgstr "1 つのステップが運べるのは 1 種類の型だけなので、この周回ではどのステップでも残り {0} 種類の型のチャンネルが遊んでいます（そこで待っている値は、自分を運べないステップの後ろで待たされています）。型ごとにリングを分けると、1 周 {2:0.#} 秒が {1} になり、同期ビットは {4} → {3} になります。"
+
+msgid "'{0}' is sent {1} times a pass, which reads as a value no older than {2:0.##} s — but the other weights leave nowhere evenly spaced to put those sends, so the worst wait is really {3:0.##} s. Mark it Req instead: a sync request puts its value on the wire at the next step boundary, which is what a heavier weight was reaching for. Evening the weights out also works, but only from a C# recipe — .Rate() is what wrote them."
+msgstr "'{0}' は 1 周に {1} 回送られるので、値は古くても {2:0.##} 秒に見えます。しかし他の重みのせいで等間隔に置ける場所が無く、実際の最悪待ちは {3:0.##} 秒です。代わりに Req を付けてください（同期リクエストなら次のステップ境界で値が線に乗ります。重みを上げて狙っていたのはそれです）。重みを揃えるのも有効ですが、それができるのは C# レシピの .Rate() だけです — 元々そこで書かれた値です。"
+
+msgid "'{0}' is the only {1} here, and a type with one target multiplexes nothing: its channel costs the {2} synced bit(s) that syncing '{0}' directly would, and the value reaches remotes no sooner for the trip. Sync it directly, or multiplex another {1} beside it."
+msgstr "'{0}' はここで唯一の {1} です。ターゲットが 1 つしかない型は何も多重化していません。そのチャンネルは '{0}' を直接同期するのと同じ {2} bit を使い、しかも値がリモートに届くのが早くなるわけでもありません。直接同期に戻すか、もう 1 つ {1} を多重化対象に加えてください。"
+
+msgid "Split By Type"
+msgstr "型ごとに分割"
+
+msgid "Build one setup per parameter type instead of this one: each type gets its own index, its own channels and its own pass. This layer is regenerated as the first type's ring and the others are added beside it — a split cannot be undone by pressing anything, so read the numbers above first."
+msgstr "このセットアップの代わりに、パラメーターの型ごとにセットアップを作ります。型ごとに index・チャンネル・周回を持ちます。このレイヤーは最初の型のリングとして再生成され、残りはその横に追加されます。分割はボタン 1 つで元に戻せないので、上の数値を先に読んでください。"
+
+msgid "The split could not be built and nothing was changed."
+msgstr "分割を構築できなかったため、何も変更していません。"
+
 # ---- sync requests ----
 
 msgid "Sync requests are enabled for '{0}', which is not multiplexed here — the entry is ignored."
@@ -965,8 +995,71 @@ msgstr "同期リクエストを受け付けます。State の同期リクエス
 msgid "Repeated steps: {0} of {1} slot(s) need a second decoder state."
 msgstr "連続送信: {1} スロット中 {0} 個にデコーダー State がもう 1 つ必要です。"
 
-msgid "Sync requests: {0} local Bool flag(s), nothing synced."
-msgstr "同期リクエスト: ローカル Bool フラグ {0} 個（同期コストなし）"
+msgid "Sync requests: {0} local Bool flag(s) and one Int, nothing synced."
+msgstr "同期リクエスト: ローカル Bool フラグ {0} 個と Int 1 個（同期コストなし）"
+
+msgid "Remote initialized flag: {0} local Bool(s) and one layer, nothing synced."
+msgstr "リモート初期化フラグ: ローカル Bool {0} 個とレイヤー 1 枚（同期コストなし）"
+
+msgid "Remote Initialized Flag"
+msgstr "リモート初期化フラグ"
+
+msgid "Generate a local Bool that turns on once this client has decoded every slot at least once — what a remote has instead of a way to ask. The wearer reads it as on from the start, so a remote that has finished initializing is Ready && !IsLocal. Costs one local Bool per slot and a second layer; nothing synced."
+msgstr "そのクライアントが全スロットを 1 度以上受信し終えたら 1 になるローカル Bool を生成します。リモートには問い合わせる手段が無く、これがその代わりです。装着者は最初から 1 なので、「初期化を終えたリモート」は Ready && !IsLocal と書けます。コストはスロット数ぶんのローカル Bool とレイヤー 1 枚で、同期は増えません。"
+
+msgid "'{0}' turns on once a remote has decoded every slot — within {1:0.#} s of arriving when nothing is lost, and later when something is. It never turns off again, and the wearer reads it as on from the start."
+msgstr "'{0}' はリモートが全スロットを受信し終えると 1 になります。取りこぼしが無ければ入室から {1:0.#} 秒以内、あれば その後です。一度 1 になったら戻りません。装着者は最初から 1 です。"
+
+msgid "Drift Suspicion Flag"
+msgstr "同期ズレ疑いフラグ"
+
+msgid "Generate a local Bool that turns on when a lap did not bring every slot, and off again when one does. Judged when a slot the pass sends exactly once comes round, so it needs no timer and no margin — and a pass with no such slot cannot carry it. Costs one local Bool per slot and a third layer; nothing synced."
+msgstr "1 周のあいだに全スロットが届かなかったとき 1 になり、届いた周で 0 に戻るローカル Bool を生成します。判定は「1 周に 1 回だけ送られるスロット」が回ってきた瞬間なので、タイマーもマージンも要りません（そのようなスロットが無い巡回では作れません）。コストはスロット数ぶんのローカル Bool とレイヤー 1 枚で、同期は増えません。"
+
+msgid "Drift suspicion flag: judged once a pass, when '{0}' comes round."
+msgstr "同期ズレ疑いフラグ: 1 周に 1 回、'{0}' が回ってきたときに判定します。"
+
+msgid "Drift suspicion flag: every step sends the same slot, so there is no lap to judge."
+msgstr "同期ズレ疑いフラグ: どのステップも同じスロットを送るため、判定できる 1 周がありません。"
+
+msgid "Drift suspicion flag: judged once a pass, on a marker of its own — one more index value ({0} in all)."
+msgstr "同期ズレ疑いフラグ: 1 周に 1 回、専用マーカーで判定します（index 値を 1 つ追加、合計 {0}）。"
+
+msgid "Every step of this pass sends the same slot, so a lap has nothing in it that could go missing and the drift flag would never come up. Give the pass a second slot, or take the flag off."
+msgstr "この周回はどのステップも同じスロットを送るため、1 周の中に欠けうるものがなく、同期ズレ疑いフラグは決して立ちません。スロットをもう 1 つ増やすか、フラグを外してください。"
+
+msgid "No slot of this pass closes a lap on its own — every one of them is either sent more than once or open to requests — so the flag is measured by giving one step an index value of its own. That costs one index value ({0} in all) and one more decoder state; the pass, the payload and the timing are unchanged."
+msgstr "この周回には 1 周を単独で閉じるスロットがありません（どのスロットも複数回送られるか、リクエスト対象です）。そのため、あるステップに専用の index 値を与えて判定します。コストは index 値 1 つ（合計 {0}）とデコーダーステート 1 つで、周回・積荷・タイミングは変わりません。"
+
+msgid "'{0}' is judged every time '{1}' comes round, which is once per pass. A remote that arrives mid-pass reads it as on for the rest of that pass — pair it with the remote initialized flag to tell that apart from a cycle that has actually started dropping steps."
+msgstr "'{0}' は '{1}' が回ってくるたび、つまり 1 周に 1 回判定されます。周の途中で入ったリモートはその周のあいだ 1 のままになるので、本当に取りこぼし始めた場合と区別したいときはリモート初期化フラグと組み合わせてください。"
+
+msgid "(no group)"
+msgstr "(グループなし)"
+
+msgid "New group…"
+msgstr "新しいグループ…"
+
+msgid "Groups: {0}, holding {1} parameter(s) — {2} local parameters and {0} layer(s), nothing synced."
+msgstr "グループ: {0} 個、対象 {1} 個 — ローカルパラメーター {2} 個とレイヤー {0} 枚（同期コストなし）"
+
+msgid "Two groups are called '{0}'. Give them different names."
+msgstr "'{0}' という名前のグループが 2 つあります。別々の名前を付けてください。"
+
+msgid "'{0}' groups parameters that already share a step, so they were never going to arrive apart. The group holds them back for nothing — drop it, or split the step."
+msgstr "'{0}' は既に同じステップを共有しているパラメーターをまとめています。もともと別々には届かないので、このグループは意味なく待たせるだけです。グループを外すか、ステップを分けてください。"
+
+msgid "The first commit of a session can carry a value nobody sent: a client whose copy starts before anything has reached it reads the index it finds — zero, which is a real slot — and decodes the channels beside it as that slot arriving. Turn on the remote initialized flag and the commit waits for it, which closes this off for good; leave it off and only the commits after the first full pass are whole."
+msgstr "セッション最初のコミットは、誰も送っていない値を運ぶことがあります。何も届かないうちに動き始めたクライアントは、見つけた index — 0 で、これは実在するスロットです — の隣にあるチャンネルを、そのスロットが到着したものとしてデコードするからです。リモート初期化フラグを ON にするとコミット自体がそれを待つようになり、この穴は塞がります。OFF のままなら、1 周し終えたあとのコミットだけが完全です。"
+
+msgid "With requests running: up to {0:0.#} s per pass."
+msgstr "リクエストが動いているとき: 1 周あたり最大 {0:0.#} 秒"
+
+msgid "Sync requests make a pass take up to {0:0.#} s instead of {1:0.#} s — a request spends an extra step before the cycle carries on where it left. That is the ceiling however often they are raised, but a target driven on every state change spends it."
+msgstr "同期リクエストがあると、1 周は {1:0.#} 秒ではなく最大 {0:0.#} 秒かかります。リクエストは 1 ステップぶん寄り道してから、巡回を離れた場所へ戻すためです。どれだけ頻繁に上げてもこれが上限ですが、ステートが変わるたびに叩くターゲットはこの上限を使い切ります。"
+
+msgid "'{0}' is sent so often that no step is left to request it from — the flag is built, but the cycle reaches the slot as fast as a request could. Drop the request: the cycle already delivers this one as fast as asking would. Lowering the weight that sends it this often would leave a step to ask from, but the weight is only settable from a C# recipe, with .Rate()."
+msgstr "'{0}' は送信頻度が高すぎて、リクエストの起点にできるステップが残っていません。フラグは作られますが、巡回のほうがリクエストと同じ速さでこのスロットに到達します。リクエストを外してください — このパラメーターは、頼まなくても同じ速さで届いています。重みを下げれば起点になるステップが残りますが、重みを設定できるのは C# レシピの .Rate() だけです。"
 
 msgid "This controller has no saved async sync setup — create one first."
 msgstr "このコントローラーには保存された巡回同期設定がありません。先に作成してください。"
@@ -1130,8 +1223,11 @@ msgstr "選択中の Behaviour をコピーします。State の右クリック�
 msgid "Append the copied behaviours to this state."
 msgstr "コピーした Behaviour をこの State に追加します。"
 
-msgid "Click a title to select (Ctrl / Shift for multi-select); Ctrl+C / Ctrl+V copies and pastes the selected behaviours."
-msgstr "タイトルをクリックで選択（Ctrl / Shift で複数選択）。選択中は Ctrl+C / Ctrl+V で Behaviour をコピー / 貼り付けします。"
+msgid "Click a title to select (Ctrl / Shift for multi-select)."
+msgstr "タイトルをクリックで選択（Ctrl / Shift で複数選択）。"
+
+msgid "{0} / {1} copies and pastes the selected behaviours."
+msgstr "選択中は {0} / {1} で Behaviour をコピー / 貼り付けします。"
 
 msgid "Copy one instance of every behaviour found on the selected states."
 msgstr "選択中の State にある Behaviour を種類ごとに 1 つコピーします。"
@@ -1142,8 +1238,11 @@ msgstr "コピーした Behaviour を選択中の全 State に追加します。
 msgid "None of the selected states have behaviours."
 msgstr "選択中の State に Behaviour はありません。"
 
-msgid "Edits apply to every selected state that has the behaviour. Click a title to select (Ctrl / Shift for multi-select); Ctrl+C / Ctrl+V copies and pastes."
-msgstr "編集内容は、その Behaviour を持つ選択中の全 State に適用されます。タイトルをクリックで選択（Ctrl / Shift で複数選択）、Ctrl+C / Ctrl+V でコピー / 貼り付け。"
+msgid "Edits apply to every selected state that has the behaviour."
+msgstr "編集内容は、その Behaviour を持つ選択中の全 State に適用されます。"
+
+msgid "{0} / {1} copies and pastes."
+msgstr "{0} / {1} でコピー / 貼り付けします。"
 
 msgid "Copy this behaviour onto the selected states that don't have it."
 msgstr "この Behaviour を、持っていない選択中の State にコピーします。"
@@ -1372,18 +1471,6 @@ msgstr "条件を編集する前にパラメーターを追加してください
 
 msgid "(set)"
 msgstr "(セット)"
-
-msgid "Greater"
-msgstr "より大"
-
-msgid "Less"
-msgstr "より小"
-
-msgid "Equals"
-msgstr "＝"
-
-msgid "NotEqual"
-msgstr "≠"
 
 msgid "{0} transitions selected"
 msgstr "{0} 件の Transition を選択中"
@@ -1614,6 +1701,18 @@ msgstr "シーンから完全一致のみを検索します。このコントロ
 
 msgid "No exact match in the scene — no avatar or MA Merge Animator references this controller."
 msgstr "シーンに完全一致がありません。このコントローラーを参照するアバターや MA Merge Animator が見つかりませんでした。"
+
+msgid "In Prefabs"
+msgstr "Prefab から"
+
+msgid "Search the project's prefabs for an MA Merge Animator referencing this controller, and take the MA Parameters beside it. Only prefabs that already reference this controller are opened, and the answer is remembered until something in the project changes."
+msgstr "プロジェクト内の Prefab から、このコントローラーを参照する MA Merge Animator を検索し、その隣の MA Parameters を採用します。開くのは既にこのコントローラーを参照している Prefab だけで、結果はプロジェクトに変更があるまで記憶されます。"
+
+msgid "No prefab in this project has an MA Merge Animator referencing this controller."
+msgstr "このコントローラーを参照する MA Merge Animator を持つ Prefab がプロジェクトにありません。"
+
+msgid "The name the built avatar gives this parameter. This row is declared internal, so it is renamed on the way in — this, not the name on the left, is what travels and what a build log will call it."
+msgstr "ビルド後のアバターがこのパラメーターに与える名前です。この行は internal 指定なので取り込み時にリネームされます。左の名前ではなくこちらが実際に同期され、ビルドログにも出ます。"
 
 msgid "{0}: {1} / {2} bit"
 msgstr "{0}: {1} / {2} bit"
@@ -2014,16 +2113,12 @@ msgstr "Bool チャンネル数は 1〜8 の範囲で指定してください。
 msgid "'{0}' belongs to the sync machinery and can't be multiplexed."
 msgstr "'{0}' は同期の仕組み側のパラメーターのため、多重化の対象にできません。"
 
-# ---- async sync (order & rates) ----
+# ---- async sync (cycle order) ----
 
-msgid "Sync Order & Rates"
-msgstr "同期の順序とレート"
 
 msgid "Tick parameters above — drag them here into the order the cycle should visit them."
 msgstr "上の一覧でパラメーターにチェックを入れると、ここに並びます。巡回する順にドラッグで並べ替えてください。"
 
-msgid "Top to bottom is the cycle order. ×N syncs a parameter N times per pass; everything else shares the steps in between."
-msgstr "上から下が巡回の順序です。×N を指定すると 1 周に N 回同期され、残りのパラメーターはその合間のステップを分け合います。"
 
 msgid "every {0:0.##} s"
 msgstr "{0:0.##} 秒ごと"
@@ -2032,26 +2127,12 @@ msgstr "{0:0.##} 秒ごと"
 msgid "(requestable)"
 msgstr "（リクエスト可）"
 
-msgid "Top to bottom is the cycle order. The timing itself is set by hand in the timeline below."
-msgstr "上から下が巡回の順序です。タイミングそのものは下のタイムラインで手動指定しています。"
 
-msgid "Top to bottom is only the listing order here — what each step sends is set cell by cell in the grid below."
-msgstr "ここでの上下は並び順にすぎません。各ステップが何を送るかは、下のグリッドでセル単位に指定します。"
 
-msgid "This setup carries an explicit cycle written in C#, so top to bottom is only the listing order and ×N only decides which parameters share a step. The pass itself is the timeline below."
-msgstr "このセットアップは C# で書かれた明示スケジュールを持っているため、ここでの上下は並び順にすぎず、×N はどのパラメーターが同じステップに乗るかだけを決めます。1 周そのものは下のタイムラインです。"
 
-msgid "Steps in the pass that send this parameter. Set it by clicking the timeline; go back to rates to have it worked out for you."
-msgstr "1 周のうちこのパラメーターを送るステップ数です。タイムラインをクリックして決めます。自動で決めさせたい場合はレートに戻してください。"
 
-msgid "Click a row to make that step send it. Every step sends exactly one slot, so a click moves the step rather than adding one."
-msgstr "行をクリックすると、そのステップがその行を送るようになります。1 ステップが送るスロットは常にちょうど 1 つなので、クリックはステップの追加ではなく置き換えです。"
 
-msgid "Click a cell to add or remove that parameter from the step; drag along a row to paint several. Everything in one column is sent together, in one go."
-msgstr "セルをクリックすると、そのステップの送信対象にパラメーターを追加／解除します。行に沿ってドラッグすればまとめて塗れます。同じ列にあるものは 1 回でまとめて送信されます。"
 
-msgid "That step already carries as many parameters of this type as its channels allow. Raise the channel count, or use another step."
-msgstr "このステップは、この型のチャンネル数の上限までパラメーターを積んでいます。チャンネル数を増やすか、別のステップを使ってください。"
 
 msgid "Split"
 msgstr "分離"
@@ -2062,23 +2143,11 @@ msgstr "このパラメーターに専用のステップを与え、上の行と
 msgid "The step this parameter rides in. Rows sharing a number share a step, are copied by one driver, and so are always sent together."
 msgstr "このパラメーターが乗るステップです。同じ番号の行は同じステップを共有し、1 つの Parameter Driver でまとめてコピーされるため、常に同時に送信されます。"
 
-msgid "Set Timing By Hand"
-msgstr "タイミングを手動指定"
 
-msgid "Write the pass out step by step instead of deriving it from the rates. It starts as the pass shown here, so nothing changes until you move something."
-msgstr "レートから 1 周を導出するのをやめ、ステップごとに書き下します。開始時点はいま表示されている 1 周と同じなので、動かすまで何も変わりません。"
 
-msgid "Steps"
-msgstr "ステップ数"
 
-msgid "Back To Rates"
-msgstr "レートに戻す"
 
-msgid "Discard the hand-written pass and let the ×N rates lay the cycle out again."
-msgstr "手動で書いた 1 周を破棄し、×N レートから巡回を組み直します。"
 
-msgid "Discard the explicit cycle this setup carries and let the ×N rates lay the pass out again."
-msgstr "このセットアップが持つ明示スケジュールを破棄し、×N レートから 1 周を組み直します。"
 
 msgid "'{0}' is never sent — no step of the pass carries it."
 msgstr "'{0}' は送信されません — 1 周のどのステップもこのパラメーターを運んでいません。"
@@ -2090,8 +2159,8 @@ msgid "{0:0.#} s ⟳"
 msgstr "{0:0.#} 秒 ⟳"
 
 
-msgid "Sync rates must be between 1 and {0} ('{1}')."
-msgstr "同期レートは 1〜{0} の範囲で指定してください（'{1}'）。"
+msgid "Sync weights must be between 1 and {0} ('{1}')."
+msgstr "同期の重みは 1〜{0} の範囲で指定してください（'{1}'）。"
 
 msgid "Everything fits into a single slot, so the index would never change and remotes would stop decoding. Lower the channel count, or add parameters."
 msgstr "すべてが 1 スロットに収まってしまうため、インデックスが変化せず、リモート側が最初の 1 回しかデコードしません。チャンネル数を下げるか、パラメーターを追加してください。"
@@ -2114,8 +2183,8 @@ msgstr "すべてのステップが同じパラメーターを送るため、イ
 msgid "Every step sends the same parameters, so only the clock tells them apart — and the clock alternates, which an odd number of steps can't do. Add or drop a step."
 msgstr "すべてのステップが同じパラメーターを送るため、両者を区別できるのはクロックだけです。クロックは位相を交互に反転させるので、ステップ数が奇数だと 1 周のつなぎ目で同じ位相が並びます。ステップを 1 つ足すか減らしてください。"
 
-msgid "The ×{0} rate on '{1}' can't be separated by the other slots; it effectively runs at ×{2}. Add parameters or lower the rate."
-msgstr "'{1}' の ×{0} レートは他のスロットでは間隔を空けきれず、実効 ×{2} で動作します。パラメーターを追加するか、レートを下げてください。"
+msgid "The ×{0} weight on '{1}' can't be separated by the other slots; it effectively runs at ×{2}. Mark it Req instead: a sync request puts the value on the wire at the next step boundary, which is what the weight was reaching for. Adding parameters gives the pass more to space it against; the weight itself is only settable from a C# recipe, with .Rate()."
+msgstr "'{1}' の ×{0} の重みは他のスロットでは間隔を空けきれず、実効 ×{2} で動作します。代わりに Req を付けてください（同期リクエストなら次のステップ境界で値が線に乗ります。重みで狙っていたのはそれです）。パラメーターを追加すれば間隔を空ける余地が増えます。重み自体を設定できるのは C# レシピの .Rate() だけです。"
 
 # ---- C# recipes ----
 
@@ -2599,9 +2668,6 @@ msgstr "Write Defaults: {0}"
 msgid "Double-click or F2 to edit"
 msgstr "ダブルクリックまたは F2 で編集"
 
-msgid "Default state"
-msgstr "Default State への接続"
-
 msgid "Return to the state machine view"
 msgstr "ステートマシン表示に戻る"
 
@@ -2697,3 +2763,626 @@ msgstr "オブジェクト"
 
 msgid "BlendShapes"
 msgstr "BlendShape"
+
+msgid "(missing)"
+msgstr "(存在しません)"
+
+msgid "(no parameter)"
+msgstr "(パラメーター未設定)"
+
+msgid "A fraction of the source state's length: 1 is its end, 0.5 is halfway, 2 is after two loops."
+msgstr "遷移元ステートの長さに対する割合です。1 で末尾、0.5 で中間、2 なら 2 周した後になります。"
+
+msgid "Where the destination state starts, as a fraction of its own length."
+msgstr "遷移先ステートの再生開始位置を、そのステートの長さに対する割合で指定します。"
+
+msgid "Duration (s)"
+msgstr "Duration（秒）"
+
+msgid "Duration (%)"
+msgstr "Duration（割合）"
+
+msgid "Crossfade length in seconds."
+msgstr "クロスフェードの長さを秒で指定します。"
+
+msgid "Crossfade length as a fraction of the source state's length — 0.25 is a quarter of it."
+msgstr "クロスフェードの長さを、遷移元ステートの長さに対する割合で指定します（0.25 でその 1/4）。"
+
+msgid "Fit the whole graph in view (A). F fits the selection."
+msgstr "グラフ全体が収まるように表示します（A キー）。F キーで選択範囲に合わせます。"
+
+msgid "Any State Retrigger"
+msgstr "Any State の自己割り込み"
+
+msgid "Transition {0} asks for {1} at the same time; it can never fire."
+msgstr "遷移 {0} は {1} を同時に要求しているため、発火することがありません。"
+
+msgid "{0} Any State transition(s) can interrupt themselves; while the condition still holds, the destination state restarts instead of playing on."
+msgstr "Any State からの遷移 {0} 本が自分自身に割り込めます。条件が成立し続けている間、遷移先ステートは先へ進まずに頭から再生し直されます。"
+
+msgid "Turn Off"
+msgstr "オフにする"
+
+msgid "Clear Can Transition To Self on these transitions"
+msgstr "これらの遷移の Can Transition To Self を解除します"
+
+msgid "{0} marked as sources — select the destinations and press {1}"
+msgstr "{0} 個を遷移元としてマーク中 — 遷移先を選んで {1} キー"
+
+msgid "{0} marked as sources — select the destinations and connect them"
+msgstr "{0} 個を遷移元としてマーク中 — 遷移先を選んで接続してください"
+
+# ---- keyboard shortcuts ----
+
+msgid "Keyboard Shortcuts"
+msgstr "キーボードショートカット"
+
+msgid "Graph"
+msgstr "グラフ"
+
+msgid "Inspector"
+msgstr "インスペクター"
+
+msgid "Shift + wheel switches layer, anywhere in the window."
+msgstr "Shift + ホイールでレイヤーを切り替えます（ウィンドウ内のどこでも）。"
+
+msgid "Rename the selected state, frame or note"
+msgstr "選択中のステート / フレーム / ノートの名前を変更"
+
+msgid "Rename the selected state's clip"
+msgstr "選択中のステートのクリップ名を変更"
+
+msgid "Select the incoming transitions"
+msgstr "入ってくる遷移を選択"
+
+msgid "Select the outgoing transitions"
+msgstr "出ていく遷移を選択"
+
+msgid "Select every connected transition"
+msgstr "繋がっている遷移をすべて選択"
+
+msgid "Fit the selection in view"
+msgstr "選択範囲が収まるように表示"
+
+msgid "Fit the whole graph in view"
+msgstr "グラフ全体が収まるように表示"
+
+msgid "Mark the selection as transition sources"
+msgstr "選択中のノードを遷移元としてマーク"
+
+msgid "Connect: marked sources to the selection, or the selection in click order"
+msgstr "接続 — マーク済みの遷移元から選択中へ。マークが無ければ選択をクリック順に連結"
+
+msgid "Move the selection to the node above"
+msgstr "選択を上のノードへ移動"
+
+msgid "Move the selection to the node below"
+msgstr "選択を下のノードへ移動"
+
+msgid "Move the selection to the node on the left"
+msgstr "選択を左のノードへ移動"
+
+msgid "Move the selection to the node on the right"
+msgstr "選択を右のノードへ移動"
+
+msgid "Copy the selected states"
+msgstr "選択中のステートをコピー"
+
+msgid "Paste states"
+msgstr "ステートを貼り付け"
+
+msgid "Paste the copied transition as a new one"
+msgstr "コピーした遷移を新しい遷移として貼り付け"
+
+msgid "Duplicate the selected states"
+msgstr "選択中のステートを複製"
+
+msgid "Select every node"
+msgstr "すべてのノードを選択"
+
+msgid "Select every transition"
+msgstr "すべての遷移を選択"
+
+msgid "Jump to the search box"
+msgstr "検索欄へ移動"
+
+msgid "Copy the selected transitions or behaviours"
+msgstr "選択中の遷移 / Behaviour をコピー"
+
+msgid "Paste onto the selected transitions or behaviours"
+msgstr "選択中の遷移 / Behaviour に貼り付け"
+
+msgid "Paste as new transitions alongside the selected ones"
+msgstr "選択中の遷移の隣に、新しい遷移として貼り付け"
+
+msgid "(unbound)"
+msgstr "(未割り当て)"
+
+
+msgid "Click a key to change it, or switch a command off to leave the key alone."
+msgstr "キーをクリックすると変更できます。オフにするとそのキーは何もしなくなります。"
+
+msgid "Press a key…"
+msgstr "キーを押してください…"
+
+msgid "Reset Shortcuts"
+msgstr "ショートカットを既定に戻す"
+
+msgid "{0} is already {1}."
+msgstr "{0} は既に「{1}」に割り当てられています。"
+
+msgid "This arrow ({0})"
+msgstr "この矢印 ({0})"
+
+msgid "All from '{0}' ({1})"
+msgstr "'{0}' の全遷移 ({1})"
+
+msgid "(no conditions)"
+msgstr "(条件なし)"
+
+# ---- DD DynamicAnalyze ----
+
+msgid "DD DynamicAnalyze"
+msgstr "DD 動的解析"
+
+msgid "Run"
+msgstr "実行"
+
+msgid "frame {0} / {1}   {2:0.###} s"
+msgstr "フレーム {0} / {1}   {2:0.###} 秒"
+
+msgid "Fit"
+msgstr "全体表示"
+
+msgid "FPS"
+msgstr "FPS"
+
+msgid "Frames per simulated second. The frame count is this times the length; jitter varies how long each one is, not how many there are."
+msgstr "シミュレート 1 秒あたりのフレーム数です。フレーム数はこれ × 秒数で決まり、ジッタが変えるのは各フレームの長さであってフレーム数ではありません。"
+
+msgid "Seconds"
+msgstr "秒数"
+
+msgid "Jitter"
+msgstr "ジッタ"
+
+msgid "How far a frame may stray from its nominal length, as a fraction of it. A controller that only works at exactly this frame rate works nowhere."
+msgstr "各フレームが基準の長さからどれだけずれてよいかを、その割合で指定します。ちょうどこのフレームレートでしか動かないコントローラーは、どこでも動きません。"
+
+msgid "Seed"
+msgstr "シード"
+
+msgid "Fixes the noise. Same settings and same seed are the same run; a new seed is the same question asked again."
+msgstr "ノイズを固定します。設定とシードが同じなら完全に同じ実行になり、シードを変えると同じ問いをもう一度別の形で試せます。"
+
+msgid "Wearer And A Remote"
+msgstr "装着者とリモート"
+
+msgid "Run two copies of the avatar off one clock, with only the synced parameters crossing between them. Off runs one, which answers questions about the Animator rather than about VRChat."
+msgstr "同じ時計で 2 つのアバターを走らせ、両者の間を渡るのは同期パラメーターだけにします。オフだと 1 つだけになり、VRChat ではなく Animator についての問いに答える形になります。"
+
+msgid "Sync Every (s)"
+msgstr "同期周期 (秒)"
+
+msgid "Seconds between samples. The wearer's synced values are read whole and handed over together, so a change that comes and goes inside one interval never leaves them."
+msgstr "サンプリングの間隔（秒）です。装着者の同期値はまとめて読まれて一括で渡るので、1 周期の中で起きて消えた変化は装着者から出ていきません。"
+
+msgid "Latency (s)"
+msgstr "遅延 (秒)"
+
+msgid "How long a sample spends on its way. The wearer's values are read when the sample goes and land this much later, so the other person acts on what was true when they were read. Zero means deliveries land the way they have always landed here — not a claim that a real trip takes no time."
+msgstr "サンプルが相手に届くまでの時間です。装着者の値はサンプル時点で読まれ、この秒数だけ後に着弾します。つまり相手が扱うのは「読まれた時点で正しかった値」です。0 は、これまでどおりの届き方をするという意味であって、実際の通信に時間が掛からないという主張ではありません。"
+
+msgid "Loss"
+msgstr "損失"
+
+msgid "Own Loss Seed"
+msgstr "損失に専用シード"
+
+msgid "Roll the lost samples from a seed of the wire's own instead of the clock's. Off is what this window has always done. On lets the frame timing be asked a new question without reshuffling which samples go missing, and the other way round."
+msgstr "どのサンプルを失うかを、時計のシードではなく線専用のシードで決めます。オフはこれまでどおりの挙動です。オンにすると、失われるサンプルの並びを変えずにフレームの揺れだけを試す（逆も同様）ことができます。"
+
+msgid "Loss Seed"
+msgstr "損失シード"
+
+msgid "Fixes which samples are lost, and nothing else. Same wire and same seed lose the same samples however the clock is changed."
+msgstr "どのサンプルが失われるかだけを固定します。線とこのシードが同じなら、時計をどう変えても失われるサンプルは同じです。"
+
+msgid "Round Like The Wire"
+msgstr "実際の同期精度で丸める"
+
+msgid "Floats to 8 bits across -1..1, Ints to a byte, Bools to a bit. On, because that is what a remote actually holds."
+msgstr "Float は -1〜1 を 8bit、Int は 1 バイト、Bool は 1 ビットに丸めます。リモートが実際に保持しているのはこの値なので既定はオンです。"
+
+msgid "Synced: {0} parameter(s)"
+msgstr "同期対象: {0} 個"
+
+msgid "From The Store"
+msgstr "ストアから取得"
+
+msgid "From The Build"
+msgstr "ビルドから取得"
+
+msgid "Fill this from the expression parameters the recorded avatar's own build produced — the list VRChat would really sync, after everything that renames or adds to it. Available once a build of that avatar has been watched this session, which entering Play mode is."
+msgstr "記録対象アバターのビルドが生成した Expression Parameters から埋めます。リネームや追加をすべて済ませたあとの、VRChat が実際に同期するリストです。このセッション中にそのアバターのビルドを見ていれば使えます（Play モードへ入るのがそれです）。"
+
+msgid "No run yet — press Run."
+msgstr "まだ実行していません。「実行」を押してください。"
+
+msgid "Restart"
+msgstr "開き直す"
+
+msgid "Pause"
+msgstr "一時停止"
+
+msgid "Play"
+msgstr "再生"
+
+msgid "Follow"
+msgstr "追従"
+
+msgid "Inputs"
+msgstr "入力"
+
+msgid "How long a run covers. In a live session it is how much history the window keeps."
+msgstr "1 回の実行が覆う長さです。ライブでは、どれだけの履歴を残すかになります。"
+
+msgid "Remote Lag Rows"
+msgstr "リモート遅延の行"
+
+msgid "A row per parameter saying how long the other person has been looking at a different value. For a multiplexed target that is the age of their copy — the remote view, as a number."
+msgstr "パラメーターごとに「相手が別の値を見ている時間」を 1 行で表示します。多重化されたターゲットではそれが相手のコピーの古さ、つまりリモート視点そのものになります。"
+
+msgid "Press Play or Restart to open a live session."
+msgstr "「再生」か「開き直す」でライブセッションを開きます。"
+
+msgid "Poke"
+msgstr "操作先"
+
+msgid "Wearer"
+msgstr "装着者"
+
+msgid "Remote"
+msgstr "リモート"
+
+msgid "Timed inputs ({0})"
+msgstr "時刻指定の入力（{0} 件）"
+
+msgid "s"
+msgstr "秒"
+
+msgid "Moved"
+msgstr "変化あり"
+
+msgid "Timed"
+msgstr "時刻指定"
+
+msgid "Save Run…"
+msgstr "実行を保存…"
+
+msgid "Open Run…"
+msgstr "実行を開く…"
+
+msgid "Load As Timed Inputs…"
+msgstr "時刻指定の入力として読み込む…"
+
+msgid "Save Run"
+msgstr "実行を保存"
+
+msgid "Where to keep this run."
+msgstr "この実行の保存先です。"
+
+msgid "Open Run"
+msgstr "実行を開く"
+
+msgid "Load As Timed Inputs"
+msgstr "時刻指定の入力として読み込む"
+
+msgid "Export As AnimationClip…"
+msgstr "AnimationClip として書き出す…"
+
+msgid "Export As AnimationClip"
+msgstr "AnimationClip として書き出す"
+
+msgid "Where to put the exported clip."
+msgstr "書き出したクリップの保存先です。"
+
+msgid "DD runs"
+msgstr "DD の実行"
+
+msgid "Compare With…"
+msgstr "重ねて比較…"
+
+msgid "Compare With"
+msgstr "重ねて比較"
+
+msgid "Stop Comparing"
+msgstr "比較をやめる"
+
+msgid "This file is not a DD run: it does not begin with the run marker."
+msgstr "このファイルは DD の実行ではありません。先頭に実行の目印がありません。"
+
+msgid "This run is in format version {0} and this build of DaerD reads up to version {1}. Update DaerD to open it."
+msgstr "この実行は形式バージョン {0} で、この DaerD が読めるのはバージョン {1} までです。開くには DaerD を更新してください。"
+
+msgid "This run is damaged: it does not hold as many values as it says it does."
+msgstr "この実行は壊れています。宣言されている数の値が入っていません。"
+
+msgid "There is no run at '{0}'."
+msgstr "'{0}' に実行がありません。"
+
+msgid "Δ {0:0.###} s"
+msgstr "Δ {0:0.###} 秒"
+
+msgid "worst {0:0.###} s: {1}"
+msgstr "最大 {0:0.###} 秒: {1}"
+
+msgid "{0} state(s) with a Parameter Driver can be entered from themselves by a transition of no length ({1}). A transition of no length is finished inside the frame it begins on, so this run has no frame in which to see the re-entry and those drivers fire once instead of every time."
+msgstr "Parameter Driver を持つ {0} 個のステートが、長さ 0 の遷移で自分自身から入り直せる形になっています（{1}）。長さ 0 の遷移は始まったフレームの内に終わっているので、この実行には再入場を見られるフレームが無く、それらのドライバは毎回ではなく 1 回だけ走ります。"
+
+msgid "{0} locomotion parameter(s) carry the wearer's own number to the other person here ({1}). On a headset the other person's copy counts playspace movement and the wearer's own does not, so those two numbers are not meant to agree."
+msgstr "{0} 個のロコモーション用パラメーターは、ここでは装着者自身の値がそのまま相手へ運ばれます（{1}）。実機では相手側のコピーだけがプレイスペース移動を勘定に入れ、装着者自身のコピーは入れないので、この 2 つの数値は本来一致しません。"
+
+msgid "{0} Animator Layer Control(s) are not run here. A layer's weight scales everything it writes, so a run can report values a headset would not."
+msgstr "{0} 個の Animator Layer Control は実行されません。レイヤーの重みはそのレイヤーが書くものすべてを増減させるので、実機とは違う値が記録されることがあります。"
+
+msgid "Not run here, and nothing recorded depends on them: {0}. They reach the player rather than the controller — so a run cannot show tracking left off, only that it was never turned back on in the parameters."
+msgstr "実行されませんが、記録される値には影響しません: {0}。これらはコントローラーではなくプレイヤー側に効くためです（トラッキングを切ったままかどうかは、この実行では分かりません）。"
+
+msgid " and {0} more"
+msgstr " ほか {0} 件"
+
+msgid "What this run does not promise ({0})"
+msgstr "この実行が保証しないこと ({0})"
+
+msgid "{0} never enters {1} of layer {2}'s states ({3}). Nothing this run did asked for them, which is not the same as nothing being able to — only a run that entered them tells those two apart."
+msgstr "{0} はレイヤー {2} のステートのうち {1} 個に一度も入りませんでした（{3}）。この実行がやったことがそれらを求めなかっただけで、そもそも入れないのかどうかは別の話です。両者を見分けられるのは、実際に入った実行だけです。"
+
+msgid "{0} is never seen in {1} of layer {2}'s transitions ({3}). Read off the via row, which catches a transition only while it is blending — a route this run cannot name is neither counted here nor cleared."
+msgstr "{0} はレイヤー {2} の遷移のうち {1} 本を通るところが一度も見えませんでした（{3}）。via 行から読んでおり、この行はブレンド中の遷移しか捉えられません。名前を特定できない経路は、ここに数えられも除外されもしていません。"
+
+msgid "{0} change(s) came and went inside one sync period and never left the wearer ({1}). The wire reads the whole set once a period, so a value back where it started by the next reading was never sent at all."
+msgstr "{0} 件の変化が 1 同期周期の中で起きて消え、装着者の外へ出ませんでした（{1}）。同期は 1 周期に 1 回まとめて値を読むので、次の読み取りの時点で元に戻っていた値は、そもそも送られていません。"
+
+msgid "{0} synced value(s) arrive changed rather than late ({1}). A Float crosses as 8 bits over -1..1 and an Int as a byte over 0..255, so a value outside that is a different number when it lands."
+msgstr "{0} 件の同期値が、遅れてではなく変えられて届きます（{1}）。Float は -1..1 を 8 bit で、Int は 0..255 を 1 byte で渡るので、その範囲の外にある値は届いた時点で別の数値です。"
+
+msgid "{0} parameter(s) are pressed here and never leave the wearer ({1}). They are not on the wire and VRChat does not carry them by itself, so whatever they do, they do to one person."
+msgstr "{0} 個のパラメーターがここで操作されていますが、装着者の外へ出ません（{1}）。同期対象に入っておらず、VRChat が自前で運ぶものでもないので、何が起きても 1 人にしか起きません。"
+
+msgid "What this run found ({0})"
+msgstr "この実行で分かったこと ({0})"
+
+msgid "Remotes"
+msgstr "リモートの人数"
+
+msgid "How many other people are in the instance. Each one is another copy of the avatar running a real Animator, so the run costs about that much more — and each of them arrives at a time of their own, which is where the failures that only happen to the second person live."
+msgstr "インスタンスにいる他人の人数です。1 人につきアバターのコピーが 1 つ増え、それぞれ本物の Animator を回すので、実行時間もその分だけ増えます。入室時刻は人ごとに別々で、「2 人目以降でだけ出る」不具合はまさにそこに潜みます。"
+
+msgid "{0} remotes is {0} more Animators stepped every frame. Nothing stops you; it will simply take about that much longer."
+msgstr "リモート {0} 人は、毎フレーム {0} 体ぶんの Animator を回すということです。止めはしません。単純にその分だけ時間がかかります。"
+
+msgid "Remote Joins At (s)"
+msgstr "リモートの入室 (秒)"
+
+msgid "Remote {0} Joins At (s)"
+msgstr "リモート {0} の入室 (秒)"
+
+msgid "When this one turns up. Somebody who walks in while a cycle is already running is the case a single remote can only ever ask about at the very first frame."
+msgstr "この人がいつ来るかです。すでに回っている巡回の途中で入ってくる状況は、リモートが 1 人だけの実行では最初のフレームでしか試せません。"
+
+msgid "Clear"
+msgstr "解除"
+
+msgid "Set this trigger on the client this row belongs to"
+msgstr "この行のクライアントでこの Trigger を立てます"
+
+msgid "When the other person turns up. Zero is everybody loading together, which is the one case that stops happening after the first minute of an instance. Somebody who arrives later is handed every synced value at once and has to work the rest out from there — which is what the flags about being caught up are for."
+msgstr "相手がいつ来るかです。0 は全員同時に読み込む場合ですが、それはインスタンスの最初の 1 分を過ぎると起きなくなります。あとから来た人は同期値を一括で受け取り、残りはそこから自力で追いつく必要があります（追いつけたかを示す各フラグはそのためのものです）。"
+
+msgid "This setup carries a pass written out step by step. It is shown here and still built as it stands, but hand timing is no longer set up in this wizard — sync requests do what it was for."
+msgstr "このセットアップはステップごとに書き出された周回を持っています。ここに表示し、そのまま生成もしますが、手動タイミングの作成はこのウィザードでは行いません（同期リクエストが同じ用途を満たします）。"
+
+msgid "This setup carries an explicit cycle written in C#. It is shown here and still built as it stands, but a cycle is no longer written in this wizard — sync requests do what it was for."
+msgstr "このセットアップは C# で書かれた明示的な巡回順を持っています。ここに表示し、そのまま生成もしますが、巡回順の記述はこのウィザードでは行いません（同期リクエストが同じ用途を満たします）。"
+
+
+msgid "This setup carries a pass written out step by step, so top to bottom is only the listing order. The pass itself is the timeline below."
+msgstr "このセットアップはステップごとに書き出された周回を持っているため、上から下は並び順の表示にすぎません。周回そのものは下のタイムラインです。"
+
+msgid "Cycle Order"
+msgstr "巡回順"
+
+msgid "Top to bottom is the cycle order, and every parameter gets one place in the pass. A value that has to reach remotes the moment it changes is marked Req instead — the cycle then sends it at the next step rather than when its turn comes."
+msgstr "上から下が巡回順で、各パラメーターは 1 周に 1 か所ずつ入ります。変わった瞬間にリモートへ届けたい値は代わりに Req を付けてください（順番を待たず、次のステップで送られます）。"
+
+msgid "This setup carries an explicit cycle written in C#, so top to bottom is only the listing order. The pass itself is the timeline below."
+msgstr "このセットアップは C# で書かれた明示的な巡回順を持っているため、上から下は並び順の表示にすぎません。周回そのものは下のタイムラインです。"
+
+msgid "Steps of the pass that send this parameter. A setup saved with per-target weights keeps them; new ones give every parameter one place and use Req for the values that cannot wait."
+msgstr "このパラメーターを送る周回のステップ数です。ターゲットごとの重みを持つ保存済みセットアップはそのまま保たれます。新規は各パラメーター 1 か所ずつで、待てない値には Req を使ってください。"
+
+msgid "Back To Cycle Order"
+msgstr "巡回順に戻す"
+
+msgid "Discard the pass this setup carries and lay the cycle out from the list above again. There is no way back to it from here."
+msgstr "このセットアップが持っている周回を破棄し、上の一覧から巡回を組み直します。ここから元に戻す手段はありません。"
+
+msgid "Nothing is on the wire, so the other person learns nothing at all. Their copy runs on its own defaults for the whole run, and every difference between the two is that rather than anything this controller does."
+msgstr "同期対象が 1 つも無いので、相手は何も知りません。相手のコピーは最後まで自分の初期値のまま動き、2 つのコピーの差はすべてそれが理由であって、このコントローラーの挙動ではありません。"
+
+msgid "{0} synced name(s) are not parameters of this controller ({1}). Nothing carries them because there is nothing to carry — the usual reason is a parameter store that has moved on since the controller did."
+msgstr "同期対象の名前のうち {0} 個が、このコントローラーのパラメーターにありません（{1}）。運ぶ中身が無いので何も運ばれません。よくある原因は、コントローラーより先にパラメーターストアだけが変わっていることです。"
+
+msgid "{0} timed input(s) press something on the wearer that is not on the wire ({1}). Whatever they do, they do to one person — worth knowing now, while the list is still being written."
+msgstr "時刻指定の入力のうち {0} 件が、同期対象でないパラメーターを装着者側で操作しています（{1}）。何が起きても 1 人にしか起きません。一覧をまだ書き換えられる今のうちに知っておく価値があります。"
+
+msgid "≠ store"
+msgstr "≠ ストア"
+
+msgid "This is not the set the avatar's parameter store calls synced. Deliberate for a run asking what happens without one of them; stale otherwise."
+msgstr "アバターのパラメーターストアが同期対象と言っている集合とは違います。「1 つ外したらどうなるか」を試す実行なら意図どおりですが、そうでなければ古いままです。"
+
+msgid "This controller has no parameter by this name."
+msgstr "このコントローラーには、この名前のパラメーターがありません。"
+
+msgid "A long run"
+msgstr "長い実行"
+
+msgid "This works out at about {0:N0} samples — {1:N0} rows over {2:N0} frames. Nothing is wrong with that; it will simply take a while, and a shorter run or fewer people costs proportionally less."
+msgstr "この設定はおよそ {0:N0} サンプル（{2:N0} フレーム × {1:N0} 行）になります。間違いではありませんが、それなりに時間が掛かります。長さを短くするか人数を減らせば、その分だけ軽くなります。"
+
+msgid "Compare With This Run"
+msgstr "今の実行と比較"
+
+msgid "Δ {0} {1}"
+msgstr "Δ {0} {1}"
+
+# ---- DD DynamicAnalyze (Rec) ----
+
+msgid "Rec"
+msgstr "記録"
+
+msgid "Record"
+msgstr "記録開始"
+
+msgid "Stop"
+msgstr "停止"
+
+msgid "Animator"
+msgstr "Animator"
+
+msgid "The avatar to record. Drop the object wearing it here, or pick one out of the list beside this — the list is everything a graph is currently driving, which is what an avatar being worn looks like from outside."
+msgstr "記録する対象のアバターです。着用中のオブジェクトをここにドロップするか、隣の一覧から選んでください。一覧に出るのは「いまグラフに駆動されている Animator」で、外から見たアバター着用状態そのものです。"
+
+msgid "Running"
+msgstr "実行中"
+
+msgid "Every Animator some PlayableGraph is writing to right now, named after the tool holding it where a tool does. A tick marks the ones running this controller."
+msgstr "いずれかの PlayableGraph が現在書き込んでいる Animator の一覧です。ツールが掴んでいるものはツール名付きで表示され、このコントローラーを実行しているものにはチェックが付きます。"
+
+msgid "Record On Play"
+msgstr "Play 開始で記録"
+
+msgid "Start recording as soon as an avatar running this controller appears in Play mode. Kept across entering Play mode, which is the only way to catch the first second of a session — by the time the window can be clicked, it has gone."
+msgstr "Play モード中にこのコントローラーを実行しているアバターが現れた時点で、自動的に記録を開始します。この設定は Play 突入をまたいで保持されます。最初の 1 秒を捉える手段はこれだけです（ウィンドウをクリックできる頃には過ぎています）。"
+
+msgid "Record Clones"
+msgstr "クローンも記録"
+
+msgid "Record the copies of this avatar that other people in the instance are seeing — Av3Emulator's non-local clones — into the same trace, under a scope each beside the wearer's. Whoever is there when the recording starts is who is in it; one made after that is caught by starting another recording."
+msgstr "インスタンス内の他人が見ているこのアバターのコピー（Av3Emulator の Non-Local クローン）を、同じトレースに、着ている側と並ぶスコープを 1 つずつ与えて記録します。記録開始の時点で居た顔ぶれが対象で、その後に増えたぶんは記録を取り直せば入ります。"
+
+msgid "Not in Play mode. Start the avatar running and press Record — or arm the toggle above and it will start on its own."
+msgstr "Play モードではありません。アバターを動かしてから「記録開始」を押してください。上のトグルを入れておけば自動で始まります。"
+
+msgid "Recording — {0} frame(s), {1} frame(s) missed."
+msgstr "記録中 — {0} フレーム、取り逃し {1} フレーム。"
+
+msgid "Waiting for an avatar running this controller to appear."
+msgstr "このコントローラーを実行しているアバターが現れるのを待っています。"
+
+msgid "Reading the graph that is running this controller, so the states, transitions and layer weights are named."
+msgstr "このコントローラーを実行しているグラフを読んでいます。ステート・遷移・レイヤーウェイトまで名前付きで記録されます。"
+
+msgid "Reading the graph that is running this avatar's own build, so the states, transitions and layer weights are named — out of the {0} the build produced rather than the controller in the field, which is not what is playing."
+msgstr "このアバター自身のビルドを実行しているグラフを読んでいます。ステート・遷移・レイヤーウェイトまで名前付きで記録されます。名前はフィールドのコントローラーではなく、ビルドが生成した {0} から取っています（動いているのはそちらです）。"
+
+msgid "Nothing in this avatar's graph is running this controller. Its parameters are recorded; nothing can be said about layers or states."
+msgstr "このアバターのグラフには、このコントローラーを実行しているものがありません。パラメーターは記録されますが、レイヤーやステートについては何も言えません。"
+
+msgid "No graph is driving this Animator, so it is being read directly. Nothing VRChat-shaped is happening to this avatar."
+msgstr "この Animator を駆動しているグラフが無いため、Animator を直接読んでいます。このアバターには VRChat 相当の仕組みは何も掛かっていません。"
+
+msgid "Reading {0} more copy(s) of this avatar as other people see it — their rows are under {1} and the scopes after it."
+msgstr "他人から見えているこのアバターのコピーを、さらに {0} 体読んでいます。その行は {1} 以降のスコープに入ります。"
+
+msgid "{0} frame(s) recorded. Entering Play mode again drops them — save the run to keep it."
+msgstr "{0} フレーム記録しました。次に Play モードへ入ると失われます。残すなら実行を保存してください。"
+
+msgid "Nothing in the scene is being driven by a graph."
+msgstr "グラフに駆動されているものがシーンにありません。"
+
+msgid "Took {0} input(s) from the recording into {1} track(s)."
+msgstr "記録から {0} 件の入力を取り込み、{1} 本のトラックに分けました。"
+
+msgid "{0} name(s) a parameter driver writes are left out ({1}). The run applies the drivers itself, so replaying these would apply each of them twice."
+msgstr "パラメータードライバーが書く {0} 個の名前は入れていません（{1}）。ドライバーは実行側が自分で適用するので、これらを流し直すと二重に適用されます。"
+
+msgid "{0} name(s) an animation writes onto the Animator are left out ({1}). The run plays the same clips, so replaying these would fight what they write every frame."
+msgstr "アニメーションが Animator に書き込む {0} 個の名前は入れていません（{1}）。実行側も同じクリップを再生するので、これらを流し直すと毎フレーム書き合いになります。"
+
+msgid "Mute"
+msgstr "ミュート"
+
+msgid "Leave this track out of the run. Part of the experiment and saved with it: a run of the recording without its gestures is a question, and a saved answer has to be able to say it was asked."
+msgstr "このトラックを実行から外します。ミュートは実験の一部で、保存にも含まれます。「ジェスチャー抜きで記録を回す」は一つの問いであり、保存した答えはその問いを言えなければなりません。"
+
+msgid "Solo"
+msgstr "ソロ"
+
+msgid "Run this track and nothing else, until you turn it off again. Not saved with the run — it is a way of looking rather than part of the experiment, and the muting underneath it is left exactly as it was."
+msgstr "解除するまで、このトラックだけを実行します。ソロは保存されません。実験の一部ではなく見方の問題であり、下にあるミュートの設定はそのまま残ります。"
+
+msgid "Name"
+msgstr "名前"
+
+msgid "Rename this track. The name is how a track is found again, so a renamed one is no longer one this window will take from a recording for you — which is the point of renaming it."
+msgstr "このトラックの名前を変えます。トラックは名前で見つけ直すので、名前を変えたトラックはもうこのウィンドウが記録から取り直してくれる対象ではありません。名前を変えるとはそういうことです。"
+
+msgid "Re-take"
+msgstr "取り直し"
+
+msgid "Take this one track down from a recording again and leave the rest of the list alone. What it holds now is replaced by what that recording has in it, including nothing."
+msgstr "このトラックだけを記録から取り直し、他の行はそのままにします。今入っている内容は、その記録が持っている内容（何も無い場合も含む）で置き換わります。"
+
+msgid "Remove this whole track and everything in it. Muting leaves it in the file; this does not."
+msgstr "このトラックを中身ごと削除します。ミュートはファイルに残りますが、こちらは残りません。"
+
+msgid "The {0} track is frozen: it replays what touched the avatar that day, and the rest of the inputs are no longer what it was recorded beside. Nothing here works out where a contact or a physbone would have fired instead. Mute it to ask the question without the world in it, or play the inputs into a real avatar and record the answer."
+msgstr "{0} トラックは凍った入力です。記録した日にアバターへ触れたものをそのまま再生しますが、他の入力はもう記録時のものではありません。コンタクトや PhysBone が代わりにどこで発火したかを、ここでは計算しません。世界抜きで問うならミュートし、世界ごと問うなら実際のアバターへ入力を流して答えを記録してください。"
+
+msgid "Play Inputs"
+msgstr "入力を流す"
+
+msgid "Stop Sending"
+msgstr "送出を止める"
+
+msgid "Press the timed inputs into the avatar GestureManager is holding, at the seconds they say, through the tool's own way of setting one — so the radial menu and everything else watching agree with the avatar. Start a recording as well and the result is the same experiment run for real, to lay against the simulated one."
+msgstr "GestureManager が掴んでいるアバターへ、時刻付き入力をそれぞれの秒に合わせて流し込みます。値の設定はツール自身の経路を通すので、ラジアルメニューやその他の表示がアバターと食い違いません。同時に記録を回せば、同じ実験を実機で走らせた結果になり、シミュレーション側と並べて比べられます。"
+
+msgid "Send The World"
+msgstr "World も流す"
+
+msgid "Send the World track too. Off by default: those values came from contacts and physbones, and in Play mode those components are running and writing the same parameters — two authors on one value, and which wins is a race. Worth turning on for a scene that has none of them, or to see what the recorded world does to an edited avatar."
+msgstr "World トラックも流します。既定はオフです。これらの値はコンタクトや PhysBone が書いたもので、Play モードではその実物が動いて同じパラメーターを書いているため、1 つの値に書き手が 2 人いる状態になり、どちらが勝つかは競争になります。そうしたコンポーネントが無いシーンや、記録された世界が編集後のアバターに何をするかを見たいときに入れてください。"
+
+msgid "Sending the timed inputs — {0} of {1} pressed, {2:0.#} s to go."
+msgstr "時刻付き入力を送出中 — {1} 件中 {0} 件を押しました。残り {2:0.#} 秒。"
+
+msgid "{0} of them are not being sent: the avatar works them out itself ({1})."
+msgstr "うち {0} 件は送っていません。アバターが自分で計算する値です（{1}）。"
+
+msgid "Nothing is written down to send. Timed inputs are written in the other two moods, or taken off a recording with Load As Timed Inputs."
+msgstr "送る入力が書かれていません。時刻付き入力は他の 2 つのモードで書くか、「時刻付き入力として読み込む」で記録から取り込んでください。"
+
+msgid "GestureManager is not holding this avatar, so there is nowhere to press its buttons. Only its own way of setting a parameter keeps the radial menu and the avatar saying the same thing, so nothing is sent without it."
+msgstr "GestureManager がこのアバターを掴んでいないため、ボタンを押す先がありません。ラジアルメニューとアバターの表示を一致させられるのはツール自身の設定経路だけなので、それが無い場合は何も送りません。"
+
+msgid "What the build changed ({0})"
+msgstr "ビルドが変えたもの ({0})"
+
+msgid "The build renamed {0} parameter(s) ({1}). The name on the left is the one written in the editor; the one on the right is what the built avatar wears, and what a recording of it says."
+msgstr "ビルドは {0} 個のパラメーターを改名しました（{1}）。左がエディタ上で書いた名前、右がビルド後のアバターが実際に持っている名前です。記録に出てくるのは右の名前です。"
+
+msgid "The build renamed {0} PhysBone prefix(es) ({1}). A prefix names a group rather than a parameter, so nothing is called this on its own — what changed is the spelling every contact and physbone parameter under it now uses."
+msgstr "ビルドは {0} 個の PhysBone プレフィックスを改名しました（{1}）。プレフィックスはパラメーターそのものではなくグループの名前なので、この名前のパラメーターがあるわけではありません。変わったのは、その配下のコンタクトや PhysBone のパラメーターが使う綴りです。"
+
+msgid "{0} added {1} parameter(s) ({2}). Read as the difference across a whole phase, so it is what everything running in it did between them — not what any one plugin did."
+msgstr "{0} で {1} 個のパラメーターが増えました（{2}）。フェーズ 1 つぶんの差分として読んでいるので、そのフェーズで動いたものすべての合計であって、特定のプラグインがやったこととは限りません。"
+
+msgid "{0} took {1} parameter(s) away ({2}). The same reading across a whole phase: a name here is one the avatar's playable layers no longer declared by the end of it, whatever removed it."
+msgstr "{0} で {1} 個のパラメーターが無くなりました（{2}）。同じくフェーズ 1 つぶんの差分で、ここに出る名前は、そのフェーズの終わりにはアバターのプレイアブルレイヤーがもう宣言していなかったものです。何が消したのかまでは分かりません。"
+
+msgid "{0} parameter(s) travel in the end. That is what the expression parameters this build produced call synced — the list VRChat really carries, rather than the one the store was written with."
+msgstr "最終的に同期対象となるのは {0} 個です。これはこのビルドが生成した Expression Parameters が同期対象と言っている数で、VRChat が実際に運ぶ一覧です（ストアに書かれた一覧ではありません）。"

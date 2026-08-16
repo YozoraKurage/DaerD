@@ -67,11 +67,15 @@ namespace Yozolab.DaerD
             ChannelsUsed(r, AnimatorControllerParameterType.Bool);
 
         /// <summary>The widest batch of one type across the slots.</summary>
-        static int ChannelsUsed(Request r, AnimatorControllerParameterType type)
+        static int ChannelsUsed(Request r, AnimatorControllerParameterType type) =>
+            ChannelsUsed(r, type, BuildSlots(r), DbtBuilder.ParametersByName(r?.controller));
+
+        static int ChannelsUsed(Request r, AnimatorControllerParameterType type,
+            List<Slot> slots, Dictionary<string, AnimatorControllerParameter> byName)
         {
             int used = 0;
-            foreach (var slot in BuildSlots(r))
-                used = Mathf.Max(used, ChannelsInSlot(r, slot, type));
+            foreach (var slot in slots)
+                used = Mathf.Max(used, ChannelsInSlot(r, slot, type, byName));
             return used;
         }
 
@@ -86,10 +90,15 @@ namespace Yozolab.DaerD
         /// — only an explicit grid can — and this is where that rule is pinned.
         /// </summary>
         internal static int ChannelsInSlot(Request r, Slot slot,
-            AnimatorControllerParameterType type)
+            AnimatorControllerParameterType type) =>
+            ChannelsInSlot(r, slot, type, DbtBuilder.ParametersByName(r?.controller));
+
+        /// <summary>The same, against an index the caller already has.</summary>
+        internal static int ChannelsInSlot(Request r, Slot slot,
+            AnimatorControllerParameterType type,
+            Dictionary<string, AnimatorControllerParameter> byName)
         {
             int used = 0;
-            var byName = DbtBuilder.ParametersByName(r.controller);
             foreach (var name in slot.targets)
             {
                 var parameter = byName.Find(name);
@@ -102,6 +111,16 @@ namespace Yozolab.DaerD
         /// regular value.</summary>
         public static float CycleSeconds(Request r) =>
             r == null ? 0f : EffectiveSchedule(r, BuildSlots(r)).Count * r.stepSeconds;
+
+        /// <summary>
+        /// The longest one pass can take once requests are in play. A detour spends a step and
+        /// gives the ring's place back, and a detour state carries no routes of its own, so the
+        /// worst a pass can be driven to is one detour between every two steps — twice the
+        /// nominal, and no worse however hard the flags are raised. Equal to
+        /// <see cref="CycleSeconds"/> for a setup nobody can request from.
+        /// </summary>
+        public static float WorstCycleSeconds(Request r) =>
+            CycleSeconds(r) * (AsyncSyncBuilder.RequestableTargets(r).Count > 0 ? 2f : 1f);
 
         /// <summary>
         /// The longest a target can go without being sent, from the actual schedule: the
@@ -121,12 +140,58 @@ namespace Yozolab.DaerD
         public static Dictionary<string, float> RefreshIntervals(Request r)
         {
             var intervals = new Dictionary<string, float>();
-            if (r == null) return intervals;
+            var visits = Visits(r, out int steps);
+            if (steps == 0) return intervals;
+
+            foreach (var entry in visits)
+            {
+                var seen = entry.Value;
+                // Seeded with the gap that closes the ring, which for a single visit is the
+                // whole pass — exactly the right answer for a target sent once.
+                int gap = seen[0] + steps - seen[seen.Count - 1];
+                for (int j = 1; j < seen.Count; j++)
+                    gap = Mathf.Max(gap, seen[j] - seen[j - 1]);
+                intervals[entry.Key] = gap * r.stepSeconds;
+            }
+            return intervals;
+        }
+
+        /// <summary>
+        /// The wait each target's share of the pass SUGGESTS, against which
+        /// <see cref="RefreshIntervals"/> is what it actually gets: the pass divided by the
+        /// steps that carry the target, rounded up.
+        ///
+        /// The two disagree more often than the ×N control lets on, and not because the
+        /// placement is careless. A pass is exactly as long as the weights add up to, so every
+        /// target's suggested window is its share of a pass that is full to the last step —
+        /// and a set of windows that fills a cycle completely often has no arrangement at all
+        /// (weights 1, 2 and 3 leave the ×2 slot only cells two apart, whichever pair it
+        /// takes). The placement spreads what it can and the honest number is the one measured
+        /// off the result; this is here so the wizard can say when the two have parted company
+        /// far enough to be worth mentioning.
+        /// </summary>
+        public static Dictionary<string, float> RefreshWindows(Request r)
+        {
+            var windows = new Dictionary<string, float>();
+            var visits = Visits(r, out int steps);
+            if (steps == 0) return windows;
+            foreach (var entry in visits)
+                windows[entry.Key] = Mathf.CeilToInt(steps / (float)entry.Value.Count)
+                    * r.stepSeconds;
+            return windows;
+        }
+
+        /// <summary>The steps that carry each target, by name — the one walk of the pass both
+        /// of the numbers above are read off.</summary>
+        static Dictionary<string, List<int>> Visits(Request r, out int steps)
+        {
+            var visits = new Dictionary<string, List<int>>();
+            steps = 0;
+            if (r == null) return visits;
             var slots = BuildSlots(r);
             var schedule = EffectiveSchedule(r, slots);
-            if (schedule.Count == 0) return intervals;
+            steps = schedule.Count;
 
-            var visits = new Dictionary<string, List<int>>();
             for (int step = 0; step < schedule.Count; step++)
                 foreach (var name in slots[schedule[step]].targets)
                 {
@@ -134,18 +199,7 @@ namespace Yozolab.DaerD
                         visits[name] = seen = new List<int>();
                     seen.Add(step);
                 }
-
-            foreach (var entry in visits)
-            {
-                var seen = entry.Value;
-                // Seeded with the gap that closes the ring, which for a single visit is the
-                // whole pass — exactly the right answer for a target sent once.
-                int gap = seen[0] + schedule.Count - seen[seen.Count - 1];
-                for (int j = 1; j < seen.Count; j++)
-                    gap = Mathf.Max(gap, seen[j] - seen[j - 1]);
-                intervals[entry.Key] = gap * r.stepSeconds;
-            }
-            return intervals;
+            return visits;
         }
 
         /// <summary>
@@ -173,9 +227,15 @@ namespace Yozolab.DaerD
             int bits = ResolveEncoding(r) == IndexEncoding.Int
                 ? 8
                 : NetworkSyncBuilder.BitsRequired(Mathf.Max(2, IndexValues(r)));
-            foreach (var type in ChannelTypes(r))
-                bits += type == AnimatorControllerParameterType.Bool ? BoolChannelsUsed(r)
-                    : type == AnimatorControllerParameterType.Float ? FloatChannelsUsed(r) * 8
+            // One index and one slot list for the whole tally: this runs several times per
+            // repaint of the wizard, and the per-type helpers each rebuilt both.
+            var byName = DbtBuilder.ParametersByName(r?.controller);
+            var slots = BuildSlots(r);
+            foreach (var type in ChannelTypes(r, byName))
+                bits += type == AnimatorControllerParameterType.Bool
+                        ? ChannelsUsed(r, type, slots, byName)
+                    : type == AnimatorControllerParameterType.Float
+                        ? ChannelsUsed(r, type, slots, byName) * 8
                     : 8;
             return bits;
         }
@@ -194,10 +254,16 @@ namespace Yozolab.DaerD
             return bits;
         }
 
-        internal static List<AnimatorControllerParameterType> ChannelTypes(Request r)
+        internal static List<AnimatorControllerParameterType> ChannelTypes(Request r) =>
+            ChannelTypes(r, DbtBuilder.ParametersByName(r?.controller));
+
+        /// <summary>The same, against an index the caller already has. Reading the parameters
+        /// rebuilds a native array every time, so anything looping over slots or types passes
+        /// one down rather than asking per call.</summary>
+        internal static List<AnimatorControllerParameterType> ChannelTypes(Request r,
+            Dictionary<string, AnimatorControllerParameter> byName)
         {
             var types = new List<AnimatorControllerParameterType>();
-            var byName = DbtBuilder.ParametersByName(r.controller);
             foreach (var name in r.targets)
             {
                 var parameter = byName.Find(name);

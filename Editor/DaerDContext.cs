@@ -86,7 +86,7 @@ namespace Yozolab.DaerD
         /// same reason as <see cref="SelectedStatesProvider"/> — the transition inspector queries
         /// it live while repainting.
         /// </summary>
-        public Func<List<(bool isDefault, IList<AnimatorTransitionBase> transitions)>> SelectedTransitionGroupsProvider;
+        public Func<List<TransitionGroup>> SelectedTransitionGroupsProvider;
 
         public bool HasController => Controller != null;
 
@@ -306,6 +306,12 @@ namespace Yozolab.DaerD
         }
 
         public void NotifyGraphStructureChanged() => GraphStructureChanged?.Invoke();
+
+        /// <summary>The user asked for the toolbar's search box (Ctrl+F). Raised by whatever
+        /// had the keyboard; the search field itself is what knows how to take focus.</summary>
+        public event Action SearchRequested;
+
+        public void RequestSearch() => SearchRequested?.Invoke();
         public void NotifyGraphRebuilt() => GraphRebuilt?.Invoke();
         public void NotifyParametersChanged() => ParametersChanged?.Invoke();
 
@@ -333,9 +339,8 @@ namespace Yozolab.DaerD
 
         /// <summary>The transitions of the currently selected edges, grouped per edge; empty when
         /// no graph has registered a provider.</summary>
-        public List<(bool isDefault, IList<AnimatorTransitionBase> transitions)> GetSelectedTransitionGroups() =>
-            SelectedTransitionGroupsProvider?.Invoke()
-            ?? new List<(bool isDefault, IList<AnimatorTransitionBase> transitions)>();
+        public List<TransitionGroup> GetSelectedTransitionGroups() =>
+            SelectedTransitionGroupsProvider?.Invoke() ?? new List<TransitionGroup>();
 
         public void NotifyLayersChanged()
         {

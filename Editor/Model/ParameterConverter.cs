@@ -260,6 +260,59 @@ namespace Yozolab.DaerD
             }
         }
 
+        /// <summary>
+        /// What a transition is waiting for, in one line: its conditions, or its exit time when
+        /// that is all it has. Drawn on an edge in the graph and on the row that names the
+        /// transition in the inspector — where an arrow carrying several is otherwise a column
+        /// of rows reading exactly the same thing.
+        /// </summary>
+        public static string SummarizeConditions(AnimatorTransitionBase transition)
+        {
+            if (transition == null) return string.Empty;
+            var conditions = transition.conditions;
+            if (conditions.Length == 0)
+            {
+                if (transition is AnimatorStateTransition st && st.hasExitTime)
+                    return "exit @ " + st.exitTime.ToString("0.##");
+                return L.Tr("(no conditions)");
+            }
+            string text = DescribeCondition(conditions[0]);
+            if (conditions.Length == 2) text += "  ·  " + DescribeCondition(conditions[1]);
+            else if (conditions.Length > 2) text += "  +" + (conditions.Length - 1);
+            return text;
+        }
+
+        /// <summary>
+        /// One condition as the graph and the analyzer both spell it: "Wet > 0.5", "!Seated",
+        /// "GestureLeft = Fist". Written once here because an edge label and an analyzer
+        /// message naming the same condition have to be recognisably the same sentence.
+        /// </summary>
+        public static string DescribeCondition(AnimatorCondition condition)
+        {
+            switch (condition.mode)
+            {
+                case AnimatorConditionMode.If: return condition.parameter;
+                case AnimatorConditionMode.IfNot: return "!" + condition.parameter;
+                case AnimatorConditionMode.Greater: return condition.parameter + " > " + DescribeThreshold(condition);
+                case AnimatorConditionMode.Less: return condition.parameter + " < " + DescribeThreshold(condition);
+                case AnimatorConditionMode.Equals: return condition.parameter + " = " + DescribeThreshold(condition);
+                case AnimatorConditionMode.NotEqual: return condition.parameter + " ≠ " + DescribeThreshold(condition);
+                default: return condition.parameter;
+            }
+        }
+
+        /// <summary>GestureLeft / GestureRight values read as gesture names ("Fist"), other
+        /// thresholds as plain numbers.</summary>
+        public static string DescribeThreshold(AnimatorCondition condition)
+        {
+            if (VrcParameters.IsGestureParameter(condition.parameter))
+            {
+                string name = VrcParameters.GestureLabel(condition.threshold);
+                if (name != null) return name;
+            }
+            return condition.threshold.ToString("0.##");
+        }
+
         public static string DescribeTransition(AnimatorTransitionBase t)
         {
             if (t == null) return "(transition)";

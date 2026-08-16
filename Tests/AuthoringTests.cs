@@ -419,17 +419,64 @@ namespace Yozolab.DaerD.Tests
                     zip = layer.stateMachine;
             Assert.IsNotNull(zip);
 
-            // From a step of another slot, the flag redirects the cycle to Send Hue ahead
-            // of the ring transition.
+            // From a step the origins rule allows, the flag sends the cycle on a detour ahead
+            // of the ring transition. Send Tail is not one: it is followed by Send Hue, and a
+            // detour returning there would repeat the index it had just written.
             var sendOutfit = FindState(zip, "Send Outfit");
             Assert.AreEqual(2, sendOutfit.transitions.Length);
-            Assert.AreEqual("Send Hue", sendOutfit.transitions[0].destinationState.name);
+            Assert.AreEqual("Send Hue (req)", sendOutfit.transitions[0].destinationState.name);
             bool conditioned = false;
             foreach (var condition in sendOutfit.transitions[0].conditions)
                 if (condition.parameter == "Zip/Req/Hue"
                     && condition.mode == AnimatorConditionMode.If)
                     conditioned = true;
             Assert.IsTrue(conditioned);
+        }
+
+        [Test]
+        public void AsyncSync_ReadyAndStale_BuildTheWatchersAndRegenerateThemInPlace()
+        {
+            var controller = Track(new AnimatorController());
+            var recipe = NewRecipe(controller, c =>
+            {
+                c.FloatParameter("Hue");
+                c.IntParameter("Outfit");
+                c.BoolParameter("Tail");
+                c.Layer("Base").NewState("S");
+                c.AsyncSync("Zip")
+                    .Targets("Hue", "Outfit", "Tail")
+                    .Ready()
+                    .Stale()
+                    .Group("Outfit", "Hue", "Tail")
+                    .SkipDriversForTest();
+            });
+
+            var warnings = recipe.Generate();
+            Assert.IsFalse(warnings.Exists(w => w.Contains("Async Sync 'Zip':")),
+                string.Join("\n", warnings));
+
+            Assert.IsNotNull(DbtBuilder.FindParameter(controller, "Zip/Ready"));
+            Assert.IsNotNull(DbtBuilder.FindParameter(controller, "Zip/Seen/Hue"));
+            Assert.IsNotNull(DbtBuilder.FindParameter(controller, "Zip/Stale"));
+            Assert.IsNotNull(DbtBuilder.FindParameter(controller, "Zip/Fresh/Hue"));
+
+            AnimatorStateMachine Watcher(string name)
+            {
+                foreach (var layer in controller.layers)
+                    if (layer.name == name) return layer.stateMachine;
+                return null;
+            }
+            Assert.AreEqual(3, Watcher("Zip Ready")?.states.Length);
+            Assert.AreEqual(4, Watcher("Zip Stale")?.states.Length);
+            Assert.AreEqual(2, Watcher("Zip Outfit")?.states.Length);
+            Assert.IsNotNull(DbtBuilder.FindParameter(controller, "Zip/Hold/Hue"));
+            Assert.IsNotNull(DbtBuilder.FindParameter(controller, "Zip/Held/Hue"));
+
+            // The watchers belong to the same call, so a second Generate rebuilds them rather
+            // than adding more beside them.
+            int layersAfterFirst = controller.layers.Length;
+            recipe.Generate();
+            Assert.AreEqual(layersAfterFirst, controller.layers.Length);
         }
 
         [Test]

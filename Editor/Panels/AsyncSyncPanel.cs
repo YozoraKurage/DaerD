@@ -97,8 +97,20 @@ namespace Yozolab.DaerD
             _form.DrawOrderSection(request);
             _form.DrawPreview(request);
             _form.DrawBlockingProblem(request);
-            foreach (var warning in AsyncSyncBuilder.Warnings(request, _form.AnimatedParameters()))
+            // Worked out once and read twice: the warnings quote it and the button below acts
+            // on it, and it is the most expensive answer this draw asks for.
+            var byType = AsyncSyncSplit.ByType(request);
+            foreach (var warning in AsyncSyncBuilder.Warnings(request, _form.AnimatedParameters(), byType))
                 EditorGUILayout.HelpBox(warning, MessageType.Warning);
+            // The split rebuilt this layer as one type's ring and added the others; the form
+            // is holding the setup that no longer exists, so it is rebound from what was saved.
+            if (_form.DrawSplitProposal(request, byType))
+            {
+                _boundLayer = null;
+                Context.NotifyParametersChanged();
+                Context.NotifyGraphStructureChanged();
+                GUIUtility.ExitGUI();
+            }
             _form.DrawStoreFix(request);
 
             EditorGUILayout.Space(4);

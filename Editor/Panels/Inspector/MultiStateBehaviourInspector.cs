@@ -85,7 +85,11 @@ namespace Yozolab.DaerD
             else
             {
                 EditorGUILayout.LabelField(
-                    L.Tr("Edits apply to every selected state that has the behaviour. Click a title to select (Ctrl / Shift for multi-select); Ctrl+C / Ctrl+V copies and pastes."),
+                    L.Tr("Edits apply to every selected state that has the behaviour.") + " "
+                        + L.Tr("Click a title to select (Ctrl / Shift for multi-select).")
+                        + DaerDShortcuts.Sentence(ShortcutScope.Inspector,
+                            DaerDCommand.Copy, DaerDCommand.Paste,
+                            L.Tr("{0} / {1} copies and pastes.")),
                     EditorStyles.miniLabel);
             }
 
@@ -307,17 +311,16 @@ namespace Yozolab.DaerD
         void HandleMultiStateBehaviourShortcuts(List<AnimatorState> states, StateMachineBehaviour[] representatives)
         {
             var e = Event.current;
-            if (e == null || e.type != EventType.KeyDown || !(e.control || e.command))
-                return;
-            if (_selectedBehaviours.Count == 0) return;
+            var command = DaerDShortcuts.Resolve(ShortcutScope.Inspector, e);
+            if (command == DaerDCommand.None || _selectedBehaviours.Count == 0) return;
             if (EditorGUIUtility.editingTextField) return;
 
-            if (e.keyCode == KeyCode.C)
+            if (command == DaerDCommand.Copy)
             {
                 _behaviours.CopyBehaviours(representatives);
                 e.Use();
             }
-            else if (e.keyCode == KeyCode.V && VrcBehaviours.ClipboardCount > 0)
+            else if (command == DaerDCommand.Paste && VrcBehaviours.ClipboardCount > 0)
             {
                 PasteBehavioursToAll(states);
                 e.Use();

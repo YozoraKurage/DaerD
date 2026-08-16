@@ -28,7 +28,7 @@ namespace Yozolab.DaerD
             DaerDWindow.Open(Selection.activeObject as AnimatorController);
         }
 
-        [MenuItem("YozoLab/DaerD Analyzer")]
+        [MenuItem("YozoLab/DD StaticAnalyze")]
         static void OpenAnalyzerFromMenu()
         {
             AnalyzerWindow.Open(Selection.activeObject as AnimatorController);

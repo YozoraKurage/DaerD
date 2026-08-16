@@ -2,6 +2,14 @@ using System.Collections.Generic;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
+#if DAERD_MA
+using MaConfig = nadena.dev.modular_avatar.core.ParameterConfig;
+using MaParameters = nadena.dev.modular_avatar.core.ModularAvatarParameters;
+using MaSyncType = nadena.dev.modular_avatar.core.ParameterSyncType;
+#endif
+#if DAERD_MA && DAERD_VRC
+using MaMergeAnimator = nadena.dev.modular_avatar.core.ModularAvatarMergeAnimator;
+#endif
 
 namespace Yozolab.DaerD
 {
@@ -22,6 +30,32 @@ namespace Yozolab.DaerD
         /// component contributes to the avatar's total, which DaerD can't see).</summary>
         public abstract int Capacity();
         public abstract List<VrcExpressionParameters.Entry> Read();
+
+        /// <summary>
+        /// What the BUILT avatar will call these parameters, for the names where that is not
+        /// what the store calls them. Empty for a store whose names are already final, which is
+        /// every store but one.
+        ///
+        /// <para>WHY THIS IS BESIDE <see cref="Read"/> AND NOT A FIELD ON THE ENTRY.</para>
+        /// An MA Parameters component can declare a parameter INTERNAL, and an internal
+        /// parameter is renamed on the way into the avatar so that two copies of the same
+        /// gimmick do not fight over one name. The store keeps saying "Hat"; what travels is
+        /// "Hat$-8842". Everything DaerD says about a synced parameter — what to put on the
+        /// wire, what a recording will be matched against — is wrong by that difference, and
+        /// the entry shape is the wrong place to carry it: the same
+        /// <see cref="VrcExpressionParameters.Entry"/> is what the VRC asset backend reads and
+        /// writes, what the sync window diffs and what <see cref="WriteAll"/> copies field by
+        /// field, so a field only one backend can ever fill would have to be decided about at
+        /// every one of those places. A separate question, asked by the two callers that need
+        /// the answer, leaves all of them alone.
+        ///
+        /// Asked as a map rather than name by name because working the answer out means walking
+        /// the object's ancestors and asking every renaming component on the way; a caller with
+        /// a list of names should pay for that once.
+        /// </summary>
+        public virtual Dictionary<string, string> EffectiveNames() =>
+            new Dictionary<string, string>();
+
         /// <summary>Aligns the store to the given entries (used by the sync command). Order
         /// is honoured where the store is ordered; MA applies it as a diff.</summary>
         public abstract void WriteAll(IList<VrcExpressionParameters.Entry> entries);
@@ -76,10 +110,12 @@ namespace Yozolab.DaerD
             if (target == null) return null;
             if (VrcExpressionParameters.Is(target))
                 return new VrcStore(target);
+#if DAERD_MA
             if (target is GameObject gameObject)
-                target = FindComponent(gameObject, MaStore.TypeName);
-            if (target is Component component && component.GetType().Name == MaStore.TypeName)
-                return new MaStore(component);
+                target = gameObject.GetComponent<MaParameters>();
+            if (target is MaParameters parameters)
+                return new MaStore(parameters);
+#endif
             return null;
         }
 
@@ -97,8 +133,68 @@ namespace Yozolab.DaerD
         {
             var vrc = VrcExpressionParameters.FindAssetFor(controller);
             if (vrc != null) return vrc;
+#if DAERD_MA
             return MaStore.FindFor(controller);
+#else
+            return null;
+#endif
         }
+
+        /// <summary>
+        /// The same question asked of the PROJECT rather than of the scene: an MA Parameters
+        /// component in a prefab asset whose MA Merge Animator references this controller.
+        ///
+        /// A separate entry point rather than a fallback inside <see cref="DetectFor"/>, and
+        /// one nothing calls on its own. A gimmick spends most of its life as a prefab that is
+        /// in no scene at all, so the scene sweep answers "nothing" about exactly the
+        /// controllers this is for — but the project sweep is a walk over every prefab in the
+        /// project, which is not a thing to do behind somebody's back while they move a mouse
+        /// (ADR 0028: the sweep is stopped at its source, and here the source is a button).
+        /// The cost is kept off the ordinary path twice over: the answer is cached per
+        /// controller until an asset changes, and prefabs are only LOADED when the dependency
+        /// table already says they mention this controller.
+        ///
+        /// Nested prefabs are found as themselves. A prefab that merely CONTAINS the prefab
+        /// carrying the Merge Animator does not depend on the controller directly, so it is
+        /// skipped — and the inner prefab is in the sweep on its own account, which is the
+        /// component a person would want to edit anyway.
+        /// </summary>
+        public static Object DetectInPrefabs(AnimatorController controller)
+        {
+#if DAERD_MA
+            return MaStore.FindInPrefabs(controller);
+#else
+            return null;
+#endif
+        }
+
+        /// <summary>Drops the prefab sweep's memory. Called on every asset import — a prefab
+        /// that has just started (or stopped) referencing the controller is the one thing a
+        /// cached answer cannot survive, and refilling costs a button press.</summary>
+        internal static void ForgetPrefabScan()
+        {
+#if DAERD_MA
+            MaStore.ForgetPrefabScan();
+#endif
+        }
+
+        /// <summary>How many project sweeps have run since the editor started, and how many
+        /// prefabs those sweeps opened. Both exist so a test can assert the two things the
+        /// design claims: that the answer is remembered, and that the dependency table keeps
+        /// the sweep from loading prefabs that have nothing to do with the controller.</summary>
+        internal static int PrefabScans =>
+#if DAERD_MA
+            MaStore.Scans;
+#else
+            0;
+#endif
+
+        internal static int PrefabLoads =>
+#if DAERD_MA
+            MaStore.Loads;
+#else
+            0;
+#endif
 
         /// <summary>
         /// The controller's parameters that have no row in the store yet, as entries ready to
@@ -194,14 +290,6 @@ namespace Yozolab.DaerD
             }
         }
 
-        internal static Component FindComponent(GameObject gameObject, string typeName)
-        {
-            foreach (var component in gameObject.GetComponents<Component>())
-                if (component != null && component.GetType().Name == typeName)
-                    return component;
-            return null;
-        }
-
         // ---- VRCExpressionParameters backend ---------------------------------
 
         class VrcStore : ParameterStore
@@ -229,20 +317,37 @@ namespace Yozolab.DaerD
 
         // ---- Modular Avatar "MA Parameters" backend ---------------------------
 
+#if DAERD_MA
         /// <summary>
-        /// Accesses nadena.dev Modular Avatar's ModularAvatarParameters component via
-        /// SerializedObject (no MA reference). Entries live in the `parameters` array:
-        /// nameOrPrefix / isPrefix / syncType (NotSynced=0, Int=1, Float=2, Bool=3) /
-        /// localOnly / saved / defaultValue. Prefix rows (PhysBone families) are preserved
-        /// but not exposed for editing.
+        /// Modular Avatar's MA Parameters component, reached through Modular Avatar's own
+        /// types — <c>ModularAvatarParameters.parameters</c>, a list of
+        /// <c>ParameterConfig</c> — behind the <c>DAERD_MA</c> versionDefine.
+        ///
+        /// <para>WHY BY TYPE RATHER THAN BY NAME.</para>
+        /// This used to be a type-name match plus SerializedObject, which is the bargain DaerD
+        /// keeps with the VRChat SDK (ADR 0009) and is the wrong bargain here. The SDK's is
+        /// paid for a reason: DaerD has to compile, run and be tested in a project that has no
+        /// SDK, so the SDK cannot be a reference. MA integration has no such half — it means
+        /// nothing at all in a project without MA — so a versionDefine deletes the code instead
+        /// of leaving it to fail quietly, and every field below becomes a compile error on the
+        /// day MA renames one rather than a row that silently stops being read on somebody
+        /// else's machine after an update. What was given up is real: the SerializedObject path
+        /// also worked against ANY component that happened to have the same field names, which
+        /// is what let the tests drive it with a stand-in of their own. They now drive the real
+        /// component and skip themselves where it is absent.
+        ///
+        /// <para>WHAT A PROJECT WITHOUT MA SEES.</para>
+        /// The same as before: nothing. <see cref="TryWrap"/> does not recognise MA components,
+        /// <see cref="DetectFor"/> and <see cref="DetectInPrefabs"/> find none — which is the
+        /// honest answer, because a project without MA has no MA components in it.
+        ///
+        /// Prefix rows (PhysBone families) are read past and never touched: they name a family
+        /// rather than a parameter, and the shared entry shape has nowhere to put one.
         /// </summary>
         class MaStore : ParameterStore
         {
-            public const string TypeName = "ModularAvatarParameters";
-            public const string MergeAnimatorTypeName = "ModularAvatarMergeAnimator";
-
-            readonly Component _component;
-            public MaStore(Component component) => _component = component;
+            readonly MaParameters _component;
+            public MaStore(MaParameters component) => _component = component;
 
             public override Object Target => _component;
             public override string Kind => "MA Params";
@@ -253,76 +358,195 @@ namespace Yozolab.DaerD
             public static Object FindFor(AnimatorController controller)
             {
                 if (controller == null) return null;
-                System.Type mergeType = null;
-                foreach (var type in TypeCache.GetTypesDerivedFrom<MonoBehaviour>())
-                    if (!type.IsAbstract && type.Name == MergeAnimatorTypeName) { mergeType = type; break; }
-                if (mergeType == null) return null;
-
-                foreach (var merge in Object.FindObjectsOfType(mergeType, true))
+#if DAERD_VRC
+                foreach (var merge in Object.FindObjectsOfType<MaMergeAnimator>(true))
                 {
-                    var component = merge as Component;
-                    if (component == null) continue;
-                    var so = new SerializedObject(component);
-                    if (so.FindProperty("animator")?.objectReferenceValue != controller) continue;
-                    for (var transform = component.transform; transform != null; transform = transform.parent)
-                    {
-                        var parameters = FindComponent(transform.gameObject, TypeName);
-                        if (parameters != null) return parameters;
-                    }
+                    if (merge == null || merge.animator != controller) continue;
+                    var parameters = Above(merge.transform);
+                    if (parameters != null) return parameters;
+                }
+#endif
+                return null;
+            }
+
+            /// <summary>The MA Parameters component on this object or the nearest parent that
+            /// has one — MA reads a merge's parameters from the same place.</summary>
+            static MaParameters Above(Transform transform)
+            {
+                for (; transform != null; transform = transform.parent)
+                {
+                    var parameters = transform.GetComponent<MaParameters>();
+                    if (parameters != null) return parameters;
                 }
                 return null;
             }
 
+            // ---- the project sweep ------------------------------------------
+
+            /// <summary>Answers per controller GUID, including "none" — a sweep that found
+            /// nothing is the expensive one, and the one most likely to be repeated.</summary>
+            static readonly Dictionary<string, Object> Answers = new Dictionary<string, Object>();
+
+            public static int Scans { get; private set; }
+            public static int Loads { get; private set; }
+
+            public static void ForgetPrefabScan() => Answers.Clear();
+
+            /// <summary>See <see cref="ParameterStore.DetectInPrefabs"/> for why this is a
+            /// button rather than a fallback.</summary>
+            public static Object FindInPrefabs(AnimatorController controller)
+            {
+                if (controller == null) return null;
+                var path = AssetDatabase.GetAssetPath(controller);
+                // A controller that is not a file cannot be a prefab's dependency, so there is
+                // nothing for the sweep to match on — and no key to remember it under.
+                if (string.IsNullOrEmpty(path)) return null;
+                var guid = AssetDatabase.AssetPathToGUID(path);
+                if (Answers.TryGetValue(guid, out var known)) return known;
+                var found = Sweep(controller, path);
+                Answers[guid] = found;
+                return found;
+            }
+
+            /// <summary>
+            /// Two stages, because the second one is the expensive one.
+            ///
+            /// <c>FindAssets</c> gives every prefab in the project and <c>GetDependencies</c>
+            /// answers out of the import database's own table, so the first stage costs a
+            /// lookup each and opens nothing. Only a prefab whose table already names this
+            /// controller is loaded, and loading a prefab pulls its meshes, materials and
+            /// textures in with it — which is the whole reason this is not simply a loop over
+            /// <c>LoadAssetAtPath</c>.
+            ///
+            /// Direct dependencies only. A prefab reaches a controller through a component
+            /// field, which is a direct reference; asking recursively would drag in every
+            /// controller referenced by every nested prefab and material and put prefabs
+            /// through stage two that cannot possibly match.
+            /// </summary>
+            static Object Sweep(AnimatorController controller, string controllerPath)
+            {
+                Scans++;
+#if DAERD_VRC
+                foreach (var guid in AssetDatabase.FindAssets("t:Prefab"))
+                {
+                    var path = AssetDatabase.GUIDToAssetPath(guid);
+                    if (string.IsNullOrEmpty(path)) continue;
+                    if (System.Array.IndexOf(AssetDatabase.GetDependencies(path, false),
+                            controllerPath) < 0)
+                        continue;
+
+                    var root = AssetDatabase.LoadAssetAtPath<GameObject>(path);
+                    if (root == null) continue;
+                    Loads++;
+                    foreach (var merge in root.GetComponentsInChildren<MaMergeAnimator>(true))
+                    {
+                        if (merge == null || merge.animator != controller) continue;
+                        var parameters = Above(merge.transform);
+                        if (parameters != null) return parameters;
+                    }
+                }
+#endif
+                return null;
+            }
+
+            // ---- reading ------------------------------------------------------
+
             public override List<VrcExpressionParameters.Entry> Read()
             {
                 var entries = new List<VrcExpressionParameters.Entry>();
-                var list = List(out _);
-                if (list == null) return entries;
-                for (int i = 0; i < list.arraySize; i++)
+                if (_component == null) return entries;
+                foreach (var config in _component.parameters)
                 {
-                    var element = list.GetArrayElementAtIndex(i);
-                    if (element.FindPropertyRelative("isPrefix")?.boolValue == true) continue;
-                    int syncType = element.FindPropertyRelative("syncType")?.intValue ?? 0;
-                    entries.Add(new VrcExpressionParameters.Entry
-                    {
-                        name = element.FindPropertyRelative("nameOrPrefix")?.stringValue ?? string.Empty,
-                        valueType = MapSyncType(syncType),
-                        typed = syncType != 0,
-                        synced = syncType != 0
-                            && element.FindPropertyRelative("localOnly")?.boolValue != true,
-                        saved = element.FindPropertyRelative("saved")?.boolValue ?? false,
-                        defaultValue = element.FindPropertyRelative("defaultValue")?.floatValue ?? 0f,
-                    });
+                    if (config.isPrefix) continue;
+                    entries.Add(EntryOf(config));
                 }
                 return entries;
             }
 
-            static VrcExpressionParameters.ValueType MapSyncType(int syncType)
+            /// <summary>One MA row in the shared entry shape. "Synced" is two of MA's fields at
+            /// once: a row with no type is not synced because there is nothing to sync it as,
+            /// and a typed row that is localOnly is declared but stays at home.</summary>
+            static VrcExpressionParameters.Entry EntryOf(MaConfig config) =>
+                new VrcExpressionParameters.Entry
+                {
+                    name = config.nameOrPrefix ?? string.Empty,
+                    valueType = MapSyncType(config.syncType),
+                    typed = config.syncType != MaSyncType.NotSynced,
+                    synced = config.syncType != MaSyncType.NotSynced && !config.localOnly,
+                    saved = config.saved,
+                    defaultValue = config.defaultValue,
+                };
+
+            /// <summary>
+            /// The renames this component's rows are subject to, asked of NDMF rather than
+            /// worked out here.
+            ///
+            /// NDMF is where the answer is: it is the framework that runs the renaming, MA is
+            /// one plugin registered with it among however many a project has installed, and
+            /// <c>ParameterInfo.ForUI</c> is the same query MA's own inspector uses to show a
+            /// person what their gimmick will really be called. Re-deriving it from
+            /// <c>internalParameter</c> and <c>remapTo</c> would be a second implementation of
+            /// somebody else's rule that agrees with it right up until the version where it
+            /// does not — and it could not see a rename applied by a component of a plugin
+            /// DaerD has never heard of, which is most of the point of asking the framework.
+            ///
+            /// Asked at the GAME OBJECT rather than at the component: NDMF resolves renames by
+            /// walking up from the object, and the component overload of that call reaches for
+            /// <c>transform.parent</c> without checking it exists, which is a null reference on
+            /// exactly the shape this is most often asked about — a gimmick prefab whose root
+            /// is not inside an avatar. The object overload checks, and includes this
+            /// component's own renames because it applies every provider on the object.
+            ///
+            /// The hole, stated: without NDMF this answers "no renames", which is what DaerD
+            /// answered before any of this existed. A project with MA but no NDMF cannot exist
+            /// (MA depends on it), so the case is theoretical — but the same is true of any
+            /// build step that renames parameters without telling NDMF, and DaerD will show
+            /// that gimmick's editor-side name and be wrong about it.
+            /// </summary>
+            public override Dictionary<string, string> EffectiveNames()
+            {
+                var renames = new Dictionary<string, string>();
+#if DAERD_NDMF && DAERD_VRC
+                if (_component == null) return renames;
+                var mappings = nadena.dev.ndmf.ParameterInfo.ForUI
+                    .GetParameterRemappingsAt(_component.gameObject);
+                foreach (var config in _component.parameters)
+                {
+                    if (config.isPrefix || string.IsNullOrEmpty(config.nameOrPrefix)) continue;
+                    if (!mappings.TryGetValue(
+                            (nadena.dev.ndmf.ParameterNamespace.Animator, config.nameOrPrefix),
+                            out var mapping))
+                        continue;
+                    if (string.IsNullOrEmpty(mapping.ParameterName)
+                        || mapping.ParameterName == config.nameOrPrefix)
+                        continue;
+                    renames[config.nameOrPrefix] = mapping.ParameterName;
+                }
+#endif
+                return renames;
+            }
+
+            static VrcExpressionParameters.ValueType MapSyncType(MaSyncType syncType)
             {
                 switch (syncType)
                 {
-                    case 1: return VrcExpressionParameters.ValueType.Int;
-                    case 3: return VrcExpressionParameters.ValueType.Bool;
+                    case MaSyncType.Int: return VrcExpressionParameters.ValueType.Int;
+                    case MaSyncType.Bool: return VrcExpressionParameters.ValueType.Bool;
                     default: return VrcExpressionParameters.ValueType.Float;
                 }
             }
 
-            static int MapValueType(VrcExpressionParameters.ValueType type)
+            static MaSyncType MapValueType(VrcExpressionParameters.ValueType type)
             {
                 switch (type)
                 {
-                    case VrcExpressionParameters.ValueType.Int: return 1;
-                    case VrcExpressionParameters.ValueType.Bool: return 3;
-                    default: return 2;
+                    case VrcExpressionParameters.ValueType.Int: return MaSyncType.Int;
+                    case VrcExpressionParameters.ValueType.Bool: return MaSyncType.Bool;
+                    default: return MaSyncType.Float;
                 }
             }
 
-            SerializedProperty List(out SerializedObject so)
-            {
-                so = new SerializedObject(_component);
-                var list = so.FindProperty("parameters");
-                return list != null && list.isArray ? list : null;
-            }
+            // ---- writing ------------------------------------------------------
 
             /// <summary>MA entries are matched by name (order carries no meaning there), so
             /// "write all" applies as a diff and leaves prefix rows untouched.</summary>
@@ -354,36 +578,24 @@ namespace Yozolab.DaerD
 
             public override void Add(VrcExpressionParameters.Entry entry)
             {
-                if (entry == null || Find(entry.name) != null) return;
-                var list = List(out var so);
-                if (list == null) return;
+                if (_component == null || entry == null || Find(entry.name) != null) return;
                 Undo.RegisterCompleteObjectUndo(_component, "Add MA Parameter");
-                int index = list.arraySize;
-                list.InsertArrayElementAtIndex(index);
-                var element = list.GetArrayElementAtIndex(index);
-                // InsertArrayElementAtIndex clones the previous row — reset everything.
-                SetString(element, "nameOrPrefix", entry.name);
-                SetString(element, "remapTo", string.Empty);
-                SetBool(element, "isPrefix", false);
-                SetBool(element, "internalParameter", false);
-                WriteEntry(element, entry);
-                so.ApplyModifiedProperties();
-                EditorUtility.SetDirty(_component);
+                var config = new MaConfig { nameOrPrefix = entry.name, remapTo = string.Empty };
+                WriteEntry(ref config, entry);
+                _component.parameters.Add(config);
+                Dirty();
             }
 
             public override bool Remove(string name)
             {
-                var list = List(out var so);
-                if (list == null) return false;
-                for (int i = 0; i < list.arraySize; i++)
+                if (_component == null) return false;
+                var list = _component.parameters;
+                for (int i = 0; i < list.Count; i++)
                 {
-                    var element = list.GetArrayElementAtIndex(i);
-                    if (element.FindPropertyRelative("isPrefix")?.boolValue == true) continue;
-                    if (element.FindPropertyRelative("nameOrPrefix")?.stringValue != name) continue;
+                    if (list[i].isPrefix || list[i].nameOrPrefix != name) continue;
                     Undo.RegisterCompleteObjectUndo(_component, "Remove MA Parameter");
-                    list.DeleteArrayElementAtIndex(i);
-                    so.ApplyModifiedProperties();
-                    EditorUtility.SetDirty(_component);
+                    list.RemoveAt(i);
+                    Dirty();
                     return true;
                 }
                 return false;
@@ -391,61 +603,71 @@ namespace Yozolab.DaerD
 
             public override bool Edit(string name, System.Action<VrcExpressionParameters.Entry> edit)
             {
-                var list = List(out var so);
-                if (list == null) return false;
-                for (int i = 0; i < list.arraySize; i++)
+                if (_component == null) return false;
+                var list = _component.parameters;
+                for (int i = 0; i < list.Count; i++)
                 {
-                    var element = list.GetArrayElementAtIndex(i);
-                    if (element.FindPropertyRelative("isPrefix")?.boolValue == true) continue;
-                    if (element.FindPropertyRelative("nameOrPrefix")?.stringValue != name) continue;
-
-                    int syncType = element.FindPropertyRelative("syncType")?.intValue ?? 0;
-                    var entry = new VrcExpressionParameters.Entry
-                    {
-                        name = name,
-                        valueType = MapSyncType(syncType),
-                        typed = syncType != 0,
-                        synced = syncType != 0
-                            && element.FindPropertyRelative("localOnly")?.boolValue != true,
-                        saved = element.FindPropertyRelative("saved")?.boolValue ?? false,
-                        defaultValue = element.FindPropertyRelative("defaultValue")?.floatValue ?? 0f,
-                    };
+                    var config = list[i];
+                    if (config.isPrefix || config.nameOrPrefix != name) continue;
+                    var entry = EntryOf(config);
                     Undo.RegisterCompleteObjectUndo(_component, "Edit MA Parameter");
                     edit(entry);
-                    SetString(element, "nameOrPrefix", entry.name);
-                    WriteEntry(element, entry);
-                    so.ApplyModifiedProperties();
-                    EditorUtility.SetDirty(_component);
+                    config.nameOrPrefix = entry.name;
+                    WriteEntry(ref config, entry);
+                    // ParameterConfig is a struct: the copy above is what was edited, so the
+                    // row is only really changed by putting it back.
+                    list[i] = config;
+                    Dirty();
                     return true;
                 }
                 return false;
             }
 
             /// <summary>Maps the shared entry shape back onto MA's fields. Synced entries get
-            /// a concrete syncType; unsynced typed entries keep their type with localOnly.</summary>
-            static void WriteEntry(SerializedProperty element, VrcExpressionParameters.Entry entry)
+            /// a concrete syncType; unsynced typed entries keep their type with localOnly.
+            /// An entry with no type at all leaves syncType alone — inventing one would declare
+            /// a parameter nobody asked for and charge the avatar bits for it.</summary>
+            static void WriteEntry(ref MaConfig config, VrcExpressionParameters.Entry entry)
             {
-                var syncType = element.FindPropertyRelative("syncType");
-                if (syncType != null && entry.typed)
-                    syncType.intValue = MapValueType(entry.valueType);
-                SetBool(element, "localOnly", !entry.synced);
-                SetBool(element, "saved", entry.saved);
-                var defaultValue = element.FindPropertyRelative("defaultValue");
-                if (defaultValue != null) defaultValue.floatValue = entry.defaultValue;
-                SetBool(element, "hasExplicitDefaultValue", true);
+                if (entry.typed) config.syncType = MapValueType(entry.valueType);
+                config.localOnly = !entry.synced;
+                config.saved = entry.saved;
+                config.defaultValue = entry.defaultValue;
+                config.hasExplicitDefaultValue = true;
             }
 
-            static void SetString(SerializedProperty element, string property, string value)
+            /// <summary>
+            /// Writes the change out, wherever the component lives.
+            ///
+            /// A scene component only needs to be marked dirty — the scene is saved by the
+            /// person, when they save it. A component found by the project sweep is INSIDE A
+            /// PREFAB ASSET, and a dirty asset that nobody saves is a change that survives
+            /// until the next domain reload and then is not there any more. Measured: editing
+            /// the component of a loaded prefab asset in place and saving it is enough — the
+            /// change is in the file and comes back after a reimport — so there is no round
+            /// trip through <c>PrefabUtility.LoadPrefabContents</c>, which would hand back a
+            /// different object graph than the one the store was handed and make every write
+            /// go looking for its own component again.
+            /// </summary>
+            void Dirty()
             {
-                var prop = element.FindPropertyRelative(property);
-                if (prop != null) prop.stringValue = value;
-            }
-
-            static void SetBool(SerializedProperty element, string property, bool value)
-            {
-                var prop = element.FindPropertyRelative(property);
-                if (prop != null) prop.boolValue = value;
+                EditorUtility.SetDirty(_component);
+                if (EditorUtility.IsPersistent(_component))
+                    AssetDatabase.SaveAssetIfDirty(_component);
             }
         }
+#endif
+    }
+
+    /// <summary>
+    /// The prefab sweep's one blind spot: prefabs change on disk without any code of DaerD's
+    /// running. A pull can add the Merge Animator that would have been the answer, or take away
+    /// the prefab that was. Dropping every answer on any import costs a button press to refill
+    /// and is the only invalidation that cannot be wrong about which import mattered.
+    /// </summary>
+    class ParameterStoreImportWatcher : AssetPostprocessor
+    {
+        static void OnPostprocessAllAssets(string[] imported, string[] deleted,
+            string[] moved, string[] movedFrom) => ParameterStore.ForgetPrefabScan();
     }
 }

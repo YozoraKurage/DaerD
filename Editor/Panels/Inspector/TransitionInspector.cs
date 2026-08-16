@@ -19,6 +19,7 @@ namespace Yozolab.DaerD
         readonly GraphSync _sync;
         readonly List<AnimatorTransitionBase> _selectedTransitions;
         readonly MultiTransitionInspector _multiTransition;
+        readonly TransitionListGui _list = new TransitionListGui();
 
         int _rangeAnchor = -1;
 
@@ -37,7 +38,8 @@ namespace Yozolab.DaerD
         public void DrawTransitionContext()
         {
             var controller = _context.Controller;
-            var pool = GatherTransitionPool();
+            var groups = _context.GetSelectedTransitionGroups();
+            var pool = GatherTransitionPool(groups);
             if (pool.Count == 0)
             {
                 if (_context.Selection is TransitionEdge edge && edge.IsDefaultEdge)
@@ -48,9 +50,11 @@ namespace Yozolab.DaerD
                 return;
             }
 
-            PruneSelection(pool);
+            // The switch is drawn from inside BuildRows, above the list it chooses.
+            var rows = BuildRows(groups, pool, out var reorderSource);
+            PruneSelection(rows, pool);
             HandleCopyPasteShortcuts();
-            DrawTransitionList(pool);
+            DrawTransitionList(rows, pool, reorderSource);
             PanelGui.HorizontalLine();
 
             if (_selectedTransitions.Count >= 2)
@@ -59,102 +63,206 @@ namespace Yozolab.DaerD
                 DrawSingleTransition(_selectedTransitions[0], controller);
         }
 
+        /// <summary>
+        /// The transition list for a source that is not an edge — the Entry and Any State nodes,
+        /// which carry transitions but are selected as a node rather than as an edge. Everything
+        /// below the list belongs to a selected transition, so it only appears once one is picked.
+        /// </summary>
+        public void DrawSourceContext(TransitionEnd source)
+        {
+            var rows = TransitionListGui.RowsOf(source, _context.CurrentStateMachine);
+            if (rows.Count == 0)
+            {
+                EditorGUILayout.HelpBox(
+                    L.Tr("{0} node. Drag from its port to create transitions.", source.Label), MessageType.Info);
+                return;
+            }
+
+            EditorGUILayout.LabelField(source.Label, EditorStyles.boldLabel);
+            _selectedTransitions.RemoveAll(t => t == null || !Contains(rows, t));
+            HandleCopyPasteShortcuts();
+            DrawTransitionList(rows, null, source);
+
+            if (_selectedTransitions.Count == 0) return;
+            PanelGui.HorizontalLine();
+            if (_selectedTransitions.Count >= 2)
+                _multiTransition.DrawMultiTransitionEditor(_context.Controller);
+            else
+                DrawSingleTransition(_selectedTransitions[0], _context.Controller);
+        }
+
         /// <summary>All transitions of every currently selected (non-default) edge. The graph
         /// answers which edges those are — including the fallback for a selection the graph is not
         /// highlighting — and hands over the transitions, never the edges themselves.</summary>
-        List<AnimatorTransitionBase> GatherTransitionPool()
+        static List<AnimatorTransitionBase> GatherTransitionPool(List<TransitionGroup> groups)
         {
             var pool = new List<AnimatorTransitionBase>();
-            foreach (var group in _context.GetSelectedTransitionGroups())
+            foreach (var group in groups)
             {
-                if (group.isDefault) continue;
-                foreach (var t in group.transitions)
+                if (group.IsDefault) continue;
+                foreach (var t in group.Transitions)
                     if (t != null && !pool.Contains(t)) pool.Add(t);
             }
             return pool;
         }
 
-        void PruneSelection(List<AnimatorTransitionBase> pool)
+        /// <summary>
+        /// Which of the two lists is on screen. Remembered for the session rather than saved: it
+        /// is a way of looking at the same thing, and one that the next click may want to change
+        /// anyway.
+        /// </summary>
+        static bool s_showWholeSource;
+
+        /// <summary>
+        /// The two questions this list can answer, which are not the same question.
+        ///
+        /// "What does this arrow do" wants the transitions the clicked edge carries and nothing
+        /// else — a handful of rows, together, all of them yours. "In what order does this state
+        /// try things" wants the source's complete list, which is the only form where reordering
+        /// means anything, because the neighbours a drag moves past have to be on screen.
+        ///
+        /// Showing the whole list always answered the second at the cost of the first: the two
+        /// or three rows belonging to the arrow you clicked end up scattered among the rest.
+        /// So the arrow's own transitions are the default and the whole list is one click away.
+        /// A selection spanning several sources has no whole list to offer and stays as it was.
+        /// </summary>
+        List<TransitionRow> BuildRows(List<TransitionGroup> groups, List<AnimatorTransitionBase> pool,
+            out TransitionEnd? reorderSource)
         {
-            _selectedTransitions.RemoveAll(t => t == null || !pool.Contains(t));
+            var sm = _context.CurrentStateMachine;
+            var source = SharedSource(groups);
+            reorderSource = null;
+            if (!source.HasValue)
+                return TransitionListGui.RowsFor(pool, groups, sm);
+
+            var whole = TransitionListGui.RowsOf(source.Value, sm);
+            // Nothing is hidden by showing the arrow's own, so there is nothing to choose.
+            if (whole.Count <= pool.Count)
+            {
+                reorderSource = source;
+                return whole;
+            }
+
+            DrawListSwitch(source.Value.Label, pool.Count, whole.Count);
+            if (!s_showWholeSource)
+                return TransitionListGui.RowsFor(pool, groups, sm);
+
+            reorderSource = source;
+            return whole;
+        }
+
+        /// <summary>The two-way switch above the list. Only drawn when the two views differ.</summary>
+        void DrawListSwitch(string sourceName, int onThisEdge, int fromThisSource)
+        {
+            EditorGUILayout.BeginHorizontal();
+            if (GUILayout.Toggle(!s_showWholeSource, L.Tr("This arrow ({0})", onThisEdge),
+                    EditorStyles.miniButtonLeft))
+                s_showWholeSource = false;
+            if (GUILayout.Toggle(s_showWholeSource,
+                    L.Tr("All from '{0}' ({1})", sourceName, fromThisSource), EditorStyles.miniButtonRight))
+                s_showWholeSource = true;
+            EditorGUILayout.EndHorizontal();
+        }
+
+        /// <summary>The one node every selected edge leaves, or null when they disagree.</summary>
+        static TransitionEnd? SharedSource(List<TransitionGroup> groups)
+        {
+            TransitionEnd? shared = null;
+            foreach (var group in groups)
+            {
+                if (group.IsDefault) continue;
+                if (group.Source.Kind == TransitionEndKind.None) return null;
+                if (shared.HasValue)
+                {
+                    if (!shared.Value.SameAs(group.Source)) return null;
+                }
+                else
+                {
+                    shared = group.Source;
+                }
+            }
+            return shared;
+        }
+
+        /// <summary>
+        /// Drops rows that are gone and makes sure something is selected. The fallback is the
+        /// selected edge's own first transition, not the list's — with a whole source on screen,
+        /// row one usually belongs to a different edge than the one the user clicked.
+        /// </summary>
+        void PruneSelection(List<TransitionRow> rows, List<AnimatorTransitionBase> pool)
+        {
+            _selectedTransitions.RemoveAll(t => t == null || !Contains(rows, t));
             if (_selectedTransitions.Count == 0)
-                _selectedTransitions.Add(pool[0]);
+                _selectedTransitions.Add(pool.Count > 0 ? pool[0] : rows[0].Transition);
+        }
+
+        static bool Contains(List<TransitionRow> rows, AnimatorTransitionBase transition)
+        {
+            foreach (var row in rows)
+                if (ReferenceEquals(row.Transition, transition)) return true;
+            return false;
         }
 
         /// <summary>Unity-style vertical transition list with Solo / Mute columns and multi-select.</summary>
-        void DrawTransitionList(List<AnimatorTransitionBase> pool)
+        void DrawTransitionList(List<TransitionRow> rows, List<AnimatorTransitionBase> pool,
+            TransitionEnd? reorderSource)
         {
-            EditorGUILayout.LabelField(L.Tr("Transitions") + " (" + pool.Count + ")", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField(L.Tr("Transitions") + " (" + rows.Count + ")", EditorStyles.boldLabel);
 
-            EditorGUILayout.BeginHorizontal();
-            EditorGUILayout.LabelField(L.Tr("Solo"), EditorStyles.miniLabel, GUILayout.Width(34));
-            EditorGUILayout.LabelField(L.Tr("Mute"), EditorStyles.miniLabel, GUILayout.Width(36));
-            EditorGUILayout.LabelField(L.Tr("Transition"), EditorStyles.miniLabel);
-            EditorGUILayout.EndHorizontal();
-
-            for (int i = 0; i < pool.Count; i++)
+            Action<int, int> onMove = null;
+            if (reorderSource.HasValue && rows.Count > 1)
             {
-                var t = pool[i];
-                EditorGUILayout.BeginHorizontal();
-
-                EditorGUI.BeginChangeCheck();
-                bool solo = EditorGUILayout.Toggle(t.solo, GUILayout.Width(34));
-                bool mute = EditorGUILayout.Toggle(t.mute, GUILayout.Width(36));
-                if (EditorGUI.EndChangeCheck())
+                var source = reorderSource.Value;
+                onMove = (from, to) =>
                 {
-                    Undo.RegisterCompleteObjectUndo(t, "Edit Transition");
-                    t.solo = solo;
-                    t.mute = mute;
-                    EditorUtility.SetDirty(t);
-                    _multiTransition.RefreshEdges();
-                }
+                    if (EdgeCommands.Reorder(source, _context.CurrentStateMachine, from, to))
+                        _context.NotifyGraphStructureChanged();
+                };
+            }
 
-                bool selected = _selectedTransitions.Contains(t);
-                var prevBackground = GUI.backgroundColor;
-                if (selected) GUI.backgroundColor = DaerDColors.SelectedRow;
-                if (GUILayout.Button((i + 1) + ".  " + ParameterConverter.DescribeTransition(t), EditorStyles.miniButton))
-                    HandleRowClick(pool, i);
-                GUI.backgroundColor = prevBackground;
+            var result = _list.Draw(rows, _selectedTransitions.Contains, _multiTransition.RefreshEdges, onMove);
+            if (result.hoverKnown) _sync.SetHoveredTransition(result.hovered);
 
-                if (GUILayout.Button("X", EditorStyles.miniButton, GUILayout.Width(DaerDLayout.GlyphButton)))
-                {
-                    DeleteTransitionRow(t, pool);
-                    GUIUtility.ExitGUI();
-                }
-
-                EditorGUILayout.EndHorizontal();
+            if (result.clicked >= 0)
+                HandleRowClick(rows, result.clicked);
+            if (result.deleted != null)
+            {
+                DeleteTransitionRow(result.deleted, rows);
+                GUIUtility.ExitGUI();
             }
 
             EditorGUILayout.BeginHorizontal();
-            if (GUILayout.Button(L.Tr("+ Add Transition")))
+            if (pool != null && GUILayout.Button(L.Tr("+ Add Transition")))
             {
                 AddTransitionToAnchorEdge(pool);
                 GUIUtility.ExitGUI();
             }
-            if (pool.Count > 1 && GUILayout.Button(L.Tr("Select All"), GUILayout.Width(80)))
+            if (rows.Count > 1 && GUILayout.Button(L.Tr("Select All"), GUILayout.Width(80)))
             {
                 _selectedTransitions.Clear();
-                _selectedTransitions.AddRange(pool);
+                foreach (var row in rows)
+                    if (row.Transition != null) _selectedTransitions.Add(row.Transition);
             }
             EditorGUILayout.EndHorizontal();
         }
 
-        void HandleRowClick(List<AnimatorTransitionBase> pool, int index)
+        void HandleRowClick(List<TransitionRow> rows, int index)
         {
-            var t = pool[index];
+            var t = rows[index].Transition;
+            if (t == null) return;
             var e = Event.current;
             bool additive = e != null && (e.control || e.command);
             bool range = e != null && e.shift;
 
             var previous = new List<AnimatorTransitionBase>(_selectedTransitions);
 
-            if (range && _rangeAnchor >= 0 && _rangeAnchor < pool.Count)
+            if (range && _rangeAnchor >= 0 && _rangeAnchor < rows.Count)
             {
                 _selectedTransitions.Clear();
                 int lo = Mathf.Min(_rangeAnchor, index);
                 int hi = Mathf.Max(_rangeAnchor, index);
                 for (int i = lo; i <= hi; i++)
-                    _selectedTransitions.Add(pool[i]);
+                    if (rows[i].Transition != null) _selectedTransitions.Add(rows[i].Transition);
             }
             else if (additive)
             {
@@ -174,6 +282,21 @@ namespace Yozolab.DaerD
             // selected transition. Without this, a value typed for transition X leaks into Y.
             if (!SameSet(previous, _selectedTransitions))
                 EndConditionInput();
+
+            // A plain click on a row belonging to some other edge has to move the graph
+            // selection too, or the highlighted edge and the form below would be about
+            // different transitions. Ctrl / Shift clicks are building a set inside this list
+            // and must not collapse it to one.
+            if (!additive && !range && _sync.FindEdge(t) != null && !InSelectedEdges(t))
+                _context.Select(t);
+        }
+
+        /// <summary>True when the transition belongs to one of the edges the graph has selected.</summary>
+        bool InSelectedEdges(AnimatorTransitionBase transition)
+        {
+            foreach (var group in _context.GetSelectedTransitionGroups())
+                if (group.Transitions.Contains(transition)) return true;
+            return false;
         }
 
         static bool SameSet(List<AnimatorTransitionBase> a, List<AnimatorTransitionBase> b)
@@ -196,7 +319,7 @@ namespace Yozolab.DaerD
             EditorGUIUtility.editingTextField = false;
         }
 
-        void DeleteTransitionRow(AnimatorTransitionBase transition, List<AnimatorTransitionBase> pool)
+        void DeleteTransitionRow(AnimatorTransitionBase transition, List<TransitionRow> rows)
         {
             // Deleting needs the edge object itself (it is where the transition's source node
             // lives), so this one stays a GraphSync command rather than a context notification.
@@ -204,8 +327,9 @@ namespace Yozolab.DaerD
             if (edge == null) return;
 
             AnimatorTransitionBase remaining = null;
-            foreach (var t in pool)
-                if (!ReferenceEquals(t, transition)) { remaining = t; break; }
+            foreach (var row in rows)
+                if (row.Transition != null && !ReferenceEquals(row.Transition, transition))
+                { remaining = row.Transition; break; }
 
             _selectedTransitions.Remove(transition);
             _sync.DeleteTransition(edge, transition);
@@ -232,21 +356,22 @@ namespace Yozolab.DaerD
         void HandleCopyPasteShortcuts()
         {
             var e = Event.current;
-            if (e == null || e.type != EventType.KeyDown || !(e.control || e.command))
-                return;
+            var command = DaerDShortcuts.Resolve(ShortcutScope.Inspector, e);
+            if (command == DaerDCommand.None || _selectedTransitions.Count == 0) return;
 
-            if (e.keyCode == KeyCode.C && _selectedTransitions.Count >= 1)
+            if (command == DaerDCommand.Copy)
             {
                 TransitionClipboard.Copy(_selectedTransitions);
                 e.Use();
+                return;
             }
-            else if (e.keyCode == KeyCode.V && TransitionClipboard.HasData && _selectedTransitions.Count >= 1)
-            {
-                if (e.shift) _multiTransition.PasteSelectedAsNew();
-                else _multiTransition.PasteOntoSelected();
-                e.Use();
-                GUIUtility.ExitGUI();
-            }
+
+            if (!TransitionClipboard.HasData) return;
+            if (command == DaerDCommand.Paste) _multiTransition.PasteOntoSelected();
+            else if (command == DaerDCommand.PasteAsNew) _multiTransition.PasteSelectedAsNew();
+            else return;
+            e.Use();
+            GUIUtility.ExitGUI();
         }
 
         // ---- single transition ----------------------------------------------
@@ -275,10 +400,15 @@ namespace Yozolab.DaerD
             bool hasExitTime = EditorGUILayout.Toggle(L.Tr("Has Exit Time"), stateTransition.hasExitTime);
             float exitTime;
             using (new EditorGUI.DisabledScope(!hasExitTime))
-                exitTime = EditorGUILayout.FloatField(L.Tr("Exit Time"), stateTransition.exitTime);
+                exitTime = EditorGUILayout.FloatField(new GUIContent(L.Tr("Exit Time"),
+                        L.Tr("A fraction of the source state's length: 1 is its end, 0.5 is halfway, "
+                             + "2 is after two loops.")),
+                    stateTransition.exitTime);
             bool fixedDuration = EditorGUILayout.Toggle(L.Tr("Fixed Duration"), stateTransition.hasFixedDuration);
-            float duration = EditorGUILayout.FloatField(L.Tr("Duration"), stateTransition.duration);
-            float offset = EditorGUILayout.FloatField(L.Tr("Offset"), stateTransition.offset);
+            float duration = EditorGUILayout.FloatField(DurationLabel(fixedDuration), stateTransition.duration);
+            float offset = EditorGUILayout.FloatField(new GUIContent(L.Tr("Offset"),
+                    L.Tr("Where the destination state starts, as a fraction of its own length.")),
+                stateTransition.offset);
             var interruption = (TransitionInterruptionSource)EditorGUILayout.EnumPopup(L.Tr("Interruption"), stateTransition.interruptionSource);
             bool ordered = EditorGUILayout.Toggle(L.Tr("Ordered Interruption"), stateTransition.orderedInterruption);
             bool toSelf = EditorGUILayout.Toggle(L.Tr("Can Transition To Self"), stateTransition.canTransitionToSelf);
@@ -297,6 +427,18 @@ namespace Yozolab.DaerD
             }
         }
 
+        /// <summary>
+        /// The duration field changes unit with the Fixed Duration toggle above it, and the
+        /// label never said which one was in force — the same 0.25 means a quarter of a second
+        /// or a quarter of the source clip. Named the way Unity's own inspector names them, so
+        /// the two editors agree; the tooltip carries what "(%)" actually means, since the
+        /// field holds a fraction rather than a number out of a hundred.
+        /// </summary>
+        static GUIContent DurationLabel(bool fixedDuration) => fixedDuration
+            ? new GUIContent(L.Tr("Duration (s)"), L.Tr("Crossfade length in seconds."))
+            : new GUIContent(L.Tr("Duration (%)"),
+                L.Tr("Crossfade length as a fraction of the source state's length — 0.25 is a quarter of it."));
+
         void DrawConditions(AnimatorTransitionBase transition, AnimatorController controller)
         {
             EditorGUILayout.LabelField(L.Tr("Conditions"), EditorStyles.boldLabel);
@@ -311,6 +453,7 @@ namespace Yozolab.DaerD
 
             var working = ConditionGui.ToDataList(transition);
             bool changed = false;
+            bool wheeled = false;
             int removeIndex = -1;
             EditorGUI.BeginChangeCheck();
 
@@ -319,12 +462,10 @@ namespace Yozolab.DaerD
                 var condition = working[i];
                 EditorGUILayout.BeginHorizontal();
 
-                int paramIndex = Mathf.Max(0, Array.IndexOf(paramNames, condition.parameter));
-                paramIndex = EditorGUILayout.Popup(paramIndex, paramNames);
-                condition.parameter = paramNames[paramIndex];
+                DrawParameterPicker(condition, paramNames);
 
                 var type = typeByName.TryGetValue(condition.parameter, out var t) ? t : AnimatorControllerParameterType.Float;
-                ConditionGui.DrawConditionValue(condition, type);
+                if (ConditionGui.DrawConditionValue(condition, type)) wheeled = true;
 
                 if (GUILayout.Button("X", EditorStyles.miniButton, GUILayout.Width(DaerDLayout.GlyphButton)))
                     removeIndex = i;
@@ -332,7 +473,8 @@ namespace Yozolab.DaerD
                 EditorGUILayout.EndHorizontal();
             }
 
-            if (EditorGUI.EndChangeCheck())
+            // EndChangeCheck has to run whatever the wheel did, or the next check inherits it.
+            if (EditorGUI.EndChangeCheck() || wheeled)
                 changed = true;
             if (removeIndex >= 0)
             {
@@ -341,8 +483,7 @@ namespace Yozolab.DaerD
             }
             if (GUILayout.Button(L.Tr("+ Add Condition")))
             {
-                var type = typeByName.TryGetValue(paramNames[0], out var t) ? t : AnimatorControllerParameterType.Float;
-                working.Add(new TransitionClipboard.ConditionData { parameter = paramNames[0], mode = PanelGui.ModesFor(type)[0] });
+                working.Add(NextCondition(working, paramNames, typeByName));
                 changed = true;
             }
 
@@ -361,5 +502,75 @@ namespace Yozolab.DaerD
                 _context.NotifyParametersChanged();
             }
         }
+        /// <summary>
+        /// The parameter dropdown for one condition row. A condition naming a parameter the
+        /// controller no longer declares keeps that name — as an extra, red entry at the end of
+        /// the list — instead of reading as the first parameter. It used to silently become the
+        /// first one: nothing was written while the row was merely drawn, but editing any other
+        /// row on the same transition saved the whole working list, so the broken condition
+        /// quietly turned into a working one pointing somewhere else, and the analyzer's
+        /// complaint about it disappeared with it.
+        /// </summary>
+        static void DrawParameterPicker(TransitionClipboard.ConditionData condition, string[] paramNames)
+        {
+            int index = Array.IndexOf(paramNames, condition.parameter);
+            bool missing = index < 0;
+
+            var options = paramNames;
+            if (missing)
+            {
+                options = new string[paramNames.Length + 1];
+                Array.Copy(paramNames, options, paramNames.Length);
+                options[paramNames.Length] = MissingLabel(condition.parameter);
+                index = paramNames.Length;
+            }
+
+            var previous = GUI.color;
+            if (missing) GUI.color = DaerDColors.Warning;
+            int picked = EditorGUILayout.Popup(index, options);
+            GUI.color = previous;
+
+            // Picking the missing entry itself is a no-op; picking a real one is the repair.
+            if (picked < paramNames.Length) condition.parameter = paramNames[picked];
+        }
+
+        static string MissingLabel(string parameter) =>
+            (string.IsNullOrEmpty(parameter) ? L.Tr("(no parameter)") : parameter) + "  " + L.Tr("(missing)");
+
+        /// <summary>
+        /// What "+ Add Condition" starts from. A second condition on a numeric parameter is
+        /// almost always the other half of a range, so it inherits the last row's parameter and
+        /// takes the opposite comparison — Greater then Less. Bool and Trigger have no range to
+        /// build, and a second condition on the same one only ever contradicts the first, so
+        /// they fall back to the first parameter in the list.
+        /// </summary>
+        public static TransitionClipboard.ConditionData NextCondition(List<TransitionClipboard.ConditionData> working,
+            string[] paramNames, Dictionary<string, AnimatorControllerParameterType> typeByName)
+        {
+            string parameter = paramNames[0];
+            AnimatorConditionMode? opposite = null;
+
+            if (working.Count > 0)
+            {
+                var last = working[working.Count - 1];
+                if (Array.IndexOf(paramNames, last.parameter) >= 0
+                    && typeByName.TryGetValue(last.parameter, out var lastType)
+                    && (lastType == AnimatorControllerParameterType.Float
+                        || lastType == AnimatorControllerParameterType.Int))
+                {
+                    parameter = last.parameter;
+                    if (last.mode == AnimatorConditionMode.Greater) opposite = AnimatorConditionMode.Less;
+                    else if (last.mode == AnimatorConditionMode.Less) opposite = AnimatorConditionMode.Greater;
+                }
+            }
+
+            var type = typeByName.TryGetValue(parameter, out var t) ? t : AnimatorControllerParameterType.Float;
+            return new TransitionClipboard.ConditionData
+            {
+                parameter = parameter,
+                mode = opposite ?? PanelGui.ModesFor(type)[0],
+            };
+        }
+
     }
 }
