@@ -14,6 +14,7 @@ namespace Yozolab.DaerD
         SoloTransition,
         AnyStateRetrigger,
         UnreachableState,
+        DeadEntryBranch,
         DuplicateName,
         TerminalStates,
         WriteDefaults,

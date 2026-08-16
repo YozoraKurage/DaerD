@@ -206,6 +206,67 @@ namespace Yozolab.DaerD.Tests
             Object.DestroyImmediate(controller);
         }
 
+        /// <summary>
+        /// Passing the root's Exit is its own question: it is what puts the layer back at Entry
+        /// and so the only way a root's Entry conditions are ever read a second time. Walked the
+        /// same way as the states — conditions unevaluated — so a route nothing satisfies still
+        /// counts as reaching Exit.
+        /// </summary>
+        [Test]
+        public void ALayerWithNothingLeadingToExit_NeverPassesIt()
+        {
+            var controller = NewController(out var sm);
+            var a = sm.AddState("A");   // default
+            var b = sm.AddState("B");
+            a.AddTransition(b);
+            b.AddTransition(a);         // a main loop that never ends
+
+            Assert.IsFalse(ControllerReachability.ReachesExit(sm));
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void AnExitTransitionOnAStateTheLayerCanEnter_PassesExit()
+        {
+            var controller = NewController(out var sm);
+            var a = sm.AddState("A");   // default
+            a.AddExitTransition();
+
+            Assert.IsTrue(ControllerReachability.ReachesExit(sm));
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void AnExitInsideASubMachineWithNothingDrawnOutOfIt_RisesToTheRootsExit()
+        {
+            var controller = NewController(out var sm);
+            var a = sm.AddState("A");   // default
+            var child = sm.AddStateMachine("Child");
+            var p = child.AddState("P");
+            child.defaultState = p;
+            a.AddTransition(child);
+            p.AddExitTransition();      // nothing leaves Child, so this rises to the layer's Exit
+
+            Assert.IsTrue(ControllerReachability.ReachesExit(sm));
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void AnExitOnAStateNothingCanEnter_IsNotAWayOut()
+        {
+            var controller = NewController(out var sm);
+            sm.AddState("A");           // default
+            var island = sm.AddState("Island");
+            island.AddExitTransition();
+
+            Assert.IsFalse(ControllerReachability.ReachesExit(sm));
+
+            Object.DestroyImmediate(controller);
+        }
+
         [Test]
         public void AnEmptyLayer_IsAnEmptyAnswer()
         {

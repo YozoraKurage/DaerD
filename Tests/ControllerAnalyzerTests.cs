@@ -925,6 +925,123 @@ namespace Yozolab.DaerD.Tests
             Object.DestroyImmediate(controller);
         }
 
+        // ---- dead entry branches ------------------------------------------------
+
+        /// <summary>
+        /// A layer begins at its default state however its Entry conditions read; the
+        /// conditions are only read on the way back through Entry. Measured in
+        /// PlayModeProbeTests — these pin what the analyzer makes of it.
+        /// </summary>
+        [Test]
+        public void ConditionalRootEntries_InALayerThatNeverReachesExit_AreReportedTogether()
+        {
+            var controller = NewController(out var sm);
+            controller.AddParameter("P", AnimatorControllerParameterType.Bool);
+            sm.AddState("Start");       // default — where the layer begins either way
+            var a = sm.AddState("A");
+            var b = sm.AddState("B");
+            sm.AddEntryTransition(a).AddCondition(AnimatorConditionMode.If, 0f, "P");
+            sm.AddEntryTransition(b).AddCondition(AnimatorConditionMode.IfNot, 0f, "P");
+
+            var issues = OfKind(controller, IssueKind.DeadEntryBranch);
+
+            Assert.AreEqual(1, issues.Count, "one row per layer, not one per branch");
+            Assert.AreEqual(IssueSeverity.Warning, issues[0].severity);
+            StringAssert.Contains("2", issues[0].message, "the branches it counted");
+            Assert.AreSame(sm, issues[0].context);
+            Assert.AreEqual(0, issues[0].layerIndex);
+            Assert.IsNull(issues[0].fix, "the repair depends on which of the two the author meant");
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void TheSameEntryBranch_InALayerThatCanPassExit_IsLeftAlone()
+        {
+            var controller = NewController(out var sm);
+            controller.AddParameter("P", AnimatorControllerParameterType.Bool);
+            var start = sm.AddState("Start");   // default
+            var a = sm.AddState("A");
+            sm.AddEntryTransition(a).AddCondition(AnimatorConditionMode.If, 0f, "P");
+            start.AddExitTransition();          // ...and the layer comes back round to Entry
+
+            Assert.IsEmpty(OfKind(controller, IssueKind.DeadEntryBranch));
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void AConditionalEntryInsideASubMachine_IsNotARootEntry()
+        {
+            var controller = NewController(out var sm);
+            controller.AddParameter("P", AnimatorControllerParameterType.Bool);
+            var start = sm.AddState("Start");   // default
+            var child = sm.AddStateMachine("Child");
+            var p = child.AddState("P1");
+            var q = child.AddState("Q");
+            child.defaultState = p;
+            child.AddEntryTransition(q).AddCondition(AnimatorConditionMode.If, 0f, "P");
+            start.AddTransition(child);
+
+            // A sub machine's Entry is read on every visit, so this branch does decide things.
+            Assert.IsEmpty(OfKind(controller, IssueKind.DeadEntryBranch));
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void RootEntriesWithNoConditions_DecideNothingToBeginWith()
+        {
+            var controller = NewController(out var sm);
+            sm.AddState("Start");       // default
+            var a = sm.AddState("A");
+            sm.AddEntryTransition(a);   // unconditional: the fall-through, not a branch
+
+            Assert.IsEmpty(OfKind(controller, IssueKind.DeadEntryBranch));
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void AnExitOnlyAnUnreachableIslandCouldTake_IsNoWayBackToEntry()
+        {
+            var controller = NewController(out var sm);
+            controller.AddParameter("P", AnimatorControllerParameterType.Bool);
+            sm.AddState("Start");       // default
+            var a = sm.AddState("A");
+            sm.AddEntryTransition(a).AddCondition(AnimatorConditionMode.If, 0f, "P");
+            var island = sm.AddState("Island");
+            var partner = sm.AddState("Partner");
+            island.AddTransition(partner);
+            partner.AddTransition(island);
+            island.AddExitTransition();   // an Exit nothing can ever walk to
+
+            Assert.AreEqual(1, OfKind(controller, IssueKind.DeadEntryBranch).Count);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void ASyncedLayer_DoesNotRepeatTheSourceLayersEntryFinding()
+        {
+            var controller = NewController(out var sm);
+            controller.AddParameter("P", AnimatorControllerParameterType.Bool);
+            sm.AddState("Start");       // default
+            var a = sm.AddState("A");
+            sm.AddEntryTransition(a).AddCondition(AnimatorConditionMode.If, 0f, "P");
+            controller.AddLayer("Mirror");
+            var layers = controller.layers;
+            layers[1].syncedLayerIndex = 0;
+            controller.layers = layers;
+
+            var issues = OfKind(controller, IssueKind.DeadEntryBranch);
+
+            Assert.AreEqual(1, issues.Count);
+            Assert.AreEqual(0, issues[0].layerIndex, "reported against the layer that owns the machine");
+
+            Object.DestroyImmediate(controller);
+        }
+
         // ---- what the builders write, read back by the analyzer ----------------
 
         /// <summary>

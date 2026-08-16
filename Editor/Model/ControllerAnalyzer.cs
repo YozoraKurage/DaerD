@@ -20,6 +20,7 @@ namespace Yozolab.DaerD
                 case IssueKind.SoloTransition: return L.Tr("Soloed Transition");
                 case IssueKind.AnyStateRetrigger: return L.Tr("Any State Retrigger");
                 case IssueKind.UnreachableState: return L.Tr("Unreachable State");
+                case IssueKind.DeadEntryBranch: return L.Tr("Dead Entry Branch");
                 case IssueKind.DuplicateName: return L.Tr("Duplicate Name");
                 case IssueKind.TerminalStates: return L.Tr("Terminal States");
                 case IssueKind.WriteDefaults: return L.Tr("WriteDefaults");
@@ -92,6 +93,7 @@ namespace Yozolab.DaerD
             AddSoloTransitionIssues(controller, issues);
             AddAnyStateRetriggerIssues(controller, issues);
             AddUnreachableStateIssues(controller, issues);
+            AddDeadEntryBranchIssues(controller, issues);
             AddDuplicateNameIssues(controller, issues);
 
             foreach (var layer in controller.layers)
@@ -581,6 +583,55 @@ namespace Yozolab.DaerD
                             context = state,
                         });
                     }
+            }
+        }
+
+        /// <summary>
+        /// Conditional Entry transitions at the top of a layer that decide nothing. A layer
+        /// starts at its default state whatever its Entry conditions say — they are read on the
+        /// way back through Entry and not on the way in, which is measured and not deduced (the
+        /// entry-condition probes in PlayModeProbeTests). So the branch is live in every layer
+        /// that can pass its own Exit, and in a layer that cannot, it is written, saved, drawn
+        /// on the graph, and never once evaluated.
+        ///
+        /// Narrow on purpose: a layer that does reach Exit is not reported at all, even though
+        /// its first pass still ignores the conditions. Starting at the default state and
+        /// branching from Entry on every lap afterwards is a normal way to build a layer, and a
+        /// check that also flagged those would be firing at an idiom instead of at a mistake.
+        ///
+        /// One row per layer, with the count, in the shape AnyStateRetrigger established: the
+        /// branches share a single cause, and a row each would say the same sentence n times.
+        /// No fix — the repair is either giving the layer a route to Exit or moving the choice
+        /// down to the first state's own transitions, and which one is right is a question
+        /// about intent.
+        /// </summary>
+        static void AddDeadEntryBranchIssues(AnimatorController controller, List<AnalyzerIssue> issues)
+        {
+            var layers = controller.layers;
+            for (int i = 0; i < layers.Length; i++)
+            {
+                // A synced layer replays the source layer's machine, whose own pass covers it.
+                if (layers[i].syncedLayerIndex >= 0) continue;
+                var root = layers[i].stateMachine;
+                if (root == null) continue;
+
+                int conditional = 0;
+                foreach (var t in root.entryTransitions)
+                    if (t != null && t.conditions.Length > 0) conditional++;
+                if (conditional == 0) continue;
+                if (ControllerReachability.ReachesExit(root)) continue;
+
+                issues.Add(new AnalyzerIssue
+                {
+                    severity = IssueSeverity.Warning,
+                    kind = IssueKind.DeadEntryBranch,
+                    message = L.Tr("Layer '{0}' starts at its default state whatever its Entry conditions "
+                        + "say; a root Entry is only read again on the way back from Exit, and nothing in "
+                        + "this layer reaches Exit. Its {1} conditional Entry transition(s) never decide "
+                        + "anything.", layers[i].name, conditional),
+                    context = root,
+                    layerIndex = i,
+                });
             }
         }
 

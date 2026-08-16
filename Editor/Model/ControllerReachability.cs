@@ -29,9 +29,33 @@ namespace Yozolab.DaerD
         /// no state of its own adopts a sub-machine's default state as its own, and Unity puts
         /// it back if you clear it.
         /// </summary>
-        public static HashSet<AnimatorState> ReachableStates(AnimatorStateMachine root)
+        public static HashSet<AnimatorState> ReachableStates(AnimatorStateMachine root) =>
+            Walk(root, out _);
+
+        /// <summary>
+        /// Whether the layer can ever pass its own Exit and start over at Entry. Asked because
+        /// a root's Entry conditions are only read on the way back through it — a layer begins
+        /// at its default state whatever they say (measured; see the entry-condition probes in
+        /// PlayModeProbeTests) — so a layer that never reaches Exit never reads them at all.
+        ///
+        /// Same walk as <see cref="ReachableStates"/>, which means the same deliberate
+        /// blindness: conditions are not evaluated, so a route nothing ever satisfies still
+        /// counts as a way to Exit. The error only runs one way. Answering "yes" suppresses the
+        /// finding built on top of this, so wherever the walk is too generous — an Exit that
+        /// bubbles up out of a sub-machine, say, whose effect on the root's Entry nobody has
+        /// measured — the cost is a warning not raised, never a live Entry branch called dead.
+        /// </summary>
+        public static bool ReachesExit(AnimatorStateMachine root)
+        {
+            Walk(root, out bool reachesExit);
+            return reachesExit;
+        }
+
+        static HashSet<AnimatorState> Walk(AnimatorStateMachine root, out bool reachesExit)
         {
             var reachable = new HashSet<AnimatorState>();
+            bool passedRootExit = false;
+            reachesExit = false;
             if (root == null) return reachable;
 
             var parent = new Dictionary<AnimatorStateMachine, AnimatorStateMachine>();
@@ -89,6 +113,7 @@ namespace Yozolab.DaerD
             {
                 if (sm == null || sm == root)
                 {
+                    passedRootExit = true;
                     EnterMachine(root);   // the layer starts over at Entry
                     return;
                 }
@@ -105,6 +130,7 @@ namespace Yozolab.DaerD
                 owner.TryGetValue(state, out var home);
                 foreach (var t in state.transitions) Follow(t, home ?? root);
             }
+            reachesExit = passedRootExit;
             return reachable;
         }
 
