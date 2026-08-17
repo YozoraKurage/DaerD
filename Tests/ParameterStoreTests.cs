@@ -160,6 +160,88 @@ namespace Yozolab.DaerD.Tests
 #endif
         }
 
+        /// <summary>
+        /// Retyping a row is what the Parameters panel's type popup does, and the bit meter is
+        /// the reason it is worth having on the row rather than in the asset: the store's type
+        /// decides what the parameter costs, so a Float trimmed to a Bool has to show up as
+        /// 8 bits becoming 1 immediately.
+        /// </summary>
+        [Test]
+        public void SetValueType_RetypesTheRowAndTheBudgetFollows()
+        {
+            var store = NewVrcStore(
+                new VrcExpressionParameters.Entry
+                { name = "Hue", valueType = VrcExpressionParameters.ValueType.Float },
+                new VrcExpressionParameters.Entry
+                { name = "Local", valueType = VrcExpressionParameters.ValueType.Float, synced = false });
+
+            Assert.AreEqual(8, store.UsedBits(), "one synced Float");
+
+            Assert.IsTrue(store.SetValueType("Hue", VrcExpressionParameters.ValueType.Bool));
+            Assert.AreEqual(VrcExpressionParameters.ValueType.Bool, store.Find("Hue").valueType);
+            Assert.AreEqual(1, store.UsedBits(), "the meter reads the store, so it follows");
+
+            Assert.IsFalse(store.SetValueType("Hue", VrcExpressionParameters.ValueType.Bool),
+                "no change is not a change");
+            Assert.IsFalse(store.SetValueType("Absent", VrcExpressionParameters.ValueType.Int));
+            // An unsynced row still has a declared type, and retyping it costs nothing.
+            Assert.IsTrue(store.SetValueType("Local", VrcExpressionParameters.ValueType.Int));
+            Assert.AreEqual(1, store.UsedBits());
+        }
+
+        /// <summary>The same call has to reach the other backend's own field — MA keeps the type
+        /// in syncType, and a row that is declared but local keeps both.</summary>
+        [Test]
+        public void SetValueType_ReachesTheMaComponentsSyncType()
+        {
+#if DAERD_MA
+            var component = NewMaComponent();
+            component.parameters.Add(Config("Hue", MaSyncType.Float));
+            component.parameters.Add(Config("Local", MaSyncType.Float, localOnly: true));
+            component.parameters.Add(Config("Anim", MaSyncType.NotSynced));
+            var store = ParameterStore.TryWrap(component);
+
+            Assert.IsTrue(store.SetValueType("Hue", VrcExpressionParameters.ValueType.Bool));
+            Assert.AreEqual(MaSyncType.Bool, component.parameters[0].syncType);
+            Assert.AreEqual(1, store.UsedBits());
+
+            Assert.IsTrue(store.SetValueType("Local", VrcExpressionParameters.ValueType.Int));
+            Assert.AreEqual(MaSyncType.Int, component.parameters[1].syncType);
+            Assert.IsTrue(component.parameters[1].localOnly, "retyping does not put a row on the wire");
+
+            // A NotSynced row declares no type, and inventing one would declare a parameter
+            // nobody asked for — the popup is not offered for it, and the model refuses it too.
+            Assert.IsFalse(store.SetValueType("Anim", VrcExpressionParameters.ValueType.Bool));
+            Assert.AreEqual(MaSyncType.NotSynced, component.parameters[2].syncType);
+#else
+            Assert.Ignore("Modular Avatar is not installed in this project.");
+#endif
+        }
+
+        /// <summary>The "≠" mark's rule. A difference is information, not a fault — VRChat
+        /// converts between every combination — so what is pinned here is which rows carry it,
+        /// including the one that carries none because it declares no type at all.</summary>
+        [Test]
+        public void Mismatched_IsAboutTypedRowsOnly()
+        {
+            var bool8 = new VrcExpressionParameters.Entry
+            { name = "Hue", valueType = VrcExpressionParameters.ValueType.Bool };
+            Assert.IsTrue(VrcExpressionParameters.Mismatched(bool8,
+                AnimatorControllerParameterType.Float));
+            Assert.IsFalse(VrcExpressionParameters.Mismatched(bool8,
+                AnimatorControllerParameterType.Bool));
+            // A Trigger maps to no store type at all, so there is nothing to disagree with.
+            Assert.IsFalse(VrcExpressionParameters.Mismatched(bool8,
+                AnimatorControllerParameterType.Trigger));
+
+            var untyped = new VrcExpressionParameters.Entry { name = "Anim", typed = false };
+            Assert.IsFalse(VrcExpressionParameters.Mismatched(untyped,
+                AnimatorControllerParameterType.Float),
+                "an MA NotSynced row declares nothing, so it cannot declare the wrong thing");
+            Assert.IsFalse(VrcExpressionParameters.Mismatched(null,
+                AnimatorControllerParameterType.Float));
+        }
+
         [Test]
         public void MissingEntries_SkipsKnownNamesAndTriggersAndAddsThemAsync()
         {

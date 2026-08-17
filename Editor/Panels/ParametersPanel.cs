@@ -389,8 +389,8 @@ namespace Yozolab.DaerD
             Refresh();
         }
 
-        /// <summary>Per-row S (synced) / D (saved) toggles for parameters present in the
-        /// expression asset, and a "+" to add the ones that aren't.</summary>
+        /// <summary>Per-row S (synced) / D (saved) toggles and the declared type for parameters
+        /// present in the expression asset, and a "+" to add the ones that aren't.</summary>
         void DrawVrcFlags(AnimatorControllerParameter parameter)
         {
             if (_store == null || _exprEntries == null) return;
@@ -409,6 +409,7 @@ namespace Yozolab.DaerD
                         e.synced = synced;
                         e.saved = saved;
                     });
+                DrawStoreType(parameter, entry);
                 return;
             }
 
@@ -426,6 +427,44 @@ namespace Yozolab.DaerD
                                 ? parameter.defaultInt
                                 : parameter.defaultBool ? 1f : 0f,
                     });
+        }
+
+        /// <summary>In VrcExpressionParameters.ValueType order — the popup writes its index
+        /// straight back as the type, so the two lists are the same list.</summary>
+        static readonly string[] StoreTypeLabels = { "Int", "Float", "Bool" };
+
+        /// <summary>
+        /// What the store declares this parameter AS, which is a different question from what
+        /// the animator holds and is answered here because it is the only place both answers are
+        /// on screen at once.
+        ///
+        /// It is worth a control rather than a trip to the asset: the type decides the synced
+        /// bits the row costs (Bool = 1, Int / Float = 8) and what a menu control does with it,
+        /// so it is the one field somebody trimming an over-budget avatar edits over and over.
+        /// The bit meter above is read from the store, so it follows on the same repaint.
+        ///
+        /// A row that disagrees with the animator gets a mark and no more. VRChat converts
+        /// between every combination on the way in, and a Bool row driving a Float parameter is a
+        /// documented way to spend one bit instead of eight — so the mark says what is happening
+        /// in the same voice the analyzer uses, and does not tell anyone off.
+        ///
+        /// An MA "NotSynced" row gets no popup at all. It declares no type, and the control would
+        /// have to invent one to show a value — which would charge the avatar bits for a
+        /// parameter nobody asked to sync.
+        /// </summary>
+        void DrawStoreType(AnimatorControllerParameter parameter,
+            VrcExpressionParameters.Entry entry)
+        {
+            if (!entry.typed) return;
+            int chosen = EditorGUILayout.Popup((int)entry.valueType, StoreTypeLabels,
+                EditorStyles.miniButton, GUILayout.Width(DaerDLayout.RowAction + 12f));
+            if (chosen != (int)entry.valueType)
+                _store.SetValueType(parameter.name, (VrcExpressionParameters.ValueType)chosen);
+            if (!VrcExpressionParameters.Mismatched(entry, parameter.type)) return;
+            GUILayout.Label(new GUIContent("≠",
+                    L.Tr("This row is declared {0} while the controller's parameter is {1}. VRChat converts between them (parameter mismatching) — a Bool row driving a Float costs one synced bit instead of eight, so this is a saving as often as it is a slip.",
+                        entry.valueType, parameter.type)),
+                EditorStyles.miniLabel, GUILayout.Width(12f));
         }
 
         /// <summary>

@@ -50,6 +50,24 @@ namespace Yozolab.DaerD
         }
 
         /// <summary>
+        /// Whether a store row declares a different type from the animator parameter it stands
+        /// for. Not an error and never treated as one: VRChat converts between every combination
+        /// on the way in ("parameter mismatching"), and a 1-bit synced Bool driving an animator
+        /// Float is a documented way to spend fewer bits. It is worth SHOWING, because the
+        /// difference is invisible everywhere else and a menu control reading the wrong type is
+        /// the same shape of mistake as a deliberate saving.
+        ///
+        /// A row with no concrete type (an MA "NotSynced" row) declares nothing to disagree with,
+        /// so it never counts as a mismatch — the same rule the analyzer's check follows.
+        /// </summary>
+        public static bool Mismatched(Entry entry, AnimatorControllerParameterType animatorType)
+        {
+            if (entry == null || !entry.typed) return false;
+            var mapped = MapType(animatorType);
+            return mapped != null && mapped.Value != entry.valueType;
+        }
+
+        /// <summary>
         /// The expression parameters asset of a scene avatar descriptor whose playable layers
         /// reference this controller — an EXACT match only, used by the explicit Detect
         /// action. DaerD is also used on NDMF gimmick controllers that belong to no avatar,

@@ -87,6 +87,26 @@ namespace Yozolab.DaerD
             return changed;
         }
 
+        /// <summary>
+        /// Changes what type one row is declared as; false when nothing changed.
+        ///
+        /// The type a store declares is not the animator's — it is what the parameter is sent as,
+        /// which decides the synced bits it costs (Bool = 1, Int / Float = 8) and what a menu
+        /// control does with it. Both backends land it in their own field: the VRC asset's
+        /// valueType, MA's syncType.
+        ///
+        /// A row with no concrete type is refused rather than given one. That is an MA
+        /// "NotSynced" row, and inventing a type for it would declare a parameter nobody asked
+        /// for and charge the avatar bits for it — the same reason
+        /// <see cref="SetSynced"/> will not switch one on.
+        /// </summary>
+        public bool SetValueType(string name, VrcExpressionParameters.ValueType type)
+        {
+            var entry = Find(name);
+            if (entry == null || !entry.typed || entry.valueType == type) return false;
+            return Edit(name, e => e.valueType = type);
+        }
+
         public VrcExpressionParameters.Entry Find(string name)
         {
             foreach (var entry in Read())

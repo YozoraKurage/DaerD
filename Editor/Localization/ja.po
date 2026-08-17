@@ -1286,6 +1286,9 @@ msgstr "ネットワーク同期（bit を消費）"
 msgid "Saved between worlds"
 msgstr "ワールド間で保存"
 
+msgid "This row is declared {0} while the controller's parameter is {1}. VRChat converts between them (parameter mismatching) — a Bool row driving a Float costs one synced bit instead of eight, so this is a saving as often as it is a slip."
+msgstr "この行は {0} として宣言されていますが、コントローラー側のパラメーターは {1} です。VRChat は両者を変換します（parameter mismatching）。Float を Bool の行で駆動すると同期ビットは 8 ではなく 1 で済むため、これは間違いであることもあれば節約であることもあります。"
+
 msgid "Add to the VRC expression parameters asset"
 msgstr "VRC Expression Parameters アセットに追加します"
 
