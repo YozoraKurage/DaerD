@@ -490,7 +490,19 @@ namespace Yozolab.DaerD
                     EditorStyles.centeredGreyMiniLabel);
             }
 
-            if (linked == null || linked == current) return;
+            if (linked == null)
+            {
+                // The one thing that is missing and that DaerD can supply, offered where the
+                // absence is stated rather than in a menu somewhere else.
+                if (GUILayout.Button(new GUIContent(L.Tr("Add MA Parameters"),
+                        L.Tr("Add an MA Parameters component to the linked prefab's root, so this controller's parameters have somewhere to be declared. This writes the prefab file."))))
+                {
+                    AddParametersToPrefab(controller, status);
+                    GUIUtility.ExitGUI();   // the prefab was reimported under this layout pass
+                }
+                return;
+            }
+            if (linked == current) return;
             if (GUILayout.Button(new GUIContent(L.Tr("Use The Prefab's MA Parameters"),
                     L.Tr("Point the parameter store slot at the MA Parameters that governs the linked merge. A button rather than something linking does for you, because the slot already holds an answer somebody gave."))))
             {
@@ -607,6 +619,57 @@ namespace Yozolab.DaerD
             PrefabLinks.Apply(controller, plan);
             Context.NotifyPrefabLinkChanged();
             if (plan.FillsStore) Context.NotifyParametersChanged();
+        }
+
+        /// <summary>
+        /// The first thing DaerD writes into somebody's prefab, and the shape every later one
+        /// follows: refuse first, then say what is about to be added, then write once.
+        ///
+        /// The refusal comes before the question rather than after it, because a dialog that
+        /// asks and then fails is a dialog that taught the user nothing. Saving an asset cannot
+        /// be undone, so the sentence about what is being added IS the undo — there is no second
+        /// chance to read it.
+        /// </summary>
+        void AddParametersToPrefab(AnimatorController controller, PrefabLinkStatus status)
+        {
+            var prefab = status.prefab;
+            switch (PrefabWriter.Check(prefab))
+            {
+                case PrefabWriteRefusal.ImmutablePackage:
+                    EditorUtility.DisplayDialog(L.Tr("Prefab Link"),
+                        L.Tr("'{0}' lives in a package the package manager owns, so DaerD will not write to it. Copy the prefab into this project's Assets folder first.",
+                            AssetDatabase.GetAssetPath(prefab)), "OK");
+                    return;
+                case PrefabWriteRefusal.OpenWithUnsavedEdits:
+                    EditorUtility.DisplayDialog(L.Tr("Prefab Link"),
+                        L.Tr("'{0}' is open in prefab mode with unsaved changes. Save or discard them first — writing the file underneath an open stage would lose one of the two sets of edits.",
+                            prefab.name), "OK");
+                    return;
+                case PrefabWriteRefusal.NotAPrefabAsset:
+                    EditorUtility.DisplayDialog(L.Tr("Prefab Link"),
+                        L.Tr("The linked prefab is not a prefab asset any more, so there is nothing to write to."), "OK");
+                    return;
+            }
+
+            if (!EditorUtility.DisplayDialog(L.Tr("Prefab Link"),
+                    L.Tr("Add an MA Parameters component to the root of '{0}'?\n\nThat is the only change: one component on the root, nothing removed, nothing moved. It goes on the root because Modular Avatar looks for it on the merge's own object and upwards, so every Merge Animator in this prefab — including ones added later — can see it there.\n\nThe prefab file is saved immediately, and saving an asset cannot be undone.",
+                        prefab.name),
+                    L.Tr("Add"), L.Tr("Cancel")))
+                return;
+
+            var added = PrefabWriter.AddParameters(prefab);
+            if (added == null)
+            {
+                EditorUtility.DisplayDialog(L.Tr("Prefab Link"),
+                    L.Tr("'{0}' was not changed — Modular Avatar is not installed, or the prefab could not be opened.",
+                        prefab.name), "OK");
+                return;
+            }
+            // The slot is filled only when it is empty, the same rule linking follows: a store
+            // somebody chose is an answer, not a gap.
+            if (GraphFrameData.GetParameterStore(controller) == null)
+                GraphFrameData.SetParameterStore(controller, added);
+            Context.NotifyParametersChanged();
         }
 
         void Unlink(AnimatorController controller)

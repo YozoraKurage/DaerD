@@ -1,6 +1,9 @@
+using System.IO;
+using System.Text;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.Animations;
+using UnityEditor.PackageManager;
 using UnityEngine;
 #if DAERD_MA && DAERD_VRC
 using MaMergeAnimator = nadena.dev.modular_avatar.core.ModularAvatarMergeAnimator;
@@ -114,6 +117,13 @@ namespace Yozolab.DaerD.Tests
             GraphFrameData.SetPrefabLink(controller, root, MergeIn(prefabPath));
         }
 #endif
+
+        /// <summary>Whether the FILE holds this text, whichever way the project serialises its
+        /// assets — Unity writes string fields as UTF-8 in both modes. A dirty asset nobody
+        /// saved looks exactly like a saved one until the next domain reload, so this is the
+        /// only question worth asking about a write into a prefab.</summary>
+        static bool FileMentions(string path, string text) =>
+            Encoding.UTF8.GetString(File.ReadAllBytes(path)).Contains(text);
 
         /// <summary>Writes the controller (and the holder inside it) out and reads it back off
         /// disk, which is the only way to tell a saved field from a remembered one.</summary>
@@ -524,6 +534,156 @@ namespace Yozolab.DaerD.Tests
             Assert.AreEqual(PrefabLinkState.Healthy, PrefabLinks.Status(controller).state);
             Assert.IsNull(GraphFrameData.GetParameterStore(controller));
             Assert.IsNull(PrefabLinks.StoreOf(PrefabLinks.Status(controller)));
+#else
+            Assert.Ignore("Modular Avatar is not installed in this project.");
+#endif
+        }
+
+        // ---- writing the declaration into the prefab ---------------------------
+
+        /// <summary>
+        /// The refusals, decided over facts rather than over the project — which is the only way
+        /// to check the case that matters most, since a prefab inside a registry package is not
+        /// something a test can install on demand.
+        /// </summary>
+        [Test]
+        public void WhoMayBeWrittenToFollowsWhereThePrefabLives()
+        {
+            Assert.AreEqual(PrefabWriteRefusal.None,
+                PrefabWriter.Judge("Assets/Gimmick.prefab", null, false),
+                "an asset in the user's own project");
+            Assert.AreEqual(PrefabWriteRefusal.None,
+                PrefabWriter.Judge("Packages/dev.example.gimmick/Gimmick.prefab",
+                    PackageSource.Embedded, false),
+                "a VPM project keeps its dependencies as real folders, and a gimmick being "
+                + "developed in one is a normal thing to be editing");
+            Assert.AreEqual(PrefabWriteRefusal.None,
+                PrefabWriter.Judge("Packages/dev.example.gimmick/Gimmick.prefab",
+                    PackageSource.Local, false));
+
+            foreach (var source in new[]
+                     {
+                         PackageSource.Registry, PackageSource.Git,
+                         PackageSource.LocalTarball, PackageSource.BuiltIn,
+                     })
+                Assert.AreEqual(PrefabWriteRefusal.ImmutablePackage,
+                    PrefabWriter.Judge("Packages/dev.example.gimmick/Gimmick.prefab", source, false),
+                    "a write there is thrown away by the next resolve, and a change that "
+                    + "disappears without saying so is worse than one that never happened");
+
+            Assert.AreEqual(PrefabWriteRefusal.NotAPrefabAsset,
+                PrefabWriter.Judge(null, null, false));
+        }
+
+        [Test]
+        public void APrefabOpenWithUnsavedEditsIsRefused()
+        {
+            Assert.AreEqual(PrefabWriteRefusal.OpenWithUnsavedEdits,
+                PrefabWriter.Judge("Assets/Gimmick.prefab", null, true));
+        }
+
+        [Test]
+        public void APrefabInThisProjectIsWritable()
+        {
+            var prefab = BarePrefab(GimmickPrefab);
+            Assert.AreEqual(PrefabWriteRefusal.None, PrefabWriter.Check(prefab));
+            Assert.AreEqual(PrefabWriteRefusal.NotAPrefabAsset, PrefabWriter.Check(null));
+
+            var loose = new GameObject("Loose");
+            Assert.AreEqual(PrefabWriteRefusal.NotAPrefabAsset, PrefabWriter.Check(loose),
+                "a scene object has no file to write");
+            Object.DestroyImmediate(loose);
+        }
+
+        [Test]
+        public void AddingTheDeclarationChangesNothingElseInThePrefab()
+        {
+#if DAERD_MA && DAERD_VRC
+            var controller = Controller(ControllerPath);
+            var prefab = Prefab(GimmickPrefab, controller);
+            Pin(controller, GimmickPrefab);
+            Assert.IsNull(PrefabLinks.StoreOf(PrefabLinks.Status(controller)));
+
+            var added = PrefabWriter.AddParameters(prefab);
+
+            Assert.IsNotNull(added, "the component comes back as it exists in the saved asset");
+            var saved = AssetDatabase.LoadAssetAtPath<GameObject>(GimmickPrefab);
+            Assert.IsNotNull(saved.transform.Find("Mid/Leaf"), "the objects are where they were");
+            Assert.AreSame(controller, saved.GetComponentInChildren<MaMergeAnimator>(true).animator,
+                "and the merge still merges what it merged");
+
+            var status = PrefabLinks.Status(controller);
+            Assert.AreEqual(PrefabLinkState.Healthy, status.state,
+                "writing the file must not break the link that pointed into it");
+            Assert.AreSame(added, PrefabLinks.StoreOf(status),
+                "on the root, which is where Modular Avatar looks from the merge upwards — so "
+                + "a merge three objects down finds it");
+#else
+            Assert.Ignore("Modular Avatar is not installed in this project.");
+#endif
+        }
+
+        [Test]
+        public void AddingTheDeclarationTwiceLeavesTheSecondCallWithNothingToDo()
+        {
+#if DAERD_MA && DAERD_VRC
+            var controller = Controller(ControllerPath);
+            var prefab = Prefab(GimmickPrefab, controller);
+
+            Assert.IsNotNull(PrefabWriter.AddParameters(prefab));
+            Assert.IsNull(PrefabWriter.AddParameters(
+                AssetDatabase.LoadAssetAtPath<GameObject>(GimmickPrefab)));
+
+            var saved = AssetDatabase.LoadAssetAtPath<GameObject>(GimmickPrefab);
+            Assert.AreEqual(1, saved.GetComponents<
+                nadena.dev.modular_avatar.core.ModularAvatarParameters>().Length);
+#else
+            Assert.Ignore("Modular Avatar is not installed in this project.");
+#endif
+        }
+
+        /// <summary>
+        /// The half of this feature that had to be MEASURED rather than reasoned about: whether
+        /// editing the VALUES of a component that lives inside a prefab asset reaches the file,
+        /// through the ordinary store path and without any prefab-contents round trip of its own.
+        /// It does — the store marks the component dirty and saves the asset it belongs to — so
+        /// there are two ways into a prefab and not one: structure through
+        /// <see cref="PrefabWriter"/>, values through the store, exactly as they are for a
+        /// component in a scene.
+        /// </summary>
+        [Test]
+        public void EditingTheAddedDeclarationReachesThePrefabFile()
+        {
+#if DAERD_MA && DAERD_VRC
+            var controller = Controller(ControllerPath);
+            var prefab = Prefab(GimmickPrefab, controller);
+            var store = ParameterStore.TryWrap(PrefabWriter.AddParameters(prefab));
+            Assert.IsNotNull(store);
+
+            store.Add(new VrcExpressionParameters.Entry
+            {
+                name = "Hat",
+                valueType = VrcExpressionParameters.ValueType.Bool,
+                typed = true,
+                synced = true,
+                saved = true,
+                defaultValue = 1f,
+            });
+            Assert.IsTrue(FileMentions(GimmickPrefab, "Hat"),
+                "a row added to a prefab's store has to be in the prefab FILE — a dirty asset "
+                + "nobody saved is gone at the next domain reload");
+
+            Assert.IsTrue(store.Edit("Hat", entry => entry.synced = false));
+            Assert.IsTrue(store.Rename("Hat", "Cap"));
+
+            AssetDatabase.ImportAsset(GimmickPrefab, ImportAssetOptions.ForceUpdate);
+            var reread = ParameterStore.TryWrap(
+                AssetDatabase.LoadAssetAtPath<GameObject>(GimmickPrefab)
+                    .GetComponent<nadena.dev.modular_avatar.core.ModularAvatarParameters>());
+            var entry = reread.Find("Cap");
+            Assert.IsNotNull(entry, "read back out of the reimported asset, not out of memory");
+            Assert.IsFalse(entry.synced);
+            Assert.IsTrue(entry.typed, "unsyncing keeps the row's type");
 #else
             Assert.Ignore("Modular Avatar is not installed in this project.");
 #endif
