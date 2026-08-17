@@ -58,6 +58,56 @@ namespace Yozolab.DaerD
         public Object mergeAnimator;
     }
 
+    /// <summary>What a scan turned up, as the three answers the UI has to tell apart.</summary>
+    enum PrefabLinkChoice
+    {
+        /// <summary>Nothing merges this controller — say so by name, ask nothing.</summary>
+        Nothing,
+        /// <summary>Exactly one, so there is nothing to choose: confirm it and link.</summary>
+        One,
+        /// <summary>Several, and picking between them is the user's call, never DaerD's.</summary>
+        Several,
+    }
+
+    /// <summary>
+    /// Everything linking to one candidate would do, worked out before anything is written.
+    ///
+    /// It exists so the confirmation dialog and the write are the same decision: a dialog that
+    /// described the write in its own words would be a second implementation of it, free to
+    /// drift, and this one is about to touch two saved fields at once. It is also what makes the
+    /// decision testable without a dialog on screen.
+    /// </summary>
+    class PrefabLinkPlan
+    {
+        public PrefabLinkCandidate candidate;
+        /// <summary>The MA Parameters that governs the candidate's merge, or null when the
+        /// prefab has none (or MA is not installed).</summary>
+        public Object store;
+        /// <summary>What the controller's parameter store slot holds right now.</summary>
+        public Object currentStore;
+
+        /// <summary>Whether linking also fills the store slot. Only ever true for an EMPTY slot:
+        /// a slot somebody filled by hand is an answer, and silently replacing it while they
+        /// pressed a button labelled "link a prefab" would be DaerD editing something it was
+        /// not asked about.</summary>
+        public bool FillsStore => store != null && currentStore == null;
+
+        /// <summary>The slot is filled with something other than what this prefab offers. Not an
+        /// error and not a thing to fix — the store is offered as a button instead.</summary>
+        public bool StoreDiffers => store != null && currentStore != null && currentStore != store;
+    }
+
+    /// <summary>A scan and what to do with it, so the branch is decided in one place rather
+    /// than by whichever caller counted the list.</summary>
+    class PrefabLinkScan
+    {
+        public List<PrefabLinkCandidate> candidates = new List<PrefabLinkCandidate>();
+        public PrefabLinkChoice choice = PrefabLinkChoice.Nothing;
+        /// <summary>Filled only for <see cref="PrefabLinkChoice.One"/> — with several, the plan
+        /// cannot be made until the user has said which.</summary>
+        public PrefabLinkPlan plan;
+    }
+
     /// <summary>
     /// The prefab side of a controller: reading the saved pin, and finding what could be pinned.
     ///
@@ -139,6 +189,68 @@ namespace Yozolab.DaerD
             if (!component.transform.IsChildOf(prefab.transform)) return component.name;
             return AnimationUtility.CalculateTransformPath(component.transform, prefab.transform);
         }
+
+        // ---- linking -----------------------------------------------------------
+
+        /// <summary>What linking to <paramref name="candidate"/> would do. Reads both saved
+        /// fields; writes neither.</summary>
+        public static PrefabLinkPlan PlanFor(AnimatorController controller,
+            PrefabLinkCandidate candidate)
+        {
+            if (candidate == null) return null;
+            return new PrefabLinkPlan
+            {
+                candidate = candidate,
+                store = ParameterStore.StoreFor(candidate.mergeAnimator),
+                currentStore = GraphFrameData.GetParameterStore(controller),
+            };
+        }
+
+        /// <summary>
+        /// Writes the plan: the pin, and the store slot when the plan says it fills it. One call
+        /// rather than two at the call site, because the second write is conditional and the
+        /// condition is the plan's — a caller that decided it again could decide it differently
+        /// from the dialog the user just read.
+        /// </summary>
+        public static void Apply(AnimatorController controller, PrefabLinkPlan plan)
+        {
+            if (controller == null || plan == null || plan.candidate == null) return;
+            GraphFrameData.SetPrefabLink(controller, plan.candidate.prefab,
+                plan.candidate.mergeAnimator);
+            if (plan.FillsStore)
+                GraphFrameData.SetParameterStore(controller, plan.store);
+        }
+
+        /// <summary>The project scan, as the branch its caller has to draw.</summary>
+        public static PrefabLinkScan ScanFor(AnimatorController controller) =>
+            Decide(controller, FindCandidates(controller));
+
+        /// <summary>The same for one prefab the user has already named (a drag-and-drop).</summary>
+        public static PrefabLinkScan ScanIn(GameObject prefab, AnimatorController controller) =>
+            Decide(controller, FindCandidatesIn(prefab, controller));
+
+        static PrefabLinkScan Decide(AnimatorController controller,
+            List<PrefabLinkCandidate> candidates)
+        {
+            var scan = new PrefabLinkScan { candidates = candidates };
+            if (candidates.Count == 1)
+            {
+                scan.choice = PrefabLinkChoice.One;
+                scan.plan = PlanFor(controller, candidates[0]);
+            }
+            else if (candidates.Count > 1)
+            {
+                scan.choice = PrefabLinkChoice.Several;
+            }
+            return scan;
+        }
+
+        /// <summary>The MA Parameters that governs the merge this controller is pinned to, or
+        /// null. What the home screen offers as a button when the store slot holds something
+        /// else — offered, never applied on its own (design: the slot is the user's answer).
+        /// </summary>
+        public static Object StoreOf(PrefabLinkStatus status) =>
+            status != null && status.IsHealthy ? ParameterStore.StoreFor(status.mergeAnimator) : null;
 
         // ---- the project sweep ------------------------------------------------
 

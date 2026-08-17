@@ -168,6 +168,27 @@ namespace Yozolab.DaerD
 #endif
         }
 
+        /// <summary>
+        /// The store that governs one MA Merge Animator: the MA Parameters on its own object or
+        /// on the nearest parent that has one, which is where Modular Avatar itself looks. Asked
+        /// of a merge the user has already chosen, so unlike <see cref="DetectFor"/> and
+        /// <see cref="DetectInPrefabs"/> this searches nothing and opens nothing.
+        ///
+        /// Null in a project without MA, and null when nothing above the merge declares any
+        /// parameters — which is a gimmick prefab that has not been given a store yet, not an
+        /// error.
+        /// </summary>
+        public static Object StoreFor(Object mergeAnimator)
+        {
+#if DAERD_MA
+            var component = mergeAnimator as Component;
+            if (component == null) return null;
+            return MaStore.Above(component.transform);
+#else
+            return null;
+#endif
+        }
+
         /// <summary>Drops the prefab sweep's memory. Called on every asset import — a prefab
         /// that has just started (or stopped) referencing the controller is the one thing a
         /// cached answer cannot survive, and refilling costs a button press.</summary>
@@ -368,7 +389,7 @@ namespace Yozolab.DaerD
 
             /// <summary>The MA Parameters component on this object or the nearest parent that
             /// has one — MA reads a merge's parameters from the same place.</summary>
-            static MaParameters Above(Transform transform)
+            public static MaParameters Above(Transform transform)
             {
                 for (; transform != null; transform = transform.parent)
                 {

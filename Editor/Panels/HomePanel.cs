@@ -162,6 +162,8 @@ namespace Yozolab.DaerD
             EditorGUILayout.BeginVertical(GUILayout.MaxWidth(SplitColumnWidth));
             DrawController(controller);
             EditorGUILayout.Space(8);
+            DrawPrefabLink(controller);
+            EditorGUILayout.Space(8);
             DrawTools(controller);
             EditorGUILayout.EndVertical();
 
@@ -190,6 +192,8 @@ namespace Yozolab.DaerD
             EditorGUILayout.BeginVertical(GUILayout.MaxWidth(SingleColumnWidth));
 
             DrawController(controller);
+            EditorGUILayout.Space(8);
+            DrawPrefabLink(controller);
             EditorGUILayout.Space(8);
             DrawGadgets(controller);
             EditorGUILayout.Space(8);
@@ -327,6 +331,292 @@ namespace Yozolab.DaerD
             ControllerAnalyzer.SetAllWriteDefaults(controller, value);
             // WD badges update immediately
             Context.NotifyGraphVisualsChanged(DaerDContext.GraphVisuals.AllStateNodes);
+        }
+
+        // ---- prefab link -------------------------------------------------------
+
+        /// <summary>
+        /// Which gimmick prefab this controller belongs to, and what follows from knowing it.
+        ///
+        /// Its own card rather than a fourth slot in the Controller card above, because the two
+        /// answer different questions. The slots up there are assets the user hands DaerD; this
+        /// is a claim about the project that DaerD then has to keep checking — it can go stale
+        /// on its own, without anybody touching the controller, and a stale link needs a
+        /// sentence rather than an empty field.
+        ///
+        /// Nothing here searches on its own (ADR 0028): the sweep runs on Scan and on nothing
+        /// else, and drawing this card costs one reference resolution.
+        /// </summary>
+        void DrawPrefabLink(AnimatorController controller)
+        {
+            BeginCard(L.Tr("Prefab Link"));
+            var status = PrefabLinks.Status(controller);
+
+            using (new PanelGui.LabelWidthScope(FieldLabelWidth))
+            {
+                var picked = (GameObject)EditorGUILayout.ObjectField(
+                    new GUIContent(L.Tr("Prefab"),
+                        L.Tr("The gimmick prefab whose MA Merge Animator merges this controller. Drop one here, or press Scan to search the project. DaerD never picks one on its own.")),
+                    status.prefab, typeof(GameObject), false);
+                if (picked != status.prefab)
+                {
+                    DropPrefab(controller, picked);
+                    GUIUtility.ExitGUI();   // the card was redrawn under this layout pass
+                }
+            }
+
+            DrawLinkState(controller, status);
+
+            EditorGUILayout.BeginHorizontal();
+            if (GUILayout.Button(new GUIContent(L.Tr("Scan & Link"),
+                    L.Tr("Search the project's prefabs for an MA Merge Animator that merges this controller. Only prefabs that already reference it are opened, and the answer is remembered until something in the project changes."))))
+            {
+                ScanAndLink(controller, rescan: false);
+                GUIUtility.ExitGUI();
+            }
+            if (IsStale(status.state) && GUILayout.Button(new GUIContent(L.Tr("Rescan"),
+                    L.Tr("Search the project again from scratch, ignoring the remembered answer."))))
+            {
+                ScanAndLink(controller, rescan: true);
+                GUIUtility.ExitGUI();
+            }
+            using (new EditorGUI.DisabledScope(status.state == PrefabLinkState.None))
+                if (GUILayout.Button(new GUIContent(L.Tr("Unlink"),
+                        L.Tr("Forget which prefab this controller belongs to. Nothing inside the prefab is changed."))))
+                {
+                    Unlink(controller);
+                    GUIUtility.ExitGUI();
+                }
+            EditorGUILayout.EndHorizontal();
+
+            DrawLinkedStore(controller, status);
+            EndCard();
+        }
+
+        /// <summary>The states a Rescan can plausibly answer: the link once resolved and no
+        /// longer does, or points somewhere else. "None" is not stale — there is nothing to
+        /// re-check — and Scan is the button for it.</summary>
+        static bool IsStale(PrefabLinkState state) =>
+            state == PrefabLinkState.PrefabMissing || state == PrefabLinkState.MergeMissing
+            || state == PrefabLinkState.Diverged;
+
+        /// <summary>
+        /// The link in one line, or the sentence its state needs. Every broken state names what
+        /// it is talking about, and none of them offers to repair itself: a link that points at
+        /// another controller is somebody's edit, and which of the two is now the mistake is not
+        /// a thing DaerD can know (the same rule the analyzer keeps).
+        /// </summary>
+        void DrawLinkState(AnimatorController controller, PrefabLinkStatus status)
+        {
+            switch (status.state)
+            {
+                case PrefabLinkState.Healthy:
+                    string path = AssetDatabase.GetAssetPath(status.prefab);
+                    EditorGUILayout.BeginHorizontal();
+                    DrawRowName(status.prefab.name, path);
+                    DrawRowNote(PrefabLinks.PathIn(status.prefab, status.mergeAnimator));
+                    if (RowButton(L.Tr("Ping"), L.Tr("Highlight this object in the Project / graph")))
+                        EditorGUIUtility.PingObject(status.prefab);
+                    EditorGUILayout.EndHorizontal();
+                    break;
+                case PrefabLinkState.PrefabMissing:
+                    // The prefab cannot be named: naming it would mean having saved its path,
+                    // and a saved path is the thing this design does not do.
+                    EditorGUILayout.HelpBox(
+                        L.Tr("The linked prefab cannot be found — deleted, or on a branch that is not checked out. The link is kept exactly as it is; nothing is guessed in its place."),
+                        MessageType.Warning);
+                    break;
+                case PrefabLinkState.MergeMissing:
+                    EditorGUILayout.HelpBox(
+                        L.Tr("The MA Merge Animator this controller was linked to is no longer inside '{0}'. The link is kept as it is — Rescan searches the project again.",
+                            status.prefab.name),
+                        MessageType.Warning);
+                    break;
+                case PrefabLinkState.Diverged:
+                    EditorGUILayout.HelpBox(
+                        L.Tr("The MA Merge Animator in '{0}' now merges {1}, not this controller. Nothing is re-pointed for you: fix it in the prefab, or link this controller to another one.",
+                            status.prefab.name, Quoted(status.mergedController)),
+                        MessageType.Warning);
+                    break;
+                case PrefabLinkState.Unverifiable:
+                    EditorGUILayout.HelpBox(
+                        L.Tr("Modular Avatar is not installed, so this link cannot be read. The saved link is untouched and comes back with it."),
+                        MessageType.Info);
+                    break;
+                default:
+                    EditorGUILayout.LabelField(
+                        L.Tr("Not linked. Scan lists every prefab whose MA Merge Animator names this controller."),
+                        EditorStyles.centeredGreyMiniLabel);
+                    break;
+            }
+        }
+
+        /// <summary>An object's name for a message, or a word for the empty slot — a Merge
+        /// Animator with nothing in its animator field is a real thing to run into, and
+        /// "merges ''" would read as a bug.</summary>
+        static string Quoted(UnityEngine.Object target) =>
+            target != null ? "'" + target.name + "'" : L.Tr("nothing at all");
+
+        /// <summary>
+        /// The store the link implies, beside the store the controller actually uses.
+        ///
+        /// Read-only on purpose. The rows are edited in the Parameters panel, which is in the
+        /// left column and visible from here — a second editing surface for the same rows is
+        /// two implementations of the same list, and the panel's one already knows about
+        /// effective names, the budget and the sync diff.
+        /// </summary>
+        void DrawLinkedStore(AnimatorController controller, PrefabLinkStatus status)
+        {
+            if (!status.IsHealthy) return;
+            var linked = PrefabLinks.StoreOf(status);
+            var current = GraphFrameData.GetParameterStore(controller);
+            var store = ParameterStore.TryWrap(current);
+
+            if (store != null)
+            {
+                int capacity = store.Capacity();
+                string summary = capacity >= 0
+                    ? L.Tr("{0}: {1} — {2} of {3} synced bits",
+                        store.Kind, store.Target.name, store.UsedBits(), capacity)
+                    : L.Tr("{0}: {1} — {2} synced bits",
+                        store.Kind, store.Target.name, store.UsedBits());
+                EditorGUILayout.LabelField(new GUIContent(summary,
+                    L.Tr("The rows themselves are edited in the Parameters panel on the left, which is showing this same store.")));
+            }
+            else if (linked == null)
+            {
+                EditorGUILayout.LabelField(
+                    L.Tr("The linked prefab has no MA Parameters above its merge yet."),
+                    EditorStyles.centeredGreyMiniLabel);
+            }
+
+            if (linked == null || linked == current) return;
+            if (GUILayout.Button(new GUIContent(L.Tr("Use The Prefab's MA Parameters"),
+                    L.Tr("Point the parameter store slot at the MA Parameters that governs the linked merge. A button rather than something linking does for you, because the slot already holds an answer somebody gave."))))
+            {
+                GraphFrameData.SetParameterStore(controller, linked);
+                Context.NotifyParametersChanged();
+                GUIUtility.ExitGUI();
+            }
+        }
+
+        // ---- prefab link actions -----------------------------------------------
+
+        /// <summary>
+        /// Scan, then link — or say why not. The three answers are told apart by
+        /// <see cref="PrefabLinks.ScanFor"/> rather than by counting the list here, so the
+        /// branch is one decision with a test on it instead of a shape the UI happens to have.
+        /// </summary>
+        void ScanAndLink(AnimatorController controller, bool rescan)
+        {
+            // Rescan exists for the case the memory is the problem: an answer remembered from
+            // before the prefab was fixed. Ordinary Scan keeps it, since refilling means walking
+            // the project again.
+            if (rescan) PrefabLinks.ForgetCandidates();
+            var scan = PrefabLinks.ScanFor(controller);
+            switch (scan.choice)
+            {
+                case PrefabLinkChoice.One:
+                    Confirm(controller, scan.plan);
+                    break;
+                case PrefabLinkChoice.Several:
+                    ShowCandidateMenu(controller, scan.candidates);
+                    break;
+                default:
+                    EditorUtility.DisplayDialog(L.Tr("Prefab Link"),
+                        L.Tr("No prefab in this project has an MA Merge Animator that merges '{0}'.",
+                            controller.name), "OK");
+                    break;
+            }
+        }
+
+        /// <summary>A prefab dropped on the slot: the same three answers asked of that one
+        /// prefab, which costs no sweep at all — the user already said which.</summary>
+        void DropPrefab(AnimatorController controller, GameObject prefab)
+        {
+            if (prefab == null)
+            {
+                Unlink(controller);
+                return;
+            }
+            // A scene object cannot be the answer: a gimmick spends most of its life as a prefab
+            // in no scene at all, and a link into a scene would die with the scene.
+            if (!PrefabUtility.IsPartOfPrefabAsset(prefab))
+            {
+                EditorUtility.DisplayDialog(L.Tr("Prefab Link"),
+                    L.Tr("'{0}' is not a prefab asset. Only a prefab in the project can be linked.",
+                        prefab.name), "OK");
+                return;
+            }
+            var scan = PrefabLinks.ScanIn(prefab, controller);
+            switch (scan.choice)
+            {
+                case PrefabLinkChoice.One:
+                    Confirm(controller, scan.plan);
+                    break;
+                case PrefabLinkChoice.Several:
+                    ShowCandidateMenu(controller, scan.candidates);
+                    break;
+                default:
+                    EditorUtility.DisplayDialog(L.Tr("Prefab Link"),
+                        L.Tr("'{0}' has no MA Merge Animator that merges '{1}'.",
+                            prefab.name, controller.name), "OK");
+                    break;
+            }
+        }
+
+        /// <summary>
+        /// The picker for several candidates. Slashes are replaced in the label because
+        /// GenericMenu reads one as "start a submenu", and both halves of what identifies a
+        /// candidate — where the prefab is, where the merge is inside it — are paths.
+        /// </summary>
+        void ShowCandidateMenu(AnimatorController controller, List<PrefabLinkCandidate> candidates)
+        {
+            var menu = new GenericMenu();
+            foreach (var candidate in candidates)
+            {
+                var captured = candidate;
+                string label = AssetDatabase.GetAssetPath(candidate.prefab) + "  :  "
+                    + PrefabLinks.PathIn(candidate.prefab, candidate.mergeAnimator);
+                menu.AddItem(new GUIContent(label.Replace("/", " › ")), false,
+                    () => Confirm(controller, PrefabLinks.PlanFor(controller, captured)));
+            }
+            menu.ShowAsContext();
+        }
+
+        /// <summary>
+        /// The confirmation, written out of the plan rather than out of the UI's own idea of
+        /// what is about to happen — including the store slot, which is the half a person would
+        /// not otherwise expect a button called "link" to touch.
+        /// </summary>
+        void Confirm(AnimatorController controller, PrefabLinkPlan plan)
+        {
+            if (plan == null || plan.candidate == null) return;
+            string message = L.Tr("Link this controller to '{0}'?\n\nPrefab: {1}\nMerge Animator: {2}",
+                plan.candidate.prefab.name, AssetDatabase.GetAssetPath(plan.candidate.prefab),
+                PrefabLinks.PathIn(plan.candidate.prefab, plan.candidate.mergeAnimator));
+            if (plan.FillsStore)
+                message += "\n\n" + L.Tr("The parameter store slot is empty, so it is set to the MA Parameters on '{0}' at the same time.",
+                    plan.store.name);
+            else if (plan.StoreDiffers)
+                message += "\n\n" + L.Tr("The parameter store slot already holds '{0}' and is left alone. A button below adopts the prefab's own instead.",
+                    plan.currentStore.name);
+
+            if (!EditorUtility.DisplayDialog(L.Tr("Prefab Link"), message, L.Tr("Link"), L.Tr("Cancel")))
+                return;
+            PrefabLinks.Apply(controller, plan);
+            Context.NotifyPrefabLinkChanged();
+            if (plan.FillsStore) Context.NotifyParametersChanged();
+        }
+
+        void Unlink(AnimatorController controller)
+        {
+            if (!EditorUtility.DisplayDialog(L.Tr("Prefab Link"),
+                    L.Tr("Forget which prefab this controller belongs to?\n\nNothing inside the prefab is changed, and the parameter store slot is left as it is."),
+                    L.Tr("Unlink"), L.Tr("Cancel")))
+                return;
+            GraphFrameData.ClearPrefabLink(controller);
+            Context.NotifyPrefabLinkChanged();
         }
 
         // ---- DBT gadgets -------------------------------------------------------

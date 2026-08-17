@@ -1779,6 +1779,107 @@ msgstr "シーンに完全一致がありません。このコントローラー
 msgid "Linked to the prefab '{0}' ({1})"
 msgstr "プレハブ '{0}' にリンクしています（{1}）"
 
+msgid "Prefab Link"
+msgstr "プレハブリンク"
+
+msgid "Prefab"
+msgstr "プレハブ"
+
+msgid "The gimmick prefab whose MA Merge Animator merges this controller. Drop one here, or press Scan to search the project. DaerD never picks one on its own."
+msgstr "このコントローラーを Merge する MA Merge Animator を持つギミックプレハブです。ここにドロップするか、「検索してリンク」でプロジェクトを検索してください。DaerD が勝手に選ぶことはありません。"
+
+msgid "Not linked. Scan lists every prefab whose MA Merge Animator names this controller."
+msgstr "未リンクです。「検索してリンク」を押すと、このコントローラーを名指しする MA Merge Animator を持つプレハブを一覧できます。"
+
+msgid "Scan & Link"
+msgstr "検索してリンク"
+
+msgid "Search the project's prefabs for an MA Merge Animator that merges this controller. Only prefabs that already reference it are opened, and the answer is remembered until something in the project changes."
+msgstr "プロジェクト内の Prefab から、このコントローラーを Merge する MA Merge Animator を検索します。開くのは既にこのコントローラーを参照している Prefab だけで、結果はプロジェクトに変更があるまで記憶されます。"
+
+msgid "Rescan"
+msgstr "再検索"
+
+msgid "Search the project again from scratch, ignoring the remembered answer."
+msgstr "記憶している結果を捨てて、プロジェクトを最初から検索し直します。"
+
+msgid "Unlink"
+msgstr "リンク解除"
+
+msgid "Forget which prefab this controller belongs to. Nothing inside the prefab is changed."
+msgstr "このコントローラーがどのプレハブに属するかの記録を破棄します。プレハブの中身は変更しません。"
+
+msgid "Link"
+msgstr "リンク"
+
+msgid "The linked prefab cannot be found — deleted, or on a branch that is not checked out. The link is kept exactly as it is; nothing is guessed in its place."
+msgstr "リンク先のプレハブが見つかりません。削除されたか、チェックアウトしていないブランチにある可能性があります。リンクはそのまま保持し、代わりのものを推測することはありません。"
+
+msgid "The MA Merge Animator this controller was linked to is no longer inside '{0}'. The link is kept as it is — Rescan searches the project again."
+msgstr "このコントローラーがリンクしていた MA Merge Animator が '{0}' の中に見つかりません。リンクはそのまま保持します。「再検索」でプロジェクトを検索し直せます。"
+
+msgid "The MA Merge Animator in '{0}' now merges {1}, not this controller. Nothing is re-pointed for you: fix it in the prefab, or link this controller to another one."
+msgstr "'{0}' の MA Merge Animator が Merge するのは、このコントローラーではなく {1} です。DaerD が張り替えることはありません。プレハブ側を直すか、別のプレハブにリンクし直してください。"
+
+msgid "nothing at all"
+msgstr "（未設定）"
+
+msgid "Modular Avatar is not installed, so this link cannot be read. The saved link is untouched and comes back with it."
+msgstr "Modular Avatar が導入されていないため、このリンクを読み取れません。保存されたリンクはそのまま保持され、Modular Avatar を入れれば元どおり読めます。"
+
+msgid "{0}: {1} — {2} of {3} synced bits"
+msgstr "{0}: {1} — 同期ビット {2} / {3}"
+
+msgid "{0}: {1} — {2} synced bits"
+msgstr "{0}: {1} — 同期ビット {2}"
+
+msgid "The rows themselves are edited in the Parameters panel on the left, which is showing this same store."
+msgstr "行そのものの編集は左の Parameters パネルで行います。そこに出ているのも同じストアです。"
+
+msgid "The linked prefab has no MA Parameters above its merge yet."
+msgstr "リンク先のプレハブには、merge から見て上位に MA Parameters がまだありません。"
+
+msgid "Use The Prefab's MA Parameters"
+msgstr "プレハブの MA Parameters を使う"
+
+msgid "Point the parameter store slot at the MA Parameters that governs the linked merge. A button rather than something linking does for you, because the slot already holds an answer somebody gave."
+msgstr "パラメーターストアのスロットを、リンク先の merge を管理する MA Parameters に向けます。スロットには既に誰かが与えた答えが入っているため、リンク時に自動で置き換えず、明示的なボタンにしています。"
+
+msgid "No prefab in this project has an MA Merge Animator that merges '{0}'."
+msgstr "'{0}' を Merge する MA Merge Animator を持つ Prefab が、プロジェクトにありません。"
+
+msgid "'{0}' is not a prefab asset. Only a prefab in the project can be linked."
+msgstr "'{0}' はプレハブアセットではありません。リンクできるのはプロジェクト内のプレハブだけです。"
+
+msgid "'{0}' has no MA Merge Animator that merges '{1}'."
+msgstr "'{0}' には '{1}' を Merge する MA Merge Animator がありません。"
+
+msgid ""
+"Link this controller to '{0}'?\n"
+"\n"
+"Prefab: {1}\n"
+"Merge Animator: {2}"
+msgstr ""
+"このコントローラーを '{0}' にリンクしますか？\n"
+"\n"
+"プレハブ: {1}\n"
+"Merge Animator: {2}"
+
+msgid "The parameter store slot is empty, so it is set to the MA Parameters on '{0}' at the same time."
+msgstr "パラメーターストアのスロットが空なので、同時に '{0}' の MA Parameters を設定します。"
+
+msgid "The parameter store slot already holds '{0}' and is left alone. A button below adopts the prefab's own instead."
+msgstr "パラメーターストアのスロットには既に '{0}' が入っているため、変更しません。プレハブ側のものを使うには、下のボタンを押してください。"
+
+msgid ""
+"Forget which prefab this controller belongs to?\n"
+"\n"
+"Nothing inside the prefab is changed, and the parameter store slot is left as it is."
+msgstr ""
+"このコントローラーがどのプレハブに属するかの記録を破棄しますか？\n"
+"\n"
+"プレハブの中身は変更せず、パラメーターストアのスロットもそのまま残します。"
+
 # ---- settings ----
 
 msgid "Language"

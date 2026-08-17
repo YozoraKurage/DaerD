@@ -75,10 +75,14 @@ namespace Yozolab.DaerD.Tests
 
 #if DAERD_MA && DAERD_VRC
         /// <summary>The same shape with an MA Merge Animator on the leaf, naming
-        /// <paramref name="merged"/>.</summary>
-        static GameObject Prefab(string path, AnimatorController merged)
+        /// <paramref name="merged"/>. With <paramref name="withStore"/> the root also carries an
+        /// MA Parameters — the ordinary gimmick shape, where the merge is somewhere inside and
+        /// the declaration sits above it.</summary>
+        static GameObject Prefab(string path, AnimatorController merged, bool withStore = false)
         {
             var built = new GameObject("Root");
+            if (withStore)
+                built.AddComponent<nadena.dev.modular_avatar.core.ModularAvatarParameters>();
             var mid = new GameObject("Mid");
             mid.transform.SetParent(built.transform);
             var leaf = new GameObject("Leaf");
@@ -87,6 +91,14 @@ namespace Yozolab.DaerD.Tests
             var saved = PrefabUtility.SaveAsPrefabAsset(built, path);
             Object.DestroyImmediate(built);
             return saved;
+        }
+
+        static PrefabLinkCandidate CandidateIn(string prefabPath, AnimatorController controller)
+        {
+            var found = PrefabLinks.FindCandidatesIn(
+                AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath), controller);
+            Assert.AreEqual(1, found.Count, "the fixture puts exactly one merge in each prefab");
+            return found[0];
         }
 
         static MaMergeAnimator MergeIn(string prefabPath)
@@ -391,6 +403,130 @@ namespace Yozolab.DaerD.Tests
             Assert.AreEqual(scans, PrefabLinks.Scans,
                 "a controller with no path cannot be any prefab's dependency");
             Object.DestroyImmediate(loose);
+        }
+
+        // ---- linking -----------------------------------------------------------
+
+        [Test]
+        public void AScanThatFindsNothingHasNothingToAsk()
+        {
+            var controller = Controller(ControllerPath);
+            PrefabLinks.ForgetCandidates();
+
+            var scan = PrefabLinks.ScanFor(controller);
+
+            Assert.AreEqual(PrefabLinkChoice.Nothing, scan.choice);
+            Assert.IsEmpty(scan.candidates);
+            Assert.IsNull(scan.plan);
+        }
+
+        [Test]
+        public void AScanThatFindsOneComesWithItsPlanReady()
+        {
+#if DAERD_MA && DAERD_VRC
+            var controller = Controller(ControllerPath);
+            Prefab(GimmickPrefab, controller, withStore: true);
+            PrefabLinks.ForgetCandidates();
+
+            var scan = PrefabLinks.ScanFor(controller);
+
+            Assert.AreEqual(PrefabLinkChoice.One, scan.choice);
+            Assert.IsNotNull(scan.plan);
+            Assert.AreEqual("Gimmick", scan.plan.candidate.prefab.name);
+            Assert.IsTrue(scan.plan.FillsStore,
+                "nothing is in the slot yet and the prefab has an MA Parameters to put there");
+#else
+            Assert.Ignore("Modular Avatar is not installed in this project.");
+#endif
+        }
+
+        [Test]
+        public void AScanThatFindsSeveralLeavesTheChoiceToTheUser()
+        {
+#if DAERD_MA && DAERD_VRC
+            var controller = Controller(ControllerPath);
+            Prefab(GimmickPrefab, controller);
+            Prefab(SecondPrefab, controller);
+            PrefabLinks.ForgetCandidates();
+
+            var scan = PrefabLinks.ScanFor(controller);
+
+            Assert.AreEqual(PrefabLinkChoice.Several, scan.choice);
+            Assert.AreEqual(2, scan.candidates.Count);
+            Assert.IsNull(scan.plan, "there is no plan until somebody says which one");
+#else
+            Assert.Ignore("Modular Avatar is not installed in this project.");
+#endif
+        }
+
+        [Test]
+        public void LinkingFillsAnEmptyParameterStoreSlotFromThePrefab()
+        {
+#if DAERD_MA && DAERD_VRC
+            var controller = Controller(ControllerPath);
+            var prefab = Prefab(GimmickPrefab, controller, withStore: true);
+            Assert.IsNull(GraphFrameData.GetParameterStore(controller));
+
+            var plan = PrefabLinks.PlanFor(controller, CandidateIn(GimmickPrefab, controller));
+            Assert.IsTrue(plan.FillsStore);
+            Assert.IsFalse(plan.StoreDiffers);
+            PrefabLinks.Apply(controller, plan);
+
+            Assert.AreEqual(PrefabLinkState.Healthy, PrefabLinks.Status(controller).state);
+            var store = ParameterStore.Of(controller);
+            Assert.IsNotNull(store, "the slot was empty, so linking filled it");
+            Assert.AreEqual("MA Params", store.Kind);
+            Assert.AreSame(prefab.GetComponent<
+                nadena.dev.modular_avatar.core.ModularAvatarParameters>(), store.Target,
+                "the one above the merge, which is where Modular Avatar itself looks");
+#else
+            Assert.Ignore("Modular Avatar is not installed in this project.");
+#endif
+        }
+
+        [Test]
+        public void LinkingLeavesASlotSomebodyAlreadyFilledAlone()
+        {
+#if DAERD_MA && DAERD_VRC
+            var controller = Controller(ControllerPath);
+            Prefab(GimmickPrefab, controller, withStore: true);
+            Prefab(SecondPrefab, controller, withStore: true);
+            // The slot answered by hand, with the OTHER prefab's declaration.
+            var chosen = AssetDatabase.LoadAssetAtPath<GameObject>(SecondPrefab)
+                .GetComponent<nadena.dev.modular_avatar.core.ModularAvatarParameters>();
+            GraphFrameData.SetParameterStore(controller, chosen);
+
+            var plan = PrefabLinks.PlanFor(controller, CandidateIn(GimmickPrefab, controller));
+            Assert.IsFalse(plan.FillsStore);
+            Assert.IsTrue(plan.StoreDiffers, "so the UI can offer the prefab's own as a button");
+            PrefabLinks.Apply(controller, plan);
+
+            Assert.AreEqual(PrefabLinkState.Healthy, PrefabLinks.Status(controller).state);
+            Assert.AreSame(chosen, GraphFrameData.GetParameterStore(controller),
+                "linking a prefab must not quietly replace an answer somebody gave");
+#else
+            Assert.Ignore("Modular Avatar is not installed in this project.");
+#endif
+        }
+
+        [Test]
+        public void APrefabWithNoDeclarationLinksAnywayAndLeavesTheSlotEmpty()
+        {
+#if DAERD_MA && DAERD_VRC
+            var controller = Controller(ControllerPath);
+            Prefab(GimmickPrefab, controller);
+
+            var plan = PrefabLinks.PlanFor(controller, CandidateIn(GimmickPrefab, controller));
+            Assert.IsNull(plan.store, "there is no MA Parameters above this merge");
+            Assert.IsFalse(plan.FillsStore);
+            PrefabLinks.Apply(controller, plan);
+
+            Assert.AreEqual(PrefabLinkState.Healthy, PrefabLinks.Status(controller).state);
+            Assert.IsNull(GraphFrameData.GetParameterStore(controller));
+            Assert.IsNull(PrefabLinks.StoreOf(PrefabLinks.Status(controller)));
+#else
+            Assert.Ignore("Modular Avatar is not installed in this project.");
+#endif
         }
 
         [Test]
