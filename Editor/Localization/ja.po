@@ -906,6 +906,53 @@ msgstr "すべての対象に階層パスが必要です。"
 msgid "Target path '{0}' is listed more than once."
 msgstr "対象パス '{0}' が重複しています。"
 
+# ---- object gadgets ----
+
+msgid "There is no gadget to build."
+msgstr "生成するガジェットがありません。"
+
+msgid "The gadget needs a name."
+msgstr "ガジェットの名前を入力してください。"
+
+msgid "This controller is not linked to a gimmick prefab yet — an object gadget animates the objects inside one."
+msgstr "このコントローラーはまだギミックプレハブにリンクしていません。オブジェクトガジェットはリンク先プレハブの中のオブジェクトをアニメーションします。"
+
+msgid "The prefab this controller is linked to cannot be found, so there is nothing to animate inside it."
+msgstr "このコントローラーがリンクしているプレハブが見つかりません。中のオブジェクトをアニメーションすることはできません。"
+
+msgid "The MA Merge Animator this controller was linked to is no longer inside '{0}'."
+msgstr "リンク先の MA Merge Animator は '{0}' の中にもう存在しません。"
+
+msgid "The MA Merge Animator in '{0}' now merges something else, so its objects are no longer this controller's to animate."
+msgstr "'{0}' の MA Merge Animator は現在別のコントローラーをマージしています。その中のオブジェクトは、このコントローラーがアニメーションする対象ではありません。"
+
+msgid "Modular Avatar is not installed, so the prefab link cannot be read and no object gadget can be built from it."
+msgstr "Modular Avatar が入っていないため、プレハブリンクを読めません。オブジェクトガジェットは生成できません。"
+
+msgid "The linked Merge Animator could not be resolved."
+msgstr "リンクされた Merge Animator を解決できませんでした。"
+
+msgid "The Merge Animator in '{0}' is set to Absolute paths. DaerD only builds object gadgets for Relative merges — with Absolute the prefab alone cannot say where the objects will end up."
+msgstr "'{0}' の Merge Animator は Absolute パスに設定されています。DaerD がオブジェクトガジェットを生成できるのは Relative のマージだけです。Absolute ではプレハブ単体からオブジェクトの最終的な位置が分かりません。"
+
+msgid "An object this gadget animates is gone from the prefab. DaerD does not pick a replacement for you — point the gadget at an object again, or delete it."
+msgstr "このガジェットがアニメーションするオブジェクトがプレハブから失われています。DaerD が代わりを推測することはありません。対象を指定し直すか、ガジェットを削除してください。"
+
+msgid "Target '{0}' is listed more than once."
+msgstr "対象 '{0}' が重複しています。"
+
+msgid "'{0}' is not inside '{1}', which the merge's paths are relative to."
+msgstr "'{0}' は '{1}' の中にありません。マージのパスは '{1}' からの相対です。"
+
+msgid "Target '{0}' animates a '{1}', and this project has no component by that name."
+msgstr "対象 '{0}' は '{1}' をアニメーションしますが、そのコンポーネントはこのプロジェクトにありません。"
+
+msgid "Another object gadget ('{0}') already drives the parameter '{1}'."
+msgstr "別のオブジェクトガジェット（'{0}'）がパラメーター '{1}' を既に使っています。"
+
+msgid "'{0}' will not be declared anywhere: this controller has no parameter store. Link the prefab's MA Parameters on the home screen, or turn Declare off."
+msgstr "'{0}' はどこにも宣言されません。このコントローラーにはパラメーターストアが設定されていません。ホーム画面でプレハブの MA Parameters をリンクするか、Declare を切ってください。"
+
 # ---- round-robin sync ----
 
 msgid "Async Sync"

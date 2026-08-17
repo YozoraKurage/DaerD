@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using System.IO;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
@@ -7,11 +6,24 @@ using UnityEngine;
 namespace Yozolab.DaerD
 {
     /// <summary>
-    /// Builds GameObject ON/OFF toggles: a pair of clips animating m_IsActive for the picked
-    /// hierarchy paths, wired up either as a classic two-state Bool layer or as a 1D tree
-    /// inside a Write-Defaults-ON Direct blend tree layer (Float weight). The clips are saved
-    /// as .anim assets next to the .controller file so they survive controller cleanup and
-    /// can be edited normally (in-memory controllers just keep the loose references).
+    /// The generation core of the object gadget family's Toggle kind: a pair of clips keying the
+    /// listed targets ON and OFF, and the two ways of playing them — a classic two-state Bool
+    /// layer, or a 1D tree inside a Write-Defaults-ON Direct blend tree layer driven by a Float.
+    ///
+    /// <para>PATHS ARRIVE ALREADY DERIVED.</para>
+    /// Every path in a <see cref="Plan"/> was worked out by somebody else, and that somebody is
+    /// <see cref="ObjectGadgets"/>, which derives them from references into the pinned prefab
+    /// each time it applies (ADR 0044). This class used to own a Request whose targets were
+    /// paths TYPED BY A PERSON against a scene hierarchy, plus a Validate and an Apply to run
+    /// it. That face is gone rather than kept beside the family's: it recorded nothing, so
+    /// nothing it built could be edited, regenerated or swept (the reason its wizard was hidden
+    /// away in the first place — ADR 0036), and two entry points into one generator is how the
+    /// two drift apart about what a toggle is.
+    ///
+    /// <para>NOTHING HERE OWNS ANYTHING.</para>
+    /// No asset is created, attached or saved, and no record is written. The clips come back
+    /// loose for the caller to put where it wants them — a sub-asset of the controller, or a
+    /// clip the user supplied (ADR 0046) — which is what lets one core serve both.
     /// </summary>
     static class ToggleBuilder
     {
@@ -19,7 +31,7 @@ namespace Yozolab.DaerD
         {
             /// <summary>New layer, two states (OFF/ON) switched by a Bool parameter.</summary>
             Layer,
-            /// <summary>1D tree (0 = OFF clip, 1 = ON clip) added to a Direct blend tree layer,
+            /// <summary>1D tree (0 = OFF, 1 = ON) added to a Direct blend tree layer,
             /// driven by a Float parameter.</summary>
             DirectBlendTree,
         }
@@ -52,7 +64,9 @@ namespace Yozolab.DaerD
 
         public class Target
         {
-            /// <summary>Hierarchy path relative to the Animator root ("" is the root itself).</summary>
+            /// <summary>Hierarchy path relative to the merge this controller is pinned to,
+            /// derived from the saved reference by the caller. "" is the merge's own object,
+            /// which is a legitimate thing to toggle.</summary>
             public string path;
             /// <summary>Unchecked inverts the toggle: every binding swaps its ON and OFF values.</summary>
             public bool activeWhenOn = true;
@@ -61,12 +75,16 @@ namespace Yozolab.DaerD
             public List<Binding> bindings = new List<Binding>();
         }
 
-        public class Request
+        /// <summary>One toggle as the generators need it: derived paths, a name, a parameter and
+        /// where to put the result. Not saved anywhere — the record is
+        /// <c>GraphFrameData.ObjectGadgetConfig</c>, and this is what it is turned into on the
+        /// way to being built.</summary>
+        public class Plan
         {
             public AnimatorController controller;
             public Mode mode;
             /// <summary>Base name for the layer, the generated clips and the 1D tree.</summary>
-            public string toggleName;
+            public string name;
             /// <summary>Bool (Layer) or Float (DirectBlendTree). Created if missing, reused when
             /// the type matches.</summary>
             public string parameter;
@@ -76,6 +94,30 @@ namespace Yozolab.DaerD
             /// <summary>DirectBlendTree mode: existing DBT (or empty) layer, or -1 to create one.</summary>
             public int layerIndex = -1;
             public string newLayerName = "DBT";
+        }
+
+        /// <summary>
+        /// One curve a toggle writes: where it goes, and the value it holds on each side.
+        ///
+        /// Rows exist as a description before they exist as curves so that the ledger a record
+        /// keeps (ADR 0046: what the last generate wrote) and the curves themselves come from
+        /// the same enumeration. A snapshot derived separately would be free to disagree with
+        /// what was actually written, which is exactly the failure it is there to prevent.
+        /// </summary>
+        public readonly struct Row
+        {
+            public readonly EditorCurveBinding binding;
+            public readonly float offValue;
+            public readonly float onValue;
+
+            public Row(EditorCurveBinding binding, float offValue, float onValue)
+            {
+                this.binding = binding;
+                this.offValue = offValue;
+                this.onValue = onValue;
+            }
+
+            public float Value(bool on) => on ? onValue : offValue;
         }
 
         /// <summary>Resolves a component type by short name (e.g. "VRCPhysBone") without an
@@ -88,150 +130,87 @@ namespace Yozolab.DaerD
             return null;
         }
 
-        /// <summary>Human-readable reason the request can't run, or null when it can.</summary>
-        public static string Validate(Request r)
+        /// <summary>Every curve this plan writes, in both clips. An inverted target is folded in
+        /// here — its rows come back with ON and OFF swapped — so nothing downstream has to know
+        /// about inversion twice.</summary>
+        public static List<Row> Rows(Plan plan)
         {
-            var controller = r.controller;
-            if (controller == null) return L.Tr("No controller.");
-            if (string.IsNullOrEmpty(r.toggleName))
-                return L.Tr("The toggle needs a name.");
-            if (string.IsNullOrEmpty(r.parameter))
-                return L.Tr("The parameter needs a name.");
-
-            var existing = DbtBuilder.FindParameter(controller, r.parameter);
-            if (existing != null)
+            var rows = new List<Row>();
+            if (plan == null || plan.targets == null) return rows;
+            foreach (var target in plan.targets)
             {
-                if (r.mode == Mode.Layer && existing.type != AnimatorControllerParameterType.Bool)
-                    return L.Tr("Parameter '{0}' exists but is not a Bool.", r.parameter);
-                if (r.mode == Mode.DirectBlendTree && existing.type != AnimatorControllerParameterType.Float)
-                    return L.Tr("Parameter '{0}' exists but is not a Float.", r.parameter);
-            }
-
-            if (r.targets == null || r.targets.Count == 0)
-                return L.Tr("Add at least one target object.");
-            var seen = new HashSet<string>();
-            foreach (var target in r.targets)
-            {
-                if (target == null || target.path == null || target.path.Trim().Length == 0)
-                    return L.Tr("Every target needs a hierarchy path.");
-                if (!seen.Add(target.path.Trim()))
-                    return L.Tr("Target path '{0}' is listed more than once.", target.path.Trim());
-                if (!target.toggleActive && (target.bindings == null || target.bindings.Count == 0))
-                    return L.Tr("Target '{0}' has nothing to animate — enable Object or add a component binding.", target.path.Trim());
-                if (target.bindings != null)
-                    foreach (var binding in target.bindings)
-                        if (binding == null || binding.type == null || string.IsNullOrEmpty(binding.property))
-                            return L.Tr("Target '{0}' has an invalid component binding.", target.path.Trim());
-            }
-
-            if (r.mode == Mode.DirectBlendTree)
-                return DbtBuilder.ValidateLayerChoice(controller, r.layerIndex, r.newLayerName);
-            return null;
-        }
-
-        /// <summary>Runs the (pre-validated) request; returns false when validation fails.</summary>
-        public static bool Apply(Request r)
-        {
-            if (Validate(r) != null) return false;
-            var controller = r.controller;
-
-            using (new UndoScope("Object Toggle"))
-            {
-                Undo.RegisterCompleteObjectUndo(controller, "Object Toggle");
-
-                var onClip = BuildClip(r, on: true);
-                var offClip = BuildClip(r, on: false);
-
-                if (r.mode == Mode.Layer)
-                    BuildLayer(r, onClip, offClip);
-                else
-                    BuildDirectBlendTree(r, onClip, offClip);
-
-                EditorUtility.SetDirty(controller);
-            }
-            return true;
-        }
-
-        /// <summary>One key per target on GameObject.m_IsActive; "activeWhenOn: false" targets
-        /// are inverted. Saved as an .anim next to the controller asset (see class docs).</summary>
-        static AnimationClip BuildClip(Request r, bool on)
-        {
-            var clip = new AnimationClip { name = r.toggleName + (on ? " ON" : " OFF") };
-            foreach (var target in r.targets)
-            {
-                // activeWhenOn == false inverts the whole target: its bindings take their
-                // ON values in the OFF clip and vice versa.
-                bool takeOn = on == target.activeWhenOn;
-                string path = target.path.Trim();
+                if (target == null) continue;
+                string path = target.path ?? string.Empty;
                 if (target.toggleActive)
-                {
-                    var binding = EditorCurveBinding.FloatCurve(path, typeof(GameObject), "m_IsActive");
-                    AnimationUtility.SetEditorCurve(clip, binding,
-                        new AnimationCurve(new Keyframe(0f, takeOn ? 1f : 0f)));
-                }
+                    rows.Add(Keyed(
+                        EditorCurveBinding.FloatCurve(path, typeof(GameObject), "m_IsActive"),
+                        0f, 1f, target.activeWhenOn));
                 if (target.bindings == null) continue;
                 foreach (var extra in target.bindings)
                 {
-                    var binding = EditorCurveBinding.FloatCurve(path, extra.type, extra.property);
-                    AnimationUtility.SetEditorCurve(clip, binding,
-                        new AnimationCurve(new Keyframe(0f, takeOn ? extra.onValue : extra.offValue)));
+                    if (extra == null || extra.type == null || string.IsNullOrEmpty(extra.property))
+                        continue;
+                    rows.Add(Keyed(
+                        EditorCurveBinding.FloatCurve(path, extra.type, extra.property),
+                        extra.offValue, extra.onValue, target.activeWhenOn));
                 }
             }
-            SaveClipBesideController(r.controller, clip);
+            return rows;
+        }
+
+        static Row Keyed(EditorCurveBinding binding, float off, float on, bool activeWhenOn) =>
+            activeWhenOn ? new Row(binding, off, on) : new Row(binding, on, off);
+
+        /// <summary>One side of the toggle as a fresh, unattached clip. The caller decides where
+        /// it lives — see the class docs.</summary>
+        public static AnimationClip BuildClip(Plan plan, bool on)
+        {
+            var clip = new AnimationClip { name = plan.name + (on ? " ON" : " OFF") };
+            foreach (var row in Rows(plan))
+                AnimationUtility.SetEditorCurve(clip, row.binding,
+                    new AnimationCurve(new Keyframe(0f, row.Value(on))));
             return clip;
         }
 
-        static void SaveClipBesideController(AnimatorController controller, AnimationClip clip)
+        /// <summary>
+        /// The classic toggle idiom: OFF and ON states with instant Bool transitions both ways,
+        /// in a layer of its own. Both clips key every target, so Write Defaults stays OFF.
+        /// Returns the layer's root state machine, which is how the record identifies the layer
+        /// across renames and reorders.
+        /// </summary>
+        public static AnimatorStateMachine BuildLayer(Plan plan, AnimationClip onClip,
+            AnimationClip offClip, out bool createdParameter)
         {
-            string controllerPath = AssetDatabase.GetAssetPath(controller);
-            if (string.IsNullOrEmpty(controllerPath)) return;   // in-memory: loose reference
-
-            string assetPath = AssetDatabase.GenerateUniqueAssetPath(
-                Path.GetDirectoryName(controllerPath) + "/" + FileSafe(clip.name) + ".anim");
-            AssetDatabase.CreateAsset(clip, assetPath);
-        }
-
-        /// <summary>Clip names double as file names — strip the characters a path can't hold.</summary>
-        static string FileSafe(string name)
-        {
-            foreach (var c in Path.GetInvalidFileNameChars())
-                name = name.Replace(c, '_');
-            return name;
-        }
-
-        /// <summary>The classic toggle idiom: OFF and ON states with instant Bool transitions
-        /// both ways. Both clips key every target, so Write Defaults stays OFF.</summary>
-        static void BuildLayer(Request r, AnimationClip onClip, AnimationClip offClip)
-        {
-            var controller = r.controller;
-            bool created;
-            EnsureParameter(controller, r.parameter, AnimatorControllerParameterType.Bool, out created);
-            if (created)
-                SetBoolDefault(controller, r.parameter, r.defaultOn);
+            var controller = plan.controller;
+            EnsureParameter(controller, plan.parameter, AnimatorControllerParameterType.Bool,
+                out createdParameter);
+            if (createdParameter)
+                SetBoolDefault(controller, plan.parameter, plan.defaultOn);
             // A reused parameter keeps its own default; start on the state that matches the
             // actual default so the layer doesn't transition on the first frame.
-            bool startOn = DbtBuilder.FindParameter(controller, r.parameter).defaultBool;
+            bool startOn = DbtBuilder.FindParameter(controller, plan.parameter).defaultBool;
 
-            controller.AddLayer(DbtBuilder.UniqueLayerName(controller, r.toggleName));
+            controller.AddLayer(DbtBuilder.UniqueLayerName(controller, plan.name));
             var layers = controller.layers;
             layers[layers.Length - 1].defaultWeight = 1f;
             controller.layers = layers;
 
             var stateMachine = layers[layers.Length - 1].stateMachine;
-            var offState = stateMachine.AddState(r.toggleName + " OFF", new Vector3(300f, 60f, 0f));
-            var onState = stateMachine.AddState(r.toggleName + " ON", new Vector3(300f, 170f, 0f));
+            var offState = stateMachine.AddState(plan.name + " OFF", new Vector3(300f, 60f, 0f));
+            var onState = stateMachine.AddState(plan.name + " ON", new Vector3(300f, 170f, 0f));
             offState.writeDefaultValues = false;
             onState.writeDefaultValues = false;
             offState.motion = offClip;
             onState.motion = onClip;
             stateMachine.defaultState = startOn ? onState : offState;
 
-            InstantTransition(offState, onState, r.parameter, AnimatorConditionMode.If);
-            InstantTransition(onState, offState, r.parameter, AnimatorConditionMode.IfNot);
+            InstantTransition(offState, onState, plan.parameter, AnimatorConditionMode.If);
+            InstantTransition(onState, offState, plan.parameter, AnimatorConditionMode.IfNot);
 
             EditorUtility.SetDirty(offState);
             EditorUtility.SetDirty(onState);
             EditorUtility.SetDirty(stateMachine);
+            return stateMachine;
         }
 
         static void InstantTransition(AnimatorState from, AnimatorState to,
@@ -245,30 +224,36 @@ namespace Yozolab.DaerD
         }
 
         /// <summary>A 1D tree (OFF at 0, ON at 1) blended by the Float parameter, added to the
-        /// DBT layer with constant-One weight — one layer hosts any number of toggles.</summary>
-        static void BuildDirectBlendTree(Request r, AnimationClip onClip, AnimationClip offClip)
+        /// DBT layer with constant-One weight — one layer hosts any number of toggles. Returns
+        /// the child it added, which is the handle on everything below it.</summary>
+        public static Motion BuildDirectBlendTree(Plan plan, AnimationClip onClip,
+            AnimationClip offClip, out bool createdParameter)
         {
-            var controller = r.controller;
+            var controller = plan.controller;
             string one = DbtBuilder.EnsureConstantOneParameter(controller);
-            bool created;
-            EnsureParameter(controller, r.parameter, AnimatorControllerParameterType.Float, out created);
-            if (created)
-                SetFloatDefault(controller, r.parameter, r.defaultOn ? 1f : 0f);
+            EnsureParameter(controller, plan.parameter, AnimatorControllerParameterType.Float,
+                out createdParameter);
+            if (createdParameter)
+                SetFloatDefault(controller, plan.parameter, plan.defaultOn ? 1f : 0f);
 
-            var root = DbtBuilder.EnsureDirectBlendTreeLayer(controller, r.layerIndex, r.newLayerName);
+            var root = DbtBuilder.EnsureDirectBlendTreeLayer(controller, plan.layerIndex,
+                plan.newLayerName);
             var tree = DbtBuilder.Tree1D(controller,
-                DbtBuilder.Sanitize(r.toggleName) + " Toggle", r.parameter);
+                DbtBuilder.Sanitize(plan.name) + " Toggle", plan.parameter);
             tree.AddChild(offClip, 0f);
             tree.AddChild(onClip, 1f);
             DbtBuilder.AddDirectChild(root, tree, one);
+            return tree;
         }
 
-        static void EnsureParameter(AnimatorController controller, string name,
+        /// <summary>Adds the parameter when the controller has none by that name, and says
+        /// whether it did — which is the only ground on which removing the gadget may take it
+        /// away again.</summary>
+        public static void EnsureParameter(AnimatorController controller, string name,
             AnimatorControllerParameterType type, out bool created)
         {
             created = DbtBuilder.FindParameter(controller, name) == null;
-            if (created)
-                controller.AddParameter(name, type);
+            DbtBuilder.EnsureParameter(controller, name, type);
         }
 
         static void SetBoolDefault(AnimatorController controller, string name, bool value)

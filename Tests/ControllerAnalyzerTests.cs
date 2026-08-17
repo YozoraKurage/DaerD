@@ -1257,18 +1257,18 @@ namespace Yozolab.DaerD.Tests
             var controller = new AnimatorController();
             controller.AddLayer("Base");
 
-            var request = new ToggleBuilder.Request
+            var plan = new ToggleBuilder.Plan
             {
                 controller = controller,
                 mode = ToggleBuilder.Mode.Layer,
-                toggleName = "Hat",
+                name = "Hat",
                 parameter = "Hat",
                 layerIndex = -1,
                 newLayerName = "Toggles",
             };
-            request.targets.Add(new ToggleBuilder.Target { path = "Armature/Head/Hat" });
-            Assert.IsNull(ToggleBuilder.Validate(request));
-            Assert.IsTrue(ToggleBuilder.Apply(request));
+            plan.targets.Add(new ToggleBuilder.Target { path = "Armature/Head/Hat" });
+            ToggleBuilder.BuildLayer(plan, ToggleBuilder.BuildClip(plan, on: true),
+                ToggleBuilder.BuildClip(plan, on: false), out _);
 
             AssertNothingIsWiredDeaf(controller, "the object toggle");
 

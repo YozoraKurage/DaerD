@@ -290,6 +290,148 @@ namespace Yozolab.DaerD
         public List<AapGadgetConfig> aapGadgets = new List<AapGadgetConfig>();
 
         /// <summary>
+        /// One generated object gadget: something in the pinned gimmick prefab that this
+        /// controller animates, kept as the inputs it was made from so it can be edited,
+        /// regenerated and swept — the same bargain the DBT gadgets and the sync setups make
+        /// (ADR 0013), for a family whose subject is a hierarchy rather than a parameter.
+        ///
+        /// <para>WHY THE TARGETS ARE REFERENCES AND NOT PATHS.</para>
+        /// A path string dies the first time somebody renames an object, silently and without
+        /// anything noticing (ADR 0044). A reference into the prefab survives renames,
+        /// reparenting and re-saves — measured in a headless probe — so the reference is what is
+        /// saved, and the path an animation curve needs is derived from it every time the gadget
+        /// is applied. That is also why the merge itself is not recorded here: the pin
+        /// (<see cref="PrefabLink"/>) already says which merge the paths are relative to, and a
+        /// second copy of that answer could disagree with it.
+        ///
+        /// <para>WHY IT IS FLAT AND FULL OF ints.</para>
+        /// <see cref="kind"/> and <see cref="mode"/> are the model's enums as numbers for the
+        /// reason <see cref="AapGadgetConfig.kind"/> is one: saved data has no business depending
+        /// on the model. Nothing here is typed as a Modular Avatar type either — a field whose
+        /// SHAPE needs an installed package is a field that goes missing when the controller is
+        /// opened without it, which is the same rule <see cref="parameterStore"/> follows.
+        /// Evolution is by appending fields with defaults; nothing is ever renamed or reordered.
+        ///
+        /// <para>WHAT IS NOT HERE.</para>
+        /// The target layer of a DBT-wired gadget is <see cref="layer"/> itself, so there is no
+        /// layer index to save (an index is not stable across a reorder anyway). The next kinds
+        /// of the family — a menu item, a position sync — add fields, not a second list: they
+        /// share the way a target is pointed at, the way ownership is swept and the way clips
+        /// are produced, and differ only in what they build.
+        /// </summary>
+        [Serializable]
+        public class ObjectGadgetConfig
+        {
+            /// <summary>(int)ObjectGadgets.Kind.</summary>
+            public int kind;
+            /// <summary>Base name for the layer, the clips and the tree.</summary>
+            public string name;
+            /// <summary>The parameter that drives it, and the key this record is saved under:
+            /// one object gadget per parameter, so regenerating replaces its own entry instead
+            /// of adding a second one describing the same thing.</summary>
+            public string parameter;
+            /// <summary>Whether generating created that parameter. The whole basis on which
+            /// removing the gadget may delete it again: a parameter that was already there when
+            /// the gadget was built belongs to somebody else.</summary>
+            public bool createdParameter;
+            /// <summary>(int)ToggleBuilder.Mode — a layer of its own, or a child of a Direct
+            /// blend tree layer's root.</summary>
+            public int mode;
+            public bool defaultOn;
+            /// <summary>Whether the parameter is also declared to the avatar through the
+            /// controller's parameter store. Off is a real answer: a gadget driven by another
+            /// layer rather than by a menu has nothing to declare.</summary>
+            public bool declare = true;
+            public List<ObjectTargetRecord> targets = new List<ObjectTargetRecord>();
+            /// <summary>Root state machine of the layer this gadget lives in — the layer it
+            /// added (Layer mode) or the Direct blend tree layer hosting its tree. Identifies
+            /// the layer across renames and reorders, as every other record here does.</summary>
+            public AnimatorStateMachine layer;
+            /// <summary>DBT mode: the child hung off that layer's root Direct tree. Null for a
+            /// gadget wired as a layer, which has no tree.</summary>
+            public Motion tree;
+            public ClipOutput onClip = new ClipOutput();
+            public ClipOutput offClip = new ClipOutput();
+            /// <summary>Objects and components this gadget put INSIDE the prefab, held by
+            /// reference because that is the whole of DaerD's claim on them (ADR 0045).
+            /// Reserved: no kind places anything yet, so this is empty in every record P2
+            /// writes, and the mechanism that applies and sweeps it arrives with the first kind
+            /// that needs one.</summary>
+            public List<PlacedArtifact> placed = new List<PlacedArtifact>();
+        }
+
+        /// <summary>One object a gadget animates, and how.</summary>
+        [Serializable]
+        public class ObjectTargetRecord
+        {
+            /// <summary>The object itself, somewhere inside the pinned prefab. The path is
+            /// derived from it when a curve needs one and is never saved (ADR 0044).</summary>
+            public GameObject target;
+            /// <summary>Unchecked inverts this target: every row swaps its ON and OFF value.</summary>
+            public bool activeWhenOn = true;
+            /// <summary>Key GameObject.m_IsActive itself. Off when only components toggle.</summary>
+            public bool toggleActive = true;
+            public List<BindingRecord> bindings = new List<BindingRecord>();
+        }
+
+        /// <summary>One extra property on a target: a component's enabled flag, or a blendshape
+        /// weight with its own OFF/ON values. The component is named rather than typed —
+        /// a serialized System.Type is not a thing, and the short name is what
+        /// <c>ToggleBuilder.FindComponentType</c> resolves against the types this project
+        /// actually has (a PhysBone binding in a project without the SDK is a named refusal,
+        /// not a corrupted record).</summary>
+        [Serializable]
+        public class BindingRecord
+        {
+            public string typeName;
+            /// <summary>"m_Enabled" or "blendShape.&lt;name&gt;".</summary>
+            public string property;
+            public float offValue;
+            public float onValue = 1f;
+        }
+
+        /// <summary>
+        /// One side of a gadget's animation: the clip, and the rows the gadget put in it.
+        ///
+        /// <see cref="written"/> is a snapshot of what the last generate wrote, kept even for a
+        /// clip DaerD owns outright. Its reason is ADR 0046 — a user-supplied clip is edited by
+        /// its owner too, so regenerating has to remove the rows IT wrote last time rather than
+        /// the rows the targets imply now, which is a different set the moment a target is
+        /// renamed. Keeping the ledger for owned clips as well is what stops that from being a
+        /// second code path: one bookkeeping, whoever the clip belongs to.
+        /// </summary>
+        [Serializable]
+        public class ClipOutput
+        {
+            public AnimationClip clip;
+            /// <summary>The clip is the user's asset, not a sub-asset DaerD made. Sweeping the
+            /// gadget then removes its rows and never the file.</summary>
+            public bool userProvided;
+            public List<WrittenRow> written = new List<WrittenRow>();
+        }
+
+        /// <summary>One curve row a generate wrote, as the triple that identifies a curve.
+        /// The type is a short name, "GameObject" for the m_IsActive rows.</summary>
+        [Serializable]
+        public class WrittenRow
+        {
+            public string path;
+            public string typeName;
+            public string property;
+        }
+
+        /// <summary>Something a gadget added inside the prefab. A holder rather than a bare
+        /// reference so the record can grow fields (what it is, where it came from) without
+        /// rewriting every saved list.</summary>
+        [Serializable]
+        public class PlacedArtifact
+        {
+            public UnityEngine.Object reference;
+        }
+
+        public List<ObjectGadgetConfig> objectGadgets = new List<ObjectGadgetConfig>();
+
+        /// <summary>
         /// One per-state sync request: while the avatar is in <see cref="state"/>, the async
         /// sync setup named <see cref="baseName"/> is asked to send <see cref="targets"/> out
         /// of turn. The record is the authoring side; the runtime side is a Parameter Driver
@@ -500,6 +642,60 @@ namespace Yozolab.DaerD
         {
             var data = Find(controller);
             if (data != null) data.RemoveGadget(output);
+        }
+
+        // ---- object gadgets ---------------------------------------------------
+
+        /// <summary>
+        /// Live object gadget records. An entry whose layer is gone describes nothing that can
+        /// still be edited or swept — a Layer-wired gadget IS that layer, and a tree-wired one
+        /// hangs off the root Direct tree inside it — so it is pruned rather than offered.
+        ///
+        /// A record whose TARGETS went missing is not pruned. That is the difference between a
+        /// gadget that no longer exists and one whose subject moved out from under it, and the
+        /// second is something to report by name rather than to forget (ADR 0044).
+        /// </summary>
+        public List<ObjectGadgetConfig> ObjectGadgetRecords()
+        {
+            objectGadgets.RemoveAll(config => config == null || config.layer == null);
+            return new List<ObjectGadgetConfig>(objectGadgets);
+        }
+
+        /// <summary>Adds or replaces the record for its parameter.</summary>
+        public void SaveObjectGadget(ObjectGadgetConfig config)
+        {
+            if (config == null || string.IsNullOrEmpty(config.parameter)) return;
+            Undo.RegisterCompleteObjectUndo(this, "Save Object Gadget Config");
+            objectGadgets.RemoveAll(existing => existing == null
+                || existing.parameter == config.parameter);
+            objectGadgets.Add(config);
+            EditorUtility.SetDirty(this);
+        }
+
+        public void RemoveObjectGadget(string parameter)
+        {
+            if (string.IsNullOrEmpty(parameter)) return;
+            Undo.RegisterCompleteObjectUndo(this, "Remove Object Gadget Config");
+            objectGadgets.RemoveAll(existing => existing == null || existing.parameter == parameter);
+            EditorUtility.SetDirty(this);
+        }
+
+        public static List<ObjectGadgetConfig> GetObjectGadgets(AnimatorController controller)
+        {
+            var data = Find(controller);
+            return data != null ? data.ObjectGadgetRecords() : new List<ObjectGadgetConfig>();
+        }
+
+        public static void SaveObjectGadget(AnimatorController controller, ObjectGadgetConfig config)
+        {
+            var data = GetOrCreate(controller);
+            if (data != null) data.SaveObjectGadget(config);
+        }
+
+        public static void RemoveObjectGadget(AnimatorController controller, string parameter)
+        {
+            var data = Find(controller);
+            if (data != null) data.RemoveObjectGadget(parameter);
         }
 
         // ---- per-state sync requests -----------------------------------------
