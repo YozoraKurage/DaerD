@@ -226,7 +226,21 @@ GraphView ベースの AnimatorController エディタ。パラメーターの�
   書き換える、という使い方ができます。
   ループで書ける単純作業の量産・巡回同期の精密調整・AI による調整が主用途。
   正しさはラウンドトリップで担保（エクスポータは実際にビルダー API を実行しながら
-  その呼び出し列を記録する方式 — 出力コードと検証済み動作が構造的に一致）
+  その呼び出し列を記録する方式 — 出力コードと検証済み動作が構造的に一致）。
+  **ウィンドウを開かずに書き出せます**: `RecipeExport.ToSource(controller)` は
+  ファイルを一切作らずコードだけを返し（`RecipeExport.Verify` で「そのコードが
+  元コントローラーを完全に再構築する」ことを確認できる）、`ToDirectory` は
+  プロジェクト外の任意のフォルダへ 2 ファイルを、`ToProject` は asmdef と Recipe
+  アセットまで含むフル書き出しを行います（ウィンドウもこれを呼んでいます）。
+  batchmode からは:
+  ```
+  Unity -batchmode -quit -projectPath P \
+    -executeMethod Yozolab.DaerD.Authoring.RecipeExportCli.Run \
+    -daerdController Assets/FX.controller -daerdOut /tmp/recipes -daerdVerify
+  ```
+  `-daerdOut` がプロジェクト内ならフル書き出し、外なら .cs 2 ファイルのみ。
+  省略すると各コントローラーの隣へ出力。CI での差分チェックや、コントローラーを
+  C# として読ませる解析用途向けです。
 - レイヤーのコピー&ペースト（コントローラー跨ぎ・参照パラメーター自動追加・フレーム引き継ぎ）と
   レイヤー / ブレンドツリーテンプレート（パラメーターリマップ付きインポート）
 - ステートのレイヤー間コピー&ペースト — Ctrl+C したステートは、レイヤーを切り替えて Ctrl+V すれば

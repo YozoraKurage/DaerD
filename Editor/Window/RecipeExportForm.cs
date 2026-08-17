@@ -188,172 +188,62 @@ namespace Yozolab.DaerD
                 }
         }
 
-        string TargetCsPath(string projectFolder)
-        {
-            string folder = projectFolder;
-            if (!("/" + folder + "/").Contains("/Editor/"))
-                folder += "/Editor";
-            return folder + "/" + RecipeScript.Identifier(_className ?? string.Empty, lowerFirst: false) + ".cs";
-        }
+        /// <summary>Where the author's half will land — the same path the export computes,
+        /// asked ahead of time so the form can say the file is already there.</summary>
+        string TargetCsPath(string projectFolder) =>
+            RecipeExport.ResolveProjectFolder(projectFolder) + "/"
+            + RecipeScript.Identifier(_className ?? string.Empty, lowerFirst: false) + ".cs";
 
-        /// <summary>The exporter's half sits beside the hand half, one name apart.</summary>
-        static string GeneratedPath(string folder, string className) =>
-            folder + "/" + className + ".Generated.cs";
-
-        /// <summary>Whether an existing "&lt;Name&gt;.cs" is a hand half (a partial that only
-        /// carries Build) rather than a whole recipe from before the split. The marker line is
-        /// the intended signal; "partial class" covers a hand half whose header was edited
-        /// away, which is likely — that file is meant to be rewritten.</summary>
-        static bool IsHandHalf(string path)
-        {
-            string text = File.ReadAllText(path);
-            return text.StartsWith(RecipeExporter.HandHalfMarker)
-                || text.Contains("partial class");
-        }
-
+        /// <summary>
+        /// The form's part of an export: save the namespace, ask the one question that needs a
+        /// human, and hand the rest to <see cref="RecipeExport"/> — which is also what a
+        /// scripted or batch-mode export calls, so the two cannot drift apart.
+        /// </summary>
         void DoExport(bool exclusive, string projectFolder)
         {
             EditorPrefs.SetString(NamespacePref, _namespace ?? string.Empty);
-            string className = RecipeScript.Identifier(_className, lowerFirst: false);
 
-            List<string> subset = null;
+            var options = new RecipeExport.Options
+            {
+                className = _className,
+                namespaceName = _namespace,
+                createAsset = _createAsset,
+                createAsmdef = _createAsmdef,
+            };
             if (!exclusive)
             {
-                subset = new List<string>();
+                var subset = new List<string>();
                 for (int i = 0; i < _layerNames.Count; i++)
                     if (_checked[i]) subset.Add(_layerNames[i]);
+                options.layerNames = subset;
             }
-
-            var result = RecipeExporter.Export(_controller, subset, className,
-                string.IsNullOrEmpty(_namespace) ? null : _namespace.Trim());
-            foreach (var warning in result.warnings)
-                Debug.LogWarning("DaerD: " + warning);
-
-            string folder = projectFolder;
-            if (!("/" + folder + "/").Contains("/Editor/"))
-                folder += "/Editor";
-            // Through the AssetDatabase, not Directory.CreateDirectory: the pipeline must
-            // know the folder or GenerateUniqueAssetPath/CreateAsset mangle their paths.
-            if (!RecipeExportQueue.EnsureAssetFolder(folder))
-            {
-                EditorUtility.DisplayDialog(L.Tr("Export C# Recipe"),
-                    L.Tr("Could not create the output folder '{0}'.", folder), "OK");
-                return;
-            }
-
-            string csPath = folder + "/" + className + ".cs";
-            string generatedPath = GeneratedPath(folder, className);
 
             // A recipe exported before the split carries the fields and the Build the
             // generated half now owns — leaving it as it is would be a duplicate definition,
-            // so it becomes the hand half, with its old contents kept beside it.
-            bool migrated = false;
-            if (File.Exists(csPath) && !IsHandHalf(csPath))
+            // so it becomes the hand half, with its old contents kept beside it. Replacing a
+            // file the author owns is the one decision the export won't make on its own.
+            string csPath = TargetCsPath(projectFolder);
+            if (RecipeExport.IsSingleFileRecipe(csPath))
             {
+                string generatedPath = csPath.Substring(0, csPath.Length - 3) + ".Generated.cs";
                 if (!EditorUtility.DisplayDialog(L.Tr("Export C# Recipe"),
                         L.Tr("'{0}' is a single-file recipe from an earlier DaerD. Exports now write two halves of one partial class: '{1}', regenerated every time, and a hand half DaerD never overwrites.\n\nMigrating copies the current file to '{0}.bak' and replaces it with the hand half — carry anything you edited over from the backup.",
                             csPath, generatedPath),
                         L.Tr("Migrate"), L.Tr("Cancel")))
                     return;
-                // Copied, not moved: the file is rewritten in place below so it keeps its
-                // .meta — and with it the GUID every existing recipe .asset points its script
-                // reference at.
-                File.Copy(csPath, csPath + ".bak", true);
-                migrated = true;
-                Debug.Log("DaerD: '" + csPath + "' was a single-file recipe — its contents are"
-                    + " backed up at '" + csPath + ".bak', and the file itself becomes your half.");
+                options.migrateSingleFile = true;
             }
 
-            // Byte-identical re-export: skip the write entirely — no reimport, no compile,
-            // no domain reload. The asset record below still refreshes the .asset fields.
-            bool identical = File.Exists(generatedPath)
-                && File.ReadAllText(generatedPath) == result.code;
-            if (!identical)
-                File.WriteAllText(generatedPath, result.code);
-
-            // The half that is yours: written once, then left alone forever — that is the
-            // whole point of the split.
-            bool wroteHandHalf = migrated || !File.Exists(csPath);
-            if (wroteHandHalf)
-                File.WriteAllText(csPath, result.handHalf);
-
-            if (_createAsmdef)
-                EnsureRecipesAsmdef(folder);
-
-            if (_createAsset)
+            try
             {
-                string typeName = string.IsNullOrEmpty(_namespace)
-                    ? className : _namespace.Trim() + "." + className;
-                RecipeExportQueue.Enqueue(typeName, folder + "/" + className + ".asset",
-                    _controller, exclusive, result.fields);
+                RecipeExport.ToProject(_controller, projectFolder, options);
             }
-
-            if (!identical)
-                AssetDatabase.ImportAsset(generatedPath);
-            if (wroteHandHalf)
-                AssetDatabase.ImportAsset(csPath);
-            Debug.Log("DaerD: recipe exported to '" + generatedPath + "'"
-                + (identical ? " (code unchanged — no recompile)" : string.Empty)
-                + (wroteHandHalf
-                    ? " — your half is '" + csPath + "', and no export will overwrite it."
-                    : " — '" + csPath + "' is yours and was left untouched; diff the generated"
-                        + " half, carry the change over, then press Compare.")
-                + (_createAsset ? " The recipe asset follows." : string.Empty));
-            Exported?.Invoke();
-        }
-
-        /// <summary>
-        /// Gives the recipe folder its own tiny editor assembly, so exporting recompiles a
-        /// handful of recipe files instead of the project's whole editor assembly. Only when
-        /// it is safe: no asmdef already governs the folder, and every script in it is one
-        /// DaerD generated (an asmdef changes which assembly neighbours compile into).
-        /// </summary>
-        static void EnsureRecipesAsmdef(string folder)
-        {
-            // Walk up to Assets: an existing asmdef anywhere above already governs us.
-            for (string current = folder; !string.IsNullOrEmpty(current);
-                current = current == "Assets" ? null : Path.GetDirectoryName(current)?.Replace('\\', '/'))
-                if (Directory.Exists(current) && Directory.GetFiles(current, "*.asmdef").Length > 0)
-                    return;
-
-            foreach (var script in Directory.GetFiles(folder, "*.cs", SearchOption.AllDirectories))
+            catch (Exception e)
             {
-                using (var reader = new StreamReader(script))
-                {
-                    // Both halves of an exported recipe count as DaerD's own.
-                    string first = reader.ReadLine() ?? string.Empty;
-                    if (first.Contains("<auto-generated> Exported from")
-                        || first.StartsWith(RecipeExporter.HandHalfMarker))
-                        continue;
-                }
-                Debug.Log("DaerD: '" + folder + "' contains scripts DaerD didn't generate — "
-                    + "not adding an assembly definition (it would move them to another assembly).");
+                EditorUtility.DisplayDialog(L.Tr("Export C# Recipe"), e.Message, "OK");
                 return;
             }
-
-            // Unique, deterministic assembly name per folder — asmdef names are global.
-            uint hash = 2166136261;
-            foreach (char c in folder)
-                hash = (hash ^ c) * 16777619;
-            string name = "DaerD.Recipes." + hash.ToString("x8");
-            string path = folder + "/" + name + ".asmdef";
-            File.WriteAllText(path,
-                "{\n"
-                + "    \"name\": \"" + name + "\",\n"
-                + "    \"rootNamespace\": \"\",\n"
-                + "    \"references\": [\"Yozolab.DaerD.Editor\"],\n"
-                + "    \"includePlatforms\": [\"Editor\"],\n"
-                + "    \"excludePlatforms\": [],\n"
-                + "    \"allowUnsafeCode\": false,\n"
-                + "    \"overrideReferences\": false,\n"
-                + "    \"precompiledReferences\": [],\n"
-                + "    \"autoReferenced\": false,\n"
-                + "    \"defineConstraints\": [],\n"
-                + "    \"versionDefines\": [],\n"
-                + "    \"noEngineReferences\": false\n"
-                + "}\n");
-            AssetDatabase.ImportAsset(path);
-            Debug.Log("DaerD: created '" + path + "' — future recipe exports recompile only this small assembly.");
+            Exported?.Invoke();
         }
     }
 }
