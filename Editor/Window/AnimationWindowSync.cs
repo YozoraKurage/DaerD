@@ -53,6 +53,12 @@ namespace Yozolab.DaerD
             // focus and surprise the user. SetEnabled opens it once on opt-in instead.
             var window = AnimationWindowAccess.FindOpen();
             if (window == null) return;
+            // Re-pushing the clip that is already there is not a no-op on Unity's side: the
+            // setter has no equality guard, so it stops preview — and StopPreview stops
+            // recording with it — and rewinds the playhead. We run on every GraphRebuilt,
+            // including the one a global Ctrl+Z triggers, so without this guard undoing an
+            // animation key would drop the user out of Rec mode every time.
+            if (AnimationWindowAccess.TryGetClip(window) == clip) return;
             if (AnimationWindowAccess.TrySetClip(window, clip)) return;
 
             // A window that hasn't run an OnGUI pass yet (just opened, or just given a
@@ -62,7 +68,9 @@ namespace Yozolab.DaerD
             {
                 if (!_enabled || !ReferenceEquals(_context.Selection, state)) return;
                 var retryWindow = AnimationWindowAccess.FindOpen();
-                if (retryWindow != null) AnimationWindowAccess.TrySetClip(retryWindow, clip);
+                if (retryWindow == null) return;
+                if (AnimationWindowAccess.TryGetClip(retryWindow) == clip) return;
+                AnimationWindowAccess.TrySetClip(retryWindow, clip);
             };
         }
     }
