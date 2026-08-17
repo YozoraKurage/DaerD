@@ -75,13 +75,14 @@ namespace Yozolab.DaerD.Authoring
             // send ring names them in its Parameter Drivers, and CollectParameterNames reads
             // those, so a partial export of the sync layer alone still declares them.
             var asyncSyncs = PlanAsyncSyncs(controller, layerNames, result.warnings);
+            var objects = PlanObjects(controller, layerNames, result.warnings);
             var script = new RecipeScript();
             var builder = new ControllerBuilder { Script = script };
             script.RegisterRoot(builder);
             result.replayed = builder;
 
-            RegisterAssets(ir, script, result, gadgets, asyncSyncs);
-            new RecipeDriver(builder, ir, result.warnings, gadgets, asyncSyncs).Run();
+            RegisterAssets(ir, script, result, gadgets, asyncSyncs, objects);
+            new RecipeDriver(builder, ir, result.warnings, gadgets, asyncSyncs, objects).Run();
             result.warnings.AddRange(builder.Bake());
 
             result.code = ComposeGenerated(script, className, namespaceName, controller, result);
@@ -348,12 +349,164 @@ namespace Yozolab.DaerD.Authoring
             return remaining.Count == 0;
         }
 
+        // ---- object gadget layers ----------------------------------------------
+
+        /// <summary>
+        /// The layers a controller can have written back as <c>c.Objects()</c> calls instead of
+        /// as the states, trees and clips they expanded into. Same shape and same two questions
+        /// as <see cref="GadgetPlan"/>: which layers stop being states, and which parameters
+        /// stop being declarations.
+        /// </summary>
+        internal class ObjectPlan
+        {
+            /// <summary>Layer name → the object gadgets that layer is, in the order they have to
+            /// be rebuilt in (the root tree's child order, where there is one).</summary>
+            public readonly Dictionary<string, List<GraphFrameData.ObjectGadgetConfig>> layers =
+                new Dictionary<string, List<GraphFrameData.ObjectGadgetConfig>>();
+
+            /// <summary>The merge every target's path is derived against, resolved once here so
+            /// the emission works from the same frame of reference the plan checked against.
+            /// Null when nothing qualified, which is also when nothing asks.</summary>
+            public Transform root;
+
+            /// <summary>Whether a planned toggle is what created this parameter. Its call
+            /// creates it again, so declaring it up top only restates what the next Generate
+            /// rebuilds. A parameter the gadget merely borrowed belongs to somebody else and
+            /// stays declared — that is the whole meaning of <c>createdParameter</c>.</summary>
+            public bool Owns(string parameter)
+            {
+                if (string.IsNullOrEmpty(parameter)) return false;
+                foreach (var pair in layers)
+                    foreach (var config in pair.Value)
+                        if (config.createdParameter && config.parameter == parameter)
+                            return true;
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Works out which layers qualify, on the live controller rather than on the IR — the
+        /// records point at the real machines and trees, so a reference match is only meaningful
+        /// here (the same reason <see cref="PlanGadgets"/> gives).
+        ///
+        /// A layer qualifies only when every state or tree child in it has a record to stand
+        /// for it AND the record can still be written down: the pin has to be healthy and every
+        /// target still in the prefab, because what an exported call carries is the target's
+        /// DERIVED PATH and there is no path to derive from a reference that resolves to
+        /// nothing. Anything else falls back to the raw states, with a named warning — a layer
+        /// rewritten as calls that describe less than it holds would drop the difference
+        /// silently.
+        /// </summary>
+        static ObjectPlan PlanObjects(AnimatorController controller,
+            ICollection<string> layerNames, List<string> warnings)
+        {
+            var plan = new ObjectPlan();
+            var configs = GraphFrameData.GetObjectGadgets(controller);
+            if (configs.Count == 0) return plan;
+            var root = ObjectGadgets.Root(controller);
+            plan.root = root;
+
+            foreach (var layer in controller.layers)
+            {
+                if (layerNames != null && !layerNames.Contains(layer.name)) continue;
+                if (layer.stateMachine == null) continue;
+                var mine = new List<GraphFrameData.ObjectGadgetConfig>();
+                foreach (var config in configs)
+                    if (config.layer == layer.stateMachine) mine.Add(config);
+                if (mine.Count == 0) continue;
+
+                string problem = Unaccounted(layer, mine, root);
+                if (problem != null)
+                {
+                    warnings.Add(problem);
+                    continue;
+                }
+                plan.layers[layer.name] = InTreeOrder(layer, mine);
+            }
+
+            // Same post-step caveat the other two carry: these layers are rebuilt at the end of
+            // the controller, so anything ordinary after them changes place.
+            if (plan.layers.Count > 0
+                && FollowedByOrdinaryLayers(controller.layers, layerNames, plan.layers.Keys, null))
+                warnings.Add(L.Tr("Object gadget layers are regenerated at the end of the controller; the layer order will differ from the original."));
+            return plan;
+        }
+
+        /// <summary>Why this layer cannot be written back as calls, or null when it can.</summary>
+        static string Unaccounted(AnimatorControllerLayer layer,
+            List<GraphFrameData.ObjectGadgetConfig> mine, Transform root)
+        {
+            if (root == null)
+                return L.Tr("Layer '{0}' holds object gadgets, but this controller is not linked to a healthy gimmick prefab any more, so their target paths cannot be worked out; exported as raw states.",
+                    layer.name);
+            foreach (var config in mine)
+                foreach (var record in config.targets)
+                    if (record == null || record.target == null
+                        || ObjectGadgets.PathOf(root, record.target) == null)
+                        return L.Tr("Object gadget '{0}' animates an object that is no longer in the linked prefab, so layer '{1}' is exported as raw states instead of an Objects call.",
+                            config.name, layer.name);
+
+            var machine = layer.stateMachine;
+            if ((ToggleBuilder.Mode)mine[0].mode == ToggleBuilder.Mode.Layer)
+            {
+                if (mine.Count != 1)
+                    return L.Tr("Layer '{0}' is claimed by {1} object gadgets at once; exported as raw states.",
+                        layer.name, mine.Count);
+                // The two states the toggle builds, by the names it gives them: this catches a
+                // renamed state and an added one alike, which is what MatchesGeneratedShape does
+                // for a sync layer.
+                var expected = new List<string> { mine[0].name + " OFF", mine[0].name + " ON" };
+                if (machine.stateMachines.Length > 0 || machine.states.Length != expected.Count)
+                    return Reshaped(mine[0], layer);
+                foreach (var child in machine.states)
+                    if (child.state == null || !expected.Remove(child.state.name))
+                        return Reshaped(mine[0], layer);
+                return null;
+            }
+
+            var tree = GadgetRootTree(layer);
+            if (tree == null) return Reshaped(mine[0], layer);
+            foreach (var child in tree.children)
+            {
+                bool covered = false;
+                foreach (var config in mine)
+                    if (config.tree == child.motion) covered = true;
+                if (!covered)
+                    return L.Tr("Layer '{0}' holds object gadgets beside something no object gadget accounts for (a DBT gadget, or a child added by hand); exported as a raw tree.",
+                        layer.name);
+            }
+            return null;
+        }
+
+        static string Reshaped(GraphFrameData.ObjectGadgetConfig config,
+            AnimatorControllerLayer layer) =>
+            L.Tr("Layer '{0}' no longer holds what the object gadget '{1}' would build; exported as raw states instead of an Objects call.",
+                layer.name, config.name);
+
+        /// <summary>The records in the order their trees hang off the layer's root, which is the
+        /// order they were built in. A layer-wired gadget is alone in its layer and has no
+        /// order to keep.</summary>
+        static List<GraphFrameData.ObjectGadgetConfig> InTreeOrder(AnimatorControllerLayer layer,
+            List<GraphFrameData.ObjectGadgetConfig> mine)
+        {
+            var tree = GadgetRootTree(layer);
+            if (tree == null || mine.Count < 2) return mine;
+            var ordered = new List<GraphFrameData.ObjectGadgetConfig>();
+            foreach (var child in tree.children)
+                foreach (var config in mine)
+                    if (config.tree == child.motion && !ordered.Contains(config))
+                        ordered.Add(config);
+            foreach (var config in mine)
+                if (!ordered.Contains(config)) ordered.Add(config);
+            return ordered;
+        }
+
         // ---- asset fields ------------------------------------------------------
 
         /// <summary>Walks the IR in emission order so field declarations come out in a
         /// stable, readable order.</summary>
         static void RegisterAssets(ControllerIR ir, RecipeScript script, Result result,
-            GadgetPlan gadgets, AsyncSyncPlan asyncSyncs)
+            GadgetPlan gadgets, AsyncSyncPlan asyncSyncs, ObjectPlan objects)
         {
             void Register(Object asset)
             {
@@ -400,6 +553,9 @@ namespace Yozolab.DaerD.Authoring
                 // call resolves (or creates) at Generate time rather than through a field.
                 if (asyncSyncs.layers.ContainsKey(layer.name)
                     || asyncSyncs.supporting.Contains(layer.name)) continue;
+                // And for an object gadget layer: the clips are keyed from the prefab by the
+                // call, or named by asset path where they are the user's (ADR 0046).
+                if (objects.layers.ContainsKey(layer.name)) continue;
                 Register(layer.mask);
                 Machine(layer.machine);
                 foreach (var entry in layer.syncedMotions)
@@ -442,6 +598,9 @@ namespace Yozolab.DaerD.Authoring
 //   Gadgets      c.Gadgets(""DBT"").Multiply(a, b, ""A*B"").Remap(x, ""X01"", -1, 1, 0, 1)
 //                    .Smooth(x, ""X/Smoothed"", ""X/Smoothing"").Buffer(x, ""X/Late"", 2);
 //                (the per-frame float math from the Add menu; its layer is rebuilt each time)
+//   Objects      c.Objects().Toggle(""Hat"").Shows(""Head/Hat"").Enables(""Head/Hat/Light"", ""Light"")
+//                    .Toggle(""Cape"").AsTree().Hides(""Body/Cape"").DefaultOn();
+//                (toggles for the pinned gimmick prefab; paths are read from it, never written)
 //   Async sync   c.AsyncSync().Targets(""Hue"", ""Outfit"").Rate(""Hue"", 2).Requestable(""Hue"")
 //                    .Schedule(""Hue"", ""Outfit"", ""Hue"");            // the cycle, step by step
 //                    .Sends(""Hue"", ""Outfit"").Sends(""Hue"");   // or what each step carries

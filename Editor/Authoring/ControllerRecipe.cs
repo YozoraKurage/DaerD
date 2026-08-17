@@ -156,7 +156,7 @@ namespace Yozolab.DaerD.Authoring
             }
 
             if (builder.PostOps.Count > 0)
-                report.Add(L.Tr("This recipe has post steps (Raw, Async Sync, DBT gadgets); their output is not covered by Verify."));
+                report.Add(L.Tr("This recipe has post steps (Raw, Async Sync, DBT gadgets, object gadgets); their output is not covered by Verify."));
 
             report.AddRange(ControllerIRDiff.Compare(declared, actual));
             return report;
@@ -189,7 +189,7 @@ namespace Yozolab.DaerD.Authoring
 
             report.AddRange(ControllerIRDiff.Compare(exported.IR, mine.IR));
             if (mine.PostOps.Count > 0 || exported.PostOps.Count > 0)
-                report.Add(L.Tr("Post steps (Raw, Async Sync, DBT gadgets) declare nothing comparable — check those by hand."));
+                report.Add(L.Tr("Post steps (Raw, Async Sync, DBT gadgets, object gadgets) declare nothing comparable — check those by hand."));
             return report;
         }
     }

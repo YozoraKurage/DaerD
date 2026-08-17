@@ -2477,8 +2477,44 @@ msgstr "この Recipe には比較対象のエクスポート側がありませ�
 msgid "Layer '{0}' was already there and no recipe generated it — the DBT gadgets replaced it. Give one of the two another name to keep both."
 msgstr "レイヤー '{0}' は元からあったもので、どの Recipe も生成していません。DBT ガジェットがこれを置き換えました。両方残すなら、どちらかの名前を変えてください。"
 
-msgid "Post steps (Raw, Async Sync, DBT gadgets) declare nothing comparable — check those by hand."
-msgstr "後段ステップ（Raw・巡回同期・DBT ガジェット）は比較対象になりません。そこは目視で確認してください。"
+msgid "No object gadget was built: {0}"
+msgstr "オブジェクトガジェットは 1 つも生成されませんでした: {0}"
+
+msgid "'{0}' (needed by '{1}')"
+msgstr "'{0}'（'{1}' が必要とするもの）"
+
+msgid "No object gadget was built: the linked prefab '{0}' has no object at {1}."
+msgstr "オブジェクトガジェットは 1 つも生成されませんでした: リンク先プレハブ '{0}' に {1} のオブジェクトがありません。"
+
+msgid "No object gadget was built: this project has no animation clip at {0}."
+msgstr "オブジェクトガジェットは 1 つも生成されませんでした: このプロジェクトに {0} のアニメーションクリップがありません。"
+
+msgid "Object gadget '{0}': {1}"
+msgstr "オブジェクトガジェット '{0}': {1}"
+
+msgid "Object gadget layers are regenerated at the end of the controller; the layer order will differ from the original."
+msgstr "オブジェクトガジェットのレイヤーはコントローラーの末尾に再生成されるため、レイヤー順は元と変わります。"
+
+msgid "Layer '{0}' holds object gadgets, but this controller is not linked to a healthy gimmick prefab any more, so their target paths cannot be worked out; exported as raw states."
+msgstr "レイヤー '{0}' にはオブジェクトガジェットがありますが、このコントローラーはギミックプレハブに正常にリンクしていないため、対象のパスを導出できません。State をそのままエクスポートします。"
+
+msgid "Object gadget '{0}' animates an object that is no longer in the linked prefab, so layer '{1}' is exported as raw states instead of an Objects call."
+msgstr "オブジェクトガジェット '{0}' がアニメーションする対象が、リンク先プレハブにもう存在しません。レイヤー '{1}' は Objects 呼び出しではなく State のままエクスポートします。"
+
+msgid "Layer '{0}' is claimed by {1} object gadgets at once; exported as raw states."
+msgstr "レイヤー '{0}' を {1} 個のオブジェクトガジェットが同時に自分のものとしています。State をそのままエクスポートします。"
+
+msgid "Layer '{0}' holds object gadgets beside something no object gadget accounts for (a DBT gadget, or a child added by hand); exported as a raw tree."
+msgstr "レイヤー '{0}' には、オブジェクトガジェット以外のもの（DBT ガジェット、または手で追加された子）が同居しています。Blend Tree をそのままエクスポートします。"
+
+msgid "Layer '{0}' no longer holds what the object gadget '{1}' would build; exported as raw states instead of an Objects call."
+msgstr "レイヤー '{0}' の中身は、オブジェクトガジェット '{1}' が生成するものと一致しません。Objects 呼び出しではなく State のままエクスポートします。"
+
+msgid "The clip '{0}' an object gadget writes into is not the main asset of a file, so a recipe cannot name it; that side is exported as a generated clip."
+msgstr "オブジェクトガジェットが書き込むクリップ '{0}' はファイルのメインアセットではないため、Recipe から名前で指せません。その側は生成クリップとしてエクスポートします。"
+
+msgid "Post steps (Raw, Async Sync, DBT gadgets, object gadgets) declare nothing comparable — check those by hand."
+msgstr "後段ステップ（Raw・巡回同期・DBT ガジェット・オブジェクトガジェット）は比較対象になりません。そこは目視で確認してください。"
 
 msgid "Compare what the code declares against the controller's current contents."
 msgstr "コードの宣言内容とコントローラーの現状を比較します。"
@@ -2585,8 +2621,8 @@ msgstr "明示スケジュールで同じスロットが隣接ステップに並
 msgid "The folder is not under an 'Editor' folder — an 'Editor' subfolder will be added so player builds don't try to compile the recipe."
 msgstr "出力先が 'Editor' フォルダ配下ではありません。プレイヤービルドで Recipe がコンパイルされないよう、'Editor' サブフォルダを自動で追加します。"
 
-msgid "This recipe has post steps (Raw, Async Sync, DBT gadgets); their output is not covered by Verify."
-msgstr "この Recipe には後段ステップ（Raw・巡回同期・DBT ガジェット）があります。その出力は Verify の対象外です。"
+msgid "This recipe has post steps (Raw, Async Sync, DBT gadgets, object gadgets); their output is not covered by Verify."
+msgstr "この Recipe には後段ステップ（Raw・巡回同期・DBT ガジェット・オブジェクトガジェット）があります。その出力は Verify の対象外です。"
 
 msgid "DBT gadget '{0}' in layer '{1}': {2}"
 msgstr "レイヤー '{1}' の DBT ガジェット '{0}': {2}"

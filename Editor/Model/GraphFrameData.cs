@@ -512,6 +512,14 @@ namespace Yozolab.DaerD
                 }
             // Only the layer follows: a gadget's tree died with the machine that held it, and
             // the entry is pruned on the next read rather than re-pointed at nothing.
+            //
+            // Object gadgets are deliberately NOT here, and it is not an omission. A DBT gadget
+            // hangs a tree inside a layer somebody else owns, so following that layer is at
+            // worst useless; a Layer-wired object gadget IS its layer, and re-pointing its
+            // record at the machine a recipe just built would make the next regenerate delete
+            // that recipe's layer as if it were the gadget's own. Losing the record instead
+            // costs one gadget that has to be rebuilt, which is the cheaper mistake — and it is
+            // what happens: the record is pruned on the next read (see ObjectGadgetRecords).
             foreach (var config in aapGadgets)
                 if (config != null && !ReferenceEquals(config.layer, null)
                     && config.layer.GetInstanceID() == oldMachineId)

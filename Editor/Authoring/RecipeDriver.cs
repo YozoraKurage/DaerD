@@ -22,6 +22,8 @@ namespace Yozolab.DaerD.Authoring
         readonly RecipeExporter.GadgetPlan _gadgets;
         /// <summary>The layers that can be written back as one AsyncSync call.</summary>
         readonly RecipeExporter.AsyncSyncPlan _asyncSyncs;
+        /// <summary>The layers that can be written back as Objects() toggle calls.</summary>
+        readonly RecipeExporter.ObjectPlan _objects;
         readonly Dictionary<string, ParamHandle> _handles =
             new Dictionary<string, ParamHandle>();
         readonly Dictionary<string, AnimatorControllerParameterType> _types =
@@ -29,7 +31,8 @@ namespace Yozolab.DaerD.Authoring
 
         public RecipeDriver(ControllerBuilder c, ControllerIR ir, List<string> warnings,
             RecipeExporter.GadgetPlan gadgets = null,
-            RecipeExporter.AsyncSyncPlan asyncSyncs = null)
+            RecipeExporter.AsyncSyncPlan asyncSyncs = null,
+            RecipeExporter.ObjectPlan objects = null)
         {
             _c = c;
             _ir = ir;
@@ -37,6 +40,7 @@ namespace Yozolab.DaerD.Authoring
             _folds = new RecipeFoldPlanner(this, c);
             _gadgets = gadgets ?? new RecipeExporter.GadgetPlan();
             _asyncSyncs = asyncSyncs ?? new RecipeExporter.AsyncSyncPlan();
+            _objects = objects ?? new RecipeExporter.ObjectPlan();
             foreach (var p in ir.parameters)
                 _types[p.name] = p.type;
         }
@@ -54,6 +58,8 @@ namespace Yozolab.DaerD.Authoring
                 if (_gadgets.Owns(p.name)) continue;
                 // Likewise the index, channels and request flags a sync setup mints.
                 if (_asyncSyncs.Owns(p.name)) continue;
+                // And the parameter an object gadget created, which its own call creates again.
+                if (_objects.Owns(p.name)) continue;
                 _handles[p.name] = Declare(p);
             }
 
@@ -73,6 +79,12 @@ namespace Yozolab.DaerD.Authoring
                 {
                     _c.Script.Comment(RecipeExporter.Header("Layer: " + layer.name + " (DBT gadgets)"));
                     EmitGadgets(layer.name, gadgets);
+                    continue;
+                }
+                if (_objects.layers.TryGetValue(layer.name, out var toggles))
+                {
+                    _c.Script.Comment(RecipeExporter.Header("Layer: " + layer.name + " (object gadgets)"));
+                    EmitObjects(toggles);
                     continue;
                 }
                 if (_asyncSyncs.layers.TryGetValue(layer.name, out var sync))
@@ -224,6 +236,88 @@ namespace Yozolab.DaerD.Authoring
                 if (child.state != null && child.state.motion == null)
                     return false;
             return true;
+        }
+
+        /// <summary>
+        /// One layer's object gadgets as the calls that build them.
+        ///
+        /// What travels is each target's DERIVED path. The record holds a reference into the
+        /// pinned prefab (ADR 0044) and a reference is the one thing source code cannot carry,
+        /// so the export takes the path the reference resolves to right now — which is also what
+        /// makes an exported recipe portable: re-pin it at another prefab and the same paths are
+        /// looked up there, with whatever is missing named.
+        ///
+        /// A binding comes back as the most specific call that describes it, so the ordinary
+        /// ones read as themselves and an exotic one still round-trips through
+        /// <c>Property</c> rather than being dropped.
+        /// </summary>
+        void EmitObjects(List<GraphFrameData.ObjectGadgetConfig> configs)
+        {
+            var objects = _c.Objects();
+            foreach (var config in configs)
+            {
+                var toggle = objects.Toggle(config.name,
+                    config.parameter == config.name ? null : config.parameter);
+                if ((ToggleBuilder.Mode)config.mode == ToggleBuilder.Mode.DirectBlendTree)
+                    toggle.AsTree();
+                if (config.defaultOn) toggle.DefaultOn();
+                if (config.declare) toggle.Declare();
+                EmitClip(toggle, config.onClip, on: true);
+                EmitClip(toggle, config.offClip, on: false);
+
+                foreach (var record in config.targets)
+                {
+                    if (record == null) continue;
+                    string path = ObjectGadgets.PathOf(_objects.root, record.target);
+                    // The plan refuses a layer whose targets cannot be resolved, so this only
+                    // ever holds for a record the plan already turned away.
+                    if (path == null) continue;
+                    if (record.toggleActive)
+                    {
+                        if (record.activeWhenOn) toggle.Shows(path);
+                        else toggle.Hides(path);
+                    }
+                    else if (!record.activeWhenOn) toggle.Inverted(path);
+                    foreach (var binding in record.bindings)
+                        EmitBinding(toggle, path, binding);
+                }
+            }
+        }
+
+        const string ShapePrefix = "blendShape.";
+
+        static void EmitBinding(ObjectToggleBuilder toggle, string path,
+            GraphFrameData.BindingRecord binding)
+        {
+            if (binding == null || string.IsNullOrEmpty(binding.property)) return;
+            if (binding.property == "m_Enabled" && binding.offValue == 0f && binding.onValue == 1f)
+                toggle.Enables(path, binding.typeName);
+            else if (binding.typeName == nameof(SkinnedMeshRenderer)
+                && binding.property.StartsWith(ShapePrefix, System.StringComparison.Ordinal))
+                toggle.BlendShape(path, binding.property.Substring(ShapePrefix.Length),
+                    binding.offValue, binding.onValue);
+            else
+                toggle.Property(path, binding.typeName, binding.property,
+                    binding.offValue, binding.onValue);
+        }
+
+        /// <summary>A supplied clip as the asset path that names it. A clip that is not the main
+        /// asset at its path cannot be named that way at all — a sub-asset has no path of its
+        /// own — so the export says so and leaves that side to be generated rather than writing
+        /// a path that would load something else.</summary>
+        void EmitClip(ObjectToggleBuilder toggle, GraphFrameData.ClipOutput output, bool on)
+        {
+            if (output == null || !output.userProvided || output.clip == null) return;
+            string path = UnityEditor.AssetDatabase.GetAssetPath(output.clip);
+            if (!string.IsNullOrEmpty(path)
+                && UnityEditor.AssetDatabase.LoadAssetAtPath<AnimationClip>(path) == output.clip)
+            {
+                if (on) toggle.OnClip(path);
+                else toggle.OffClip(path);
+                return;
+            }
+            _warnings.Add(L.Tr("The clip '{0}' an object gadget writes into is not the main asset of a file, so a recipe cannot name it; that side is exported as a generated clip.",
+                output.clip.name));
         }
 
         void EmitGadgets(string layerName, List<AapGadgets.Request> requests)

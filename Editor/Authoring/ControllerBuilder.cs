@@ -200,6 +200,31 @@ namespace Yozolab.DaerD.Authoring
         readonly Dictionary<string, GadgetRecipeBuilder> _gadgets =
             new Dictionary<string, GadgetRecipeBuilder>();
 
+        /// <summary>
+        /// Object gadgets — the toggles whose subject is an object inside the gimmick prefab
+        /// this controller is pinned to — as a post step. The controller side is rebuilt on
+        /// every Generate; the prefab is only ever read, and a target it cannot find stops the
+        /// step by name (ADR 0047).
+        ///
+        ///   c.Objects().Toggle("Hat").Shows("Head/Hat")
+        ///              .Toggle("Cape").AsTree().Hides("Body/Cape");
+        ///
+        /// One builder per recipe, unlike <see cref="Gadgets"/>, which is one per layer: an
+        /// object gadget names no layer — a Bool toggle is a layer of its own and the tree-wired
+        /// ones share one — so there is nothing here to key a second builder by.
+        /// </summary>
+        public ObjectRecipeBuilder Objects()
+        {
+            if (_objects == null)
+            {
+                _objects = new ObjectRecipeBuilder(this);
+                Script?.Declare(_objects, "Objects", this, "Objects()");
+            }
+            return _objects;
+        }
+
+        ObjectRecipeBuilder _objects;
+
         // ---- bake ---------------------------------------------------------------
 
         /// <summary>Resolves deferred references (synced source names) and returns problems
