@@ -33,6 +33,12 @@ namespace Yozolab.DaerD
     /// what put it there. Nothing is ever found by name or by shape and deleted for looking like
     /// something DaerD would have made.
     ///
+    /// A clip the user supplied is the one thing a record points at without owning (ADR 0046).
+    /// DaerD writes its own rows into it, takes those same rows back out when the gadget is
+    /// regenerated or swept — the ledger in <c>GraphFrameData.ClipOutput</c> says which they
+    /// are — and never deletes the file. A curve there that the ledger does not claim belongs to
+    /// somebody else, and finding one is a named refusal rather than an overwrite.
+    ///
     /// <para>THE GUARD.</para>
     /// Reading a merge's path mode needs Modular Avatar's type, so that one question sits behind
     /// the same <c>DAERD_MA &amp;&amp; DAERD_VRC</c> pair <c>ParameterStore.MaStore</c> and
@@ -154,6 +160,9 @@ namespace Yozolab.DaerD
             refusal = ParameterRefusal(controller, config, replaces);
             if (refusal != null) return refusal;
 
+            refusal = ClipRefusal(controller, config, replaces, root);
+            if (refusal != null) return refusal;
+
             // The same question every builder that adds a Direct child asks first, and it is
             // about the layer rather than about the toggle: a layer already carrying states
             // that are not Direct trees would be joined rather than shared.
@@ -259,6 +268,90 @@ namespace Yozolab.DaerD
             return null;
         }
 
+        // ---- the clips somebody else owns --------------------------------------
+
+        /// <summary>Whether this side is a clip the user handed over rather than one DaerD is
+        /// about to mint. A slot marked user-provided with nothing in it is not a clip at all —
+        /// it means the same as an empty slot, which is "generate one".</summary>
+        static bool Provided(GraphFrameData.ClipOutput output) =>
+            output != null && output.userProvided && output.clip != null;
+
+        /// <summary>
+        /// A supplied clip as the reason a row cannot be written into it, or null.
+        ///
+        /// DaerD writes its own rows into somebody's clip and leaves everything else alone
+        /// (ADR 0046), and the whole contract rests on being able to tell "mine" from "theirs".
+        /// The ledger of the last generate is what says which is which: a curve at one of this
+        /// gadget's bindings that the ledger does not claim was put there by someone — the
+        /// person, or another gadget — and taking it over silently would destroy an edit that
+        /// nothing recorded. So it is refused by name, with the clip and the row in the
+        /// sentence, and the person decides.
+        ///
+        /// Two gadgets sharing one clip is not a conflict and is not meant to be: each owns the
+        /// rows it wrote, and only the same ROW being claimed twice is refused.
+        /// </summary>
+        static string ClipRefusal(AnimatorController controller,
+            GraphFrameData.ObjectGadgetConfig config,
+            GraphFrameData.ObjectGadgetConfig replaces, Transform root)
+        {
+            bool on = Provided(config.onClip), off = Provided(config.offClip);
+            if (!on && !off) return null;
+            // Both sides key the same bindings with different values, so one clip holding both
+            // would end up holding whichever side was written last — a toggle that never moves.
+            if (on && off && config.onClip.clip == config.offClip.clip)
+                return L.Tr("The ON and OFF sides are the same clip ('{0}'). Each side writes the same rows with different values, so one clip cannot hold both.",
+                    config.onClip.clip.name);
+
+            var rows = ToggleBuilder.Rows(PlanFor(controller, config, root));
+            return Conflict(config.onClip, replaces, rows) ?? Conflict(config.offClip, replaces, rows);
+        }
+
+        static string Conflict(GraphFrameData.ClipOutput output,
+            GraphFrameData.ObjectGadgetConfig replaces, List<ToggleBuilder.Row> rows)
+        {
+            if (!Provided(output)) return null;
+            var mine = Booked(replaces, output.clip);
+            var present = new HashSet<string>();
+            foreach (var binding in AnimationUtility.GetCurveBindings(output.clip))
+                present.Add(Key(binding.path, binding.type != null ? binding.type.Name : null,
+                    binding.propertyName));
+
+            foreach (var row in rows)
+            {
+                string key = Key(row.binding.path,
+                    row.binding.type != null ? row.binding.type.Name : null,
+                    row.binding.propertyName);
+                if (!present.Contains(key) || mine.Contains(key)) continue;
+                return L.Tr("'{0}' already animates '{1}' ({2}), and this gadget did not write that curve. DaerD does not take over rows in a clip you supplied — remove the curve, or point this side at another clip.",
+                    output.clip.name,
+                    row.binding.path.Length > 0 ? row.binding.path : L.Tr("(the merge's own object)"),
+                    (row.binding.type != null ? row.binding.type.Name : "?") + "." + row.binding.propertyName);
+            }
+            return null;
+        }
+
+        /// <summary>The rows the record being replaced says IT wrote into this clip. Read from
+        /// whichever of its two sides points at the same clip — a person who swaps the ON and
+        /// OFF slots has moved their own rows around, not collided with somebody.</summary>
+        static HashSet<string> Booked(GraphFrameData.ObjectGadgetConfig replaces, AnimationClip clip)
+        {
+            var booked = new HashSet<string>();
+            if (replaces == null || clip == null) return booked;
+            foreach (var output in new[] { replaces.onClip, replaces.offClip })
+            {
+                if (output == null || output.clip != clip || output.written == null) continue;
+                foreach (var row in output.written)
+                    if (row != null) booked.Add(Key(row.path, row.typeName, row.property));
+            }
+            return booked;
+        }
+
+        /// <summary>A curve's identity as the triple that names it. Rows are compared as text
+        /// because that is what a record can hold: a System.Type does not serialize, so the
+        /// ledger keeps the short name and the comparison has to meet it there.</summary>
+        static string Key(string path, string typeName, string property) =>
+            (path ?? string.Empty) + "|" + (typeName ?? string.Empty) + "|" + (property ?? string.Empty);
+
         /// <summary>
         /// Something worth saying that is not a refusal, or null. There is one: a gadget asked to
         /// declare its parameter when the controller has no store to declare it in. Refusing
@@ -304,25 +397,24 @@ namespace Yozolab.DaerD
                 if (replaces != null) Remove(controller, replaces);
 
                 var plan = PlanFor(controller, config, root);
-                var onClip = ToggleBuilder.BuildClip(plan, on: true);
-                var offClip = ToggleBuilder.BuildClip(plan, on: false);
-                DbtBuilder.Attach(controller, onClip);
-                DbtBuilder.Attach(controller, offClip);
+                var onClip = Output(controller, config.onClip, plan, on: true);
+                var offClip = Output(controller, config.offClip, plan, on: false);
 
                 bool created;
                 if (plan.mode == ToggleBuilder.Mode.Layer)
                 {
-                    config.layer = ToggleBuilder.BuildLayer(plan, onClip, offClip, out created);
+                    config.layer = ToggleBuilder.BuildLayer(plan, onClip.clip, offClip.clip, out created);
                     config.tree = null;
                 }
                 else
                 {
-                    config.tree = ToggleBuilder.BuildDirectBlendTree(plan, onClip, offClip, out created);
+                    config.tree = ToggleBuilder.BuildDirectBlendTree(plan, onClip.clip, offClip.clip,
+                        out created);
                     config.layer = DbtBuilder.HostingMachine(controller, config.tree);
                 }
                 config.createdParameter = created;
-                config.onClip = Output(onClip, plan);
-                config.offClip = Output(offClip, plan);
+                config.onClip = onClip;
+                config.offClip = offClip;
 
                 GraphFrameData.SaveObjectGadget(controller, config);
                 Declare(controller, config);
@@ -371,13 +463,39 @@ namespace Yozolab.DaerD
             return plan;
         }
 
-        /// <summary>A generated clip with the ledger of what was just written into it. DaerD owns
-        /// this one outright, and it is booked all the same — see
-        /// <c>GraphFrameData.ClipOutput</c> for why the bookkeeping is not reserved for the
-        /// clips somebody else owns.</summary>
-        static GraphFrameData.ClipOutput Output(AnimationClip clip, ToggleBuilder.Plan plan)
+        /// <summary>
+        /// One side of the toggle written, and the ledger of what went into it.
+        ///
+        /// Which clip it is depends on the slot the caller handed over: a clip the user supplied
+        /// is written in place — DaerD's rows only, the file theirs — and an empty slot mints a
+        /// fresh sub-asset of the controller, which is the default and what every gadget did
+        /// before ADR 0046. The rows that were written are booked either way: one bookkeeping
+        /// whoever the clip belongs to, so a regenerate has one thing to undo (see
+        /// <c>GraphFrameData.ClipOutput</c>).
+        ///
+        /// The previous rows are already gone by the time this runs — <see cref="Remove"/> took
+        /// them out of the old record's clips on the way in, which is the same act that destroys
+        /// a clip DaerD owned. That is what keeps a renamed target from leaving a row behind:
+        /// what is erased is what the ledger says was written, not what the targets imply now.
+        /// </summary>
+        static GraphFrameData.ClipOutput Output(AnimatorController controller,
+            GraphFrameData.ClipOutput slot, ToggleBuilder.Plan plan, bool on)
         {
-            var output = new GraphFrameData.ClipOutput { clip = clip, userProvided = false };
+            var output = new GraphFrameData.ClipOutput();
+            if (Provided(slot))
+            {
+                output.clip = slot.clip;
+                output.userProvided = true;
+                Undo.RegisterCompleteObjectUndo(output.clip, "Object Gadget");
+                ToggleBuilder.Write(output.clip, plan, on);
+                EditorUtility.SetDirty(output.clip);
+            }
+            else
+            {
+                output.clip = ToggleBuilder.BuildClip(plan, on);
+                DbtBuilder.Attach(controller, output.clip);
+            }
+
             foreach (var row in ToggleBuilder.Rows(plan))
                 output.written.Add(new GraphFrameData.WrittenRow
                 {
@@ -427,8 +545,9 @@ namespace Yozolab.DaerD
         ///
         /// Everything but the parameter is reached through the record's own references, which is
         /// the whole of DaerD's claim (ADR 0045): nothing is searched for by name or by shape.
-        /// A clip the user supplied is never destroyed — the file is theirs — and in P2 removing
-        /// leaves its rows in place, which is the half ADR 0046 finishes.
+        /// A clip the user supplied is never destroyed — the file is theirs — and loses exactly
+        /// the rows the ledger says this gadget wrote into it, which is the other half of the
+        /// same claim (ADR 0046): what is given back is what was taken.
         ///
         /// Sub-assets are left unflushed on purpose: <see cref="Apply"/> calls this on the way to
         /// building the replacement and pays for one reimport, not two. A caller that only
@@ -451,8 +570,8 @@ namespace Yozolab.DaerD
                 if (config.tree != null) Undo.DestroyObjectImmediate(config.tree);
             }
 
-            DestroyClip(config.onClip);
-            DestroyClip(config.offClip);
+            Release(config.onClip);
+            Release(config.offClip);
             if (config.createdParameter) RemoveParameter(controller, config.parameter);
             GraphFrameData.RemoveObjectGadget(controller, config.parameter);
             EditorUtility.SetDirty(controller);
@@ -491,10 +610,42 @@ namespace Yozolab.DaerD
             return null;
         }
 
-        static void DestroyClip(GraphFrameData.ClipOutput output)
+        /// <summary>Lets go of one side's clip. A clip DaerD minted is destroyed with the rest of
+        /// the gadget; a clip the user supplied keeps its file and loses only the rows this
+        /// gadget booked — deleting somebody's asset because a gadget that pointed at it went
+        /// away is the one thing this must never do.</summary>
+        static void Release(GraphFrameData.ClipOutput output)
         {
-            if (output == null || output.userProvided || output.clip == null) return;
-            Undo.DestroyObjectImmediate(output.clip);
+            if (output == null || output.clip == null) return;
+            if (output.userProvided) Erase(output);
+            else Undo.DestroyObjectImmediate(output.clip);
+        }
+
+        /// <summary>
+        /// Takes this gadget's rows back out of a supplied clip, one booked row at a time.
+        ///
+        /// The ledger is walked rather than the targets, because the two disagree exactly when
+        /// it matters: rename a target and the path derived now is not the path that was
+        /// written, so a clip cleaned "by what the gadget animates" would keep the old row
+        /// forever and the object would stay stuck wherever the stale curve left it.
+        ///
+        /// A row whose type this project no longer has is skipped: there is nothing to build a
+        /// binding from, and guessing would be reaching for curves that are not this gadget's.
+        /// </summary>
+        static void Erase(GraphFrameData.ClipOutput output)
+        {
+            if (output == null || output.clip == null || output.written == null) return;
+            Undo.RegisterCompleteObjectUndo(output.clip, "Object Gadget");
+            foreach (var row in output.written)
+            {
+                if (row == null || string.IsNullOrEmpty(row.property)) continue;
+                var type = ToggleBuilder.FindCurveType(row.typeName);
+                if (type == null) continue;
+                AnimationUtility.SetEditorCurve(output.clip,
+                    EditorCurveBinding.FloatCurve(row.path ?? string.Empty, type, row.property),
+                    null);
+            }
+            EditorUtility.SetDirty(output.clip);
         }
 
         /// <summary>Drops one parameter by name. Reached only through

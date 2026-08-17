@@ -236,8 +236,11 @@ namespace Yozolab.DaerD.Tests
             Object.DestroyImmediate(controller);
         }
 
-        /// <summary>A clip the user supplied is never destroyed, so it is not on the list of
-        /// what deleting takes — the ledger the record keeps is what tells the two apart.</summary>
+        /// <summary>A clip the user supplied loses this gadget's rows and keeps its file, so it
+        /// is named apart from the generated ones instead of being counted with them. Both other
+        /// answers are wrong in their own way: counted in, the dialog promises to delete
+        /// somebody's asset; left out, it says nothing about a clip that is about to change.
+        /// </summary>
         [Test]
         public void TheDeletePreviewDoesNotPromiseToDeleteAUsersOwnClip()
         {
@@ -254,10 +257,65 @@ namespace Yozolab.DaerD.Tests
 
             string loss = HomePanel.ObjectGadgetLoss(controller, config);
 
-            StringAssert.Contains("1", loss, "one generated clip, not two");
+            StringAssert.Contains("1 generated clip", loss, "one generated clip, not two");
+            StringAssert.Contains("you supplied", loss,
+                "and the other one is named as rows leaving a file that stays");
 
             Object.DestroyImmediate(config.onClip.clip);
             Object.DestroyImmediate(config.offClip.clip);
+            Object.DestroyImmediate(controller);
+        }
+
+        // ---- the clip slots ----------------------------------------------------
+
+        /// <summary>A supplied clip is part of the record, so it has to survive the form the
+        /// same way a binding does — and it has to come back marked as the user's, which is the
+        /// flag that decides whether sweeping the gadget deletes an asset.</summary>
+        [Test]
+        public void ASuppliedClipComesBackThroughTheForm()
+        {
+            var controller = NewController();
+            var hat = new GameObject("Hat");
+            var config = Config(hat);
+            var supplied = new AnimationClip();
+            config.onClip = new GraphFrameData.ClipOutput
+            {
+                clip = supplied,
+                userProvided = true,
+                written = { new GraphFrameData.WrittenRow { path = "Hat", typeName = "GameObject", property = "m_IsActive" } },
+            };
+
+            var again = Reopened(controller, config);
+
+            Assert.AreSame(supplied, again.onClip.clip);
+            Assert.IsTrue(again.onClip.userProvided);
+            Assert.IsEmpty(again.onClip.written,
+                "what was written last time is the saved record's claim, not the form's");
+
+            Object.DestroyImmediate(supplied);
+            Object.DestroyImmediate(hat);
+            Object.DestroyImmediate(controller);
+        }
+
+        /// <summary>A generated clip must NOT come back in the slot. Showing it there would
+        /// invite somebody to leave it in place, and a clip DaerD minted that is then marked as
+        /// the user's is a clip nothing ever sweeps — one leaked per regenerate.</summary>
+        [Test]
+        public void AGeneratedClipIsNotOfferedBackAsIfItWereTheUsers()
+        {
+            var controller = NewController();
+            var hat = new GameObject("Hat");
+            var config = Config(hat);
+            var generated = new AnimationClip();
+            config.onClip = new GraphFrameData.ClipOutput { clip = generated };
+
+            var again = Reopened(controller, config);
+
+            Assert.IsNull(again.onClip.clip);
+            Assert.IsFalse(again.onClip.userProvided);
+
+            Object.DestroyImmediate(generated);
+            Object.DestroyImmediate(hat);
             Object.DestroyImmediate(controller);
         }
     }

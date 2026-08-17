@@ -130,6 +130,19 @@ namespace Yozolab.DaerD
             return null;
         }
 
+        /// <summary>
+        /// The same question asked of a CURVE's type rather than of a binding's component: the
+        /// row that switches an object on and off binds to GameObject, which is not a Component
+        /// and which <see cref="FindComponentType"/> therefore cannot find.
+        ///
+        /// It exists because a written row (ADR 0046) is stored as a type NAME, and taking those
+        /// rows back out again means turning every one of them back into a binding — including
+        /// the m_IsActive ones, which are most of them. A resolver that quietly answered null
+        /// for "GameObject" would leave exactly the rows a rename strands.
+        /// </summary>
+        public static System.Type FindCurveType(string shortName) =>
+            shortName == nameof(GameObject) ? typeof(GameObject) : FindComponentType(shortName);
+
         /// <summary>Every curve this plan writes, in both clips. An inverted target is folded in
         /// here — its rows come back with ON and OFF swapped — so nothing downstream has to know
         /// about inversion twice.</summary>
@@ -166,10 +179,29 @@ namespace Yozolab.DaerD
         public static AnimationClip BuildClip(Plan plan, bool on)
         {
             var clip = new AnimationClip { name = plan.name + (on ? " ON" : " OFF") };
+            Write(clip, plan, on);
+            return clip;
+        }
+
+        /// <summary>
+        /// One side of the toggle written into a clip that already exists, touching nothing but
+        /// its own rows.
+        ///
+        /// The same loop <see cref="BuildClip"/> runs, split out rather than duplicated because
+        /// the two must not drift: a clip the user supplied is written by exactly the rows a
+        /// generated one would have held, which is what makes the two kinds of clip the same
+        /// feature (ADR 0046). Curves that are not this plan's are left where they are — taking
+        /// somebody's clip over is a refusal, not a write, and it is made before this is called.
+        ///
+        /// No undo and no dirtying: the caller owns both, because it is the caller that knows
+        /// whether the clip is an asset somebody can lose.
+        /// </summary>
+        public static void Write(AnimationClip clip, Plan plan, bool on)
+        {
+            if (clip == null) return;
             foreach (var row in Rows(plan))
                 AnimationUtility.SetEditorCurve(clip, row.binding,
                     new AnimationCurve(new Keyframe(0f, row.Value(on))));
-            return clip;
         }
 
         /// <summary>

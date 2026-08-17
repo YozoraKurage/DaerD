@@ -133,6 +133,23 @@ namespace Yozolab.DaerD.Tests
                     return true;
             return false;
         }
+
+        /// <summary>A clip of the user's: a real asset beside the controller, which is what makes
+        /// "the file is never deleted" a claim that can be checked.</summary>
+        static AnimationClip UserClip(string name)
+        {
+            var clip = new AnimationClip { name = name };
+            AssetDatabase.CreateAsset(clip, Folder + "/" + name + ".anim");
+            return clip;
+        }
+
+        static void Key(AnimationClip clip, string path, System.Type type, string property, float value)
+            => AnimationUtility.SetEditorCurve(clip,
+                EditorCurveBinding.FloatCurve(path, type, property),
+                new AnimationCurve(new Keyframe(0f, value)));
+
+        static GraphFrameData.ClipOutput Slot(AnimationClip clip) =>
+            new GraphFrameData.ClipOutput { clip = clip, userProvided = true };
 #endif
 
         // ---- what may be built ------------------------------------------------
@@ -557,6 +574,196 @@ namespace Yozolab.DaerD.Tests
             Assert.AreEqual(VrcExpressionParameters.ValueType.Bool, row.valueType,
                 "the animator's own type is what is copied");
             Assert.IsTrue(row.synced);
+#else
+            Assert.Ignore("Modular Avatar is not installed in this project.");
+#endif
+        }
+
+        // ---- clips the user supplies ------------------------------------------
+
+        /// <summary>The contract in one test: the gadget's rows arrive, everything else in the
+        /// clip is untouched, and only the side that was left empty is minted as a sub-asset.
+        /// </summary>
+        [Test]
+        public void ASuppliedClipGetsOurRowsAndKeepsItsOwn()
+        {
+#if DAERD_MA && DAERD_VRC
+            var controller = Pinned(out var prefab);
+            var supplied = UserClip("Hand");
+            Key(supplied, "Elsewhere", typeof(GameObject), "m_IsActive", 1f);
+
+            var config = NewConfig(ToggleBuilder.Mode.Layer, In(prefab, "Merge/Hat"));
+            config.onClip = Slot(supplied);
+            Assert.IsTrue(ObjectGadgets.Apply(controller, config));
+
+            Assert.IsTrue(HasCurve(supplied, "Hat", typeof(GameObject), "m_IsActive"),
+                "the gadget's own row is written into the clip it was given");
+            Assert.IsTrue(HasCurve(supplied, "Elsewhere", typeof(GameObject), "m_IsActive"),
+                "and the curve that was already there is not this gadget's to touch");
+            Assert.AreEqual(1, SubAssetClips(controller),
+                "only the OFF side had no clip of its own to write into");
+
+            var saved = GraphFrameData.GetObjectGadgets(controller)[0];
+            Assert.IsTrue(saved.onClip.userProvided);
+            Assert.AreSame(supplied, saved.onClip.clip);
+            Assert.AreEqual(1, saved.onClip.written.Count, "one row, booked as ours");
+            Assert.IsFalse(saved.offClip.userProvided);
+#else
+            Assert.Ignore("Modular Avatar is not installed in this project.");
+#endif
+        }
+
+        /// <summary>
+        /// The reason the ledger exists. The target is renamed, so the path derived now is not
+        /// the path that was written last time — and a clip cleaned by what the gadget animates
+        /// TODAY would leave the old row behind forever, holding an object that no longer
+        /// exists at a value nobody can see or reach.
+        /// </summary>
+        [Test]
+        public void RegeneratingAfterARenameLeavesNoStaleRowBehind()
+        {
+#if DAERD_MA && DAERD_VRC
+            var controller = Pinned(out var prefab);
+            var supplied = UserClip("Hand");
+            Key(supplied, "Elsewhere", typeof(GameObject), "m_IsActive", 1f);
+            var config = NewConfig(ToggleBuilder.Mode.Layer, In(prefab, "Merge/Hat"));
+            config.onClip = Slot(supplied);
+            Assert.IsTrue(ObjectGadgets.Apply(controller, config));
+
+            var contents = PrefabUtility.LoadPrefabContents(GimmickPrefab);
+            contents.transform.Find("Merge/Hat").name = "Cap";
+            PrefabUtility.SaveAsPrefabAsset(contents, GimmickPrefab);
+            PrefabUtility.UnloadPrefabContents(contents);
+
+            var saved = GraphFrameData.GetObjectGadgets(controller)[0];
+            Assert.IsTrue(ObjectGadgets.Apply(controller, saved, saved));
+
+            Assert.IsTrue(HasCurve(supplied, "Cap", typeof(GameObject), "m_IsActive"),
+                "the row follows the object");
+            Assert.IsFalse(HasCurve(supplied, "Hat", typeof(GameObject), "m_IsActive"),
+                "and the row written under the old path is taken out again");
+            Assert.IsTrue(HasCurve(supplied, "Elsewhere", typeof(GameObject), "m_IsActive"),
+                "the user's own curve survives a regenerate like it survives everything else");
+#else
+            Assert.Ignore("Modular Avatar is not installed in this project.");
+#endif
+        }
+
+        /// <summary>A row already in the clip that no ledger claims is somebody's work.
+        /// Overwriting it is the one thing that cannot be undone by hand — there would be
+        /// nothing left to say what was there — so it stops the generate, by name.</summary>
+        [Test]
+        public void ARowSomebodyElseWroteIsRefusedRatherThanOverwritten()
+        {
+#if DAERD_MA && DAERD_VRC
+            var controller = Pinned(out var prefab);
+            var supplied = UserClip("Hand");
+            Key(supplied, "Hat", typeof(GameObject), "m_IsActive", 0.5f);
+
+            var config = NewConfig(ToggleBuilder.Mode.Layer, In(prefab, "Merge/Hat"));
+            config.onClip = Slot(supplied);
+
+            var refusal = ObjectGadgets.Validate(controller, config);
+            Assert.IsNotNull(refusal);
+            StringAssert.Contains("Hand", refusal, "the refusal names the clip");
+            StringAssert.Contains("Hat", refusal, "and the row it is talking about");
+            Assert.IsFalse(ObjectGadgets.Apply(controller, config), "and nothing is built");
+            Assert.AreEqual(1, controller.layers.Length);
+#else
+            Assert.Ignore("Modular Avatar is not installed in this project.");
+#endif
+        }
+
+        /// <summary>One clip cannot be both sides: they key the same rows with different values,
+        /// so whichever was written last would be the only thing in it.</summary>
+        [Test]
+        public void OneClipCannotBeBothSidesOfTheToggle()
+        {
+#if DAERD_MA && DAERD_VRC
+            var controller = Pinned(out var prefab);
+            var supplied = UserClip("Hand");
+            var config = NewConfig(ToggleBuilder.Mode.Layer, In(prefab, "Merge/Hat"));
+            config.onClip = Slot(supplied);
+            config.offClip = Slot(supplied);
+
+            var refusal = ObjectGadgets.Validate(controller, config);
+            Assert.IsNotNull(refusal);
+            StringAssert.Contains("Hand", refusal);
+#else
+            Assert.Ignore("Modular Avatar is not installed in this project.");
+#endif
+        }
+
+        /// <summary>Two gadgets are welcome to write into one clip: each owns the rows it wrote,
+        /// and sweeping one takes exactly those. Only the same ROW being claimed twice is a
+        /// conflict.</summary>
+        [Test]
+        public void TwoGadgetsShareAClipAndOwnDifferentRowsInIt()
+        {
+#if DAERD_MA && DAERD_VRC
+            var controller = Pinned(out var prefab);
+            var supplied = UserClip("Hand");
+
+            var hat = NewConfig(ToggleBuilder.Mode.Layer, In(prefab, "Merge/Hat"));
+            hat.onClip = Slot(supplied);
+            Assert.IsTrue(ObjectGadgets.Apply(controller, hat));
+
+            var cape = NewConfig(ToggleBuilder.Mode.Layer, In(prefab, "Merge/Cape"));
+            cape.name = "Cape";
+            cape.parameter = "Cape";
+            cape.onClip = Slot(supplied);
+            Assert.IsNull(ObjectGadgets.Validate(controller, cape), "different rows, same clip");
+            Assert.IsTrue(ObjectGadgets.Apply(controller, cape));
+
+            ObjectGadgets.Remove(controller, hat);
+            DbtBuilder.CommitSubAssets(controller);
+
+            Assert.IsFalse(HasCurve(supplied, "Hat", typeof(GameObject), "m_IsActive"),
+                "the gadget that went away took its own row");
+            Assert.IsTrue(HasCurve(supplied, "Cape", typeof(GameObject), "m_IsActive"),
+                "and left the other gadget's alone");
+            Assert.IsNotNull(
+                AssetDatabase.LoadAssetAtPath<AnimationClip>(Folder + "/Hand.anim"),
+                "the file is the user's — sweeping a gadget never deletes it");
+#else
+            Assert.Ignore("Modular Avatar is not installed in this project.");
+#endif
+        }
+
+        /// <summary>Both directions of the switch, because each has a way of going wrong: taking
+        /// a supplied clip must sweep the generated one (or the controller keeps a clip nothing
+        /// points at), and giving one back must clear the rows out of the user's file (or the
+        /// object stays keyed by a gadget that no longer writes there).</summary>
+        [Test]
+        public void SwitchingBetweenAGeneratedClipAndASuppliedOneMovesTheRows()
+        {
+#if DAERD_MA && DAERD_VRC
+            var controller = Pinned(out var prefab);
+            var supplied = UserClip("Hand");
+            Key(supplied, "Elsewhere", typeof(GameObject), "m_IsActive", 1f);
+            var target = In(prefab, "Merge/Hat");
+
+            Assert.IsTrue(ObjectGadgets.Apply(controller,
+                NewConfig(ToggleBuilder.Mode.Layer, target)));
+            Assert.AreEqual(2, SubAssetClips(controller));
+
+            var toSupplied = NewConfig(ToggleBuilder.Mode.Layer, target);
+            toSupplied.onClip = Slot(supplied);
+            Assert.IsTrue(ObjectGadgets.Apply(controller, toSupplied,
+                GraphFrameData.GetObjectGadgets(controller)[0]));
+
+            Assert.AreEqual(1, SubAssetClips(controller), "the generated ON clip went with it");
+            Assert.IsTrue(HasCurve(supplied, "Hat", typeof(GameObject), "m_IsActive"));
+
+            var backToGenerated = NewConfig(ToggleBuilder.Mode.Layer, target);
+            Assert.IsTrue(ObjectGadgets.Apply(controller, backToGenerated,
+                GraphFrameData.GetObjectGadgets(controller)[0]));
+
+            Assert.AreEqual(2, SubAssetClips(controller), "both sides are generated again");
+            Assert.IsFalse(HasCurve(supplied, "Hat", typeof(GameObject), "m_IsActive"),
+                "and the rows left the clip that is no longer this gadget's output");
+            Assert.IsTrue(HasCurve(supplied, "Elsewhere", typeof(GameObject), "m_IsActive"));
+            Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<AnimationClip>(Folder + "/Hand.anim"));
 #else
             Assert.Ignore("Modular Avatar is not installed in this project.");
 #endif

@@ -861,10 +861,18 @@ namespace Yozolab.DaerD
                 ? L.Tr("the layer '{0}'", layer)
                 : L.Tr("its blend tree in the layer '{0}'", layer));
 
-            int clips = 0;
+            int clips = 0, supplied = 0;
             foreach (var output in new[] { config.onClip, config.offClip })
-                if (output != null && !output.userProvided && output.clip != null) clips++;
+            {
+                if (output == null || output.clip == null) continue;
+                if (output.userProvided) supplied++;
+                else clips++;
+            }
             if (clips > 0) lost.Add(L.Tr("{0} generated clip(s)", clips));
+            // Named apart from the generated ones because what happens to them is different:
+            // the file stays and only this gadget's rows leave it. Somebody about to press
+            // Delete on a gadget pointed at their own clip is owed that distinction.
+            if (supplied > 0) lost.Add(L.Tr("this gadget's rows in {0} clip(s) you supplied", supplied));
             if (config.createdParameter)
                 lost.Add(L.Tr("the parameter '{0}'", config.parameter));
             return string.Join(", ", lost);

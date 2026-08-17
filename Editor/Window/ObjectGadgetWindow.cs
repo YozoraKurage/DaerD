@@ -49,6 +49,11 @@ namespace Yozolab.DaerD
         ToggleBuilder.Mode _mode = ToggleBuilder.Mode.Layer;
         bool _defaultOn;
         bool _declare = true;
+        /// <summary>Clips the user handed over, or null for "generate one". A slot that is
+        /// filled is the whole of the user-provided contract on this side (ADR 0046): DaerD
+        /// writes its rows into that asset and never deletes it.</summary>
+        AnimationClip _onClip;
+        AnimationClip _offClip;
         readonly List<Row> _rows = new List<Row>();
         Vector2 _scroll;
         // 0 = create a new layer; 1.. = _layerCandidates[index - 1]. DBT wiring only.
@@ -135,6 +140,8 @@ namespace Yozolab.DaerD
             _mode = (ToggleBuilder.Mode)config.mode;
             _defaultOn = config.defaultOn;
             _declare = config.declare;
+            _onClip = Supplied(config.onClip);
+            _offClip = Supplied(config.offClip);
 
             _rows.Clear();
             foreach (var record in config.targets)
@@ -156,6 +163,13 @@ namespace Yozolab.DaerD
             int candidate = _layerCandidates.IndexOf(LayerIndexOf(config.layer));
             _layerChoice = candidate >= 0 ? candidate + 1 : 0;
         }
+
+        /// <summary>The clip in a saved side, but only where it is the user's. A generated
+        /// sub-asset must not come back in the slot: showing it there would invite somebody to
+        /// keep it, which would turn a clip DaerD sweeps into a clip DaerD is not allowed to
+        /// sweep, and the record would then leak one on every regenerate.</summary>
+        static AnimationClip Supplied(GraphFrameData.ClipOutput output) =>
+            output != null && output.userProvided ? output.clip : null;
 
         int LayerIndexOf(AnimatorStateMachine machine)
         {
@@ -214,6 +228,8 @@ namespace Yozolab.DaerD
             if (_mode == ToggleBuilder.Mode.DirectBlendTree)
                 DrawLayerChoice();
 
+            DrawClipSlots();
+
             EditorGUILayout.Space(6);
             DrawTargets(root);
 
@@ -267,6 +283,33 @@ namespace Yozolab.DaerD
             _layerChoice = EditorGUILayout.Popup(L.Tr("Target Layer"),
                 Mathf.Clamp(_layerChoice, 0, labels.Length - 1), labels);
         }
+
+        /// <summary>
+        /// Where each side's animation goes. Empty is the default and the ordinary answer: the
+        /// clip is generated as a sub-asset of the controller and DaerD owns it outright.
+        ///
+        /// Filling a slot points the gadget at an asset somebody else owns, and the contract
+        /// that comes with it is worth saying on screen rather than only in a manual: DaerD
+        /// writes the rows this gadget needs, leaves every other curve alone, takes its own rows
+        /// back out when the gadget is regenerated or deleted, and never deletes the file. A row
+        /// it would write that is already there stops the generate with a named refusal — the
+        /// clip is somebody's work, so it is not overwritten on the way past.
+        /// </summary>
+        void DrawClipSlots()
+        {
+            _onClip = ClipSlot(L.Tr("ON Clip"), _onClip);
+            _offClip = ClipSlot(L.Tr("OFF Clip"), _offClip);
+            if (_onClip != null || _offClip != null)
+                EditorGUILayout.HelpBox(
+                    L.Tr("DaerD writes only this gadget's own rows into a clip you supply, removes exactly those rows again when it is regenerated or deleted, and never deletes the file. A row it needs that the clip already has stops the generate by name."),
+                    MessageType.Info);
+        }
+
+        AnimationClip ClipSlot(string label, AnimationClip clip) =>
+            (AnimationClip)EditorGUILayout.ObjectField(
+                new GUIContent(label,
+                    L.Tr("Leave empty to generate this side as a clip inside the controller. Assign one to write into your own clip instead.")),
+                clip, typeof(AnimationClip), false);
 
         // ---- targets -----------------------------------------------------------
 
@@ -508,6 +551,8 @@ namespace Yozolab.DaerD
                 // Only the tree wiring has a host to choose; a Bool toggle is a layer of its own
                 // and the builder fills this in with the layer it added.
                 layer = _mode == ToggleBuilder.Mode.DirectBlendTree ? ChosenLayer() : null,
+                onClip = Slot(_onClip),
+                offClip = Slot(_offClip),
             };
             foreach (var row in _rows)
             {
@@ -522,6 +567,15 @@ namespace Yozolab.DaerD
             }
             return config;
         }
+
+        /// <summary>One side as the record holds it. The ledger of written rows stays empty
+        /// here: what this gadget wrote LAST time is the saved record's business, and Apply
+        /// reads it from there — a form that filled it in would be claiming rows it never
+        /// wrote.</summary>
+        static GraphFrameData.ClipOutput Slot(AnimationClip clip) =>
+            clip == null
+                ? new GraphFrameData.ClipOutput()
+                : new GraphFrameData.ClipOutput { clip = clip, userProvided = true };
 
         AnimatorStateMachine ChosenLayer()
         {

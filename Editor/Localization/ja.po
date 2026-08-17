@@ -271,6 +271,9 @@ msgstr "レイヤー '{0}' の中の Blend Tree"
 msgid "{0} generated clip(s)"
 msgstr "生成されたクリップ {0} 個"
 
+msgid "this gadget's rows in {0} clip(s) you supplied"
+msgstr "あなたが指定したクリップ {0} 個の中の、このガジェットの行"
+
 msgid "the parameter '{0}'"
 msgstr "パラメーター '{0}'"
 
@@ -867,6 +870,18 @@ msgstr "既存のパラメーター '{0}' を使用します。"
 msgid "Parameter '{0}' exists but is a {1} — pick another name or wiring."
 msgstr "パラメーター '{0}' は {1} 型として既に存在します。別の名前か配線方式を選んでください。"
 
+msgid "ON Clip"
+msgstr "ON クリップ"
+
+msgid "OFF Clip"
+msgstr "OFF クリップ"
+
+msgid "Leave empty to generate this side as a clip inside the controller. Assign one to write into your own clip instead."
+msgstr "空のままにすると、この側のクリップをコントローラー内に生成します。指定すると、そのクリップに書き込みます。"
+
+msgid "DaerD writes only this gadget's own rows into a clip you supply, removes exactly those rows again when it is regenerated or deleted, and never deletes the file. A row it needs that the clip already has stops the generate by name."
+msgstr "指定したクリップには、このガジェット自身の行だけを書き込みます。再生成・削除のときは、その行だけを取り除きます。ファイル自体を削除することはありません。書き込もうとする行がクリップに既にある場合は、名指しで生成を中止します。"
+
 msgid "Target Objects"
 msgstr "対象オブジェクト"
 
@@ -967,6 +982,15 @@ msgstr "対象 '{0}' は '{1}' をアニメーションしますが、そのコ�
 
 msgid "Another object gadget ('{0}') already drives the parameter '{1}'."
 msgstr "別のオブジェクトガジェット（'{0}'）がパラメーター '{1}' を既に使っています。"
+
+msgid "The ON and OFF sides are the same clip ('{0}'). Each side writes the same rows with different values, so one clip cannot hold both."
+msgstr "ON と OFF に同じクリップ（'{0}'）が指定されています。両側は同じ行を異なる値で書き込むため、1 つのクリップで両方を持つことはできません。"
+
+msgid "'{0}' already animates '{1}' ({2}), and this gadget did not write that curve. DaerD does not take over rows in a clip you supplied — remove the curve, or point this side at another clip."
+msgstr "'{0}' には既に '{1}' の {2} を動かすカーブがありますが、このガジェットが書いたものではありません。DaerD が、あなたの指定したクリップの行を横取りすることはありません。そのカーブを削除するか、別のクリップを指定してください。"
+
+msgid "(the merge's own object)"
+msgstr "（Merge Animator 自身のオブジェクト）"
 
 msgid "'{0}' will not be declared anywhere: this controller has no parameter store. Link the prefab's MA Parameters on the home screen, or turn Declare off."
 msgstr "'{0}' はどこにも宣言されません。このコントローラーにはパラメーターストアが設定されていません。ホーム画面でプレハブの MA Parameters をリンクするか、Declare を切ってください。"
