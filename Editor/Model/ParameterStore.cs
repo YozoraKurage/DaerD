@@ -181,7 +181,9 @@ namespace Yozolab.DaerD
         /// <summary>How many project sweeps have run since the editor started, and how many
         /// prefabs those sweeps opened. Both exist so a test can assert the two things the
         /// design claims: that the answer is remembered, and that the dependency table keeps
-        /// the sweep from loading prefabs that have nothing to do with the controller.</summary>
+        /// the sweep from loading prefabs that have nothing to do with the controller. The load
+        /// count is the shared walk's, so it counts the prefab link's sweeps too — the claim it
+        /// backs is about the walk, not about who asked for it.</summary>
         internal static int PrefabScans =>
 #if DAERD_MA
             MaStore.Scans;
@@ -189,12 +191,7 @@ namespace Yozolab.DaerD
             0;
 #endif
 
-        internal static int PrefabLoads =>
-#if DAERD_MA
-            MaStore.Loads;
-#else
-            0;
-#endif
+        internal static int PrefabLoads => PrefabAssetSweep.Loads;
 
         /// <summary>
         /// The controller's parameters that have no row in the store yet, as entries ready to
@@ -388,7 +385,6 @@ namespace Yozolab.DaerD
             static readonly Dictionary<string, Object> Answers = new Dictionary<string, Object>();
 
             public static int Scans { get; private set; }
-            public static int Loads { get; private set; }
 
             public static void ForgetPrefabScan() => Answers.Clear();
 
@@ -409,42 +405,27 @@ namespace Yozolab.DaerD
             }
 
             /// <summary>
-            /// Two stages, because the second one is the expensive one.
+            /// The first merge of this controller found anywhere in the project, and the MA
+            /// Parameters above it. The walk itself — dependency table first, prefab loaded only
+            /// when the table already says it names this controller — lives in
+            /// <see cref="PrefabAssetSweep"/>, shared with the prefab link's sweep so the two
+            /// cannot drift apart on what "opening a prefab costs" means.
             ///
-            /// <c>FindAssets</c> gives every prefab in the project and <c>GetDependencies</c>
-            /// answers out of the import database's own table, so the first stage costs a
-            /// lookup each and opens nothing. Only a prefab whose table already names this
-            /// controller is loaded, and loading a prefab pulls its meshes, materials and
-            /// textures in with it — which is the whole reason this is not simply a loop over
-            /// <c>LoadAssetAtPath</c>.
-            ///
-            /// Direct dependencies only. A prefab reaches a controller through a component
-            /// field, which is a direct reference; asking recursively would drag in every
-            /// controller referenced by every nested prefab and material and put prefabs
-            /// through stage two that cannot possibly match.
+            /// Stops at the first match, which the shared walk being lazy is what makes true:
+            /// the prefabs after it are never loaded. This answer is a default to fill a slot
+            /// with, not a list to choose from — choosing is what the prefab link is for.
             /// </summary>
             static Object Sweep(AnimatorController controller, string controllerPath)
             {
                 Scans++;
 #if DAERD_VRC
-                foreach (var guid in AssetDatabase.FindAssets("t:Prefab"))
-                {
-                    var path = AssetDatabase.GUIDToAssetPath(guid);
-                    if (string.IsNullOrEmpty(path)) continue;
-                    if (System.Array.IndexOf(AssetDatabase.GetDependencies(path, false),
-                            controllerPath) < 0)
-                        continue;
-
-                    var root = AssetDatabase.LoadAssetAtPath<GameObject>(path);
-                    if (root == null) continue;
-                    Loads++;
+                foreach (var root in PrefabAssetSweep.Depending(controllerPath))
                     foreach (var merge in root.GetComponentsInChildren<MaMergeAnimator>(true))
                     {
                         if (merge == null || merge.animator != controller) continue;
                         var parameters = Above(merge.transform);
                         if (parameters != null) return parameters;
                     }
-                }
 #endif
                 return null;
             }
@@ -660,14 +641,22 @@ namespace Yozolab.DaerD
     }
 
     /// <summary>
-    /// The prefab sweep's one blind spot: prefabs change on disk without any code of DaerD's
+    /// The prefab sweeps' one blind spot: prefabs change on disk without any code of DaerD's
     /// running. A pull can add the Merge Animator that would have been the answer, or take away
     /// the prefab that was. Dropping every answer on any import costs a button press to refill
     /// and is the only invalidation that cannot be wrong about which import mattered.
+    ///
+    /// Both sweeps are dropped here rather than each watching for itself: they answer the same
+    /// question about the same prefabs, so a second postprocessor would be a second chance for
+    /// the two to disagree about when an answer went stale.
     /// </summary>
     class ParameterStoreImportWatcher : AssetPostprocessor
     {
         static void OnPostprocessAllAssets(string[] imported, string[] deleted,
-            string[] moved, string[] movedFrom) => ParameterStore.ForgetPrefabScan();
+            string[] moved, string[] movedFrom)
+        {
+            ParameterStore.ForgetPrefabScan();
+            PrefabLinks.ForgetCandidates();
+        }
     }
 }

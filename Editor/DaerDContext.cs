@@ -52,6 +52,12 @@ namespace Yozolab.DaerD
         /// <summary>Fires whenever <see cref="IsHomeSelected"/> flips either way, so the
         /// centre pane, the breadcrumb and the layer list's tint stay in step with it.</summary>
         public event Action HomeChanged;
+        /// <summary>Fires when the controller's prefab pin was set, re-pointed or dropped. An
+        /// event of its own rather than one of the structural ones: nothing about the controller
+        /// changed, and the only thing that reads the pin outside the screen it is edited on is
+        /// the tab strip's badge — which has no other way of hearing about it, since the strip
+        /// is only rebuilt when a tab is opened, closed or switched.</summary>
+        public event Action PrefabLinkChanged;
         public event Action SelectionChanged;
         public event Action<object> FrameRequested;
         public event Action<object> GraphVisualsChanged;
@@ -314,6 +320,7 @@ namespace Yozolab.DaerD
         public void RequestSearch() => SearchRequested?.Invoke();
         public void NotifyGraphRebuilt() => GraphRebuilt?.Invoke();
         public void NotifyParametersChanged() => ParametersChanged?.Invoke();
+        public void NotifyPrefabLinkChanged() => PrefabLinkChanged?.Invoke();
 
         /// <summary>Fires when a BlendTree's fields or children are edited from any panel.</summary>
         public void NotifyBlendTreeChanged() => BlendTreeChanged?.Invoke();

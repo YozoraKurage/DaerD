@@ -252,6 +252,11 @@ namespace Yozolab.DaerD
             _context.ControllerChanged += SyncSerializedState;
             _context.HomeChanged += SyncSerializedState;
 
+            // The tab strip carries the prefab badge, and it is otherwise only rebuilt when the
+            // set of tabs changes — so pinning from the home screen would leave the badge a tab
+            // switch behind without this.
+            _context.PrefabLinkChanged += RefreshTabBar;
+
             // Subscribed before RefreshGraphVisibility so the flag is fresh when it runs.
             _context.LayerChanged += ResetSyncGraphPeek;
             _context.ControllerChanged += ResetSyncGraphPeek;

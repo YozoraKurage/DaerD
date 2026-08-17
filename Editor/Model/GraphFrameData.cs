@@ -58,6 +58,45 @@ namespace Yozolab.DaerD
         public UnityEngine.Object expressionsMenu;
 
         /// <summary>
+        /// The pin that says which gimmick prefab is this controller's home: a prefab asset and
+        /// the MA Merge Animator inside it that names this controller.
+        ///
+        /// <para>WHY A PIN AND NOT A SEARCH.</para>
+        /// The link itself is not stored anywhere — the merge's own <c>animator</c> reference IS
+        /// the link, and a project sweep can find every prefab that has one. What a sweep cannot
+        /// say is which of them a person means when two prefabs merge the same controller, and
+        /// running that sweep is a walk over every prefab in the project, which is not a thing to
+        /// do behind somebody's back (ADR 0028). So the answer is asked for once, by hand, and
+        /// written down; everything else about the prefab is derived from these two references
+        /// when it is needed.
+        ///
+        /// <para>WHY THE MERGE IS AN <see cref="UnityEngine.Object"/>.</para>
+        /// The same reason <see cref="parameterStore"/> is one. A field typed as a Modular Avatar
+        /// component only exists in a project that has Modular Avatar, and saved data whose SHAPE
+        /// depends on an installed package is data that goes missing when somebody opens the
+        /// controller without it — not "unreadable until you reinstall", but gone from the file
+        /// on the next save. Held as an Object the reference is inert and intact there, and the
+        /// code that has to understand what it points at lives behind the DAERD_MA guard.
+        ///
+        /// <para>NEVER NORMALIZED.</para>
+        /// Nothing writes these fields but <see cref="SetPrefabLink"/> and
+        /// <see cref="ClearPrefabLink"/>, both of which are user actions. A reference that
+        /// resolves to null is something to say out loud — the prefab may be on a branch that is
+        /// not checked out, Modular Avatar may be uninstalled — and a "tidy-up" that wrote null
+        /// over it would turn "I cannot see this right now" into "there was never one".
+        /// </summary>
+        [Serializable]
+        public class PrefabLink
+        {
+            /// <summary>Root of the prefab ASSET (never a scene instance).</summary>
+            public GameObject prefab;
+            /// <summary>The MA Merge Animator component inside that prefab.</summary>
+            public UnityEngine.Object mergeAnimator;
+        }
+
+        public PrefabLink prefabLink = new PrefabLink();
+
+        /// <summary>
         /// One generated async (round-robin) sync setup: the layer that hosts it plus the
         /// wizard inputs, so the wizard can re-open the setup and regenerate the layer in
         /// place instead of piling up new ones.
@@ -593,6 +632,57 @@ namespace Yozolab.DaerD
             if (data == null || data.expressionsMenu == menu) return;
             Undo.RegisterCompleteObjectUndo(data, "Set Expressions Menu");
             data.expressionsMenu = menu;
+            EditorUtility.SetDirty(data);
+        }
+
+        /// <summary>
+        /// The saved pin, or null when this controller has no holder at all. The record handed
+        /// back is the live one: read it, and go through <see cref="SetPrefabLink"/> /
+        /// <see cref="ClearPrefabLink"/> to change it (see <see cref="PrefabLink"/> for why
+        /// nothing else may write those two fields).
+        /// </summary>
+        public static PrefabLink GetPrefabLink(AnimatorController controller)
+        {
+            var data = Find(controller);
+            return data != null ? data.prefabLink : null;
+        }
+
+        /// <summary>Pins the prefab and the merge inside it as this controller's home. Only ever
+        /// called from an explicit user action.</summary>
+        public static void SetPrefabLink(AnimatorController controller, GameObject prefab,
+            UnityEngine.Object mergeAnimator)
+        {
+            var data = GetOrCreate(controller);
+            if (data == null) return;
+            // Data saved before the field existed deserializes the list-less holder with a null
+            // record rather than an empty one.
+            if (data.prefabLink == null) data.prefabLink = new PrefabLink();
+            if (data.prefabLink.prefab == prefab && data.prefabLink.mergeAnimator == mergeAnimator)
+                return;
+            Undo.RegisterCompleteObjectUndo(data, "Set Prefab Link");
+            data.prefabLink.prefab = prefab;
+            data.prefabLink.mergeAnimator = mergeAnimator;
+            EditorUtility.SetDirty(data);
+        }
+
+        /// <summary>
+        /// Drops the pin. Clearing must not create a holder on a controller that never had one,
+        /// which is why this asks <see cref="Find"/> rather than <see cref="GetOrCreate"/>.
+        ///
+        /// The "already empty" test is REFERENCE emptiness: a slot still holding a reference that
+        /// no longer resolves is not empty, and Unity's == reports it as null exactly like an
+        /// unset field. Skipping the write there would leave a dead pin that the UI can see and
+        /// this method cannot clear.
+        /// </summary>
+        public static void ClearPrefabLink(AnimatorController controller)
+        {
+            var data = Find(controller);
+            if (data == null || data.prefabLink == null) return;
+            if (ReferenceEquals(data.prefabLink.prefab, null)
+                && ReferenceEquals(data.prefabLink.mergeAnimator, null)) return;
+            Undo.RegisterCompleteObjectUndo(data, "Clear Prefab Link");
+            data.prefabLink.prefab = null;
+            data.prefabLink.mergeAnimator = null;
             EditorUtility.SetDirty(data);
         }
 

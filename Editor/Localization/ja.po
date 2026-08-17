@@ -1774,6 +1774,11 @@ msgstr "このコントローラーを Playable レイヤーで実行してい�
 msgid "No exact match in the scene — no avatar runs this controller."
 msgstr "シーンに完全一致がありません。このコントローラーを実行しているアバターが見つかりませんでした。"
 
+# ---- prefab link ----
+
+msgid "Linked to the prefab '{0}' ({1})"
+msgstr "プレハブ '{0}' にリンクしています（{1}）"
+
 # ---- settings ----
 
 msgid "Language"

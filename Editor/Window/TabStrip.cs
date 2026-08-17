@@ -107,6 +107,8 @@ namespace Yozolab.DaerD
                 tab.AddToClassList("dd-tab");
                 if (controller == active) tab.AddToClassList("dd-tab--active");
 
+                AddPrefabIcon(tab, controller);
+
                 var label = new Label(controller.name) { tooltip = AssetDatabase.GetAssetPath(controller) };
                 label.AddToClassList("dd-tab__label");
                 tab.Add(label);
@@ -137,6 +139,34 @@ namespace Yozolab.DaerD
 
                 Bar.Add(tab);
             }
+        }
+
+        /// <summary>
+        /// A prefab badge in front of the tab's name, for a controller whose pin resolves
+        /// cleanly. Only for a healthy pin: the mark says "this one has a home and I can see
+        /// it", and a badge that also appeared for a pin pointing at a deleted prefab would be
+        /// saying the opposite of the truth in the place least able to explain itself. The
+        /// broken states are named on the home screen, which has room for the sentence.
+        ///
+        /// The state is asked for on every rebuild of the strip, which is what
+        /// <see cref="PrefabLinks.Status"/> is kept cheap for — reference resolution and one
+        /// field read, never a sweep.
+        /// </summary>
+        static void AddPrefabIcon(VisualElement tab, AnimatorController controller)
+        {
+            var status = PrefabLinks.Status(controller);
+            if (!status.IsHealthy) return;
+            var icon = EditorGUIUtility.IconContent("Prefab Icon")?.image;
+            if (icon == null) return;
+
+            var image = new Image
+            {
+                image = icon,
+                tooltip = L.Tr("Linked to the prefab '{0}' ({1})",
+                    status.prefab.name, AssetDatabase.GetAssetPath(status.prefab)),
+            };
+            image.AddToClassList("dd-tab__icon");
+            tab.Add(image);
         }
     }
 }
