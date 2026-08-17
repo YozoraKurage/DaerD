@@ -52,6 +52,7 @@ namespace Yozolab.DaerD
         // The lists start expanded: seeing what the controller carries is the reason to open
         // this screen at all, so folding them away is the exception, not the default.
         bool _gadgetsOpen = true;
+        bool _objectGadgetsOpen = true;
         bool _syncsOpen = true;
         bool _recipesOpen = true;
         // The tools start folded, for the opposite reason: each is a working surface of its
@@ -172,6 +173,8 @@ namespace Yozolab.DaerD
             EditorGUILayout.BeginVertical(GUILayout.MaxWidth(SplitColumnWidth));
             DrawGadgets(controller);
             EditorGUILayout.Space(8);
+            DrawObjectGadgets(controller);
+            EditorGUILayout.Space(8);
             DrawAsyncSyncs(controller);
             EditorGUILayout.Space(8);
             DrawRecipes(controller);
@@ -196,6 +199,8 @@ namespace Yozolab.DaerD
             DrawPrefabLink(controller);
             EditorGUILayout.Space(8);
             DrawGadgets(controller);
+            EditorGUILayout.Space(8);
+            DrawObjectGadgets(controller);
             EditorGUILayout.Space(8);
             DrawAsyncSyncs(controller);
             EditorGUILayout.Space(8);
@@ -755,6 +760,114 @@ namespace Yozolab.DaerD
             // No build follows this one, so the sub-assets it freed are flushed here.
             DbtBuilder.CommitSubAssets(controller);
             OnGadgetApplied();
+        }
+
+        // ---- object gadgets ----------------------------------------------------
+
+        /// <summary>
+        /// The gadgets whose subject is an object in the linked prefab, listed apart from the
+        /// DBT gadgets above. Two lists rather than one because they are two families: these are
+        /// regenerated against a prefab and are meaningless without a healthy pin, while a DBT
+        /// gadget is arithmetic over parameters and cares about no prefab at all. Sharing a card
+        /// would mean one heading that is true of half its rows.
+        ///
+        /// With the pin unusable the card says so and offers nothing. There is no half of this
+        /// that works without it — every path is relative to the merge — and buttons that refuse
+        /// one by one on being pressed teach less than one sentence that says why.
+        /// </summary>
+        void DrawObjectGadgets(AnimatorController controller)
+        {
+            var gadgets = GraphFrameData.GetObjectGadgets(controller);
+            _objectGadgetsOpen = BeginFoldCard(L.Tr("Object Gadgets"), gadgets.Count,
+                _objectGadgetsOpen);
+            if (!_objectGadgetsOpen)
+            {
+                EndCard();
+                return;
+            }
+
+            string refusal = ObjectGadgets.LinkRefusal(controller);
+            if (refusal != null)
+            {
+                EditorGUILayout.HelpBox(refusal, MessageType.Info);
+                EndCard();
+                return;
+            }
+            if (gadgets.Count == 0)
+                EditorGUILayout.LabelField(L.Tr("No object gadgets yet."),
+                    EditorStyles.centeredGreyMiniLabel);
+
+            foreach (var config in gadgets)
+            {
+                string kind = ObjectGadgets.KindLabel(config);
+                string mode = ObjectGadgets.ModeLabel(config);
+                string targets = L.Tr("{0} object(s)", config.targets.Count);
+                EditorGUILayout.BeginHorizontal();
+                DrawRowName(config.name,
+                    config.name + " (" + kind + ", " + mode + ") — " + targets);
+                DrawRowNote(kind);
+                DrawRowNote(mode);
+                DrawRowNote(targets);
+                if (RowButton(L.Tr("Edit")))
+                {
+                    ObjectGadgetWindow.Open(controller, config, OnGadgetApplied);
+                    GUIUtility.ExitGUI();   // the focus moved to another window under this layout pass
+                }
+                if (RowButton(L.Tr("Delete")))
+                {
+                    DeleteObjectGadget(controller, config);
+                    GUIUtility.ExitGUI();   // the list was rebuilt under this layout pass
+                }
+                EditorGUILayout.EndHorizontal();
+            }
+
+            if (GUILayout.Button(new GUIContent(L.Tr("+ Add Toggle"),
+                    L.Tr("Switch objects in the linked prefab on and off from a parameter."))))
+            {
+                ObjectGadgetWindow.Open(controller, OnGadgetApplied);
+                GUIUtility.ExitGUI();   // the focus moved to another window under this layout pass
+            }
+            EndCard();
+        }
+
+        /// <summary>Deleting names what goes with it. Not politeness: an asset save cannot be
+        /// undone once it reaches a prefab, and even here the parameter is the piece somebody
+        /// else's layer may be reading — so the sentence lists exactly what the record holds.
+        /// </summary>
+        void DeleteObjectGadget(AnimatorController controller,
+            GraphFrameData.ObjectGadgetConfig config)
+        {
+            if (!EditorUtility.DisplayDialog(L.Tr("Object Gadget"),
+                    L.Tr("Delete the object gadget '{0}'?\n\nThis removes {1}. Nothing inside the prefab is changed.",
+                        config.name, ObjectGadgetLoss(controller, config)),
+                    L.Tr("Delete"), L.Tr("Cancel")))
+                return;
+            ObjectGadgets.Remove(controller, config);
+            // No build follows this one, so the sub-assets it freed are flushed here.
+            DbtBuilder.CommitSubAssets(controller);
+            OnGadgetApplied();
+        }
+
+        /// <summary>What deleting one object gadget takes with it, read off the record rather
+        /// than described from memory — the dialog and the sweep have to be the same list.
+        /// Internal so a test can hold the two side by side: a dialog that under-states what is
+        /// about to go is worse than no dialog.</summary>
+        internal static string ObjectGadgetLoss(AnimatorController controller,
+            GraphFrameData.ObjectGadgetConfig config)
+        {
+            var lost = new List<string>();
+            string layer = LayerNameOf(controller, config.layer);
+            lost.Add(config.mode == (int)ToggleBuilder.Mode.Layer
+                ? L.Tr("the layer '{0}'", layer)
+                : L.Tr("its blend tree in the layer '{0}'", layer));
+
+            int clips = 0;
+            foreach (var output in new[] { config.onClip, config.offClip })
+                if (output != null && !output.userProvided && output.clip != null) clips++;
+            if (clips > 0) lost.Add(L.Tr("{0} generated clip(s)", clips));
+            if (config.createdParameter)
+                lost.Add(L.Tr("the parameter '{0}'", config.parameter));
+            return string.Join(", ", lost);
         }
 
         // ---- async sync --------------------------------------------------------

@@ -639,12 +639,11 @@ namespace Yozolab.DaerD
                 menu.AddItem(new GUIContent(type.ToString()), false, () => AddParameter(captured));
             }
 
-            // The generators that add computed parameters — DBT gadgets and async sync — are
-            // reached from the home screen, which lists what a controller already has as well
-            // as offering to add more. Adding one is not the part that needs an entry point:
-            // finding the four you built last month is, and this menu could never show that.
-            // Object Toggle is not on the home screen either, by an older decision — it records
-            // nothing in the controller, so there is nothing for a management surface to list.
+            // The generators that add parameters of their own — DBT gadgets, object gadgets and
+            // async sync — are reached from the home screen, which lists what a controller
+            // already has as well as offering to add more. Adding one is not the part that needs
+            // an entry point: finding the four you built last month is, and this menu could
+            // never show that.
 
             // VRChat built-in parameters. Already-present ones show as a checked, disabled entry so
             // the menu doubles as a quick "which standard parameters does this controller have?".

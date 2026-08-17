@@ -244,6 +244,36 @@ msgstr "+ ガジェットを追加"
 msgid "Add a Direct blend tree gadget that computes a float operation every frame."
 msgstr "Float 演算を毎フレーム計算する Direct Blend Tree ガジェットを追加します。"
 
+msgid "Object Gadgets"
+msgstr "オブジェクトガジェット"
+
+msgid "No object gadgets yet."
+msgstr "オブジェクトガジェットはまだありません。"
+
+msgid "{0} object(s)"
+msgstr "対象 {0} 個"
+
+msgid "+ Add Toggle"
+msgstr "+ トグルを追加"
+
+msgid "Switch objects in the linked prefab on and off from a parameter."
+msgstr "リンク先プレハブの中のオブジェクトを、パラメーターで表示/非表示します。"
+
+msgid "Delete the object gadget '{0}'?\n\nThis removes {1}. Nothing inside the prefab is changed."
+msgstr "オブジェクトガジェット '{0}' を削除しますか？\n\n{1} が削除されます。プレハブの中身は一切変更されません。"
+
+msgid "the layer '{0}'"
+msgstr "レイヤー '{0}'"
+
+msgid "its blend tree in the layer '{0}'"
+msgstr "レイヤー '{0}' の中の Blend Tree"
+
+msgid "{0} generated clip(s)"
+msgstr "生成されたクリップ {0} 個"
+
+msgid "the parameter '{0}'"
+msgstr "パラメーター '{0}'"
+
 msgid "No async sync setups yet."
 msgstr "巡回同期の設定はまだありません。"
 
@@ -778,19 +808,40 @@ msgstr "この演算はコントローラーの末尾に専用のレイヤーも
 msgid "This operation is a layer of its own: one state whose motion time follows the input. Nothing is added to a blend tree."
 msgstr "この演算はレイヤーそのものです。モーションタイムが入力に追従する State を 1 つ作るだけで、Blend Tree には何も追加しません。"
 
-# ---- object toggle wizard ----
+# ---- object gadget wizard ----
 
-msgid "Object Toggle"
-msgstr "オブジェクトトグル"
+msgid "Object Gadget"
+msgstr "オブジェクトガジェット"
 
-msgid "Generate ON/OFF clips for picked GameObjects and the layer or Direct blend tree machinery that plays them."
-msgstr "選択した GameObject の ON/OFF クリップと、それを再生するレイヤーまたは Direct Blend Tree の仕掛けを生成します。"
+msgid "Animates objects inside the linked prefab. Paths are worked out from '{0}' every time the gadget is generated, so renaming an object in the prefab does not break it."
+msgstr "リンク先プレハブの中のオブジェクトをアニメーションします。パスは生成のたびに '{0}' を起点として計算されるため、プレハブ内でオブジェクトの名前を変えてもガジェットは壊れません。"
 
-msgid "Creates ON/OFF clips that toggle the listed GameObjects and wires them to a parameter. The clips are saved next to the controller asset."
-msgstr "リストした GameObject を切り替える ON/OFF クリップを作成し、パラメーターに配線します。クリップはコントローラーアセットと同じフォルダに保存されます。"
+msgid "Close"
+msgstr "閉じる"
 
-msgid "Toggle Name"
-msgstr "トグル名"
+msgid "Gadget Name"
+msgstr "ガジェット名"
+
+msgid "Declare"
+msgstr "パラメーターを宣言"
+
+msgid "Add the parameter to this controller's parameter store, so the built avatar knows about it. Off for a parameter driven from inside the controller."
+msgstr "このコントローラーのパラメーターストアに行を追加し、ビルドされたアバターへ宣言します。コントローラー内部から駆動するパラメーターの場合はオフにします。"
+
+msgid "Pick an object from the linked prefab. Only objects under the merge can be animated."
+msgstr "リンク先プレハブからオブジェクトを選びます。アニメーションできるのは Merge Animator の配下にあるオブジェクトだけです。"
+
+msgid "No targets yet. Add objects from the linked prefab."
+msgstr "対象がまだありません。リンク先プレハブからオブジェクトを追加してください。"
+
+msgid "(missing object)"
+msgstr "（オブジェクトが見つかりません）"
+
+msgid "This target is gone from the prefab. Remove the row, or add the object again."
+msgstr "この対象はプレハブから失われています。行を削除するか、オブジェクトを追加し直してください。"
+
+msgid "A binding this window has no button for. It is kept exactly as it is."
+msgstr "このウィンドウにボタンが無い種類の指定です。そのまま保持されます。"
 
 msgid "Wiring"
 msgstr "配線方式"
@@ -819,38 +870,14 @@ msgstr "パラメーター '{0}' は {1} 型として既に存在します。別
 msgid "Target Objects"
 msgstr "対象オブジェクト"
 
-msgid "Path Root"
-msgstr "パスのルート"
-
-msgid "The GameObject holding the Animator; dropped objects get their path relative to it."
-msgstr "Animator を持つ GameObject です。ドロップしたオブジェクトのパスはここからの相対で計算されます。"
-
 msgid "Add Object"
 msgstr "オブジェクト追加"
-
-msgid "Drop a scene GameObject to add it as a target."
-msgstr "シーン上の GameObject をドロップすると対象に追加されます。"
-
-msgid "Add Selection"
-msgstr "選択中を追加"
-
-msgid "Add every GameObject selected in the Hierarchy."
-msgstr "Hierarchy で選択中のすべての GameObject を追加します。"
 
 msgid "Active"
 msgstr "ON で表示"
 
 msgid "Checked: the object is active while the toggle is ON. Unchecked inverts it."
 msgstr "チェック時はトグル ON でオブジェクトが有効になります。外すと反転します。"
-
-msgid "No targets yet. Drop GameObjects above or type hierarchy paths (relative to the Animator root)."
-msgstr "対象がまだありません。上の欄に GameObject をドロップするか、階層パス（Animator ルートからの相対）を入力してください。"
-
-msgid "'{0}' is not a child of the path root '{1}'."
-msgstr "'{0}' はパスのルート '{1}' の子ではありません。"
-
-msgid "The path root itself can't be toggled — animations can't re-enable the object that hosts the Animator."
-msgstr "パスのルート自体はトグルできません。Animator を持つオブジェクトを無効にすると、アニメーションで再有効化できなくなります。"
 
 msgid "Animate GameObject.m_IsActive"
 msgstr "GameObject の有効状態 (m_IsActive) をアニメーションします"
@@ -888,9 +915,6 @@ msgstr "対象 '{0}' にアニメーションする項目がありません。Ob
 msgid "Target '{0}' has an invalid component binding."
 msgstr "対象 '{0}' のコンポーネント指定が不正です。"
 
-msgid "The toggle needs a name."
-msgstr "トグルの名前を入力してください。"
-
 msgid "The parameter needs a name."
 msgstr "パラメーターの名前を入力してください。"
 
@@ -899,12 +923,6 @@ msgstr "パラメーター '{0}' は存在しますが Bool ではありませ�
 
 msgid "Add at least one target object."
 msgstr "対象オブジェクトを 1 つ以上追加してください。"
-
-msgid "Every target needs a hierarchy path."
-msgstr "すべての対象に階層パスが必要です。"
-
-msgid "Target path '{0}' is listed more than once."
-msgstr "対象パス '{0}' が重複しています。"
 
 # ---- object gadgets ----
 

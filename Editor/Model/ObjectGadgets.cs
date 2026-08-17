@@ -136,7 +136,7 @@ namespace Yozolab.DaerD
             if (string.IsNullOrEmpty(config.parameter))
                 return L.Tr("The parameter needs a name.");
 
-            string refusal = PinRefusal(controller);
+            string refusal = LinkRefusal(controller);
             if (refusal != null) return refusal;
 
             var root = Root(controller);
@@ -163,12 +163,16 @@ namespace Yozolab.DaerD
         }
 
         /// <summary>
-        /// The pin, as the reason it cannot be worked from. Every state names what it is talking
-        /// about and none of them offers to repair itself — which of two controllers a
-        /// re-pointed merge now belongs to is not DaerD's call (the rule the whole prefab link
-        /// keeps).
+        /// The pin, as the reason nothing can be built from it — or null when it is fine. Every
+        /// state names what it is talking about and none of them offers to repair itself: which
+        /// of two controllers a re-pointed merge now belongs to is not DaerD's call (the rule the
+        /// whole prefab link keeps).
+        ///
+        /// Public because it is the first thing a surface has to say. The home screen's card and
+        /// the wizard both open with it and then offer nothing, rather than showing controls that
+        /// would refuse one by one on being pressed.
         /// </summary>
-        static string PinRefusal(AnimatorController controller)
+        public static string LinkRefusal(AnimatorController controller)
         {
             var status = PrefabLinks.Status(controller);
             switch (status.state)
