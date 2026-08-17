@@ -273,6 +273,12 @@ namespace Yozolab.DaerD
             _animationSync.Start();
             _statePreview.Start();
 
+            // The toolbar's default-ON state is applied to the subsystem here, not by the
+            // toggle's own ValueChanged: BuildToolbar runs before the toolbar has a panel, and
+            // UIElements drops a ChangeEvent on a panel-less element. Doing it after Start()
+            // also means the first Sync() the enable triggers already has its subscriptions.
+            _animationSync.SetEnabled(_selectSyncToggle.value);
+
             if (_controller != null)
             {
                 _context.SetController(_controller);
@@ -375,7 +381,10 @@ namespace Yozolab.DaerD
             toolbar.Add(_settingsButton);
 
             ApplyToolbarTexts();
-            _selectSyncToggle.value = true;   // default ON; fires the callback above
+            // Default ON, without notification: the toolbar has no panel yet, so a notifying
+            // set would leave the toggle drawn ON while the ChangeEvent — and with it
+            // SetEnabled — is silently dropped. CreateGUI enables the subsystem explicitly.
+            _selectSyncToggle.SetValueWithoutNotify(true);
 
             return toolbar;
         }
