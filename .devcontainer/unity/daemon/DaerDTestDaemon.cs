@@ -37,6 +37,7 @@ namespace Yozolab.DaerDTestDaemon
         static readonly bool Inert;
         static double s_nextTick;
         static double s_nextBeat;
+        static double s_compilingSince;
         static bool s_started;
 
         static DaerDTestDaemon()
@@ -75,7 +76,24 @@ namespace Yozolab.DaerDTestDaemon
                     return;
                 }
 
-                if (EditorApplication.isCompiling || EditorApplication.isUpdating) return;
+                if (EditorApplication.isCompiling || EditorApplication.isUpdating)
+                {
+                    // バッチの常駐エディタは、コンパイル済みアセンブリを当てるドメイン
+                    // リロードを自発的に始めないことがある(実測: ソース変更後の初回依頼が
+                    // isCompiling のまま固まり、クライアントがタイムアウトする)。依頼を
+                    // 抱えたままコンパイル待ちが 10 秒続いたら、リロードを明示的に頼む。
+                    if (File.Exists(RunningPath) && EditorApplication.isCompiling)
+                    {
+                        if (s_compilingSince == 0) s_compilingSince = now;
+                        else if (now - s_compilingSince > 10)
+                        {
+                            s_compilingSince = 0;
+                            EditorUtility.RequestScriptReload();
+                        }
+                    }
+                    return;
+                }
+                s_compilingSince = 0;
 
                 if (File.Exists(RunningPath))
                 {
