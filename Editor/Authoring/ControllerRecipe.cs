@@ -79,10 +79,30 @@ namespace Yozolab.DaerD.Authoring
             return builder;
         }
 
+        /// <summary>
+        /// The one line a run comes back with when the loaded code may not be the code on disk,
+        /// or null when nothing suggests a mismatch.
+        ///
+        /// Every entry point below asks this first and touches nothing when it gets an answer.
+        /// Verify and Compare included, and that is the point rather than an over-reach: holding
+        /// a controller against last week's assembly produces a confident list of differences
+        /// that are not there, which is worse than a refusal because it reads like a finding.
+        /// </summary>
+        List<string> StaleRefusal()
+        {
+            var staleness = RecipeFreshness.Check(this);
+            return staleness == RecipeFreshness.Staleness.Fresh
+                ? null
+                : new List<string> { RecipeFreshness.Reason(staleness) };
+        }
+
         /// <summary>Applies the declaration to the target controller. Returns warnings —
         /// an empty list is a clean run.</summary>
         public List<string> Generate()
         {
+            var stale = StaleRefusal();
+            if (stale != null) return stale;
+
             var warnings = new List<string>();
             if (targetController == null)
             {
@@ -224,6 +244,9 @@ namespace Yozolab.DaerD.Authoring
         /// </summary>
         public List<string> Verify()
         {
+            var stale = StaleRefusal();
+            if (stale != null) return stale;
+
             var report = new List<string>();
             if (targetController == null)
             {
@@ -271,6 +294,9 @@ namespace Yozolab.DaerD.Authoring
         /// </summary>
         public List<string> Compare()
         {
+            var stale = StaleRefusal();
+            if (stale != null) return stale;
+
             var report = new List<string>();
             if (!HasGeneratedHalf)
             {

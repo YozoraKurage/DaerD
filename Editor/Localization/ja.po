@@ -2635,6 +2635,17 @@ msgstr "Assembly Definition（コンパイル高速化）"
 msgid "Put the recipe folder in its own small assembly, so an export recompiles only the recipes instead of your whole editor assembly. Skipped when the folder already belongs to an asmdef or contains scripts DaerD didn't generate."
 msgstr "Recipe フォルダを専用の小さなアセンブリに分離し、エクスポート時の再コンパイルをエディタアセンブリ全体ではなく Recipe だけに抑えます。フォルダが既に asmdef 管理下にある場合や、DaerD 以外のスクリプトを含む場合はスキップします。"
 
+# ---- C# recipes (freshness guard) ----
+
+msgid "Scripts are still compiling — run this again once the compile has finished."
+msgstr "コンパイル中です — 完了後にもう一度実行してください。"
+
+msgid "A compile error means the new code was never loaded — what would run is the last version that compiled successfully. Check the Console."
+msgstr "コンパイルエラーで新しいコードが読み込まれていません — 実行されるのは最後に成功した古いコードです。Console を確認してください。"
+
+msgid "This recipe's .cs is newer than the compiled code — wait for the recompile before running this."
+msgstr ".cs がコンパイル済みコードより新しい — 再コンパイルを待ってから実行してください。"
+
 # ---- state inspector ----
 
 msgid "Motion"
