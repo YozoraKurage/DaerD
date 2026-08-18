@@ -9,7 +9,7 @@ using PackageInfo = UnityEditor.PackageManager.PackageInfo;
 using MaParameters = nadena.dev.modular_avatar.core.ModularAvatarParameters;
 #endif
 
-namespace Yozolab.DaerD
+namespace Yozolab.DaerD.Bridge
 {
     /// <summary>Why a prefab cannot be written to. Every value is something to say by name —
     /// none of them is a condition to work around.</summary>

@@ -3,8 +3,10 @@ using System.Collections.Generic;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
+using Yozolab.DaerD.Bridge;
+using Yozolab.DaerD.Engine;
 
-namespace Yozolab.DaerD
+namespace Yozolab.DaerD.IR
 {
     /// <summary>
     /// Turns a <see cref="ControllerIR"/> back into a live AnimatorController. Two modes:

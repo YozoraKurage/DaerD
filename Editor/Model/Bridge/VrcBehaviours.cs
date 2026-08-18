@@ -3,7 +3,7 @@ using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
 
-namespace Yozolab.DaerD
+namespace Yozolab.DaerD.Bridge
 {
     /// <summary>
     /// Registry and clipboard for the VRC SDK StateMachineBehaviour types DaerD understands.

@@ -1,7 +1,7 @@
 using System.Collections.Generic;
 using UnityEditor.Animations;
 
-namespace Yozolab.DaerD
+namespace Yozolab.DaerD.Analyze
 {
     /// <summary>
     /// VRC PhysBones and Contacts expose families of auto-generated parameters sharing one

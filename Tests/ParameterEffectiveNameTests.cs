@@ -2,12 +2,13 @@ using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
-using Yozolab.DaerD.DynamicAnalyze;
 #if DAERD_MA
 using MaConfig = nadena.dev.modular_avatar.core.ParameterConfig;
 using MaParameters = nadena.dev.modular_avatar.core.ModularAvatarParameters;
 using MaSyncType = nadena.dev.modular_avatar.core.ParameterSyncType;
 #endif
+using Yozolab.DaerD.Bridge;
+using Yozolab.DaerD.DynamicAnalyze;
 
 namespace Yozolab.DaerD.Tests
 {

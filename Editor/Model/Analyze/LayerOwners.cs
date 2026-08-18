@@ -1,7 +1,8 @@
 using System.Collections.Generic;
 using UnityEditor.Animations;
+using Yozolab.DaerD.Engine;
 
-namespace Yozolab.DaerD
+namespace Yozolab.DaerD.Analyze
 {
     /// <summary>What kind of claim DaerD has on a layer. The distinction is the point: a
     /// generated layer, a shared host and a recipe's output are all "DaerD's", and what a person

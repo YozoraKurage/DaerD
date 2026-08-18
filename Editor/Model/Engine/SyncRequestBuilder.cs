@@ -2,8 +2,9 @@ using System.Collections.Generic;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
+using Yozolab.DaerD.Bridge;
 
-namespace Yozolab.DaerD
+namespace Yozolab.DaerD.Engine
 {
     /// <summary>
     /// The per-state "sync request" — DaerD's component-like attachment for async sync

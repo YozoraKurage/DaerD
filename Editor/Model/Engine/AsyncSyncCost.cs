@@ -2,12 +2,12 @@ using System.Collections.Generic;
 using UnityEngine;
 // Stated in AsyncSyncBuilder's vocabulary, and leaning on the schedule it prices — both
 // moved out of that class unchanged, and the imports keep the moved code reading as it did.
-using static Yozolab.DaerD.AsyncSyncSchedule;
-using IndexEncoding = Yozolab.DaerD.AsyncSyncBuilder.IndexEncoding;
-using Request = Yozolab.DaerD.AsyncSyncBuilder.Request;
-using Slot = Yozolab.DaerD.AsyncSyncBuilder.Slot;
+using static Yozolab.DaerD.Engine.AsyncSyncSchedule;
+using IndexEncoding = Yozolab.DaerD.Engine.AsyncSyncBuilder.IndexEncoding;
+using Request = Yozolab.DaerD.Engine.AsyncSyncBuilder.Request;
+using Slot = Yozolab.DaerD.Engine.AsyncSyncBuilder.Slot;
 
-namespace Yozolab.DaerD
+namespace Yozolab.DaerD.Engine
 {
     /// <summary>
     /// What an async-sync request resolves to and what it costs, before anything is built:

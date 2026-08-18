@@ -3,7 +3,7 @@ using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
 
-namespace Yozolab.DaerD
+namespace Yozolab.DaerD.Edit
 {
     /// <summary>
     /// Duplicates a Frame, every state and note lying fully inside it, and the transitions whose

@@ -5,10 +5,11 @@ using UnityEngine;
 // The build moved out of AsyncSyncBuilder unchanged and still speaks its vocabulary;
 // importing the facade keeps Request, Slot and the naming / schedule / cost helpers in
 // scope, so every statement below reads exactly as it did there.
-using static Yozolab.DaerD.AsyncSyncBuilder;
+using static Yozolab.DaerD.Engine.AsyncSyncBuilder;
 using SyncGroup = Yozolab.DaerD.GraphFrameData.AsyncSyncConfig.SyncGroup;
+using Yozolab.DaerD.Bridge;
 
-namespace Yozolab.DaerD
+namespace Yozolab.DaerD.Engine
 {
     /// <summary>
     /// Writes the layer an <see cref="AsyncSyncBuilder.Request"/> describes: the generated

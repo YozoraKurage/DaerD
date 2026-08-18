@@ -1,7 +1,9 @@
 using System.Collections.Generic;
 using UnityEditor.Animations;
+using Yozolab.DaerD.Bridge;
+using Yozolab.DaerD.Edit;
 
-namespace Yozolab.DaerD
+namespace Yozolab.DaerD.Analyze
 {
     /// <summary>
     /// Locates every place that references a parameter by name inside an AnimatorController:

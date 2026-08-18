@@ -4,7 +4,7 @@ using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
 
-namespace Yozolab.DaerD
+namespace Yozolab.DaerD.Edit
 {
     /// <summary>
     /// Session-scoped clipboard for transition settings. Survives domain reloads via

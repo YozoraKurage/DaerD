@@ -3,7 +3,7 @@ using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
 
-namespace Yozolab.DaerD
+namespace Yozolab.DaerD.Analyze
 {
     /// <summary>
     /// Cleanup helpers for a controller asset: an index of every AnimationClip the controller

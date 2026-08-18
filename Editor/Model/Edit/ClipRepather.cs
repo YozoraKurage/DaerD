@@ -2,8 +2,9 @@ using System.Collections.Generic;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
+using Yozolab.DaerD.Analyze;
 
-namespace Yozolab.DaerD
+namespace Yozolab.DaerD.Edit
 {
     /// <summary>
     /// Fixes AnimationClip bindings whose hierarchy paths no longer exist under the avatar

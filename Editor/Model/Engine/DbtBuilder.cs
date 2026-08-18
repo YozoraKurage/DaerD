@@ -2,8 +2,9 @@ using System.Collections.Generic;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
+using Yozolab.DaerD.Analyze;
 
-namespace Yozolab.DaerD
+namespace Yozolab.DaerD.Engine
 {
     /// <summary>
     /// Shared low-level builders for the Direct-blend-tree (AAP) gadgets: parameter clips,

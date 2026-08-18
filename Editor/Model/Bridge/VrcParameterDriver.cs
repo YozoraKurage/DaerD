@@ -2,8 +2,9 @@ using System.Collections.Generic;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
+using Yozolab.DaerD.IR;
 
-namespace Yozolab.DaerD
+namespace Yozolab.DaerD.Bridge
 {
     /// <summary>
     /// Reads and rewrites the parameter references inside a VRCAvatarParameterDriver

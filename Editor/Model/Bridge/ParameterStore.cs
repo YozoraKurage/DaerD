@@ -10,8 +10,10 @@ using MaSyncType = nadena.dev.modular_avatar.core.ParameterSyncType;
 #if DAERD_MA && DAERD_VRC
 using MaMergeAnimator = nadena.dev.modular_avatar.core.ModularAvatarMergeAnimator;
 #endif
+using Yozolab.DaerD.Analyze;
+using Yozolab.DaerD.Engine;
 
-namespace Yozolab.DaerD
+namespace Yozolab.DaerD.Bridge
 {
     /// <summary>
     /// Uniform access to "the thing that declares this controller's expression parameters":

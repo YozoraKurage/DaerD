@@ -1,4 +1,4 @@
-namespace Yozolab.DaerD
+namespace Yozolab.DaerD.Bridge
 {
     /// <summary>
     /// The built-in ("primitive") parameters the VRChat SDK drives automatically on every avatar.

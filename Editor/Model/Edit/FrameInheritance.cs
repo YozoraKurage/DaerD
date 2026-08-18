@@ -2,7 +2,7 @@ using System.Collections.Generic;
 using UnityEditor;
 using UnityEditor.Animations;
 
-namespace Yozolab.DaerD
+namespace Yozolab.DaerD.Edit
 {
     /// <summary>
     /// Carries graph frames and notes from one set of state machines to another. Used when a

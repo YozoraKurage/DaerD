@@ -1,11 +1,11 @@
 using System.Collections.Generic;
 using UnityEngine;
 // Stated in AsyncSyncBuilder's vocabulary, like every other piece of the technique.
-using Request = Yozolab.DaerD.AsyncSyncBuilder.Request;
+using Request = Yozolab.DaerD.Engine.AsyncSyncBuilder.Request;
 using StepSpec = Yozolab.DaerD.GraphFrameData.AsyncSyncConfig.StepSpec;
 using SyncGroup = Yozolab.DaerD.GraphFrameData.AsyncSyncConfig.SyncGroup;
 
-namespace Yozolab.DaerD
+namespace Yozolab.DaerD.Engine
 {
     /// <summary>
     /// One ring per parameter type, out of a setup that runs them all through one.

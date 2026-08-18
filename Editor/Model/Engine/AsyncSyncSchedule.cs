@@ -2,12 +2,12 @@ using System.Collections.Generic;
 using UnityEngine;
 // The math is stated in AsyncSyncBuilder's vocabulary because it moved out of that class
 // unchanged; aliasing the two DTOs keeps every signature reading as it always did.
-using Clock = Yozolab.DaerD.AsyncSyncBuilder.Clock;
-using Request = Yozolab.DaerD.AsyncSyncBuilder.Request;
-using Slot = Yozolab.DaerD.AsyncSyncBuilder.Slot;
+using Clock = Yozolab.DaerD.Engine.AsyncSyncBuilder.Clock;
+using Request = Yozolab.DaerD.Engine.AsyncSyncBuilder.Request;
+using Slot = Yozolab.DaerD.Engine.AsyncSyncBuilder.Slot;
 using StepSpec = Yozolab.DaerD.GraphFrameData.AsyncSyncConfig.StepSpec;
 
-namespace Yozolab.DaerD
+namespace Yozolab.DaerD.Engine
 {
     /// <summary>
     /// Which slots the async-sync cycle visits and in what order: the targets grouped into

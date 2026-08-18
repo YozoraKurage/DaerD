@@ -2,8 +2,10 @@ using System.Collections.Generic;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
+using Yozolab.DaerD.Bridge;
+using Yozolab.DaerD.Edit;
 
-namespace Yozolab.DaerD
+namespace Yozolab.DaerD.Analyze
 {
     /// <summary>Audits a controller and provides controller-wide bulk fixes.</summary>
     static class ControllerAnalyzer

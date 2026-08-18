@@ -2,8 +2,9 @@ using System.Collections.Generic;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
+using Yozolab.DaerD.Bridge;
 
-namespace Yozolab.DaerD
+namespace Yozolab.DaerD.IR
 {
     /// <summary>
     /// Structural snapshot of an AnimatorController — the foundation of the C# conversion

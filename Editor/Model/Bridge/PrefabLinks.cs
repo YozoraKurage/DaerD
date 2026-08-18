@@ -6,7 +6,7 @@ using UnityEngine;
 using MaMergeAnimator = nadena.dev.modular_avatar.core.ModularAvatarMergeAnimator;
 #endif
 
-namespace Yozolab.DaerD
+namespace Yozolab.DaerD.Bridge
 {
     /// <summary>
     /// What the saved pin (<see cref="GraphFrameData.PrefabLink"/>) resolves to right now.

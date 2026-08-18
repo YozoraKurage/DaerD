@@ -3,7 +3,7 @@ using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
 
-namespace Yozolab.DaerD
+namespace Yozolab.DaerD.Edit
 {
     /// <summary>
     /// In-memory clipboard for graph frames and memo notes. Entries are plain data with no link

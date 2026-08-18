@@ -1,6 +1,7 @@
 using UnityEngine;
+using Yozolab.DaerD.Bridge;
 
-namespace Yozolab.DaerD
+namespace Yozolab.DaerD.Analyze
 {
     enum IssueSeverity { Info, Warning, Error }
 

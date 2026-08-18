@@ -8,6 +8,8 @@ using MaConfig = nadena.dev.modular_avatar.core.ParameterConfig;
 using MaParameters = nadena.dev.modular_avatar.core.ModularAvatarParameters;
 using MaSyncType = nadena.dev.modular_avatar.core.ParameterSyncType;
 #endif
+using Yozolab.DaerD.Analyze;
+using Yozolab.DaerD.Bridge;
 
 namespace Yozolab.DaerD.Tests
 {

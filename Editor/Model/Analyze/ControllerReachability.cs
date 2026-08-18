@@ -1,7 +1,7 @@
 using System.Collections.Generic;
 using UnityEditor.Animations;
 
-namespace Yozolab.DaerD
+namespace Yozolab.DaerD.Analyze
 {
     /// <summary>
     /// Which states of a layer the animator can actually end up in. "Has an incoming

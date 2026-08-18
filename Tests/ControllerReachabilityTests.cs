@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using NUnit.Framework;
 using UnityEditor.Animations;
 using UnityEngine;
+using Yozolab.DaerD.Analyze;
 
 namespace Yozolab.DaerD.Tests
 {

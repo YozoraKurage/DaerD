@@ -1,7 +1,7 @@
 using System.Collections.Generic;
 using UnityEditor.Animations;
 
-namespace Yozolab.DaerD
+namespace Yozolab.DaerD.Analyze
 {
     /// <summary>
     /// Locates an arbitrary controller object (state, sub-state machine, transition or blend

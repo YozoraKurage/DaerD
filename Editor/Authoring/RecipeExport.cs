@@ -4,6 +4,7 @@ using System.IO;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
+using Yozolab.DaerD.IR;
 
 namespace Yozolab.DaerD.Authoring
 {

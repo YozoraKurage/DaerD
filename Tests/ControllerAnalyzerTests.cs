@@ -3,6 +3,9 @@ using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
+using Yozolab.DaerD.Analyze;
+using Yozolab.DaerD.Bridge;
+using Yozolab.DaerD.Engine;
 
 namespace Yozolab.DaerD.Tests
 {

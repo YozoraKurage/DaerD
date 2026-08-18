@@ -8,6 +8,7 @@ using UnityEngine;
 #if DAERD_MA && DAERD_VRC
 using MaMergeAnimator = nadena.dev.modular_avatar.core.ModularAvatarMergeAnimator;
 #endif
+using Yozolab.DaerD.Bridge;
 
 namespace Yozolab.DaerD.Tests
 {

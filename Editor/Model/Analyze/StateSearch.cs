@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using UnityEditor.Animations;
 
-namespace Yozolab.DaerD
+namespace Yozolab.DaerD.Analyze
 {
     /// <summary>
     /// Name search across every layer of a controller: states (by state name or by the name of

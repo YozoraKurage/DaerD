@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
+using Yozolab.DaerD.Bridge;
 
 #if DAERD_NDMF && DAERD_VRC
 // Registered with NDMF from inside the module rather than from the package's AssemblyInfo, so

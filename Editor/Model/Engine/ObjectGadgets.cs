@@ -6,8 +6,9 @@ using UnityEngine;
 using MaMergeAnimator = nadena.dev.modular_avatar.core.ModularAvatarMergeAnimator;
 using MaPathMode = nadena.dev.modular_avatar.core.MergeAnimatorPathMode;
 #endif
+using Yozolab.DaerD.Bridge;
 
-namespace Yozolab.DaerD
+namespace Yozolab.DaerD.Engine
 {
     /// <summary>
     /// The object gadget family: the generated things whose subject is an OBJECT in the gimmick

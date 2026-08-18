@@ -3,6 +3,9 @@ using System.Text;
 using System.Text.RegularExpressions;
 using UnityEditor.Animations;
 using UnityEngine;
+using Yozolab.DaerD.Edit;
+using Yozolab.DaerD.Engine;
+using Yozolab.DaerD.IR;
 
 namespace Yozolab.DaerD.Authoring
 {

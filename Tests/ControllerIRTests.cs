@@ -2,6 +2,8 @@ using System.Collections.Generic;
 using NUnit.Framework;
 using UnityEditor.Animations;
 using UnityEngine;
+using Yozolab.DaerD.Engine;
+using Yozolab.DaerD.IR;
 
 namespace Yozolab.DaerD.Tests
 {

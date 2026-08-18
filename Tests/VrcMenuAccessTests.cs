@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using NUnit.Framework;
 using UnityEngine;
+using Yozolab.DaerD.Bridge;
 
 namespace Yozolab.DaerD.Tests
 {

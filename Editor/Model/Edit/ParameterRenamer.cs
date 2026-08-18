@@ -1,8 +1,9 @@
 using System.Collections.Generic;
 using UnityEditor;
 using UnityEditor.Animations;
+using Yozolab.DaerD.Bridge;
 
-namespace Yozolab.DaerD
+namespace Yozolab.DaerD.Edit
 {
     /// <summary>
     /// Renames a parameter and cascades the new name into every condition, blend tree

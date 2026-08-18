@@ -1,5 +1,7 @@
 using System.Collections.Generic;
 using UnityEditor.Animations;
+using Yozolab.DaerD.Bridge;
+using Yozolab.DaerD.Engine;
 
 namespace Yozolab.DaerD.Authoring
 {

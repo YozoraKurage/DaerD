@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using UnityEditor.Animations;
 using UnityEngine;
+using Yozolab.DaerD.Bridge;
 
 namespace Yozolab.DaerD
 {

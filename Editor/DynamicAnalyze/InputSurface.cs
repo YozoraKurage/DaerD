@@ -1,6 +1,8 @@
 using System.Collections.Generic;
 using UnityEditor.Animations;
 using UnityEngine;
+using Yozolab.DaerD.Analyze;
+using Yozolab.DaerD.Bridge;
 
 namespace Yozolab.DaerD.DynamicAnalyze
 {

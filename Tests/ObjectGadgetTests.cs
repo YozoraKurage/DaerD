@@ -6,6 +6,8 @@ using UnityEngine;
 using MaMergeAnimator = nadena.dev.modular_avatar.core.ModularAvatarMergeAnimator;
 using MaPathMode = nadena.dev.modular_avatar.core.MergeAnimatorPathMode;
 #endif
+using Yozolab.DaerD.Bridge;
+using Yozolab.DaerD.Engine;
 
 namespace Yozolab.DaerD.Tests
 {

@@ -6,8 +6,10 @@ using UnityEngine;
 // is declared with the rest of the saved setup; the alias keeps the request reading plainly.
 using StepSpec = Yozolab.DaerD.GraphFrameData.AsyncSyncConfig.StepSpec;
 using SyncGroup = Yozolab.DaerD.GraphFrameData.AsyncSyncConfig.SyncGroup;
+using Yozolab.DaerD.Analyze;
+using Yozolab.DaerD.Bridge;
 
-namespace Yozolab.DaerD
+namespace Yozolab.DaerD.Engine
 {
     /// <summary>
     /// Parameter compression via time-multiplexing ("async sync"): instead of syncing

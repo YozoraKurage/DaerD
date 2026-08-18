@@ -3,7 +3,7 @@ using System.Globalization;
 using System.Text.RegularExpressions;
 using UnityEngine;
 
-namespace Yozolab.DaerD
+namespace Yozolab.DaerD.IR
 {
     /// <summary>
     /// Semantic comparison of two <see cref="ControllerIR"/> snapshots. Returns human-readable

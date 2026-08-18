@@ -3,7 +3,7 @@ using System.Text;
 using UnityEditor.Animations;
 using UnityEngine;
 
-namespace Yozolab.DaerD
+namespace Yozolab.DaerD.Bridge
 {
     /// <summary>
     /// What one layer of a running Animator is doing this frame, and the one piece of

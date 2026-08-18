@@ -1,5 +1,7 @@
 using System.Collections.Generic;
 using UnityEngine;
+using Yozolab.DaerD.Analyze;
+using Yozolab.DaerD.Bridge;
 
 namespace Yozolab.DaerD.DynamicAnalyze
 {

@@ -1,7 +1,7 @@
 using UnityEditor;
 using UnityEngine;
 
-namespace Yozolab.DaerD
+namespace Yozolab.DaerD.Edit
 {
     /// <summary>
     /// Renames the AnimationClip backing a state. A standalone .anim asset is renamed on disk;
