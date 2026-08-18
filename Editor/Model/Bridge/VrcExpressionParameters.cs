@@ -17,9 +17,9 @@ namespace Yozolab.DaerD.Bridge
         public const string DescriptorTypeName = "VRCAvatarDescriptor";
         public const int FallbackCapacity = 256;
 
-        public enum ValueType { Int = 0, Float = 1, Bool = 2 }
+        internal enum ValueType { Int = 0, Float = 1, Bool = 2 }
 
-        public class Entry
+        internal class Entry
         {
             public string name;
             public ValueType valueType;

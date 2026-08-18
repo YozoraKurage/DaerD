@@ -14,7 +14,7 @@ namespace Yozolab.DaerD.Analyze
     static class ControllerCleanup
     {
         /// <summary>One place a clip is used; carries the drill path for <see cref="DaerDContext.NavigateTo"/>.</summary>
-        public class ClipUsage
+        internal class ClipUsage
         {
             /// <summary>List label, e.g. "Base / Locomotion / Walk — MoveTree".</summary>
             public string label;
@@ -23,7 +23,7 @@ namespace Yozolab.DaerD.Analyze
             public AnimatorState state;
         }
 
-        public class ClipEntry
+        internal class ClipEntry
         {
             public AnimationClip clip;
             /// <summary>True when the clip is stored inside the .controller file itself.</summary>

@@ -12,7 +12,7 @@ namespace Yozolab.DaerD.Edit
     /// </summary>
     static class ParameterConverter
     {
-        public struct ConditionResult
+        internal struct ConditionResult
         {
             public AnimatorConditionMode mode;
             public float threshold;
@@ -20,7 +20,7 @@ namespace Yozolab.DaerD.Edit
             public string note;
         }
 
-        public class ConditionChange
+        internal class ConditionChange
         {
             public AnimatorTransitionBase transition;
             public int index;
@@ -35,7 +35,7 @@ namespace Yozolab.DaerD.Edit
             public bool enabled = true;
         }
 
-        public class Plan
+        internal class Plan
         {
             public AnimatorController controller;
             public string parameterName;

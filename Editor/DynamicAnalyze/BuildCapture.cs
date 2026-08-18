@@ -70,7 +70,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// it. The name is read off the serialized enum rather than from a table of our own, so
         /// a slot the SDK adds later is labelled correctly by a build that has never heard of
         /// it.</summary>
-        public struct Slot
+        internal struct Slot
         {
             public string kind;
             public AnimatorController controller;
@@ -91,7 +91,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// one IS the history, and it is what <see cref="Changed"/> reads to say what each phase
         /// of the build added or took away.
         /// </summary>
-        public sealed class Built
+        internal sealed class Built
         {
             /// <summary>The avatar's name as a person would say it. Taken with any
             /// <c>(Clone)</c> suffix removed, because VRChat's own build hook renames the object

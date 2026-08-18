@@ -39,7 +39,7 @@ namespace Yozolab.DaerD
     {
         readonly ListReorder _reorder = new ListReorder();
 
-        public struct Result
+        internal struct Result
         {
             /// <summary>The transition the pointer is over, or null. Only ever answered on the
             /// repaint pass, where the row rectangles are real; a caller pushing it to the graph

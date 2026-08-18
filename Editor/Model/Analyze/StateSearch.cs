@@ -11,7 +11,7 @@ namespace Yozolab.DaerD.Analyze
     /// </summary>
     static class StateSearch
     {
-        public class Result
+        internal class Result
         {
             /// <summary>List label, e.g. "Base / Locomotion / Walk".</summary>
             public string label;

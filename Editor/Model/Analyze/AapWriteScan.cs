@@ -31,7 +31,7 @@ namespace Yozolab.DaerD.Analyze
         /// <summary>The AAPs one layer writes. Layers are kept apart because they do not add
         /// up the way a Direct tree's children do — see
         /// <see cref="ControllerAnalyzer"/>'s layer-conflict check.</summary>
-        public class LayerWrites
+        internal class LayerWrites
         {
             public int layerIndex;
             public string layerName;

@@ -39,7 +39,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
     /// </summary>
     sealed class SignalTrace
     {
-        public sealed class Signal
+        internal sealed class Signal
         {
             /// <summary>Which client this came from ("Local"). Empty for the run's own signals.</summary>
             public string scope = string.Empty;

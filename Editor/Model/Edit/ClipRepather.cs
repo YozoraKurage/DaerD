@@ -14,7 +14,7 @@ namespace Yozolab.DaerD.Edit
     /// </summary>
     static class ClipRepather
     {
-        public class BrokenBinding
+        internal class BrokenBinding
         {
             public AnimationClip clip;
             public EditorCurveBinding binding;

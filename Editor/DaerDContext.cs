@@ -68,7 +68,7 @@ namespace Yozolab.DaerD
         /// The bulk repaints a <see cref="GraphVisualsChanged"/> notification can ask for, for the
         /// call sites that touch every state or every transition at once rather than one object.
         /// </summary>
-        public enum GraphVisuals
+        internal enum GraphVisuals
         {
             /// Every state node's labels and badges (e.g. after a bulk Write Defaults).
             AllStateNodes,

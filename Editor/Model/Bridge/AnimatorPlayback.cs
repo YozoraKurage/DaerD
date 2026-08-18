@@ -16,7 +16,7 @@ namespace Yozolab.DaerD.Bridge
     /// </summary>
     static class AnimatorPlayback
     {
-        public struct LayerPlayback
+        internal struct LayerPlayback
         {
             /// <summary>False when there was nothing to read — no animator, not initialized,
             /// or the layer index does not exist on it.</summary>

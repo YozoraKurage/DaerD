@@ -27,7 +27,7 @@ namespace Yozolab.DaerD.IR
         public readonly List<Param> parameters = new List<Param>();
         public readonly List<Layer> layers = new List<Layer>();
 
-        public class Param
+        internal class Param
         {
             public string name;
             public AnimatorControllerParameterType type;
@@ -39,7 +39,7 @@ namespace Yozolab.DaerD.IR
             public bool hasDefault = true;
         }
 
-        public class Layer
+        internal class Layer
         {
             public string name;
             public float defaultWeight = 1f;
@@ -58,19 +58,19 @@ namespace Yozolab.DaerD.IR
             public readonly List<BehaviourOverride> syncedBehaviours = new List<BehaviourOverride>();
         }
 
-        public class MotionOverride
+        internal class MotionOverride
         {
             public string statePath;
             public Motion motion;
         }
 
-        public class BehaviourOverride
+        internal class BehaviourOverride
         {
             public string statePath;
             public readonly List<Behaviour> behaviours = new List<Behaviour>();
         }
 
-        public class Machine
+        internal class Machine
         {
             public string name;
             public Vector3 entryPosition;
@@ -89,7 +89,7 @@ namespace Yozolab.DaerD.IR
             public readonly List<Transition> entryTransitions = new List<Transition>();
         }
 
-        public class ChildMachine
+        internal class ChildMachine
         {
             public Machine machine;
             public Vector3 position;
@@ -98,7 +98,7 @@ namespace Yozolab.DaerD.IR
             public readonly List<Transition> transitions = new List<Transition>();
         }
 
-        public class State
+        internal class State
         {
             public string name;
             public Vector3 position;
@@ -125,7 +125,7 @@ namespace Yozolab.DaerD.IR
             public readonly List<Transition> transitions = new List<Transition>();
         }
 
-        public class Tree
+        internal class Tree
         {
             public string name = "Blend Tree";
             public BlendTreeType type;
@@ -138,7 +138,7 @@ namespace Yozolab.DaerD.IR
             public readonly List<TreeChild> children = new List<TreeChild>();
         }
 
-        public class TreeChild
+        internal class TreeChild
         {
             public Motion motionAsset;
             public Tree tree;
@@ -157,7 +157,7 @@ namespace Yozolab.DaerD.IR
         /// action; those never need to be diffed, because Verify re-parses the real
         /// controller after applying them.
         /// </summary>
-        public class Behaviour
+        internal class Behaviour
         {
             public string typeName;
             public string json;
@@ -168,13 +168,13 @@ namespace Yozolab.DaerD.IR
         }
 
         /// <summary>Typed VRC Avatar Parameter Driver contents (authoring + export).</summary>
-        public class DriverSpec
+        internal class DriverSpec
         {
             public bool localOnly;
             public readonly List<DriverEntry> entries = new List<DriverEntry>();
         }
 
-        public class DriverEntry
+        internal class DriverEntry
         {
             /// <summary>0 = Set, 1 = Add, 2 = Random, 3 = Copy (the SDK's ChangeType order).</summary>
             public int kind;
@@ -194,9 +194,9 @@ namespace Yozolab.DaerD.IR
             public float destMax;
         }
 
-        public class Transition
+        internal class Transition
         {
-            public enum Target { State, Machine, Exit }
+            internal enum Target { State, Machine, Exit }
 
             public Target target;
             /// <summary>Layer-local path of the destination (empty for Exit).</summary>
@@ -220,7 +220,7 @@ namespace Yozolab.DaerD.IR
             public readonly List<Condition> conditions = new List<Condition>();
         }
 
-        public class Condition
+        internal class Condition
         {
             public AnimatorConditionMode mode;
             public string parameter = string.Empty;

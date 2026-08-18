@@ -16,7 +16,7 @@ namespace Yozolab.DaerD
     class GraphFrameData : ScriptableObject
     {
         [Serializable]
-        public class Frame
+        internal class Frame
         {
             public string title = "Frame";
             public Color color = DaerDColors.DefaultFrame;
@@ -29,7 +29,7 @@ namespace Yozolab.DaerD
 
         /// <summary>A free-floating memo (sticky note) drawn among the nodes.</summary>
         [Serializable]
-        public class Note
+        internal class Note
         {
             public string text = "Memo";
             public Color color = DaerDColors.DefaultNote;
@@ -100,7 +100,7 @@ namespace Yozolab.DaerD
         /// over it would turn "I cannot see this right now" into "there was never one".
         /// </summary>
         [Serializable]
-        public class PrefabLink
+        internal class PrefabLink
         {
             /// <summary>Root of the prefab ASSET (never a scene instance).</summary>
             public GameObject prefab;
@@ -116,7 +116,7 @@ namespace Yozolab.DaerD
         /// place instead of piling up new ones.
         /// </summary>
         [Serializable]
-        public class AsyncSyncConfig
+        internal class AsyncSyncConfig
         {
             /// <summary>Root state machine of the generated layer (identifies the layer
             /// across renames and reorders).</summary>
@@ -178,7 +178,7 @@ namespace Yozolab.DaerD
             public bool allowRepeatSteps;
 
             [Serializable]
-            public class SyncRate
+            internal class SyncRate
             {
                 public string name;
                 public int rate = 1;
@@ -191,7 +191,7 @@ namespace Yozolab.DaerD
             /// <see cref="StepSpec"/> is one — Unity does not serialize a list of lists.
             /// </summary>
             [Serializable]
-            public class SyncGroup
+            internal class SyncGroup
             {
                 public string name;
                 public List<string> members = new List<string>();
@@ -209,7 +209,7 @@ namespace Yozolab.DaerD
             /// depending on the model, so the model reads this rather than the other way round.
             /// </summary>
             [Serializable]
-            public class StepSpec
+            internal class StepSpec
             {
                 /// <summary>Names in any order — the slots normalize them against the target
                 /// list, so a step is a set and two steps naming the same targets are one slot.</summary>
@@ -257,7 +257,7 @@ namespace Yozolab.DaerD
         /// edit and regenerate it, and the C# exporter writes it back as the call that made it.
         /// </summary>
         [Serializable]
-        public class AapGadgetConfig
+        internal class AapGadgetConfig
         {
             /// <summary>Root state machine of the hosting DBT layer (identifies the layer
             /// across renames and reorders).</summary>
@@ -334,7 +334,7 @@ namespace Yozolab.DaerD
         /// are produced, and differ only in what they build.
         /// </summary>
         [Serializable]
-        public class ObjectGadgetConfig
+        internal class ObjectGadgetConfig
         {
             /// <summary>(int)ObjectGadgets.Kind.</summary>
             public int kind;
@@ -376,7 +376,7 @@ namespace Yozolab.DaerD
 
         /// <summary>One object a gadget animates, and how.</summary>
         [Serializable]
-        public class ObjectTargetRecord
+        internal class ObjectTargetRecord
         {
             /// <summary>The object itself, somewhere inside the pinned prefab. The path is
             /// derived from it when a curve needs one and is never saved (ADR 0044).</summary>
@@ -395,7 +395,7 @@ namespace Yozolab.DaerD
         /// actually has (a PhysBone binding in a project without the SDK is a named refusal,
         /// not a corrupted record).</summary>
         [Serializable]
-        public class BindingRecord
+        internal class BindingRecord
         {
             public string typeName;
             /// <summary>"m_Enabled" or "blendShape.&lt;name&gt;".</summary>
@@ -415,7 +415,7 @@ namespace Yozolab.DaerD
         /// second code path: one bookkeeping, whoever the clip belongs to.
         /// </summary>
         [Serializable]
-        public class ClipOutput
+        internal class ClipOutput
         {
             public AnimationClip clip;
             /// <summary>The clip is the user's asset, not a sub-asset DaerD made. Sweeping the
@@ -427,7 +427,7 @@ namespace Yozolab.DaerD
         /// <summary>One curve row a generate wrote, as the triple that identifies a curve.
         /// The type is a short name, "GameObject" for the m_IsActive rows.</summary>
         [Serializable]
-        public class WrittenRow
+        internal class WrittenRow
         {
             public string path;
             public string typeName;
@@ -438,7 +438,7 @@ namespace Yozolab.DaerD
         /// reference so the record can grow fields (what it is, where it came from) without
         /// rewriting every saved list.</summary>
         [Serializable]
-        public class PlacedArtifact
+        internal class PlacedArtifact
         {
             public UnityEngine.Object reference;
         }
@@ -453,7 +453,7 @@ namespace Yozolab.DaerD
         /// and edit that driver as a component instead of raw driver rows.
         /// </summary>
         [Serializable]
-        public class SyncRequest
+        internal class SyncRequest
         {
             public AnimatorState state;
             /// <summary>Base name of the async-sync setup the request talks to.</summary>
@@ -467,7 +467,7 @@ namespace Yozolab.DaerD
         /// <summary>Layers generated (and regenerated) by a C# recipe — the layer list shows
         /// them with a "C#" badge so hand-edits there read as "will be overwritten".</summary>
         [Serializable]
-        public class CodeOwnedLayer
+        internal class CodeOwnedLayer
         {
             public AnimatorStateMachine layer;
             public UnityEngine.Object recipe;

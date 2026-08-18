@@ -9,7 +9,7 @@ namespace Yozolab.DaerD.Edit
     static class GraphLayout
     {
         /// <summary>How a multi-selection is straightened by <see cref="Align"/>.</summary>
-        public enum AlignAxis
+        internal enum AlignAxis
         {
             /// <summary>Equalize Y so the selected states sit in a single horizontal row.</summary>
             Row,

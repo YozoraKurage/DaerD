@@ -11,7 +11,7 @@ namespace Yozolab.DaerD.Analyze
     /// </summary>
     static class ControllerLocator
     {
-        public class Location
+        internal class Location
         {
             public int layerIndex;
             public List<AnimatorStateMachine> stateMachinePath;

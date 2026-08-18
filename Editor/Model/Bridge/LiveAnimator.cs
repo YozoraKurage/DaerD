@@ -125,7 +125,7 @@ namespace Yozolab.DaerD.Bridge
                 _present[parameter.name] = parameter.type;
         }
 
-        public struct Resolution
+        internal struct Resolution
         {
             public Animator animator;
             public bool ambiguous;

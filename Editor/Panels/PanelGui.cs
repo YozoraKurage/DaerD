@@ -35,7 +35,7 @@ namespace Yozolab.DaerD
         /// Detect does), which would jump straight over a trailing restore and leave every other
         /// panel drawing with this width.
         /// </summary>
-        public readonly struct LabelWidthScope : IDisposable
+        internal readonly struct LabelWidthScope : IDisposable
         {
             readonly float _previous;
 

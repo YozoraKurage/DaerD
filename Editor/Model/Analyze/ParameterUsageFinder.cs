@@ -14,7 +14,7 @@ namespace Yozolab.DaerD.Analyze
     /// </summary>
     static class ParameterUsageFinder
     {
-        public class Usage
+        internal class Usage
         {
             /// <summary>Menu/list label, e.g. "L0 / SM Locomotion / Idle → Walk".</summary>
             public string label;

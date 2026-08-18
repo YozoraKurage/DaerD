@@ -25,7 +25,7 @@ namespace Yozolab.DaerD.Engine
         public const string IsLocalParameter = "IsLocal";
         public const string DriverInstanceName = "Network";
 
-        public enum Encoding
+        internal enum Encoding
         {
             /// <summary>One synced Int holds the state index (up to 255 states).</summary>
             Int,
@@ -33,7 +33,7 @@ namespace Yozolab.DaerD.Engine
             Bool,
         }
 
-        public enum RemoteWiring
+        internal enum RemoteWiring
         {
             /// <summary>One AnyState transition per mirror state (N transitions).</summary>
             AnyState,
@@ -41,7 +41,7 @@ namespace Yozolab.DaerD.Engine
             AllToAll,
         }
 
-        public class Request
+        internal class Request
         {
             public AnimatorController controller;
             public int layerIndex = -1;

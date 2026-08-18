@@ -81,7 +81,7 @@ namespace Yozolab.DaerD.Engine
     /// </summary>
     static class AsyncSyncBuilder
     {
-        public enum IndexEncoding
+        internal enum IndexEncoding
         {
             /// <summary>One synced Int holds the slot index (8 bits, up to 255 slots).</summary>
             Int,
@@ -92,7 +92,7 @@ namespace Yozolab.DaerD.Engine
             Auto,
         }
 
-        public class Request
+        internal class Request
         {
             public AnimatorController controller;
             /// <summary>Existing Float / Int / Bool parameters to multiplex, in slot order.</summary>
@@ -269,7 +269,7 @@ namespace Yozolab.DaerD.Engine
         /// <summary>One step's payload: the targets copied into the channels together. The
         /// automatic batching fills it with one type at a time; a step written out by hand
         /// (see <see cref="Request.steps"/>) may carry one of each.</summary>
-        public class Slot
+        internal class Slot
         {
             public readonly List<string> targets = new List<string>();
             public int rate = 1;
@@ -285,7 +285,7 @@ namespace Yozolab.DaerD.Engine
         /// every slot has exactly one phase and <see cref="Index"/> is the slot number it has
         /// always been, so the whole build runs the same path either way.
         /// </summary>
-        public class Clock
+        internal class Clock
         {
             /// <summary>The phase each step of the schedule sends, one entry per step.</summary>
             public readonly int[] stepPhases;

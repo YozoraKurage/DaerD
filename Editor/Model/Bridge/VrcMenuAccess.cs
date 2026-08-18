@@ -18,7 +18,7 @@ namespace Yozolab.DaerD.Bridge
         public const int FallbackMaxControls = 8;
 
         /// <summary>VRC SDK control type ids.</summary>
-        public enum ControlType
+        internal enum ControlType
         {
             Button = 101,
             Toggle = 102,
@@ -29,7 +29,7 @@ namespace Yozolab.DaerD.Bridge
         }
 
         /// <summary>Read-only snapshot of one control for list / inspector rendering.</summary>
-        public class Control
+        internal class Control
         {
             public string name;
             public Texture2D icon;

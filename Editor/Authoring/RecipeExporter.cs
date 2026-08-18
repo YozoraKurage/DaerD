@@ -24,7 +24,7 @@ namespace Yozolab.DaerD.Authoring
     /// </summary>
     static class RecipeExporter
     {
-        public class Result
+        internal class Result
         {
             /// <summary>The generated half ("&lt;Name&gt;.Generated.cs") — always rewritten.</summary>
             public string code;
@@ -37,7 +37,7 @@ namespace Yozolab.DaerD.Authoring
             internal ControllerBuilder replayed;
         }
 
-        public class FieldRef
+        internal class FieldRef
         {
             public string fieldName;
             public string fieldType;

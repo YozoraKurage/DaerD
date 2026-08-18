@@ -30,7 +30,7 @@ namespace Yozolab.DaerD.Engine
     /// </summary>
     static class AapGadgets
     {
-        public enum Kind
+        internal enum Kind
         {
             Smooth,
             Add,
@@ -138,7 +138,7 @@ namespace Yozolab.DaerD.Engine
         /// read as one, which the wizard says out loud.</summary>
         public static bool CreatesSupportingLayer(Kind kind) => kind == Kind.FrameTime;
 
-        public class Request
+        internal class Request
         {
             public AnimatorController controller;
             public Kind kind;

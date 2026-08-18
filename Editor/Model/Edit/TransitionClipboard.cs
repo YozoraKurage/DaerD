@@ -15,10 +15,10 @@ namespace Yozolab.DaerD.Edit
         const string SessionKey = "Yozolab.DaerD.TransitionClipboard";
 
         /// <summary>What kind of node the transition originally ran from.</summary>
-        public enum SourceKind { None, State, SubStateMachine, AnyState, Entry }
+        internal enum SourceKind { None, State, SubStateMachine, AnyState, Entry }
 
         [Serializable]
-        public class ConditionData
+        internal class ConditionData
         {
             public AnimatorConditionMode mode;
             public string parameter;
@@ -26,7 +26,7 @@ namespace Yozolab.DaerD.Edit
         }
 
         [Serializable]
-        public class Snapshot
+        internal class Snapshot
         {
             public bool isStateTransition;
             public bool hasExitTime;

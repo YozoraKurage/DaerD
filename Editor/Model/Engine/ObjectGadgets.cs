@@ -48,7 +48,7 @@ namespace Yozolab.DaerD.Engine
     /// </summary>
     static class ObjectGadgets
     {
-        public enum Kind
+        internal enum Kind
         {
             Toggle,
             // Appended, and to be appended to: a saved gadget records its kind as this enum's

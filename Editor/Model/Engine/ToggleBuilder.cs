@@ -27,7 +27,7 @@ namespace Yozolab.DaerD.Engine
     /// </summary>
     static class ToggleBuilder
     {
-        public enum Mode
+        internal enum Mode
         {
             /// <summary>New layer, two states (OFF/ON) switched by a Bool parameter.</summary>
             Layer,
@@ -38,7 +38,7 @@ namespace Yozolab.DaerD.Engine
 
         /// <summary>One extra animated property besides GameObject.m_IsActive: a component's
         /// m_Enabled flag, or a blendshape weight with explicit OFF/ON values.</summary>
-        public class Binding
+        internal class Binding
         {
             /// <summary>Component type the curve binds to (concrete type, e.g. SkinnedMeshRenderer).</summary>
             public System.Type type;
@@ -62,7 +62,7 @@ namespace Yozolab.DaerD.Engine
             };
         }
 
-        public class Target
+        internal class Target
         {
             /// <summary>Hierarchy path relative to the merge this controller is pinned to,
             /// derived from the saved reference by the caller. "" is the merge's own object,
@@ -79,7 +79,7 @@ namespace Yozolab.DaerD.Engine
         /// where to put the result. Not saved anywhere — the record is
         /// <c>GraphFrameData.ObjectGadgetConfig</c>, and this is what it is turned into on the
         /// way to being built.</summary>
-        public class Plan
+        internal class Plan
         {
             public AnimatorController controller;
             public Mode mode;
@@ -104,7 +104,7 @@ namespace Yozolab.DaerD.Engine
         /// the same enumeration. A snapshot derived separately would be free to disagree with
         /// what was actually written, which is exactly the failure it is there to prevent.
         /// </summary>
-        public readonly struct Row
+        internal readonly struct Row
         {
             public readonly EditorCurveBinding binding;
             public readonly float offValue;

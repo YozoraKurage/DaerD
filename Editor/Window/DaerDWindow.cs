@@ -10,7 +10,7 @@ using Yozolab.DaerD.Bridge;
 namespace Yozolab.DaerD
 {
     /// <summary>The main editor window: toolbar, layers/parameters panels, graph and inspector.</summary>
-    public class DaerDWindow : EditorWindow
+    internal class DaerDWindow : EditorWindow
     {
         [SerializeField] AnimatorController _controller;
         [SerializeField] int _layerIndex;

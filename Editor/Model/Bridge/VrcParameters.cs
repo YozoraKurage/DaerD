@@ -9,7 +9,7 @@ namespace Yozolab.DaerD.Bridge
     {
         // Local enum so this file has no hard dependency on UnityEditor.Animations; the panel maps
         // it to AnimatorControllerParameterType when adding the parameter.
-        public enum ParamType { Float, Int, Bool }
+        internal enum ParamType { Float, Int, Bool }
 
         /// <summary>
         /// How the platform gets this parameter to somebody else's copy of the avatar — which
@@ -27,7 +27,7 @@ namespace Yozolab.DaerD.Bridge
         /// person's copy does with it in between. One "it broadcasts" answer covers all three
         /// with the fastest of them, which is the flattering half of the truth.
         /// </summary>
-        public enum Sync
+        internal enum Sync
         {
             /// <summary>Carried with the avatar's pose, on a fixed cadence: "always updated
             /// every 0.1 seconds (10 times per second)", and a Float is interpolated locally on
@@ -54,7 +54,7 @@ namespace Yozolab.DaerD.Bridge
             Local,
         }
 
-        public struct Definition
+        internal struct Definition
         {
             public string name;
             public ParamType type;

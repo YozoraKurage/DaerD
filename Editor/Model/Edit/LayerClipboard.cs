@@ -17,7 +17,7 @@ namespace Yozolab.DaerD.Edit
     static class LayerClipboard
     {
         [System.Serializable]
-        public class ParameterSnapshot
+        internal class ParameterSnapshot
         {
             public string name;
             public AnimatorControllerParameterType type;
