@@ -4,6 +4,7 @@ using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
 using Yozolab.DaerD.Analyze;
+using Yozolab.DaerD.Bridge;
 using Yozolab.DaerD.Engine;
 
 namespace Yozolab.DaerD
@@ -40,6 +41,18 @@ namespace Yozolab.DaerD
 
         public List<Frame> frames = new List<Frame>();
         public List<Note> notes = new List<Note>();
+
+        /// <summary>
+        /// Which DD build last wrote this holder, stamped on every <see cref="GetOrCreate"/> by
+        /// <see cref="Bridge.SavedByVersion"/> — the one place every write accessor passes
+        /// through on its way to <c>EditorUtility.SetDirty</c>.
+        ///
+        /// READING THIS: empty/absent means saved by 0.13 or earlier, before the field existed.
+        /// <c>"X.Y.Z"</c> means a release build of that version. <c>"X.Y.Z+dev"</c> means a
+        /// development build made after that release — the exact commit is not recorded, only
+        /// that it postdates the tag.
+        /// </summary>
+        public string savedByVersion;
 
         /// <summary>
         /// This controller's designated placeholder clip. Assigned to new states on creation
@@ -1075,15 +1088,28 @@ namespace Yozolab.DaerD
                 System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(controller);
         }
 
-        /// <summary>Finds or creates the frame holder. In-memory controllers get a non-persisted instance.</summary>
+        /// <summary>
+        /// Finds or creates the frame holder. In-memory controllers get a non-persisted instance.
+        ///
+        /// Every write accessor in this file reaches its data through here (or already holds
+        /// what a prior call to this returned) before mutating and calling
+        /// <c>EditorUtility.SetDirty</c> — which makes this the one place to stamp
+        /// <see cref="savedByVersion"/>, rather than repeating the stamp at each of that
+        /// dirty flag's call sites.
+        /// </summary>
         public static GraphFrameData GetOrCreate(AnimatorController controller)
         {
             var existing = Find(controller);
-            if (existing != null) return existing;
+            if (existing != null)
+            {
+                existing.savedByVersion = SavedByVersion.Current;
+                return existing;
+            }
 
             var data = CreateInstance<GraphFrameData>();
             data.name = "DaerD Frames";
             data.hideFlags = HideFlags.HideInHierarchy;
+            data.savedByVersion = SavedByVersion.Current;
             var path = controller != null ? AssetDatabase.GetAssetPath(controller) : null;
             if (!string.IsNullOrEmpty(path))
             {
