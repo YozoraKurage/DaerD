@@ -81,8 +81,10 @@ namespace Yozolab.DaerDTestDaemon
                     // バッチの常駐エディタは、コンパイル済みアセンブリを当てるドメイン
                     // リロードを自発的に始めないことがある(実測: ソース変更後の初回依頼が
                     // isCompiling のまま固まり、クライアントがタイムアウトする)。依頼を
-                    // 抱えたままコンパイル待ちが 10 秒続いたら、リロードを明示的に頼む。
-                    if (File.Exists(RunningPath) && EditorApplication.isCompiling)
+                    // 抱えたままこのゲートに 10 秒居座ったら、リロードを明示的に頼む。
+                    // isCompiling に限定しない — isUpdating で固まる個体も実測で 2 例あり、
+                    // そちらは促されないまま永久に待っていた。
+                    if (File.Exists(RunningPath))
                     {
                         if (s_compilingSince == 0) s_compilingSince = now;
                         else if (now - s_compilingSince > 10)
