@@ -869,8 +869,14 @@ namespace Yozolab.DaerD
                 EditorGUILayout.EndHorizontal();
             }
 
-            if (GUILayout.Button(new GUIContent(L.Tr("+ Add Toggle"),
-                    L.Tr("Switch objects in the linked prefab on and off from a parameter."))))
+            // Named for the family, not for the one kind that exists — the card's heading
+            // already says which family, exactly as the DBT gadgets card above it does. The
+            // family is meant to grow into "pick objects in the prefab and do something to
+            // them", so a button called Add Toggle would have to be renamed on the day a second
+            // kind lands, and until then it says that toggling is all this list can ever hold.
+            // The editor it opens is still the toggle one; the tooltip is where that is said.
+            if (GUILayout.Button(new GUIContent(L.Tr("+ Add Gadget"),
+                    L.Tr("Add a gadget whose subject is an object inside the linked prefab. One kind so far: a toggle, which switches those objects on and off from a parameter."))))
             {
                 ObjectGadgetWindow.Open(controller, OnGadgetApplied);
                 GUIUtility.ExitGUI();   // the focus moved to another window under this layout pass

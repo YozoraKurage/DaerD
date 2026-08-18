@@ -250,11 +250,8 @@ msgstr "オブジェクトガジェットはまだありません。"
 msgid "{0} object(s)"
 msgstr "対象 {0} 個"
 
-msgid "+ Add Toggle"
-msgstr "+ トグルを追加"
-
-msgid "Switch objects in the linked prefab on and off from a parameter."
-msgstr "リンク先プレハブの中のオブジェクトを、パラメーターで表示/非表示します。"
+msgid "Add a gadget whose subject is an object inside the linked prefab. One kind so far: a toggle, which switches those objects on and off from a parameter."
+msgstr "リンク先プレハブの中のオブジェクトを対象にするガジェットを追加します。今のところ種類は 1 つ、パラメーターで表示/非表示を切り替えるトグルです。"
 
 msgid "Delete the object gadget '{0}'?\n\nThis removes {1}. Nothing inside the prefab is changed."
 msgstr "オブジェクトガジェット '{0}' を削除しますか？\n\n{1} が削除されます。プレハブの中身は一切変更されません。"
