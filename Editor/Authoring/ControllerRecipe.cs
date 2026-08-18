@@ -91,6 +91,7 @@ namespace Yozolab.DaerD.Authoring
 
             var builder = BuildDeclaration();
             warnings.AddRange(builder.Bake());
+            var atRisk = RecordsInDeclaredLayers(builder.IR);
 
             using (new UndoScope("Generate Recipe"))
             {
@@ -99,6 +100,7 @@ namespace Yozolab.DaerD.Authoring
                 foreach (var op in builder.PostOps)
                     warnings.AddRange(op(targetController));
             }
+            ReportLostRecords(atRisk, warnings);
 
             ownedLayers.Clear();
             foreach (var layer in builder.IR.layers)
@@ -118,6 +120,95 @@ namespace Yozolab.DaerD.Authoring
             EditorUtility.SetDirty(this);
             EditorUtility.SetDirty(targetController);
             return warnings;
+        }
+
+        // ---- the records a declared layer stands to destroy -----------------------
+
+        /// <summary>One saved gadget that lives in the machinery a declared layer is about to
+        /// replace: the layer's name, the key its record is filed under, and what to call it in
+        /// a sentence.</summary>
+        class RecordAtRisk
+        {
+            public string layer;
+            public string key;
+            public string label;
+            public bool objectGadget;
+        }
+
+        /// <summary>
+        /// The saved gadgets standing in the way of a declared layer.
+        ///
+        /// Declaring a layer means rebuilding its state machine from scratch, and every object
+        /// and DBT gadget recorded in that layer points at machinery that is about to stop
+        /// existing. Most of the time a call in the same recipe puts them back — that is what an
+        /// export writes when it can — but the fallback to raw states survives for the cases it
+        /// cannot (an unhealthy pin, a layer reshaped by hand), and a Generate that quietly
+        /// forgets a gadget while leaving its states behind is the worst possible outcome: the
+        /// controller still works and DaerD no longer knows why.
+        ///
+        /// So the list is taken before the run and checked after it, rather than warned about up
+        /// front. What survives is not knowable here — the post steps have not run yet, and they
+        /// are what re-register everything the calls rebuild.
+        /// </summary>
+        List<RecordAtRisk> RecordsInDeclaredLayers(ControllerIR ir)
+        {
+            var risk = new List<RecordAtRisk>();
+            var declared = new Dictionary<AnimatorStateMachine, string>();
+            foreach (var layer in ir.layers)
+                foreach (var live in targetController.layers)
+                    if (live.name == layer.name && live.stateMachine != null)
+                        declared[live.stateMachine] = layer.name;
+            if (declared.Count == 0) return risk;
+
+            foreach (var config in GraphFrameData.GetObjectGadgets(targetController))
+                if (config.layer != null && declared.TryGetValue(config.layer, out var layerName))
+                    risk.Add(new RecordAtRisk
+                    {
+                        layer = layerName,
+                        key = config.parameter,
+                        label = config.name,
+                        objectGadget = true,
+                    });
+            foreach (var config in GraphFrameData.GetGadgets(targetController))
+                if (config.layer != null && declared.TryGetValue(config.layer, out var layerName))
+                    risk.Add(new RecordAtRisk
+                    {
+                        layer = layerName,
+                        key = config.output,
+                        label = config.output,
+                    });
+            return risk;
+        }
+
+        /// <summary>Names the gadgets the run really did lose, one sentence per layer. Reading
+        /// the records back is what proves it: a record that is still there was put back by a
+        /// call, and one that is gone is gone whatever the reason.</summary>
+        void ReportLostRecords(List<RecordAtRisk> risk, List<string> warnings)
+        {
+            if (risk.Count == 0) return;
+            var objects = new HashSet<string>();
+            foreach (var config in GraphFrameData.GetObjectGadgets(targetController))
+                objects.Add(config.parameter);
+            var gadgets = new HashSet<string>();
+            foreach (var config in GraphFrameData.GetGadgets(targetController))
+                gadgets.Add(config.output);
+
+            var order = new List<string>();
+            var lost = new Dictionary<string, List<string>>();
+            foreach (var entry in risk)
+            {
+                if ((entry.objectGadget ? objects : gadgets).Contains(entry.key)) continue;
+                if (!lost.TryGetValue(entry.layer, out var names))
+                {
+                    lost[entry.layer] = names = new List<string>();
+                    order.Add(entry.layer);
+                }
+                string named = "'" + entry.label + "'";
+                if (!names.Contains(named)) names.Add(named);
+            }
+            foreach (var layer in order)
+                warnings.Add(L.Tr("Layer '{0}' is declared by this recipe, so generating it rebuilt what these saved gadgets were built into and DaerD has lost their records: {1}. What they built is still in the controller as plain states — export the layer again to write them back as calls, or rebuild them from the home screen.",
+                    layer, string.Join(", ", lost[layer])));
         }
 
         /// <summary>

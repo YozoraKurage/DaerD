@@ -44,10 +44,15 @@ namespace Yozolab.DaerD.Tests
         [TearDown]
         public void TearDown()
         {
+            foreach (var o in _cleanup)
+                if (o != null) Object.DestroyImmediate(o);
+            _cleanup.Clear();
             AssetDatabase.DeleteAsset(Folder);
             PrefabLinks.ForgetCandidates();
             GraphFrameData.ForgetHolders();
         }
+
+        readonly List<Object> _cleanup = new List<Object>();
 
 #if DAERD_MA && DAERD_VRC
         /// <summary>A controller on disk pinned to a gimmick prefab whose merge names it — the
@@ -287,6 +292,79 @@ namespace Yozolab.DaerD.Tests
                 Assert.AreEqual(1, GraphFrameData.GetGadgets(controller).Count, "run " + run);
                 Assert.AreEqual(1, GraphFrameData.GetObjectGadgets(controller).Count, "run " + run);
             }
+#else
+            Assert.Ignore("Modular Avatar is not installed in this project.");
+#endif
+        }
+
+        /// <summary>
+        /// The insurance for what the claim cannot reach. A gadget the export could not write
+        /// down still falls back to raw states, and generating that declaration really does
+        /// destroy the record — so Generate says which one, by name, instead of leaving a
+        /// controller that works and a DaerD that has forgotten why.
+        /// </summary>
+        [Test]
+        public void ARecordADeclaredLayerDestroys_IsNamedByGenerate()
+        {
+#if DAERD_MA && DAERD_VRC
+            var controller = Pinned(ControllerPath, GimmickPrefab);
+            var built = new ControllerBuilder();
+            built.Objects().Toggle("Hat").AsTree().Shows("Hat");
+            Assert.IsEmpty(Generate(built, controller));
+
+            // The target goes out of the prefab: there is no path left to derive, so no call can
+            // describe the toggle and the layer is exported as the states it really is.
+            var contents = PrefabUtility.LoadPrefabContents(GimmickPrefab);
+            Object.DestroyImmediate(contents.transform.Find("Merge/Hat").gameObject);
+            PrefabUtility.SaveAsPrefabAsset(contents, GimmickPrefab);
+            PrefabUtility.UnloadPrefabContents(contents);
+
+            var result = RecipeExporter.Export(controller, null, "GimmickRecipe", null);
+            Assert.AreEqual(1, result.warnings.Count, string.Join("\n", result.warnings));
+            StringAssert.DoesNotContain("c.Objects()", Body(result.code));
+            StringAssert.Contains("c.Layer(\"DBT\")", Body(result.code));
+
+            // Generating that declaration — as a recipe, which is the only place both halves of
+            // the run are visible — takes the machinery the record was built into.
+            var recipe = ScriptableObject.CreateInstance<TestRecipe>();
+            _cleanup.Add(recipe);
+            recipe.targetController = controller;
+            recipe.body = c => c.Layer("DBT");
+
+            var warnings = recipe.Generate();
+
+            Assert.IsEmpty(GraphFrameData.GetObjectGadgets(controller), "the record really is gone");
+            // Matched on the names rather than the sentence around them: the message is
+            // translated, the layer and the gadget it names are not.
+            Assert.IsNotEmpty(warnings.FindAll(w => w.Contains("'DBT'") && w.Contains("'Hat'")),
+                "the loss was not named:\n" + string.Join("\n", warnings));
+#else
+            Assert.Ignore("Modular Avatar is not installed in this project.");
+#endif
+        }
+
+        /// <summary>And it stays quiet when a call puts the record back, which is the whole
+        /// reason the check runs after the post steps instead of before them.</summary>
+        [Test]
+        public void ARecordACallRebuilds_IsNotReportedAsLost()
+        {
+#if DAERD_MA && DAERD_VRC
+            var controller = Pinned(ControllerPath, GimmickPrefab);
+            MixedLayer(controller);
+
+            var recipe = ScriptableObject.CreateInstance<TestRecipe>();
+            _cleanup.Add(recipe);
+            recipe.targetController = controller;
+            recipe.body = c =>
+            {
+                c.Layer("DBT");
+                c.Objects().Toggle("Hat").AsTree().Shows("Hat");
+            };
+
+            var warnings = recipe.Generate();
+
+            Assert.IsEmpty(warnings, string.Join("\n", warnings));
+            Assert.AreEqual(1, GraphFrameData.GetObjectGadgets(controller).Count);
 #else
             Assert.Ignore("Modular Avatar is not installed in this project.");
 #endif

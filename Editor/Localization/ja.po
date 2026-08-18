@@ -2519,6 +2519,9 @@ msgstr "オブジェクトガジェット '{0}' がアニメーションする�
 msgid "Layer '{0}' is claimed by {1} object gadgets at once; exported as raw states."
 msgstr "レイヤー '{0}' を {1} 個のオブジェクトガジェットが同時に自分のものとしています。State をそのままエクスポートします。"
 
+msgid "Layer '{0}' is declared by this recipe, so generating it rebuilt what these saved gadgets were built into and DaerD has lost their records: {1}. What they built is still in the controller as plain states — export the layer again to write them back as calls, or rebuild them from the home screen."
+msgstr "レイヤー '{0}' はこのレシピが宣言しているため、生成時に作り直され、次のガジェットの記録が失われました: {1}。作られたものはプレーンな State としてコントローラーに残っています。もう一度エクスポートして呼び出しとして書き出すか、ホーム画面から作り直してください。"
+
 msgid "Layer '{0}' no longer holds what the object gadget '{1}' would build; exported as raw states instead of an Objects call."
 msgstr "レイヤー '{0}' の中身は、オブジェクトガジェット '{1}' が生成するものと一致しません。Objects 呼び出しではなく State のままエクスポートします。"
 
