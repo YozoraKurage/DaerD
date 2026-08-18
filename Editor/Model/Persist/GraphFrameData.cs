@@ -464,8 +464,9 @@ namespace Yozolab.DaerD
 
         public List<SyncRequest> syncRequests = new List<SyncRequest>();
 
-        /// <summary>Layers generated (and regenerated) by a C# recipe — the layer list shows
-        /// them with a "C#" badge so hand-edits there read as "will be overwritten".</summary>
+        /// <summary>Layers generated (and regenerated) by a C# recipe — the layer list marks
+        /// them as generated and names the recipe in the mark's tooltip, so hand-edits there
+        /// read as "will be overwritten".</summary>
         [Serializable]
         internal class CodeOwnedLayer
         {
