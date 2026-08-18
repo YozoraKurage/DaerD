@@ -407,6 +407,42 @@ msgstr "Empty クリップ"
 msgid "Stored with this controller. New states are created with it, and the analyzer's Fill fix assigns it to states with no motion."
 msgstr "このコントローラーと一緒に保存されます。新規 State 作成時に自動で設定され、解析の「穴埋め」修正でモーション未設定の State や Blend Tree の空スロットにも割り当てられます。"
 
+msgid "DaerD Data"
+msgstr "DaerD データ"
+
+msgid "This controller's DaerD data is kept in a file of its own, so the controller carries none of it."
+msgstr "このコントローラーの DaerD データは専用のファイルに置かれています。コントローラー本体には一切入っていません。"
+
+msgid "Detach DaerD Data…"
+msgstr "DaerD データを分離…"
+
+msgid "Move what DaerD stores into a file of its own, so this controller can be handed over without it."
+msgstr "DaerD が保存しているものを専用のファイルへ移します。DaerD データを含まない状態でこのコントローラーを配布できます。"
+
+msgid "Detach DaerD Data"
+msgstr "DaerD データの分離"
+
+msgid "Move everything DaerD stores with '{0}' into a file of its own?\n\nThe controller stops carrying any DaerD data at all — which is what makes it clean to hand over — and keeps every layer, parameter, motion and generated clip. Nothing is lost here: DaerD goes on managing it from the new file.\n\nIt is written to '{1}'. Keep that file in your project: without it this controller looks like one DaerD has never seen.\n\nThe assets are saved immediately; this cannot be undone."
+msgstr "'{0}' と一緒に DaerD が保存しているものを、すべて専用のファイルへ移しますか？\n\nコントローラー側には DaerD データが一切残らなくなり（配布用に綺麗な状態になります）、レイヤー・パラメーター・モーション・生成済みクリップはそのままです。手元では何も失われません: DaerD は新しいファイルから引き続き管理します。\n\n書き出し先は '{1}' です。このファイルはプロジェクトに残しておいてください。無くなると、このコントローラーは DaerD が一度も触っていないものと同じに見えます。\n\nアセットは即座に保存され、この操作は取り消せません。"
+
+msgid "Detach"
+msgstr "分離"
+
+msgid "Embed DaerD Data…"
+msgstr "DaerD データを統合…"
+
+msgid "Move the detached data back into this controller and delete the file."
+msgstr "分離したデータをこのコントローラーへ戻し、ファイルを削除します。"
+
+msgid "Embed DaerD Data"
+msgstr "DaerD データの統合"
+
+msgid "Move the DaerD data at '{0}' back into '{1}'?\n\nEverything DaerD remembers is kept — only where it lives changes. The file is deleted, along with the folders that were made for it, and the controller carries the data again.\n\nThe assets are saved immediately; this cannot be undone."
+msgstr "'{0}' にある DaerD データを '{1}' へ戻しますか？\n\nDaerD が覚えている内容はすべて保たれ、置き場所だけが変わります。ファイルは削除され（そのために作られたフォルダも一緒に）、コントローラーが再びデータを持ちます。\n\nアセットは即座に保存され、この操作は取り消せません。"
+
+msgid "Embed"
+msgstr "統合"
+
 msgid "Discard DaerD Data…"
 msgstr "DaerD データを破棄…"
 
@@ -418,6 +454,9 @@ msgstr "DaerD データの破棄"
 
 msgid "Remove everything DaerD stores with '{0}'?\n\nGone: graph frames and notes, gadget and sync records, the prefab and recipe links, the store and Empty clip assignments.\n\nKept: every layer, parameter, motion and generated clip — the controller plays exactly as before, DaerD just no longer manages it (no regeneration, no ownership marks).\n\nThe asset is saved immediately; this cannot be undone."
 msgstr "'{0}' と一緒に DaerD が保存しているものをすべて取り除きますか？\n\n消えるもの: グラフのフレームとノート、ガジェットと同期の記録、プレハブ / レシピのリンク、ストアと Empty クリップの割り当て。\n\n残るもの: すべてのレイヤー・パラメーター・モーション・生成済みクリップ — コントローラーの再生は何も変わらず、DaerD の管理下から外れるだけです（再生成・所有表示はできなくなります）。\n\nアセットは即座に保存され、この操作は取り消せません。"
+
+msgid "This controller's data is detached: the file '{0}' is deleted too."
+msgstr "このコントローラーのデータは分離されています: ファイル '{0}' も一緒に削除されます。"
 
 msgid "Discard"
 msgstr "破棄"

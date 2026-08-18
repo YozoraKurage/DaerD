@@ -307,12 +307,42 @@ namespace Yozolab.DaerD
                 EditorGUILayout.EndHorizontal();
             }
 
-            // Bottom-right and spelled with an ellipsis: destructive, rare, and never the
-            // reason this card is open. Only shown when there is anything to discard.
-            if (GraphFrameData.Find(controller) != null)
+            // Bottom of the card and spelled with an ellipsis: rare, not undoable, and never
+            // the reason this card is open. Only shown when there is anything to act on.
+            var holder = GraphFrameData.Find(controller);
+            if (holder != null)
             {
+                string sidecar = GraphFrameData.SidecarPathOf(controller);
+                if (sidecar != null)
+                    using (new PanelGui.LabelWidthScope(FieldLabelWidth))
+                    {
+                        // Where it went is the one thing a detached controller has to say out
+                        // loud: the file is the user's to keep, move and commit.
+                        EditorGUILayout.BeginHorizontal();
+                        EditorGUILayout.LabelField(
+                            new GUIContent(L.Tr("DaerD Data"),
+                                L.Tr("This controller's DaerD data is kept in a file of its own, so the controller carries none of it.")),
+                            new GUIContent(sidecar, sidecar));
+                        if (RowButton(L.Tr("Ping"), L.Tr("Highlight this object in the Project / graph")))
+                            EditorGUIUtility.PingObject(holder);
+                        EditorGUILayout.EndHorizontal();
+                    }
+
                 EditorGUILayout.BeginHorizontal();
                 GUILayout.FlexibleSpace();
+                if (sidecar == null)
+                {
+                    // Nowhere to put a sidecar (a controller in a package, say) means no button:
+                    // the refusal is a fact about the controller, not something to find out by
+                    // pressing.
+                    if (GraphFrameData.SidecarPathFor(AssetDatabase.GetAssetPath(controller)) != null
+                        && GUILayout.Button(new GUIContent(L.Tr("Detach DaerD Data…"),
+                            L.Tr("Move what DaerD stores into a file of its own, so this controller can be handed over without it."))))
+                        DetachData(controller);
+                }
+                else if (GUILayout.Button(new GUIContent(L.Tr("Embed DaerD Data…"),
+                        L.Tr("Move the detached data back into this controller and delete the file."))))
+                    EmbedData(controller);
                 if (GUILayout.Button(new GUIContent(L.Tr("Discard DaerD Data…"),
                         L.Tr("Remove everything DaerD stores with this controller. The controller itself is untouched."))))
                     DiscardData(controller);
@@ -322,11 +352,40 @@ namespace Yozolab.DaerD
             EndCard();
         }
 
+        static void DetachData(AnimatorController controller)
+        {
+            if (!EditorUtility.DisplayDialog(L.Tr("Detach DaerD Data"),
+                    L.Tr("Move everything DaerD stores with '{0}' into a file of its own?\n\nThe controller stops carrying any DaerD data at all — which is what makes it clean to hand over — and keeps every layer, parameter, motion and generated clip. Nothing is lost here: DaerD goes on managing it from the new file.\n\nIt is written to '{1}'. Keep that file in your project: without it this controller looks like one DaerD has never seen.\n\nThe assets are saved immediately; this cannot be undone.",
+                        controller.name,
+                        GraphFrameData.SidecarPathFor(AssetDatabase.GetAssetPath(controller))),
+                    L.Tr("Detach"), L.Tr("Cancel")))
+                return;
+            var reason = GraphFrameData.Detach(controller);
+            if (reason != null) Debug.LogWarning("DaerD: could not detach the data — " + reason);
+        }
+
+        static void EmbedData(AnimatorController controller)
+        {
+            if (!EditorUtility.DisplayDialog(L.Tr("Embed DaerD Data"),
+                    L.Tr("Move the DaerD data at '{0}' back into '{1}'?\n\nEverything DaerD remembers is kept — only where it lives changes. The file is deleted, along with the folders that were made for it, and the controller carries the data again.\n\nThe assets are saved immediately; this cannot be undone.",
+                        GraphFrameData.SidecarPathOf(controller), controller.name),
+                    L.Tr("Embed"), L.Tr("Cancel")))
+                return;
+            var reason = GraphFrameData.Embed(controller);
+            if (reason != null) Debug.LogWarning("DaerD: could not embed the data — " + reason);
+        }
+
         static void DiscardData(AnimatorController controller)
         {
-            if (!EditorUtility.DisplayDialog(L.Tr("Discard DaerD Data"),
-                    L.Tr("Remove everything DaerD stores with '{0}'?\n\nGone: graph frames and notes, gadget and sync records, the prefab and recipe links, the store and Empty clip assignments.\n\nKept: every layer, parameter, motion and generated clip — the controller plays exactly as before, DaerD just no longer manages it (no regeneration, no ownership marks).\n\nThe asset is saved immediately; this cannot be undone.",
-                        controller.name),
+            string message = L.Tr("Remove everything DaerD stores with '{0}'?\n\nGone: graph frames and notes, gadget and sync records, the prefab and recipe links, the store and Empty clip assignments.\n\nKept: every layer, parameter, motion and generated clip — the controller plays exactly as before, DaerD just no longer manages it (no regeneration, no ownership marks).\n\nThe asset is saved immediately; this cannot be undone.",
+                controller.name);
+            // Detached data is a file, and discarding it is deleting that file — said here
+            // rather than left to be discovered in the Project window afterwards.
+            var sidecar = GraphFrameData.SidecarPathOf(controller);
+            if (sidecar != null)
+                message += "\n\n" + L.Tr("This controller's data is detached: the file '{0}' is deleted too.",
+                    sidecar);
+            if (!EditorUtility.DisplayDialog(L.Tr("Discard DaerD Data"), message,
                     L.Tr("Discard"), L.Tr("Cancel")))
                 return;
             GraphFrameData.Discard(controller);
