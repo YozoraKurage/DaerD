@@ -974,16 +974,28 @@ namespace Yozolab.DaerD
         }
 
         /// <summary>Drops what Find remembered. Called for you when assets change; exposed for
-        /// tests, which build and delete controllers faster than the importer reports.</summary>
-        public static void ForgetHolders() => s_holders.Clear();
+        /// tests, which build and delete controllers faster than the importer reports.
+        ///
+        /// The layer-owner map goes with it rather than watching for imports itself: it is built
+        /// out of what Find hands back, so anything that can make one answer stale makes both
+        /// stale, and two watchers would be two chances to disagree about when.</summary>
+        public static void ForgetHolders()
+        {
+            s_holders.Clear();
+            LayerOwners.Forget();
+        }
 
         /// <summary>
         /// Reference identity rather than Unity's equality, which reports a destroyed Object as
         /// equal to null — and so to any other destroyed one. Nothing about a lookup table
         /// should rest on that conflation: the question here is which object, not whether it is
         /// still alive, and aliveness is asked separately where it matters.
+        ///
+        /// Internal because anything else keyed by controller wants the same answer for the same
+        /// reason — <see cref="LayerOwners"/> is, and a second comparer written out beside it
+        /// would be a second chance to get this subtle rule wrong.
         /// </summary>
-        sealed class ControllerIdentity : IEqualityComparer<AnimatorController>
+        internal sealed class ControllerIdentity : IEqualityComparer<AnimatorController>
         {
             public static readonly ControllerIdentity Instance = new ControllerIdentity();
             public bool Equals(AnimatorController a, AnimatorController b) => ReferenceEquals(a, b);
