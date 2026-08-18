@@ -8,6 +8,9 @@ namespace Yozolab.DaerD.Tests
     /// <summary>
     /// Stand-in for the VRC SDK menu asset: same type name and serialized field layout, so
     /// the SerializedObject-based accessor works against it without the SDK installed.
+    /// The tests build menus by filling these fields directly — the authoring API this
+    /// fixture used to drive was deleted with the menu editor (2026-08-18), and what is
+    /// left to test is the reading half and the rename cascade that live features call.
     /// </summary>
     class VRCExpressionsMenu : ScriptableObject
     {
@@ -47,81 +50,39 @@ namespace Yozolab.DaerD.Tests
         static VRCExpressionsMenu NewMenu() =>
             ScriptableObject.CreateInstance<VRCExpressionsMenu>();
 
-        [Test]
-        public void AddControl_UsesDefaultsAndRespectsTheCap()
+        static VRCExpressionsMenu.Control Control(string name,
+            VrcMenuAccess.ControlType type = VrcMenuAccess.ControlType.Toggle,
+            string parameter = "", Object subMenu = null, params string[] subParameters)
         {
-            var menu = NewMenu();
-            Assert.AreEqual(8, VrcMenuAccess.MaxControls(menu));
-
-            int index = VrcMenuAccess.AddControl(menu);
-            Assert.AreEqual(0, index);
-            var controls = VrcMenuAccess.Read(menu);
-            Assert.AreEqual("New Control", controls[0].name);
-            Assert.AreEqual(VrcMenuAccess.ControlType.Toggle, controls[0].type);
-
-            for (int i = 1; i < 8; i++)
-                Assert.AreEqual(i, VrcMenuAccess.AddControl(menu));
-            Assert.AreEqual(-1, VrcMenuAccess.AddControl(menu));   // cap reached
-        }
-
-        /// <summary>
-        /// A control added after a puppet used to arrive holding the puppet's sub-parameters,
-        /// because the serialized array grows by cloning its last element and only some of
-        /// the fields were being cleared afterwards.
-        /// </summary>
-        [Test]
-        public void AddControl_DoesNotInheritTheControlBeforeIt()
-        {
-            var menu = NewMenu();
-            int puppet = VrcMenuAccess.AddControl(menu);
-            VrcMenuAccess.SetType(menu, puppet, VrcMenuAccess.ControlType.FourAxisPuppet);
-            VrcMenuAccess.SetSubParameter(menu, puppet, 0, "Spin");
-            VrcMenuAccess.SetLabel(menu, puppet, 0, "Up");
-
-            int fresh = VrcMenuAccess.AddControl(menu);
-
-            var control = VrcMenuAccess.Read(menu)[fresh];
-            Assert.AreEqual(VrcMenuAccess.ControlType.Toggle, control.type);
-            Assert.IsEmpty(control.subParameters);
-            Assert.IsEmpty(control.labels);
-            Assert.AreEqual(1f, control.value);
+            var control = new VRCExpressionsMenu.Control
+            {
+                name = name,
+                type = (int)type,
+                parameter = new VRCExpressionsMenu.Parameter { name = parameter },
+                subMenu = subMenu,
+            };
+            var slots = new List<VRCExpressionsMenu.Parameter>();
+            foreach (var sub in subParameters)
+                slots.Add(new VRCExpressionsMenu.Parameter { name = sub });
+            control.subParameters = slots.ToArray();
+            return control;
         }
 
         [Test]
-        public void SetType_GrowsPuppetArrays()
+        public void Read_HandsBackEveryFieldTheLiveFeaturesAsk()
         {
             var menu = NewMenu();
-            int index = VrcMenuAccess.AddControl(menu);
-            VrcMenuAccess.SetType(menu, index, VrcMenuAccess.ControlType.FourAxisPuppet);
-
-            var control = VrcMenuAccess.Read(menu)[index];
-            Assert.AreEqual(VrcMenuAccess.ControlType.FourAxisPuppet, control.type);
-            Assert.GreaterOrEqual(control.subParameters.Count, 4);
-            Assert.GreaterOrEqual(control.labels.Count, 4);
-        }
-
-        [Test]
-        public void EditMoveRemove_Work()
-        {
-            var menu = NewMenu();
-            VrcMenuAccess.AddControl(menu);
-            VrcMenuAccess.AddControl(menu);
-            VrcMenuAccess.SetName(menu, 0, "A");
-            VrcMenuAccess.SetName(menu, 1, "B");
-            VrcMenuAccess.SetParameter(menu, 0, "Hat");
-            VrcMenuAccess.SetValue(menu, 0, 3f);
+            menu.controls.Add(Control("Hat", VrcMenuAccess.ControlType.Toggle, "Hat"));
+            menu.controls.Add(Control("Spin", VrcMenuAccess.ControlType.RadialPuppet,
+                subParameters: "Spin/Amount"));
 
             var controls = VrcMenuAccess.Read(menu);
+
+            Assert.AreEqual(2, controls.Count);
             Assert.AreEqual("Hat", controls[0].parameter);
-            Assert.AreEqual(3f, controls[0].value);
-
-            Assert.IsTrue(VrcMenuAccess.MoveControl(menu, 0, 1));
-            Assert.AreEqual("B", VrcMenuAccess.Read(menu)[0].name);
-
-            Assert.IsTrue(VrcMenuAccess.RemoveControl(menu, 0));
-            controls = VrcMenuAccess.Read(menu);
-            Assert.AreEqual(1, controls.Count);
-            Assert.AreEqual("A", controls[0].name);
+            Assert.AreEqual(VrcMenuAccess.ControlType.Toggle, controls[0].type);
+            Assert.AreEqual(VrcMenuAccess.ControlType.RadialPuppet, controls[1].type);
+            Assert.AreEqual("Spin/Amount", controls[1].subParameters[0]);
         }
 
         [Test]
@@ -130,24 +91,18 @@ namespace Yozolab.DaerD.Tests
             var root = NewMenu();
             var child = NewMenu();
 
-            int rootControl = VrcMenuAccess.AddControl(root);
-            VrcMenuAccess.SetParameter(root, rootControl, "Old");
-            int link = VrcMenuAccess.AddControl(root);
-            VrcMenuAccess.SetType(root, link, VrcMenuAccess.ControlType.SubMenu);
-            VrcMenuAccess.SetSubMenu(root, link, child);
-
-            int puppet = VrcMenuAccess.AddControl(child);
-            VrcMenuAccess.SetType(child, puppet, VrcMenuAccess.ControlType.RadialPuppet);
-            VrcMenuAccess.SetSubParameter(child, puppet, 0, "Old");
+            root.controls.Add(Control("Old User", parameter: "Old"));
+            root.controls.Add(Control("More", VrcMenuAccess.ControlType.SubMenu, subMenu: child));
+            child.controls.Add(Control("Spin", VrcMenuAccess.ControlType.RadialPuppet,
+                subParameters: "Old"));
             // Cycle: the child links back to the root.
-            int back = VrcMenuAccess.AddControl(child);
-            VrcMenuAccess.SetType(child, back, VrcMenuAccess.ControlType.SubMenu);
-            VrcMenuAccess.SetSubMenu(child, back, root);
+            child.controls.Add(Control("Back", VrcMenuAccess.ControlType.SubMenu, subMenu: root));
 
             int touched = VrcMenuAccess.RenameParameterReferences(root, "Old", "New");
+
             Assert.AreEqual(2, touched);
-            Assert.AreEqual("New", VrcMenuAccess.Read(root)[rootControl].parameter);
-            Assert.AreEqual("New", VrcMenuAccess.Read(child)[puppet].subParameters[0]);
+            Assert.AreEqual("New", VrcMenuAccess.Read(root)[0].parameter);
+            Assert.AreEqual("New", VrcMenuAccess.Read(child)[0].subParameters[0]);
         }
     }
 }
