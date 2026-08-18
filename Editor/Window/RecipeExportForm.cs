@@ -55,6 +55,12 @@ namespace Yozolab.DaerD
             _checked.Clear();
             if (controller == null) return;
 
+            // Opening this form is the moment somebody is about to decide where a recipe goes, so
+            // it is also the moment to find out that one already exists. Recipes exported before
+            // the link existed are taken up here; everything below then describes a NEW recipe,
+            // which is what the defaults are for.
+            RecipeLinks.Adopt(controller);
+
             _className = RecipeScript.Identifier(controller.name, lowerFirst: false) + "Recipe";
             _namespace = EditorPrefs.GetString(NamespacePref, string.Empty);
             string controllerPath = AssetDatabase.GetAssetPath(controller);

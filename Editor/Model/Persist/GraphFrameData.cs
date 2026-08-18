@@ -475,6 +475,75 @@ namespace Yozolab.DaerD
 
         public List<CodeOwnedLayer> codeOwned = new List<CodeOwnedLayer>();
 
+        /// <summary>
+        /// The C# recipes that write into this controller — the controller's own answer to
+        /// "where is my source".
+        ///
+        /// <para>WHY THE CONTROLLER HOLDS THIS AT ALL.</para>
+        /// It did not, and the export decided where the recipe goes from scratch every time: the
+        /// controller's current folder and a class name derived from its name. Move the
+        /// controller, rename it, or keep two controllers with the same name, and a second pair
+        /// of files under the same class name is written somewhere else, with a second .asset
+        /// beside it. In one assembly that is a duplicate-definition error that freezes
+        /// compilation; in two it is a silent second class, and Generate goes on running whichever
+        /// one the loaded assembly holds. Both read as "the same old content is generated every
+        /// time". The link is what makes a re-export an UPDATE of a recipe that already exists.
+        ///
+        /// <para>WHY IT IS NOT <see cref="codeOwned"/>.</para>
+        /// That list answers a different question — which LAYERS a recipe last built — and it is
+        /// written by Generate. A recipe that has been exported but never generated owns no layer
+        /// and still has to be findable, or the next export writes a second copy of it.
+        ///
+        /// <para>WHY <see cref="UnityEngine.Object"/>.</para>
+        /// The same rule <see cref="parameterStore"/> and <see cref="PrefabLink.mergeAnimator"/>
+        /// follow: this is saved data, and saved data does not depend on a type that lives one
+        /// layer up. Persist knows nothing of Authoring, and a field typed as ControllerRecipe
+        /// would invert that.
+        ///
+        /// <para>NEVER NORMALIZED, ONLY PRUNED.</para>
+        /// A dead reference is dropped on read (<see cref="LinkedRecipes"/>) because a deleted
+        /// asset is not coming back. A link whose recipe now targets ANOTHER controller is kept:
+        /// which of the two is the mistake is not something DaerD can know, and the home screen
+        /// says so by name instead.
+        /// </summary>
+        public List<UnityEngine.Object> recipes = new List<UnityEngine.Object>();
+
+        /// <summary>The recipes linked to this controller, entries whose asset is gone pruned on
+        /// read — the same rule <see cref="GetCodeOwned"/> keeps, and for the same reason.</summary>
+        public static List<UnityEngine.Object> LinkedRecipes(AnimatorController controller)
+        {
+            var data = Find(controller);
+            if (data == null) return new List<UnityEngine.Object>();
+            // Data saved before the field existed deserializes it as null rather than as an
+            // empty list.
+            if (data.recipes == null) data.recipes = new List<UnityEngine.Object>();
+            data.recipes.RemoveAll(recipe => recipe == null);
+            return new List<UnityEngine.Object>(data.recipes);
+        }
+
+        /// <summary>
+        /// Records one recipe as this controller's. Idempotent — three different moments record
+        /// the same link (an export, a Generate, opening the export form) and the second and
+        /// third must be no-ops rather than a growing list of the same asset.
+        ///
+        /// Returns whether anything was written, which is what lets a caller that swept the
+        /// project say how many strays it took up without counting them itself.
+        /// </summary>
+        public static bool LinkRecipe(AnimatorController controller, UnityEngine.Object recipe)
+        {
+            if (controller == null || recipe == null) return false;
+            var data = GetOrCreate(controller);
+            if (data == null) return false;
+            if (data.recipes == null) data.recipes = new List<UnityEngine.Object>();
+            data.recipes.RemoveAll(existing => existing == null);
+            foreach (var existing in data.recipes)
+                if (existing == recipe) return false;
+            Undo.RegisterCompleteObjectUndo(data, "Link Recipe");
+            data.recipes.Add(recipe);
+            EditorUtility.SetDirty(data);
+            return true;
+        }
+
         /// <summary>Replaces <paramref name="recipe"/>'s claims with the given machines.</summary>
         public static void SetCodeOwned(AnimatorController controller,
             List<AnimatorStateMachine> machines, UnityEngine.Object recipe)

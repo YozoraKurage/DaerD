@@ -117,6 +117,10 @@ namespace Yozolab.DaerD.Authoring
                     if (live.name == name && live.stateMachine != null)
                         machines.Add(live.stateMachine);
             GraphFrameData.SetCodeOwned(targetController, machines, this);
+            // Self-healing: a recipe that writes into a controller belongs to it, and saying so
+            // here is what adopts every .asset exported before the link existed. Generate is the
+            // one moment guaranteed to happen to a recipe somebody is actually using.
+            GraphFrameData.LinkRecipe(targetController, this);
 
             EditorUtility.SetDirty(this);
             EditorUtility.SetDirty(targetController);

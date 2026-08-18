@@ -68,7 +68,10 @@ namespace Yozolab.DaerD.Authoring
             EditorApplication.delayCall += Process;
         }
 
-        static void Process()
+        /// <summary>One pass over the queue. Internal rather than private so a test can drive the
+        /// step a domain reload normally drives — the reload is what makes the export path
+        /// untestable end to end, and this is the half of it that is not the reload.</summary>
+        internal static void Process()
         {
             var list = Load();
             if (list.items.Count == 0) return;
@@ -171,6 +174,11 @@ namespace Yozolab.DaerD.Authoring
             else
                 AssetDatabase.CreateAsset(recipe,
                     AssetDatabase.GenerateUniqueAssetPath(intended));
+            // The controller learns where its recipe is, here rather than at the window: this is
+            // the first moment the .asset exists, and it is the only moment on the export path
+            // that both halves of the link are in hand. Before SaveAssets, so the holder the link
+            // may have just created is written out with the recipe.
+            GraphFrameData.LinkRecipe(recipe.targetController, recipe);
             AssetDatabase.SaveAssets();
             Selection.activeObject = recipe;
             EditorGUIUtility.PingObject(recipe);
