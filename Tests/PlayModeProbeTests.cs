@@ -5,6 +5,7 @@ using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
 using UnityEngine.TestTools;
+using Yozolab.DaerD.Engine;
 
 namespace Yozolab.DaerD.Tests
 {

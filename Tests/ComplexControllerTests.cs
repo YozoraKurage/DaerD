@@ -3,7 +3,11 @@ using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
+using Yozolab.DaerD.Analyze;
 using Yozolab.DaerD.Authoring;
+using Yozolab.DaerD.Bridge;
+using Yozolab.DaerD.Edit;
+using Yozolab.DaerD.IR;
 
 namespace Yozolab.DaerD.Tests
 {
@@ -534,6 +538,12 @@ namespace Yozolab.DaerD.Tests
         /// was told to use — not every layer in the controller that happens to hold a Direct
         /// tree. Someone's own DBT sitting beside a generated one has to come through a
         /// Generate with its states, its tree and its position untouched.
+        ///
+        /// "Untouched" is asserted by fileID rather than by managed identity: the gadget step
+        /// saves and reimports the asset, and a reimport occasionally hands back fresh C#
+        /// wrappers for the same serialized objects (seen as a rare whole-suite flake). The
+        /// fileID is the identity that survives a reload; a swept-and-rebuilt state gets a
+        /// new one, which is the difference this test exists to catch.
         /// </summary>
         [Test]
         public void AHandBuiltDbtLayer_SurvivesTheGadgetStepRebuildingItsOwn()
@@ -546,6 +556,9 @@ namespace Yozolab.DaerD.Tests
                 var handTree = Track(new BlendTree { name = "Hand Root", blendType = BlendTreeType.Direct });
                 AssetDatabase.AddObjectToAsset(handTree, controller);
                 handState.motion = handTree;
+                AssetDatabase.SaveAssets();   // the hand objects need fileIDs to be compared by
+                long stateBefore = FileId(handState);
+                long treeBefore = FileId(handTree);
 
                 var recipe = NewRecipe(controller, BuildWithPostSteps);
                 recipe.Generate();
@@ -554,11 +567,22 @@ namespace Yozolab.DaerD.Tests
                 Assert.AreEqual(0, IndexOfLayer(controller, "Hand DBT"), "it moved");
                 var after = controller.layers[0].stateMachine;
                 Assert.AreEqual(1, after.states.Length);
-                Assert.AreSame(handState, after.states[0].state, "the state was rebuilt, not kept");
-                Assert.AreSame(handTree, handState.motion, "the tree was replaced");
+                var kept = after.states[0].state;
+                Assert.AreEqual("Hand Written", kept.name);
+                Assert.AreEqual(stateBefore, FileId(kept), "the state was rebuilt, not kept");
+                Assert.AreEqual(treeBefore, FileId(kept.motion), "the tree was replaced");
                 Assert.GreaterOrEqual(IndexOfLayer(controller, "DBT"), 0,
                     "the gadget layer did not get built beside it");
             });
+        }
+
+        /// <summary>A sub-asset's local fileID — the identity that survives a save-and-reimport
+        /// cycle, unlike the managed wrapper.</summary>
+        static long FileId(Object o)
+        {
+            Assert.IsTrue(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(o, out _, out long id),
+                o.name + " has no fileID (is it saved?)");
+            return id;
         }
 
         /// <summary>

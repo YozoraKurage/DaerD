@@ -4,6 +4,9 @@ using System.Text.RegularExpressions;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
+using Yozolab.DaerD.Analyze;
+using Yozolab.DaerD.Bridge;
+using Yozolab.DaerD.IR;
 
 namespace Yozolab.DaerD.Tests
 {

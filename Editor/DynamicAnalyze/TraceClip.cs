@@ -16,7 +16,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
     sealed class TraceManifest : ScriptableObject
     {
         [System.Serializable]
-        public sealed class Entry
+        internal sealed class Entry
         {
             public string scope;
             public string name;
@@ -29,7 +29,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// numbers, and is deliberately not this type: the engine's shape is free to change
         /// with the engine, and a file's shape is not.</summary>
         [System.Serializable]
-        public sealed class Poke
+        internal sealed class Poke
         {
             public float at;
             public string scope = string.Empty;
@@ -43,7 +43,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// file that could not say which tracks were in it would be an answer nobody can
         /// re-ask.</summary>
         [System.Serializable]
-        public sealed class Track
+        internal sealed class Track
         {
             public string name = string.Empty;
             public bool muted;
@@ -65,7 +65,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// grow the format.
         /// </summary>
         [System.Serializable]
-        public sealed class Settings
+        internal sealed class Settings
         {
             /// <summary>What this build writes. Bumped when a field's MEANING changes, which
             /// is the only change a reader cannot survive: adding one is already survivable,

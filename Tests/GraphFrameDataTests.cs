@@ -79,6 +79,42 @@ namespace Yozolab.DaerD.Tests
             Object.DestroyImmediate(controller);
         }
 
+        /// <summary>
+        /// An object gadget's record deliberately does NOT follow a rebuilt machine, and that is
+        /// the decision this pins rather than an omission somebody would "fix".
+        ///
+        /// A Layer-wired object gadget IS its layer. Re-pointing its record at the machine a
+        /// recipe just built in its place would make the next regenerate sweep that recipe's
+        /// layer as if it were the gadget's own — destroying somebody else's work to save a
+        /// record. Losing the record costs one gadget that has to be rebuilt, which is the
+        /// cheaper of the two mistakes; the entry is pruned on the next read, so nothing is left
+        /// pointing at a machine that is gone.
+        /// </summary>
+        [Test]
+        public void RemapMachineReferences_LeavesObjectGadgetsBehind_SoARecipesLayerIsNotSwept()
+        {
+            var controller = new AnimatorController();
+            controller.AddLayer("Hat");
+            var old = controller.layers[0].stateMachine;
+            int oldId = old.GetInstanceID();
+
+            var data = GraphFrameData.GetOrCreate(controller);
+            data.objectGadgets.Add(new GraphFrameData.ObjectGadgetConfig
+            { layer = old, name = "Hat", parameter = "Hat" });
+
+            Object.DestroyImmediate(old);
+            var successor = new AnimatorStateMachine { name = "Hat" };
+
+            Assert.IsFalse(data.RemapMachineReferences(oldId, successor),
+                "nothing here is keyed by a machine that may be replaced under it");
+            Assert.IsEmpty(data.ObjectGadgetRecords(),
+                "and the record whose layer is gone is pruned rather than re-pointed");
+
+            Object.DestroyImmediate(successor);
+            Object.DestroyImmediate(data);
+            Object.DestroyImmediate(controller);
+        }
+
         /// <summary>A gadget is filed under the parameter it writes: regenerating one replaces
         /// its own record instead of leaving a second one describing the same output.</summary>
         [Test]

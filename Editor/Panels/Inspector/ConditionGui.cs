@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
+using Yozolab.DaerD.Bridge;
+using Yozolab.DaerD.Edit;
 
 namespace Yozolab.DaerD
 {
@@ -137,7 +139,7 @@ namespace Yozolab.DaerD
             return list;
         }
 
-        public struct SharedConditionEntry
+        internal struct SharedConditionEntry
         {
             public TransitionClipboard.ConditionData data;
             public int count;

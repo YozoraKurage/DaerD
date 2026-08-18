@@ -4,11 +4,13 @@ using UnityEditor.Animations;
 using UnityEditor.UIElements;
 using UnityEngine;
 using UnityEngine.UIElements;
+using Yozolab.DaerD.Analyze;
+using Yozolab.DaerD.Bridge;
 
 namespace Yozolab.DaerD
 {
     /// <summary>The main editor window: toolbar, layers/parameters panels, graph and inspector.</summary>
-    public class DaerDWindow : EditorWindow
+    internal class DaerDWindow : EditorWindow
     {
         [SerializeField] AnimatorController _controller;
         [SerializeField] int _layerIndex;
@@ -252,6 +254,11 @@ namespace Yozolab.DaerD
             _context.ControllerChanged += SyncSerializedState;
             _context.HomeChanged += SyncSerializedState;
 
+            // The tab strip carries the prefab badge, and it is otherwise only rebuilt when the
+            // set of tabs changes — so pinning from the home screen would leave the badge a tab
+            // switch behind without this.
+            _context.PrefabLinkChanged += RefreshTabBar;
+
             // Subscribed before RefreshGraphVisibility so the flag is fresh when it runs.
             _context.LayerChanged += ResetSyncGraphPeek;
             _context.ControllerChanged += ResetSyncGraphPeek;
@@ -272,6 +279,12 @@ namespace Yozolab.DaerD
             // re-toggle would re-acquire against the previous clip.
             _animationSync.Start();
             _statePreview.Start();
+
+            // The toolbar's default-ON state is applied to the subsystem here, not by the
+            // toggle's own ValueChanged: BuildToolbar runs before the toolbar has a panel, and
+            // UIElements drops a ChangeEvent on a panel-less element. Doing it after Start()
+            // also means the first Sync() the enable triggers already has its subscriptions.
+            _animationSync.SetEnabled(_selectSyncToggle.value);
 
             if (_controller != null)
             {
@@ -375,7 +388,10 @@ namespace Yozolab.DaerD
             toolbar.Add(_settingsButton);
 
             ApplyToolbarTexts();
-            _selectSyncToggle.value = true;   // default ON; fires the callback above
+            // Default ON, without notification: the toolbar has no panel yet, so a notifying
+            // set would leave the toggle drawn ON while the ChangeEvent — and with it
+            // SetEnabled — is silently dropped. CreateGUI enables the subsystem explicitly.
+            _selectSyncToggle.SetValueWithoutNotify(true);
 
             return toolbar;
         }

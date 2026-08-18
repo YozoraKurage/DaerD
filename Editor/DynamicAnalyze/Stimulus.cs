@@ -72,7 +72,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// everything, under the name the panel used to have at the top of it.</summary>
         public const string OneTrack = "Timed inputs";
 
-        public sealed class Entry
+        internal sealed class Entry
         {
             /// <summary>Simulated seconds from the start of the run.</summary>
             public float atSeconds;
@@ -96,7 +96,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// field here, and the alternative was a hidden second identity that a rename would
         /// silently disagree with.
         /// </summary>
-        public sealed class Track
+        internal sealed class Track
         {
             public string name = string.Empty;
             /// <summary>Switched off, and part of the experiment — see the class doc.</summary>

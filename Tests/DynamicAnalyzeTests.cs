@@ -2,6 +2,7 @@ using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
+using Yozolab.DaerD.Bridge;
 using Yozolab.DaerD.DynamicAnalyze;
 
 namespace Yozolab.DaerD.Tests

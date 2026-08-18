@@ -3,6 +3,9 @@ using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
+using Yozolab.DaerD.Bridge;
+using Yozolab.DaerD.Engine;
+using Yozolab.DaerD.IR;
 
 namespace Yozolab.DaerD.Tests
 {
@@ -3189,6 +3192,293 @@ namespace Yozolab.DaerD.Tests
             request.slotBreaks.Add("B2");
             Assert.IsFalse(AsyncSyncBuilder.Warnings(request)
                 .Exists(w => w.Contains("already share a step")));
+        }
+
+        // ---- deleting a setup ------------------------------------------------
+
+        /// <summary>A controller with an asset to keep the saved setup in — the record only
+        /// persists where there is a file to hold the holder, and a delete is entirely about
+        /// the record.</summary>
+        static AnimatorController SavedSetupController(string path)
+        {
+            AssetDatabase.CreateAsset(new AnimatorController(), path);
+            var controller = AssetDatabase.LoadAssetAtPath<AnimatorController>(path);
+            controller.AddLayer("Base");
+            controller.AddParameter("F", AnimatorControllerParameterType.Float);
+            controller.AddParameter("B", AnimatorControllerParameterType.Bool);
+            controller.AddParameter("I", AnimatorControllerParameterType.Int);
+            return controller;
+        }
+
+        /// <summary>Every layer one setup can own, so a delete has all four kinds to fold:
+        /// the cycle's own, the two watchers, and a group's commit layer.</summary>
+        static AsyncSyncBuilder.Request FullSetup(AnimatorController controller, string baseName)
+        {
+            var request = NewRequest(controller, "F", "B", "I");
+            request.baseName = baseName;
+            request.ready = true;
+            request.stale = true;
+            request.groups.Add(Group("Outfit", "F", "B"));
+            return request;
+        }
+
+        [Test]
+        public void Remove_TakesEveryLayerTheRecordHoldsAndEveryParameterTheBuildMinted()
+        {
+            const string path = "Assets/DaerDAsyncSyncDeleteTest.controller";
+            var controller = SavedSetupController(path);
+            try
+            {
+                Assert.IsTrue(AsyncSyncBuilder.Apply(FullSetup(controller, "Async")));
+
+                var configs = GraphFrameData.GetAsyncSyncs(controller);
+                Assert.AreEqual(1, configs.Count);
+                var config = configs[0];
+                Assert.AreEqual(4, AsyncSyncBuilder.OwnedLayers(config).Count,
+                    "the cycle, both watchers and the group's commit layer");
+                Assert.AreEqual(5, controller.layers.Length, "those four beside the Base layer");
+
+                var owned = AsyncSyncBuilder.OwnedParameters(controller, config);
+                // A sample of each enumerator's output, so a delete that quietly stopped asking
+                // one of them fails here rather than leaving orphans nobody counts.
+                foreach (var name in new[]
+                         {
+                             "Async/Index", "Async/Float", "Async/Ready", "Async/Seen/F",
+                             "Async/Stale", "Async/Fresh/B", "Async/Latch/F", "Async/Hold/B",
+                             "Async/Held/F",
+                         })
+                    CollectionAssert.Contains(owned, name);
+
+                AsyncSyncBuilder.Remove(controller, config);
+
+                Assert.AreEqual(1, controller.layers.Length, "only the Base layer is left");
+                CollectionAssert.IsEmpty(GraphFrameData.GetAsyncSyncs(controller),
+                    "the record goes with the setup, not on the next read");
+                foreach (var name in owned)
+                    Assert.IsNull(DbtBuilder.FindParameter(controller, name),
+                        "'" + name + "' survived the delete");
+            }
+            finally
+            {
+                AssetDatabase.DeleteAsset(path);
+            }
+        }
+
+        /// <summary>
+        /// The two things a delete must never take. IsLocal is shared with every other
+        /// network-aware layer on the avatar — the direct sync builder writes it too — and the
+        /// multiplexed targets are the user's own parameters, the reason the setup existed at
+        /// all. Both are outside the five enumerators the removal asks, and this is the test
+        /// that says so out loud.
+        /// </summary>
+        [Test]
+        public void Remove_LeavesIsLocalTheMultiplexedTargetsAndTheEmptyClip()
+        {
+            const string path = "Assets/DaerDAsyncSyncDeleteKeepsTest.controller";
+            var controller = SavedSetupController(path);
+            try
+            {
+                Assert.IsTrue(AsyncSyncBuilder.Apply(FullSetup(controller, "Async")));
+                var empty = GraphFrameData.GetEmptyClip(controller);
+                Assert.IsNotNull(empty, "the setup created one, so there is something to keep");
+
+                var owned = AsyncSyncBuilder.OwnedParameters(controller,
+                    GraphFrameData.GetAsyncSyncs(controller)[0]);
+                CollectionAssert.DoesNotContain(owned, "IsLocal");
+                foreach (var target in new[] { "F", "B", "I" })
+                    CollectionAssert.DoesNotContain(owned, target);
+
+                AsyncSyncBuilder.Remove(controller, GraphFrameData.GetAsyncSyncs(controller)[0]);
+
+                Assert.IsNotNull(DbtBuilder.FindParameter(controller, "IsLocal"),
+                    "IsLocal belongs to the avatar, not to this setup");
+                foreach (var target in new[] { "F", "B", "I" })
+                    Assert.IsNotNull(DbtBuilder.FindParameter(controller, target),
+                        "'" + target + "' is the user's own parameter");
+                Assert.AreSame(empty, GraphFrameData.GetEmptyClip(controller),
+                    "the Empty clip is shared and may be one the user designated");
+            }
+            finally
+            {
+                AssetDatabase.DeleteAsset(path);
+            }
+        }
+
+        [Test]
+        public void Remove_TouchesNothingOfASecondSetupOnTheSameController()
+        {
+            const string path = "Assets/DaerDAsyncSyncDeleteNeighbourTest.controller";
+            var controller = SavedSetupController(path);
+            try
+            {
+                controller.AddParameter("F2", AnimatorControllerParameterType.Float);
+                controller.AddParameter("B2", AnimatorControllerParameterType.Bool);
+                Assert.IsTrue(AsyncSyncBuilder.Apply(FullSetup(controller, "Async")));
+
+                var second = NewRequest(controller, "F2", "B2");
+                second.baseName = "Other";
+                second.ready = true;
+                Assert.IsTrue(AsyncSyncBuilder.Apply(second));
+
+                var configs = GraphFrameData.GetAsyncSyncs(controller);
+                Assert.AreEqual(2, configs.Count);
+                var doomed = configs.Find(c => c.baseName == "Async");
+                var kept = configs.Find(c => c.baseName == "Other");
+                var keptLayers = AsyncSyncBuilder.OwnedLayers(kept);
+                var keptParameters = AsyncSyncBuilder.OwnedParameters(controller, kept);
+
+                AsyncSyncBuilder.Remove(controller, doomed);
+
+                var left = GraphFrameData.GetAsyncSyncs(controller);
+                Assert.AreEqual(1, left.Count);
+                Assert.AreEqual("Other", left[0].baseName);
+                foreach (var machine in keptLayers)
+                    Assert.GreaterOrEqual(LayerIndexOf(controller, machine), 0,
+                        "the neighbour lost a layer");
+                foreach (var name in keptParameters)
+                    Assert.IsNotNull(DbtBuilder.FindParameter(controller, name),
+                        "the neighbour lost '" + name + "'");
+            }
+            finally
+            {
+                AssetDatabase.DeleteAsset(path);
+            }
+        }
+
+        static int LayerIndexOf(AnimatorController controller, AnimatorStateMachine machine)
+        {
+            var layers = controller.layers;
+            for (int i = 0; i < layers.Length; i++)
+                if (layers[i].stateMachine == machine) return i;
+            return -1;
+        }
+
+        /// <summary>The state the old "delete" left behind: a watcher removed by hand, and a
+        /// record still holding a reference that now reads as null. Folding the rest has to
+        /// finish rather than stop at the first thing that is already gone.</summary>
+        [Test]
+        public void Remove_FoldsTheRestWhenAWatcherLayerWasDeletedByHand()
+        {
+            const string path = "Assets/DaerDAsyncSyncDeleteOrphanTest.controller";
+            var controller = SavedSetupController(path);
+            try
+            {
+                Assert.IsTrue(AsyncSyncBuilder.Apply(FullSetup(controller, "Async")));
+                var config = GraphFrameData.GetAsyncSyncs(controller)[0];
+
+                int stale = LayerIndexOf(controller, config.staleLayer);
+                Assert.GreaterOrEqual(stale, 0);
+                controller.RemoveLayer(stale);
+                Assert.AreEqual(3, AsyncSyncBuilder.OwnedLayers(config).Count,
+                    "a layer that is gone is nothing to report and nothing to do");
+
+                AsyncSyncBuilder.Remove(controller, config);
+
+                Assert.AreEqual(1, controller.layers.Length);
+                CollectionAssert.IsEmpty(GraphFrameData.GetAsyncSyncs(controller));
+                Assert.IsNull(DbtBuilder.FindParameter(controller, "Async/Stale"),
+                    "the parameters of a hand-deleted layer are still this setup's to remove");
+            }
+            finally
+            {
+                AssetDatabase.DeleteAsset(path);
+            }
+        }
+
+        [Test]
+        public void Remove_SweepsTheSyncRequestsOfThisSetupAndLeavesTheOthers()
+        {
+            const string path = "Assets/DaerDAsyncSyncDeleteRequestTest.controller";
+            var controller = SavedSetupController(path);
+            try
+            {
+                Assert.IsTrue(AsyncSyncBuilder.Apply(FullSetup(controller, "Async")));
+                var state = controller.layers[0].stateMachine.AddState("Idle");
+
+                // Saved straight rather than through SyncRequestBuilder: the record is the half
+                // this sweep is about, and building the driver half would need the SDK.
+                foreach (var baseName in new[] { "Async", "Other" })
+                {
+                    var record = new GraphFrameData.SyncRequest
+                    {
+                        state = state,
+                        baseName = baseName,
+                    };
+                    record.targets.Add("F");
+                    GraphFrameData.SaveSyncRequest(controller, record);
+                }
+                Assert.AreEqual(2, GraphFrameData.GetSyncRequests(controller).Count);
+
+                AsyncSyncBuilder.Remove(controller,
+                    GraphFrameData.GetAsyncSyncs(controller)[0]);
+
+                var left = GraphFrameData.GetSyncRequests(controller);
+                Assert.AreEqual(1, left.Count);
+                Assert.AreEqual("Other", left[0].baseName,
+                    "a request aimed at another setup is not this delete's business");
+            }
+            finally
+            {
+                AssetDatabase.DeleteAsset(path);
+            }
+        }
+
+        /// <summary>
+        /// Deleting says what goes with it, and the sentence is read off the same two lists the
+        /// sweep uses. Only what it enumerates is pinned here, not how it is worded: the
+        /// wording is translated, the list is a claim about behaviour.
+        /// </summary>
+        [Test]
+        public void TheDeletePreviewNamesEveryLayerTheParametersAndTheRequests()
+        {
+            const string path = "Assets/DaerDAsyncSyncDeletePreviewTest.controller";
+            var controller = SavedSetupController(path);
+            try
+            {
+                Assert.IsTrue(AsyncSyncBuilder.Apply(FullSetup(controller, "Async")));
+                var config = GraphFrameData.GetAsyncSyncs(controller)[0];
+                var state = controller.layers[0].stateMachine.AddState("Idle");
+                var record = new GraphFrameData.SyncRequest { state = state, baseName = "Async" };
+                record.targets.Add("F");
+                GraphFrameData.SaveSyncRequest(controller, record);
+
+                string loss = HomePanel.AsyncSyncLoss(controller, config);
+
+                foreach (var layer in new[] { "Async", "Async Ready", "Async Stale", "Async Outfit" })
+                    StringAssert.Contains("'" + layer + "'", loss, "the layer names are named");
+                StringAssert.Contains(
+                    AsyncSyncBuilder.OwnedParameters(controller, config).Count.ToString(), loss,
+                    "the parameter count is the sweep's own");
+                StringAssert.Contains("1 sync request", loss);
+            }
+            finally
+            {
+                AssetDatabase.DeleteAsset(path);
+            }
+        }
+
+        /// <summary>A setup with neither watcher nor group owns one layer and no requests, and
+        /// the sentence says only what is true of it — a preview that listed empty categories
+        /// would teach the reader to stop reading it.</summary>
+        [Test]
+        public void TheDeletePreviewLeavesOutWhatASetupDoesNotHave()
+        {
+            const string path = "Assets/DaerDAsyncSyncDeletePlainTest.controller";
+            var controller = SavedSetupController(path);
+            try
+            {
+                Assert.IsTrue(AsyncSyncBuilder.Apply(NewRequest(controller, "F", "B", "I")));
+                string loss = HomePanel.AsyncSyncLoss(controller,
+                    GraphFrameData.GetAsyncSyncs(controller)[0]);
+
+                StringAssert.Contains("'Async'", loss);
+                StringAssert.DoesNotContain("Async Ready", loss);
+                StringAssert.DoesNotContain("sync request", loss);
+            }
+            finally
+            {
+                AssetDatabase.DeleteAsset(path);
+            }
         }
     }
 }

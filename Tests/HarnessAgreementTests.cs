@@ -3,7 +3,9 @@ using System.Text;
 using NUnit.Framework;
 using UnityEditor.Animations;
 using UnityEngine;
+using Yozolab.DaerD.Bridge;
 using Yozolab.DaerD.DynamicAnalyze;
+using Yozolab.DaerD.Engine;
 
 namespace Yozolab.DaerD.Tests
 {
@@ -237,18 +239,18 @@ namespace Yozolab.DaerD.Tests
         {
             var controller = new AnimatorController();
             controller.AddLayer("Base");
-            var request = new ToggleBuilder.Request
+            var plan = new ToggleBuilder.Plan
             {
                 controller = controller,
                 mode = ToggleBuilder.Mode.Layer,
-                toggleName = "Hat",
+                name = "Hat",
                 parameter = "Hat",
                 layerIndex = -1,
                 newLayerName = "DBT",
             };
-            request.targets.Add(new ToggleBuilder.Target { path = "Body/Hat" });
-            Assert.IsNull(ToggleBuilder.Validate(request), "the toggle was refused");
-            Assert.IsTrue(ToggleBuilder.Apply(request), "the toggle failed to apply");
+            plan.targets.Add(new ToggleBuilder.Target { path = "Body/Hat" });
+            ToggleBuilder.BuildLayer(plan, ToggleBuilder.BuildClip(plan, on: true),
+                ToggleBuilder.BuildClip(plan, on: false), out _);
 
             string layer = controller.layers[1].name;
             const int frames = 16, turnsOn = 4;

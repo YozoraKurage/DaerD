@@ -1,6 +1,7 @@
 using NUnit.Framework;
 using UnityEditor.Animations;
 using UnityEngine;
+using Yozolab.DaerD.Engine;
 
 namespace Yozolab.DaerD.Tests
 {
@@ -32,21 +33,21 @@ namespace Yozolab.DaerD.Tests
             return root;
         }
 
-        static ToggleBuilder.Request NewRequest(AnimatorController controller,
+        static ToggleBuilder.Plan NewPlan(AnimatorController controller,
             ToggleBuilder.Mode mode, params string[] paths)
         {
-            var request = new ToggleBuilder.Request
+            var plan = new ToggleBuilder.Plan
             {
                 controller = controller,
                 mode = mode,
-                toggleName = "Hat",
+                name = "Hat",
                 parameter = "Hat",
                 layerIndex = -1,
                 newLayerName = "DBT",
             };
             foreach (var path in paths)
-                request.targets.Add(new ToggleBuilder.Target { path = path });
-            return request;
+                plan.targets.Add(new ToggleBuilder.Target { path = path });
+            return plan;
         }
 
         static AnimatorController NewController()
@@ -56,11 +57,18 @@ namespace Yozolab.DaerD.Tests
             return controller;
         }
 
-        static void Apply(ToggleBuilder.Request request)
+        /// <summary>The core, driven the way <see cref="ObjectGadgets"/> drives it. The paths are
+        /// written out here instead of being derived from a prefab because what these tests are
+        /// about is the machinery playing them — deriving them is the model's half, and it has a
+        /// prefab of its own to be tested against.</summary>
+        static void Build(ToggleBuilder.Plan plan)
         {
-            string refusal = ToggleBuilder.Validate(request);
-            Assert.IsNull(refusal, "the toggle was refused: " + refusal);
-            Assert.IsTrue(ToggleBuilder.Apply(request), "the toggle failed to apply");
+            var onClip = ToggleBuilder.BuildClip(plan, on: true);
+            var offClip = ToggleBuilder.BuildClip(plan, on: false);
+            if (plan.mode == ToggleBuilder.Mode.Layer)
+                ToggleBuilder.BuildLayer(plan, onClip, offClip, out _);
+            else
+                ToggleBuilder.BuildDirectBlendTree(plan, onClip, offClip, out _);
         }
 
         // ---- the Bool layer -------------------------------------------------------
@@ -69,7 +77,7 @@ namespace Yozolab.DaerD.Tests
         public void Layer_TurnsTheTargetOffAndOnAgain()
         {
             var controller = NewController();
-            Apply(NewRequest(controller, ToggleBuilder.Mode.Layer, "Body/Hat"));
+            Build(NewPlan(controller, ToggleBuilder.Mode.Layer, "Body/Hat"));
 
             var root = Hierarchy(out var body, out var hat, out var bag);
             using (var rig = new AnimatorRig(controller, root))
@@ -96,9 +104,9 @@ namespace Yozolab.DaerD.Tests
         public void Layer_StartsOnWhenTheDefaultSaysSo()
         {
             var controller = NewController();
-            var request = NewRequest(controller, ToggleBuilder.Mode.Layer, "Body/Hat");
-            request.defaultOn = true;
-            Apply(request);
+            var plan = NewPlan(controller, ToggleBuilder.Mode.Layer, "Body/Hat");
+            plan.defaultOn = true;
+            Build(plan);
 
             var root = Hierarchy(out _, out var hat, out _);
             using (var rig = new AnimatorRig(controller, root))
@@ -115,9 +123,9 @@ namespace Yozolab.DaerD.Tests
         public void Layer_InvertedTargetGoesTheOtherWay()
         {
             var controller = NewController();
-            var request = NewRequest(controller, ToggleBuilder.Mode.Layer, "Body/Hat");
-            request.targets.Add(new ToggleBuilder.Target { path = "Bag", activeWhenOn = false });
-            Apply(request);
+            var plan = NewPlan(controller, ToggleBuilder.Mode.Layer, "Body/Hat");
+            plan.targets.Add(new ToggleBuilder.Target { path = "Bag", activeWhenOn = false });
+            Build(plan);
 
             var root = Hierarchy(out _, out var hat, out var bag);
             using (var rig = new AnimatorRig(controller, root))
@@ -138,11 +146,11 @@ namespace Yozolab.DaerD.Tests
         public void Layer_ComponentBindingFollowsTheToggle()
         {
             var controller = NewController();
-            var request = NewRequest(controller, ToggleBuilder.Mode.Layer);
+            var plan = NewPlan(controller, ToggleBuilder.Mode.Layer);
             var target = new ToggleBuilder.Target { path = "Bag", toggleActive = false };
             target.bindings.Add(ToggleBuilder.Binding.Enabled(typeof(BoxCollider)));
-            request.targets.Add(target);
-            Apply(request);
+            plan.targets.Add(target);
+            Build(plan);
 
             var root = Hierarchy(out _, out _, out var bag);
             var collider = bag.AddComponent<BoxCollider>();
@@ -166,7 +174,7 @@ namespace Yozolab.DaerD.Tests
         public void DirectBlendTree_TurnsTheTargetOffAndOnWithAFloat()
         {
             var controller = NewController();
-            Apply(NewRequest(controller, ToggleBuilder.Mode.DirectBlendTree, "Body/Hat"));
+            Build(NewPlan(controller, ToggleBuilder.Mode.DirectBlendTree, "Body/Hat"));
 
             var root = Hierarchy(out _, out var hat, out var bag);
             using (var rig = new AnimatorRig(controller, root))
@@ -190,13 +198,13 @@ namespace Yozolab.DaerD.Tests
         public void DirectBlendTree_TwoTogglesInOneLayerStayIndependent()
         {
             var controller = NewController();
-            Apply(NewRequest(controller, ToggleBuilder.Mode.DirectBlendTree, "Body/Hat"));
+            Build(NewPlan(controller, ToggleBuilder.Mode.DirectBlendTree, "Body/Hat"));
 
-            var second = NewRequest(controller, ToggleBuilder.Mode.DirectBlendTree, "Bag");
-            second.toggleName = "Bag";
+            var second = NewPlan(controller, ToggleBuilder.Mode.DirectBlendTree, "Bag");
+            second.name = "Bag";
             second.parameter = "Bag";
             second.layerIndex = 1;
-            Apply(second);
+            Build(second);
 
             Assert.AreEqual(2, controller.layers.Length, "both toggles should share one layer");
 

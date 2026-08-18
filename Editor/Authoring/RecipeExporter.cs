@@ -3,6 +3,9 @@ using System.Text;
 using System.Text.RegularExpressions;
 using UnityEditor.Animations;
 using UnityEngine;
+using Yozolab.DaerD.Edit;
+using Yozolab.DaerD.Engine;
+using Yozolab.DaerD.IR;
 
 namespace Yozolab.DaerD.Authoring
 {
@@ -21,7 +24,7 @@ namespace Yozolab.DaerD.Authoring
     /// </summary>
     static class RecipeExporter
     {
-        public class Result
+        internal class Result
         {
             /// <summary>The generated half ("&lt;Name&gt;.Generated.cs") — always rewritten.</summary>
             public string code;
@@ -34,7 +37,7 @@ namespace Yozolab.DaerD.Authoring
             internal ControllerBuilder replayed;
         }
 
-        public class FieldRef
+        internal class FieldRef
         {
             public string fieldName;
             public string fieldType;
@@ -70,18 +73,26 @@ namespace Yozolab.DaerD.Authoring
                 }
             }
 
-            var gadgets = PlanGadgets(controller, layerNames, result.warnings);
+            var claims = new ChildClaims();
+            var gadgets = PlanGadgets(controller, layerNames, claims);
             // The multiplexed targets need no help reaching ReferencedParameters above: the
             // send ring names them in its Parameter Drivers, and CollectParameterNames reads
             // those, so a partial export of the sync layer alone still declares them.
             var asyncSyncs = PlanAsyncSyncs(controller, layerNames, result.warnings);
+            var objects = PlanObjects(controller, layerNames, result.warnings, claims);
+            // Both planners have had their say by now, which is what the order warning and the
+            // strip below both need: whether a layer still has children nobody claimed is only
+            // known once every planner has claimed its own.
+            WarnAboutRebuildOrder(controller, layerNames, gadgets, objects, claims, result.warnings);
+            claims.Strip(ir);
+
             var script = new RecipeScript();
             var builder = new ControllerBuilder { Script = script };
             script.RegisterRoot(builder);
             result.replayed = builder;
 
-            RegisterAssets(ir, script, result, gadgets, asyncSyncs);
-            new RecipeDriver(builder, ir, result.warnings, gadgets, asyncSyncs).Run();
+            RegisterAssets(ir, script, result, gadgets, asyncSyncs, objects, claims);
+            new RecipeDriver(builder, ir, result.warnings, gadgets, asyncSyncs, objects, claims).Run();
             result.warnings.AddRange(builder.Bake());
 
             result.code = ComposeGenerated(script, className, namespaceName, controller, result);
@@ -99,6 +110,121 @@ namespace Yozolab.DaerD.Authoring
                 if (layerNames.Contains(layer.name) && layer.stateMachine != null)
                     referenced.UnionWith(LayerClipboard.CollectParameterNames(layer.stateMachine));
             return referenced;
+        }
+
+        // ---- claiming the children of a shared tree ----------------------------
+
+        /// <summary>
+        /// Which children of a Direct-blend-tree layer have a call to stand for them.
+        ///
+        /// <para>WHY THE CLAIM IS PER CHILD AND NOT PER LAYER.</para>
+        /// One Direct tree layer hosts whatever wants a per-frame slot: AAP gadgets, tree-wired
+        /// object toggles, and whatever somebody hung there by hand. Asking "does EVERY child of
+        /// this layer have a call?" made one hand-built child disqualify the whole layer, and a
+        /// disqualified layer is exported as raw states — which puts it in the recipe's
+        /// DECLARATION. The next Generate then rebuilds that machinery from scratch, the saved
+        /// records point at a state machine and a tree that no longer exist, and they are pruned:
+        /// the toggles keep working as states and DaerD forgets it ever made them.
+        ///
+        /// So each planner claims only the children it can write back, and the layer is declared
+        /// as a raw tree holding only what nobody claimed. Nothing claimed at all means the layer
+        /// is declared exactly as before; everything claimed means it is not declared at all and
+        /// the calls rebuild it whole, which is what already happened.
+        ///
+        /// <para>WHAT IT COSTS.</para>
+        /// A split layer loses its child ORDER: the declared remainder is built first and each
+        /// post step appends its own children after it. Direct children sum, so the order only
+        /// matters between two children writing the same parameter — which is a chain, and a
+        /// chain lives entirely inside one planner's claim, where the order is kept.
+        ///
+        /// Children are identified by index. The IR holds a copy of the tree, parsed child by
+        /// child from the live one, so position is the one thing the two are guaranteed to agree
+        /// on — a reference match is meaningless across the copy, and a name match would be a
+        /// guess.
+        /// </summary>
+        internal class ChildClaims
+        {
+            readonly Dictionary<string, HashSet<int>> _claimed = new Dictionary<string, HashSet<int>>();
+            readonly Dictionary<string, int> _total = new Dictionary<string, int>();
+
+            /// <summary>Records that the call for one planner rebuilds child
+            /// <paramref name="index"/> of this layer's root tree.</summary>
+            public void Claim(string layerName, int index, int childCount)
+            {
+                if (!_claimed.TryGetValue(layerName, out var indices))
+                    _claimed[layerName] = indices = new HashSet<int>();
+                indices.Add(index);
+                _total[layerName] = childCount;
+            }
+
+            /// <summary>Whether this layer still holds children no call accounts for — the
+            /// question that decides whether it is declared as well as called.</summary>
+            public bool HasLeftovers(string layerName) =>
+                layerName != null && _claimed.TryGetValue(layerName, out var indices)
+                && _total.TryGetValue(layerName, out int total) && indices.Count < total;
+
+            /// <summary>
+            /// Takes the claimed children out of the IR, so what is left to declare is the
+            /// remainder and nothing else. A layer whose children are all claimed keeps an empty
+            /// tree, which the driver never emits — its calls are the whole of it.
+            ///
+            /// A tree whose child count no longer matches what was surveyed is left alone: the
+            /// indices would be pointing at other children, and declaring one child too many is
+            /// recoverable where deleting the wrong one is not.
+            /// </summary>
+            public void Strip(ControllerIR ir)
+            {
+                foreach (var layer in ir.layers)
+                {
+                    if (!_claimed.TryGetValue(layer.name, out var indices)) continue;
+                    var tree = RootTree(layer);
+                    if (tree == null || tree.children.Count != _total[layer.name]) continue;
+                    for (int i = tree.children.Count - 1; i >= 0; i--)
+                        if (indices.Contains(i)) tree.children.RemoveAt(i);
+                }
+            }
+
+            /// <summary>IR-side twin of <see cref="GadgetRootTree"/>: the root Direct tree of a
+            /// layer shaped like one state playing it, or null.</summary>
+            static ControllerIR.Tree RootTree(ControllerIR.Layer layer)
+            {
+                var machine = layer.machine;
+                if (machine == null || machine.machines.Count > 0 || machine.states.Count != 1)
+                    return null;
+                var tree = machine.states[0].tree;
+                return tree != null && tree.type == BlendTreeType.Direct ? tree : null;
+            }
+        }
+
+        /// <summary>
+        /// The post steps append their layers at the end of the controller, so an ordinary layer
+        /// that sat after one of them changes place. A layer the export ALSO declares is exempt:
+        /// the declaration rebuilds it where it was and the post step only adds children to it.
+        /// </summary>
+        static void WarnAboutRebuildOrder(AnimatorController controller,
+            ICollection<string> layerNames, GadgetPlan gadgets, ObjectPlan objects,
+            ChildClaims claims, List<string> warnings)
+        {
+            var layers = controller.layers;
+            var movedGadgets = RebuiltWhole(gadgets.layers.Keys, claims);
+            if (movedGadgets.Count > 0
+                && FollowedByOrdinaryLayers(layers, layerNames, movedGadgets, gadgets.supporting))
+                warnings.Add(L.Tr("Gadget layers are regenerated at the end of the controller; the layer order will differ from the original."));
+
+            var movedObjects = RebuiltWhole(objects.layers.Keys, claims);
+            if (movedObjects.Count > 0
+                && FollowedByOrdinaryLayers(layers, layerNames, movedObjects, null))
+                warnings.Add(L.Tr("Object gadget layers are regenerated at the end of the controller; the layer order will differ from the original."));
+        }
+
+        /// <summary>The layer names a post step rebuilds outright. A layer with a raw remainder
+        /// is declared as well as called, and a declared layer keeps its index.</summary>
+        static List<string> RebuiltWhole(ICollection<string> names, ChildClaims claims)
+        {
+            var whole = new List<string>();
+            foreach (var name in names)
+                if (!claims.HasLeftovers(name)) whole.Add(name);
+            return whole;
         }
 
         // ---- gadget layers -----------------------------------------------------
@@ -141,51 +267,39 @@ namespace Yozolab.DaerD.Authoring
         /// the IR: the IR holds copies of the trees, and the saved configs point at the real
         /// ones, so a reference match is only meaningful here.
         ///
-        /// A layer qualifies only when every child of its root Direct tree has a config to
-        /// stand for it — a child added by hand has no call that would rebuild it, and
-        /// rewriting the layer as calls would drop it without a word.
+        /// The gadgets claim the children of the root Direct tree that have a config to stand for
+        /// them, and only those (see <see cref="ChildClaims"/>): a child added by hand, or one an
+        /// object toggle owns, has no gadget call that would rebuild it and stays in the raw tree
+        /// the layer is also declared as.
         /// </summary>
         static GadgetPlan PlanGadgets(AnimatorController controller, ICollection<string> layerNames,
-            List<string> warnings)
+            ChildClaims claims)
         {
             var plan = new GadgetPlan();
             var configs = GraphFrameData.GetGadgets(controller);
             if (configs.Count == 0) return plan;
 
-            var layers = controller.layers;
-            foreach (var layer in layers)
+            foreach (var layer in controller.layers)
             {
                 if (layerNames != null && !layerNames.Contains(layer.name)) continue;
                 var root = GadgetRootTree(layer);
                 if (root == null) continue;
 
                 var covered = new List<AapGadgets.Request>();
-                int uncovered = 0;
-                foreach (var child in root.children)
+                for (int i = 0; i < root.children.Length; i++)
                 {
-                    var config = FindGadget(configs, layer.stateMachine, child.motion);
-                    if (config == null) uncovered++;
-                    else covered.Add(AapGadgets.ToRequest(config, controller));
+                    var config = FindGadget(configs, layer.stateMachine, root.children[i].motion);
+                    if (config == null) continue;
+                    covered.Add(AapGadgets.ToRequest(config, controller));
+                    claims.Claim(layer.name, i, root.children.Length);
                 }
                 if (covered.Count == 0) continue;
-                if (uncovered > 0)
-                {
-                    warnings.Add(L.Tr("Layer '{0}': {1} of {2} blend tree children have no saved gadget config; exported as a raw tree.",
-                        layer.name, uncovered, root.children.Length));
-                    continue;
-                }
 
                 plan.layers[layer.name] = covered;
                 foreach (var request in covered)
                     foreach (var name in AapGadgets.SupportingLayerNames(request))
                         plan.supporting.Add(name);
             }
-
-            // Gadgets are a post step: their layers are rebuilt at the end of the controller.
-            // The order survives that only while nothing but other gadget layers follows them.
-            if (plan.layers.Count > 0
-                && FollowedByOrdinaryLayers(layers, layerNames, plan.layers.Keys, plan.supporting))
-                warnings.Add(L.Tr("Gadget layers are regenerated at the end of the controller; the layer order will differ from the original."));
             return plan;
         }
 
@@ -348,12 +462,172 @@ namespace Yozolab.DaerD.Authoring
             return remaining.Count == 0;
         }
 
+        // ---- object gadget layers ----------------------------------------------
+
+        /// <summary>
+        /// The layers a controller can have written back as <c>c.Objects()</c> calls instead of
+        /// as the states, trees and clips they expanded into. Same shape and same two questions
+        /// as <see cref="GadgetPlan"/>: which layers stop being states, and which parameters
+        /// stop being declarations.
+        /// </summary>
+        internal class ObjectPlan
+        {
+            /// <summary>Layer name → the object gadgets that layer is, in the order they have to
+            /// be rebuilt in (the root tree's child order, where there is one).</summary>
+            public readonly Dictionary<string, List<GraphFrameData.ObjectGadgetConfig>> layers =
+                new Dictionary<string, List<GraphFrameData.ObjectGadgetConfig>>();
+
+            /// <summary>The merge every target's path is derived against, resolved once here so
+            /// the emission works from the same frame of reference the plan checked against.
+            /// Null when nothing qualified, which is also when nothing asks.</summary>
+            public Transform root;
+
+            /// <summary>The layer the tree-wired toggles hang in, so the call can name it and a
+            /// replay lands in the same one instead of minting a "DBT" beside it. Null when no
+            /// toggle is tree-wired. One name for the whole plan because one recipe builds one
+            /// shared layer — a controller whose wizard-made toggles are spread over two Direct
+            /// layers exports as calls that gather them into the first.</summary>
+            public string treeLayer;
+
+            /// <summary>Whether a planned toggle is what created this parameter. Its call
+            /// creates it again, so declaring it up top only restates what the next Generate
+            /// rebuilds. A parameter the gadget merely borrowed belongs to somebody else and
+            /// stays declared — that is the whole meaning of <c>createdParameter</c>.</summary>
+            public bool Owns(string parameter)
+            {
+                if (string.IsNullOrEmpty(parameter)) return false;
+                foreach (var pair in layers)
+                    foreach (var config in pair.Value)
+                        if (config.createdParameter && config.parameter == parameter)
+                            return true;
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Works out which layers qualify, on the live controller rather than on the IR — the
+        /// records point at the real machines and trees, so a reference match is only meaningful
+        /// here (the same reason <see cref="PlanGadgets"/> gives).
+        ///
+        /// A record qualifies only when it can still be written down: the pin has to be healthy
+        /// and every target still in the prefab, because what an exported call carries is the
+        /// target's DERIVED PATH and there is no path to derive from a reference that resolves to
+        /// nothing. A layer-wired toggle also has to still hold the two states it built, since
+        /// nothing else in that layer is anybody's. Anything else falls back to the raw states,
+        /// with a named warning — a call that describes less than the layer holds would drop the
+        /// difference silently.
+        ///
+        /// A tree-wired toggle claims its own child of the shared Direct tree and nothing else
+        /// (see <see cref="ChildClaims"/>). What sits beside it — a DBT gadget, a child added by
+        /// hand — is somebody else's business, not a reason to give up on the layer.
+        /// </summary>
+        static ObjectPlan PlanObjects(AnimatorController controller,
+            ICollection<string> layerNames, List<string> warnings, ChildClaims claims)
+        {
+            var plan = new ObjectPlan();
+            var configs = GraphFrameData.GetObjectGadgets(controller);
+            if (configs.Count == 0) return plan;
+            var root = ObjectGadgets.Root(controller);
+            plan.root = root;
+
+            foreach (var layer in controller.layers)
+            {
+                if (layerNames != null && !layerNames.Contains(layer.name)) continue;
+                if (layer.stateMachine == null) continue;
+                var mine = new List<GraphFrameData.ObjectGadgetConfig>();
+                foreach (var config in configs)
+                    if (config.layer == layer.stateMachine) mine.Add(config);
+                if (mine.Count == 0) continue;
+
+                string problem = Unaccounted(layer, mine, root);
+                if (problem != null)
+                {
+                    warnings.Add(problem);
+                    continue;
+                }
+                plan.layers[layer.name] = InTreeOrder(layer, mine);
+
+                var tree = GadgetRootTree(layer);
+                if (tree == null) continue;
+                if (plan.treeLayer == null) plan.treeLayer = layer.name;
+                for (int i = 0; i < tree.children.Length; i++)
+                    foreach (var config in mine)
+                        if (config.tree == tree.children[i].motion)
+                            claims.Claim(layer.name, i, tree.children.Length);
+            }
+            return plan;
+        }
+
+        /// <summary>Why these gadgets cannot be written back as calls, or null when they can.
+        /// Only what the gadgets themselves built is asked about: a shared Direct tree layer is
+        /// judged one child at a time, and the children nobody claims are exported as the raw
+        /// tree they are rather than disqualifying the toggle beside them.</summary>
+        static string Unaccounted(AnimatorControllerLayer layer,
+            List<GraphFrameData.ObjectGadgetConfig> mine, Transform root)
+        {
+            if (root == null)
+                return L.Tr("Layer '{0}' holds object gadgets, but this controller is not linked to a healthy gimmick prefab any more, so their target paths cannot be worked out; exported as raw states.",
+                    layer.name);
+            foreach (var config in mine)
+                foreach (var record in config.targets)
+                    if (record == null || record.target == null
+                        || ObjectGadgets.PathOf(root, record.target) == null)
+                        return L.Tr("Object gadget '{0}' animates an object that is no longer in the linked prefab, so layer '{1}' is exported as raw states instead of an Objects call.",
+                            config.name, layer.name);
+
+            var machine = layer.stateMachine;
+            if ((ToggleBuilder.Mode)mine[0].mode == ToggleBuilder.Mode.Layer)
+            {
+                if (mine.Count != 1)
+                    return L.Tr("Layer '{0}' is claimed by {1} object gadgets at once; exported as raw states.",
+                        layer.name, mine.Count);
+                // The two states the toggle builds, by the names it gives them: this catches a
+                // renamed state and an added one alike, which is what MatchesGeneratedShape does
+                // for a sync layer.
+                var expected = new List<string> { mine[0].name + " OFF", mine[0].name + " ON" };
+                if (machine.stateMachines.Length > 0 || machine.states.Length != expected.Count)
+                    return Reshaped(mine[0], layer);
+                foreach (var child in machine.states)
+                    if (child.state == null || !expected.Remove(child.state.name))
+                        return Reshaped(mine[0], layer);
+                return null;
+            }
+
+            // Reshaped is still asked, but only about the gadgets' OWN machinery: a tree-wired
+            // toggle whose layer is no longer a Direct tree layer at all has nothing left to
+            // claim a child of, and a call for it would describe a shape that is gone.
+            return GadgetRootTree(layer) == null ? Reshaped(mine[0], layer) : null;
+        }
+
+        static string Reshaped(GraphFrameData.ObjectGadgetConfig config,
+            AnimatorControllerLayer layer) =>
+            L.Tr("Layer '{0}' no longer holds what the object gadget '{1}' would build; exported as raw states instead of an Objects call.",
+                layer.name, config.name);
+
+        /// <summary>The records in the order their trees hang off the layer's root, which is the
+        /// order they were built in. A layer-wired gadget is alone in its layer and has no
+        /// order to keep.</summary>
+        static List<GraphFrameData.ObjectGadgetConfig> InTreeOrder(AnimatorControllerLayer layer,
+            List<GraphFrameData.ObjectGadgetConfig> mine)
+        {
+            var tree = GadgetRootTree(layer);
+            if (tree == null || mine.Count < 2) return mine;
+            var ordered = new List<GraphFrameData.ObjectGadgetConfig>();
+            foreach (var child in tree.children)
+                foreach (var config in mine)
+                    if (config.tree == child.motion && !ordered.Contains(config))
+                        ordered.Add(config);
+            foreach (var config in mine)
+                if (!ordered.Contains(config)) ordered.Add(config);
+            return ordered;
+        }
+
         // ---- asset fields ------------------------------------------------------
 
         /// <summary>Walks the IR in emission order so field declarations come out in a
         /// stable, readable order.</summary>
         static void RegisterAssets(ControllerIR ir, RecipeScript script, Result result,
-            GadgetPlan gadgets, AsyncSyncPlan asyncSyncs)
+            GadgetPlan gadgets, AsyncSyncPlan asyncSyncs, ObjectPlan objects, ChildClaims claims)
         {
             void Register(Object asset)
             {
@@ -392,14 +666,21 @@ namespace Yozolab.DaerD.Authoring
 
             foreach (var layer in ir.layers)
             {
+                // A layer with a raw remainder is still declared, and the remainder's clips are
+                // the user's — the strip above already took the claimed children out, so what is
+                // walked here is exactly what the declaration will need fields for.
+                bool remainder = claims.HasLeftovers(layer.name);
                 // A layer the gadget calls rebuild contributes no fields: every clip in it is
                 // minted by those calls, and a field for one would refer to nothing.
-                if (gadgets.layers.ContainsKey(layer.name) || gadgets.supporting.Contains(layer.name))
-                    continue;
+                if (!remainder && (gadgets.layers.ContainsKey(layer.name)
+                    || gadgets.supporting.Contains(layer.name))) continue;
                 // Same for a sync layer: its states play the controller's Empty clip, which the
                 // call resolves (or creates) at Generate time rather than through a field.
                 if (asyncSyncs.layers.ContainsKey(layer.name)
                     || asyncSyncs.supporting.Contains(layer.name)) continue;
+                // And for an object gadget layer: the clips are keyed from the prefab by the
+                // call, or named by asset path where they are the user's (ADR 0046).
+                if (!remainder && objects.layers.ContainsKey(layer.name)) continue;
                 Register(layer.mask);
                 Machine(layer.machine);
                 foreach (var entry in layer.syncedMotions)
@@ -442,6 +723,10 @@ namespace Yozolab.DaerD.Authoring
 //   Gadgets      c.Gadgets(""DBT"").Multiply(a, b, ""A*B"").Remap(x, ""X01"", -1, 1, 0, 1)
 //                    .Smooth(x, ""X/Smoothed"", ""X/Smoothing"").Buffer(x, ""X/Late"", 2);
 //                (the per-frame float math from the Add menu; its layer is rebuilt each time)
+//   Objects      c.Objects().Toggle(""Hat"").Shows(""Head/Hat"").Enables(""Head/Hat/Light"", ""Light"")
+//                    .Toggle(""Cape"").AsTree().Hides(""Body/Cape"").DefaultOn();
+//                (toggles for the pinned gimmick prefab; paths are read from it, never written;
+//                 c.Objects(""Name"") names the layer the tree-wired ones share)
 //   Async sync   c.AsyncSync().Targets(""Hue"", ""Outfit"").Rate(""Hue"", 2).Requestable(""Hue"")
 //                    .Schedule(""Hue"", ""Outfit"", ""Hue"");            // the cycle, step by step
 //                    .Sends(""Hue"", ""Outfit"").Sends(""Hue"");   // or what each step carries
