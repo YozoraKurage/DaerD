@@ -38,12 +38,19 @@ namespace Yozolab.DaerD.Authoring
     /// </summary>
     public sealed class ObjectRecipeBuilder
     {
+        /// <summary>What the shared Direct blend tree layer is called when the recipe does not
+        /// say — the name the wizard gives it, so a recipe and the wizard land in the same
+        /// layer.</summary>
+        internal const string DefaultLayer = "DBT";
+
         readonly ControllerBuilder _root;
+        readonly string _layerName;
         readonly List<ObjectToggleBuilder> _toggles = new List<ObjectToggleBuilder>();
 
-        internal ObjectRecipeBuilder(ControllerBuilder root)
+        internal ObjectRecipeBuilder(ControllerBuilder root, string layerName = null)
         {
             _root = root;
+            _layerName = string.IsNullOrEmpty(layerName) ? DefaultLayer : layerName;
             root.PostOps.Add(Run);
         }
 
@@ -122,10 +129,13 @@ namespace Yozolab.DaerD.Authoring
                 var replaces = Record(controller, toggle.Parameter);
                 var config = toggle.ToConfig(resolved[toggle]);
                 // Tree-wired toggles share one layer: the one an earlier toggle in this run
-                // landed in, or the one this record was in last time. Null asks for a new one,
-                // which is what the first tree toggle of a fresh controller gets.
+                // landed in, or the one this record was in last time, or — for a controller that
+                // has neither, which is what a port to another gimmick is — a layer already
+                // standing under the recipe's name. Null asks for a new one.
                 if (config.mode == (int)ToggleBuilder.Mode.DirectBlendTree)
-                    config.layer = host != null ? host : replaces?.layer;
+                    config.layer = host != null ? host
+                        : replaces != null && replaces.layer != null ? replaces.layer
+                        : NamedHost(controller);
 
                 string error = ObjectGadgets.Validate(controller, config, replaces);
                 if (error != null)
@@ -135,7 +145,8 @@ namespace Yozolab.DaerD.Authoring
                 }
                 // One flush for the whole run: each toggle can mint two clips, and committing
                 // per gadget reimports the controller once per call (ADR 0011).
-                if (!ObjectGadgets.Apply(controller, config, replaces, commitSubAssets: false))
+                if (!ObjectGadgets.Apply(controller, config, replaces, commitSubAssets: false,
+                    newLayerName: _layerName))
                     continue;
                 if (config.mode == (int)ToggleBuilder.Mode.DirectBlendTree) host = config.layer;
                 Claim(controller, config.layer);
@@ -159,6 +170,27 @@ namespace Yozolab.DaerD.Authoring
         {
             var prefab = PrefabLinks.Status(controller).prefab;
             return prefab != null ? prefab.name : "?";
+        }
+
+        /// <summary>
+        /// The layer standing under the recipe's name that a tree-wired toggle can join, or null.
+        ///
+        /// It is what makes a shared Direct tree layer survive a replay. The layer the export
+        /// declares as its raw remainder, and the one the DBT gadget step builds, are both known
+        /// only by NAME on a controller that carries no record of this toggle — and without this
+        /// the toggle would create a second layer beside them under a numbered name, splitting a
+        /// gimmick in two the first time it is ported.
+        ///
+        /// Only a layer that can host a Direct child qualifies, so a name collision with somebody
+        /// else's ordinary layer falls through to "make a new one" rather than joining states
+        /// that have nothing to do with a blend tree.
+        /// </summary>
+        AnimatorStateMachine NamedHost(AnimatorController controller)
+        {
+            foreach (var layer in controller.layers)
+                if (layer.name == _layerName && DbtBuilder.CanHostGadget(layer))
+                    return layer.stateMachine;
+            return null;
         }
 
         static GraphFrameData.ObjectGadgetConfig Record(AnimatorController controller,

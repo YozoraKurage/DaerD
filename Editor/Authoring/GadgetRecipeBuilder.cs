@@ -93,6 +93,19 @@ namespace Yozolab.DaerD.Authoring
                 foreach (var name in AapGadgets.SupportingLayerNames(request))
                     if (!layerNames.Contains(name)) layerNames.Add(name);
 
+            // Two kinds of layer are not this step's to take away whole, and for the same
+            // reason: something else in the recipe put machinery there. A layer the recipe
+            // DECLARES has already been rebuilt from that declaration by the time a post step
+            // runs, and a layer holding object gadget trees is shared with the toggle step —
+            // removing either would throw away what the other just built, which is exactly the
+            // split a shared Direct tree layer is exported as (RecipeExporter.ChildClaims).
+            // What this step owns there is its own children, and the saved records name them
+            // one at a time, so those are swept and the rest of the tree is left standing.
+            var removed = new List<string>();
+            foreach (var name in layerNames)
+                if (!Declares(name) && !SharedWithObjectGadgets(controller, name))
+                    removed.Add(name);
+
             // Where they sit now, so the rebuild can put them back. Removing a layer and
             // adding it again lands it at the end of the list, and a layer's index is what
             // decides which of two writers to the same property wins — a second Generate
@@ -100,9 +113,11 @@ namespace Yozolab.DaerD.Authoring
             // touching the recipe. The declared layers already do this (BuildLayer moves each
             // one back to the index it was found at); this is the same courtesy for the ones
             // a post step owns.
-            var previousIndices = PreviousIndices(controller, layerNames);
-            WarnAboutLayersNobodyGenerated(controller, layerNames, warnings);
-            RemoveLayers(controller, layerNames);
+            var previousIndices = PreviousIndices(controller, removed);
+            WarnAboutLayersNobodyGenerated(controller, removed, warnings);
+            RemoveLayers(controller, removed);
+            foreach (var name in layerNames)
+                if (!removed.Contains(name)) RemoveGadgetsIn(controller, name);
             RemoveOwnedParameters(controller);
 
             // The blend tree layer before any supporting layer: a supporting layer covers the
@@ -111,7 +126,11 @@ namespace Yozolab.DaerD.Authoring
             foreach (var request in _requests)
                 if (AapGadgets.UsesDbtLayer(request.kind))
                 {
-                    DbtBuilder.EnsureDirectBlendTreeLayer(controller, -1, _layerName);
+                    // Found by name rather than always created: a layer that survived the sweep
+                    // above is the one to add to, and asking for a new one would land beside it
+                    // under a numbered name.
+                    DbtBuilder.EnsureDirectBlendTreeLayer(controller,
+                        FindLayer(controller, _layerName), _layerName);
                     break;
                 }
 
@@ -159,6 +178,52 @@ namespace Yozolab.DaerD.Authoring
             for (int i = controller.layers.Length - 1; i >= 0; i--)
                 if (names.Contains(controller.layers[i].name))
                     controller.RemoveLayer(i);
+        }
+
+        /// <summary>Whether the recipe declares a layer by this name, and has therefore already
+        /// rebuilt it before this post step ran.</summary>
+        bool Declares(string name)
+        {
+            foreach (var layer in _root.IR.layers)
+                if (layer.name == name) return true;
+            return false;
+        }
+
+        /// <summary>Whether an object gadget's tree hangs in this layer — which makes the layer
+        /// shared, and its other children somebody else's to rebuild.</summary>
+        static bool SharedWithObjectGadgets(AnimatorController controller, string name)
+        {
+            var machine = MachineOf(controller, name);
+            if (machine == null) return false;
+            foreach (var config in GraphFrameData.GetObjectGadgets(controller))
+                if (config.layer == machine) return true;
+            return false;
+        }
+
+        /// <summary>
+        /// Sweeps this step's own gadgets out of a layer it is not removing whole. Each saved
+        /// record knows the child it hung and the parameters under its output, so taking them
+        /// out one at a time leaves everything else in the tree exactly where it was — which is
+        /// the whole point of not removing the layer.
+        ///
+        /// Every DBT gadget recorded in the layer goes, not only the ones this recipe declares:
+        /// the step claims its layer, and a gadget left standing there would keep an output name
+        /// the next Generate cannot reuse.
+        /// </summary>
+        static void RemoveGadgetsIn(AnimatorController controller, string name)
+        {
+            var machine = MachineOf(controller, name);
+            if (machine == null) return;
+            foreach (var config in GraphFrameData.GetGadgets(controller))
+                if (config.layer == machine)
+                    AapGadgets.RemoveGadget(controller, config);
+        }
+
+        static AnimatorStateMachine MachineOf(AnimatorController controller, string name)
+        {
+            foreach (var layer in controller.layers)
+                if (layer.name == name) return layer.stateMachine;
+            return null;
         }
 
         /// <summary>

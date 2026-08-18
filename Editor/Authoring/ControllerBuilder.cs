@@ -209,16 +209,21 @@ namespace Yozolab.DaerD.Authoring
         ///   c.Objects().Toggle("Hat").Shows("Head/Hat")
         ///              .Toggle("Cape").AsTree().Hides("Body/Cape");
         ///
-        /// One builder per recipe, unlike <see cref="Gadgets"/>, which is one per layer: an
-        /// object gadget names no layer — a Bool toggle is a layer of its own and the tree-wired
-        /// ones share one — so there is nothing here to key a second builder by.
+        /// One builder per recipe, unlike <see cref="Gadgets"/>, which is one per layer: a Bool
+        /// toggle is a layer of its own and the tree-wired ones all share one, so there is
+        /// nothing here to key a second builder by. <paramref name="layerName"/> is that shared
+        /// layer's name — it only decides where the tree-wired toggles land on a controller that
+        /// has no saved record to inherit a layer from, which is what a port to another gimmick
+        /// is. Named "DBT" by default, the same name the wizard gives it.
         /// </summary>
-        public ObjectRecipeBuilder Objects()
+        public ObjectRecipeBuilder Objects(string layerName = null)
         {
             if (_objects == null)
             {
-                _objects = new ObjectRecipeBuilder(this);
-                Script?.Declare(_objects, "Objects", this, "Objects()");
+                _objects = new ObjectRecipeBuilder(this, layerName);
+                Script?.Declare(_objects, "Objects", this,
+                    string.IsNullOrEmpty(layerName) || layerName == ObjectRecipeBuilder.DefaultLayer
+                        ? "Objects()" : $"Objects({RecipeScript.S(layerName)})");
             }
             return _objects;
         }

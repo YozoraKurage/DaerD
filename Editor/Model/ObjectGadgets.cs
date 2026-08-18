@@ -383,10 +383,16 @@ namespace Yozolab.DaerD
         /// than it looks: a clip added with AddObjectToAsset stays invisible in the Project
         /// window — and to anything reading the imported artifact — until the file is saved and
         /// reimported.
+        ///
+        /// <paramref name="newLayerName"/> only names a Direct blend tree layer that has to be
+        /// CREATED — <c>config.layer</c> decides where an existing one is joined. A recipe passes
+        /// the name its call carries, so a gimmick ported to a fresh controller rebuilds its
+        /// shared layer under the name it had rather than under the wizard's default.
         /// </summary>
         public static bool Apply(AnimatorController controller,
             GraphFrameData.ObjectGadgetConfig config,
-            GraphFrameData.ObjectGadgetConfig replaces = null, bool commitSubAssets = true)
+            GraphFrameData.ObjectGadgetConfig replaces = null, bool commitSubAssets = true,
+            string newLayerName = null)
         {
             if (Validate(controller, config, replaces) != null) return false;
             var root = Root(controller);
@@ -396,7 +402,7 @@ namespace Yozolab.DaerD
                 Undo.RegisterCompleteObjectUndo(controller, "Object Gadget");
                 if (replaces != null) Remove(controller, replaces);
 
-                var plan = PlanFor(controller, config, root);
+                var plan = PlanFor(controller, config, root, newLayerName);
                 var onClip = Output(controller, config.onClip, plan, on: true);
                 var offClip = Output(controller, config.offClip, plan, on: false);
 
@@ -429,7 +435,7 @@ namespace Yozolab.DaerD
         /// from the saved reference, so a record whose layer is gone lands on -1 and a new layer
         /// is built.</summary>
         static ToggleBuilder.Plan PlanFor(AnimatorController controller,
-            GraphFrameData.ObjectGadgetConfig config, Transform root)
+            GraphFrameData.ObjectGadgetConfig config, Transform root, string newLayerName = null)
         {
             var plan = new ToggleBuilder.Plan
             {
@@ -439,7 +445,7 @@ namespace Yozolab.DaerD
                 parameter = config.parameter,
                 defaultOn = config.defaultOn,
                 layerIndex = LayerIndexOf(controller, config.layer),
-                newLayerName = "DBT",
+                newLayerName = string.IsNullOrEmpty(newLayerName) ? "DBT" : newLayerName,
             };
             foreach (var record in config.targets)
             {

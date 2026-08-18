@@ -463,10 +463,18 @@ namespace Yozolab.DaerD.Tests
             });
         }
 
-        /// <summary>A child somebody added to the tree by hand has no call to stand for it, so
-        /// the layer falls back to the raw tree it is — and the export says why.</summary>
+        /// <summary>
+        /// A child somebody added to the tree by hand has no call to stand for it — but that is
+        /// a fact about the child, not about the layer. The gadget keeps its call and the hand
+        /// child is declared as the raw tree it is, so the layer comes back as both.
+        ///
+        /// Claiming a whole layer or nothing used to send this one to raw states entirely, which
+        /// put the gadget's own machinery into the recipe's DECLARATION: the next Generate
+        /// rebuilt it, the saved record pointed at a tree that no longer existed, and it was
+        /// pruned. What the tree does survived; the fact that DaerD made it did not.
+        /// </summary>
         [Test]
-        public void Export_GadgetLayerWithAnUnaccountedChild_FallsBackToTheRawTree()
+        public void Export_GadgetLayerWithAnUnaccountedChild_KeepsTheCallAndRawsTheRest()
         {
             WithSavedController(controller =>
             {
@@ -477,12 +485,30 @@ namespace Yozolab.DaerD.Tests
                 DbtBuilder.AddDirectChild(root, DbtBuilder.ParameterClip(controller, "B", 1f), "One");
 
                 var result = RecipeExporter.Export(controller, null, "GadgetRecipe", null);
-                Assert.AreEqual(1, result.warnings.Count, string.Join("\n", result.warnings));
-                StringAssert.Contains("Math", result.warnings[0]);
+
+                Assert.IsEmpty(result.warnings, string.Join("\n", result.warnings));
                 StringAssert.Contains("c.Layer(\"Math\")", result.code);
                 StringAssert.Contains("NewBlendTree(", Body(result.code));
-                Assert.IsNotEmpty(result.fields, "a raw tree needs its clips as fields");
+                Assert.IsNotEmpty(result.fields, "the hand child's clip needs a field");
+                StringAssert.Contains("c.Gadgets(\"Math\")", result.code);
+                StringAssert.Contains(".Multiply(\"A\", \"B\", \"A*B\")", result.code);
+
+                // One child in the declared remainder, not two: the gadget's own is the call's
+                // to rebuild, and declaring it as well would build it twice.
+                Assert.AreEqual(1, DeclaredRootChildren(result), "the raw remainder");
             });
+        }
+
+        /// <summary>Children of the one Direct tree the replayed declaration builds.</summary>
+        static int DeclaredRootChildren(RecipeExporter.Result result)
+        {
+            foreach (var layer in result.replayed.IR.layers)
+            {
+                if (layer.machine == null || layer.machine.states.Count != 1) continue;
+                var tree = layer.machine.states[0].tree;
+                if (tree != null && tree.type == BlendTreeType.Direct) return tree.children.Count;
+            }
+            return -1;
         }
 
         /// <summary>The clock layer FrameTime brings is rebuilt by the gadget call; exporting

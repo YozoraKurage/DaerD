@@ -24,6 +24,9 @@ namespace Yozolab.DaerD.Authoring
         readonly RecipeExporter.AsyncSyncPlan _asyncSyncs;
         /// <summary>The layers that can be written back as Objects() toggle calls.</summary>
         readonly RecipeExporter.ObjectPlan _objects;
+        /// <summary>Which children of a shared Direct tree layer the calls above rebuild — and
+        /// therefore whether the layer is declared as well as called.</summary>
+        readonly RecipeExporter.ChildClaims _claims;
         readonly Dictionary<string, ParamHandle> _handles =
             new Dictionary<string, ParamHandle>();
         readonly Dictionary<string, AnimatorControllerParameterType> _types =
@@ -32,7 +35,8 @@ namespace Yozolab.DaerD.Authoring
         public RecipeDriver(ControllerBuilder c, ControllerIR ir, List<string> warnings,
             RecipeExporter.GadgetPlan gadgets = null,
             RecipeExporter.AsyncSyncPlan asyncSyncs = null,
-            RecipeExporter.ObjectPlan objects = null)
+            RecipeExporter.ObjectPlan objects = null,
+            RecipeExporter.ChildClaims claims = null)
         {
             _c = c;
             _ir = ir;
@@ -41,6 +45,7 @@ namespace Yozolab.DaerD.Authoring
             _gadgets = gadgets ?? new RecipeExporter.GadgetPlan();
             _asyncSyncs = asyncSyncs ?? new RecipeExporter.AsyncSyncPlan();
             _objects = objects ?? new RecipeExporter.ObjectPlan();
+            _claims = claims ?? new RecipeExporter.ChildClaims();
             foreach (var p in ir.parameters)
                 _types[p.name] = p.type;
         }
@@ -75,16 +80,18 @@ namespace Yozolab.DaerD.Authoring
                     SyncedLayer(layer);
                     continue;
                 }
-                if (_gadgets.layers.TryGetValue(layer.name, out var gadgets))
+                _gadgets.layers.TryGetValue(layer.name, out var gadgets);
+                _objects.layers.TryGetValue(layer.name, out var toggles);
+                // A layer whose every child has a call is the calls and nothing else. One that
+                // still holds children nobody claimed is BOTH: the remainder is declared below
+                // as the tree it is, and the calls add their own children back to it on the next
+                // Generate (see RecipeExporter.ChildClaims).
+                bool remainder = _claims.HasLeftovers(layer.name);
+                if ((gadgets != null || toggles != null) && !remainder)
                 {
-                    _c.Script.Comment(RecipeExporter.Header("Layer: " + layer.name + " (DBT gadgets)"));
-                    EmitGadgets(layer.name, gadgets);
-                    continue;
-                }
-                if (_objects.layers.TryGetValue(layer.name, out var toggles))
-                {
-                    _c.Script.Comment(RecipeExporter.Header("Layer: " + layer.name + " (object gadgets)"));
-                    EmitObjects(toggles);
+                    _c.Script.Comment(RecipeExporter.Header("Layer: " + layer.name
+                        + " (" + ClaimLabel(gadgets != null, toggles != null) + ")"));
+                    EmitClaims(layer.name, gadgets, toggles);
                     continue;
                 }
                 if (_asyncSyncs.layers.TryGetValue(layer.name, out var sync))
@@ -106,10 +113,17 @@ namespace Yozolab.DaerD.Authoring
                     continue;
                 }
                 _c.Script.Comment(RecipeExporter.Header("Layer: " + layer.name));
+                if (remainder)
+                {
+                    _c.Script.Comment("The children below are the ones no call accounts for. The"
+                        + " gadget calls after them");
+                    _c.Script.Comment("add their own back to this same layer, which is why it is"
+                        + " declared and called both.");
+                }
                 // A gadget layer exports as the raw tree it is — accurate, and a wall of
                 // children nobody edits by hand. The calls that build this kind of layer
                 // are right there in the API, so point at them where the wall starts.
-                if (IsGadgetShapedLayer(layer.machine))
+                else if (IsGadgetShapedLayer(layer.machine))
                 {
                     _c.Script.Comment("Direct blend tree (DBT gadget) layer. The gadget calls that"
                         + " build this kind of layer");
@@ -158,8 +172,31 @@ namespace Yozolab.DaerD.Authoring
                         scope.ParentAt(machine.parentPosition.x, machine.parentPosition.y);
                 }
                 _c.Script.EndPack();
+
+                if (!remainder) continue;
+                _c.Script.Blank();
+                _c.Script.Comment(RecipeExporter.Header("Layer: " + layer.name
+                    + " (" + ClaimLabel(gadgets != null, toggles != null) + ")"));
+                EmitClaims(layer.name, gadgets, toggles);
             }
         }
+
+        /// <summary>
+        /// The calls that rebuild one layer's claimed children. Gadgets before toggles, which is
+        /// the order the post steps then run in — neither takes a shared layer away from the
+        /// other any more, so it is no longer a requirement, but it keeps a mixed layer reading
+        /// the way it was built rather than the way the exporter happened to walk it.
+        /// </summary>
+        void EmitClaims(string layerName, List<AapGadgets.Request> gadgets,
+            List<GraphFrameData.ObjectGadgetConfig> toggles)
+        {
+            if (gadgets != null) EmitGadgets(layerName, gadgets);
+            if (toggles != null) EmitObjects(toggles);
+        }
+
+        static string ClaimLabel(bool gadgets, bool toggles) =>
+            gadgets && toggles ? "DBT gadgets, object gadgets"
+            : gadgets ? "DBT gadgets" : "object gadgets";
 
         /// <summary>
         /// A gadget layer written back as the calls that built it, in the order its root tree
@@ -253,7 +290,10 @@ namespace Yozolab.DaerD.Authoring
         /// </summary>
         void EmitObjects(List<GraphFrameData.ObjectGadgetConfig> configs)
         {
-            var objects = _c.Objects();
+            // The shared layer is named on the call, not left to the default: a replay against a
+            // controller that has no record to inherit a layer from would otherwise mint a "DBT"
+            // of its own beside the one the export just declared.
+            var objects = _c.Objects(_objects.treeLayer);
             foreach (var config in configs)
             {
                 var toggle = objects.Toggle(config.name,

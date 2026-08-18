@@ -2519,9 +2519,6 @@ msgstr "オブジェクトガジェット '{0}' がアニメーションする�
 msgid "Layer '{0}' is claimed by {1} object gadgets at once; exported as raw states."
 msgstr "レイヤー '{0}' を {1} 個のオブジェクトガジェットが同時に自分のものとしています。State をそのままエクスポートします。"
 
-msgid "Layer '{0}' holds object gadgets beside something no object gadget accounts for (a DBT gadget, or a child added by hand); exported as a raw tree."
-msgstr "レイヤー '{0}' には、オブジェクトガジェット以外のもの（DBT ガジェット、または手で追加された子）が同居しています。Blend Tree をそのままエクスポートします。"
-
 msgid "Layer '{0}' no longer holds what the object gadget '{1}' would build; exported as raw states instead of an Objects call."
 msgstr "レイヤー '{0}' の中身は、オブジェクトガジェット '{1}' が生成するものと一致しません。Objects 呼び出しではなく State のままエクスポートします。"
 
@@ -2575,9 +2572,6 @@ msgstr "チェックしたレイヤーを DaerD の Authoring API で再構築�
 
 msgid "Layer '{0}' is declared more than once."
 msgstr "レイヤー '{0}' が複数回宣言されています。"
-
-msgid "Layer '{0}': {1} of {2} blend tree children have no saved gadget config; exported as a raw tree."
-msgstr "レイヤー '{0}': Blend Tree の子 {2} 個のうち {1} 個に保存されたガジェット設定がありません。ツリーのままエクスポートしました。"
 
 msgid "LUT curve for '{0}' uses weighted tangents; the exported curve drops the weights."
 msgstr "'{0}' の LUT カーブが重み付きタンジェントを使っています。エクスポートされるカーブでは重みが失われます。"
