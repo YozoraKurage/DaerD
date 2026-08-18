@@ -55,6 +55,19 @@ namespace Yozolab.DaerD
         public string savedByVersion;
 
         /// <summary>
+        /// The controller this holder belongs to — set only while the holder lives in a sidecar
+        /// asset of its own, null while it is a sub-asset of the controller (where belonging is
+        /// the file itself and needs no field).
+        ///
+        /// THE LINK POINTS ONE WAY ON PURPOSE. Detaching exists so a controller can be handed to
+        /// someone without DaerD's records in it; a reference on the controller's side would put
+        /// a trace of DaerD straight back into the file the whole operation is meant to leave
+        /// clean. So the sidecar knows its controller and the controller knows nothing, and
+        /// <see cref="Find"/> pays for that with a lookup rather than a dereference.
+        /// </summary>
+        public AnimatorController owner;
+
+        /// <summary>
         /// This controller's designated placeholder clip. Assigned to new states on creation
         /// and offered by the analyzer as the fill-in fix for states (and blend tree slots)
         /// with no motion.
@@ -1048,6 +1061,14 @@ namespace Yozolab.DaerD
             return found;
         }
 
+        /// <summary>
+        /// Three places to look, cheapest first: inside the .controller, at the sidecar path this
+        /// controller's own path derives, and — for a sidecar whose controller has since been
+        /// moved or renamed — anywhere in the project. Only the first two run for the controllers
+        /// that have never been detached, which is nearly all of them; the sweep is the price of
+        /// a link that lives on one side only, and it is paid once per answer, since
+        /// <see cref="Find"/> writes what comes back through to its table.
+        /// </summary>
         static GraphFrameData Scan(AnimatorController controller)
         {
             var path = AssetDatabase.GetAssetPath(controller);
@@ -1055,8 +1076,221 @@ namespace Yozolab.DaerD
             foreach (var asset in AssetDatabase.LoadAllAssetsAtPath(path))
                 if (asset is GraphFrameData data)
                     return data;
+
+            var derived = SidecarPathFor(path);
+            if (derived != null)
+            {
+                var beside = AssetDatabase.LoadAssetAtPath<GraphFrameData>(derived);
+                if (beside != null && beside.owner == controller) return beside;
+            }
+            return SweepForSidecar(controller);
+        }
+
+        // ---- the sidecar --------------------------------------------------------
+        //
+        // A controller headed out the door — sold, shared, committed to somebody else's repo —
+        // should not have to choose between carrying DaerD's records inside it and losing them
+        // (Discard, below). Detaching moves the holder into an asset of its own, where it keeps
+        // working exactly as before: every accessor in this file reaches it through Find, which
+        // does not care which file answered.
+        //
+        // The frames' references into the controller (state machines, clips, the parameter store)
+        // become cross-asset references and survive as such — that is what makes this a move and
+        // not a copy, and SidecarTests pins it.
+
+        /// <summary>
+        /// Where detached data goes. Named to sort last in the Project window: it is DaerD's
+        /// bookkeeping, not part of anybody's avatar, and it should not sit among the folders
+        /// people actually open (user decision, 2026-08-18).
+        /// </summary>
+        internal const string SidecarRoot = "Assets/zz_DaerD";
+
+        /// <summary>What the holder object is called, in the .controller and in a sidecar alike —
+        /// a sidecar's file is named after its controller, but the object inside keeps saying
+        /// what it is.</summary>
+        internal const string HolderName = "DaerD Frames";
+
+        /// <summary>
+        /// The sidecar path a controller path derives: its folders under <c>Assets/</c> mirrored
+        /// beneath <see cref="SidecarRoot"/>, its name with an <c>.asset</c> extension. Null for
+        /// anything outside <c>Assets/</c> — a controller in a package or in memory has no place
+        /// to put one, and refusing here is what makes that a stated answer rather than a path
+        /// the asset pipeline rejects later.
+        ///
+        /// THE MIRROR IS A BIRTHPLACE, NOT A TRACKER. Nothing keeps it true afterwards: move the
+        /// controller and its sidecar stays where it was, to be found by <see cref="Find"/>'s
+        /// sweep. Deriving the path again is a guess about where a sidecar probably is, which is
+        /// why the guess is only believed when the file it names says it owns this controller.
+        ///
+        /// Pure by design so the rule can be read off a test instead of an asset database.
+        /// </summary>
+        internal static string SidecarPathFor(string controllerAssetPath)
+        {
+            if (string.IsNullOrEmpty(controllerAssetPath)) return null;
+            var path = controllerAssetPath.Replace('\\', '/');
+            const string assets = "Assets/";
+            if (!path.StartsWith(assets, StringComparison.Ordinal)) return null;
+            var relative = path.Substring(assets.Length);
+            if (relative.Length == 0) return null;
+            int dot = relative.LastIndexOf('.');
+            if (dot > relative.LastIndexOf('/')) relative = relative.Substring(0, dot);
+            if (relative.Length == 0) return null;
+            return SidecarRoot + "/" + relative + ".asset";
+        }
+
+        /// <summary>
+        /// The recovery path: a sidecar names its controller, so a sidecar that has stopped
+        /// being where the mirror says can still be identified by asking every one of them.
+        /// Sub-asset holders never match — they leave <see cref="owner"/> null.
+        /// </summary>
+        static GraphFrameData SweepForSidecar(AnimatorController controller)
+        {
+            foreach (var guid in AssetDatabase.FindAssets("t:GraphFrameData", new[] { "Assets" }))
+            {
+                var found = AssetDatabase.LoadAssetAtPath<GraphFrameData>(
+                    AssetDatabase.GUIDToAssetPath(guid));
+                if (found != null && found.owner == controller) return found;
+            }
             return null;
         }
+
+        /// <summary>The file this controller's data lives in when that file is a sidecar, or null
+        /// when the data is embedded (or absent). The question the home screen asks to decide
+        /// which of the two buttons it is showing.</summary>
+        public static string SidecarPathOf(AnimatorController controller)
+        {
+            var data = Find(controller);
+            if (data == null) return null;
+            var path = AssetDatabase.GetAssetPath(data);
+            if (string.IsNullOrEmpty(path) || path == AssetDatabase.GetAssetPath(controller))
+                return null;
+            return path;
+        }
+
+        /// <summary>
+        /// Moves the holder out of the .controller and into an asset of its own, so the
+        /// controller can be distributed with none of DaerD's records inside it while the records
+        /// themselves stay here, working.
+        ///
+        /// Returns null on success (including "there was nothing to move" and "it is already
+        /// detached"), or a diagnostic reason when the controller has nowhere to keep a sidecar.
+        /// The reason is for a log, not a dialog — the home screen simply does not offer the
+        /// button when <see cref="SidecarPathFor"/> says no.
+        ///
+        /// NOT UNDOABLE, for <see cref="Discard"/>'s reason: taking a sub-asset out is an asset
+        /// save. The caller confirms with the user before calling.
+        /// </summary>
+        public static string Detach(AnimatorController controller)
+        {
+            if (controller == null) return "there is no controller to detach data from";
+            var controllerPath = AssetDatabase.GetAssetPath(controller);
+            var sidecarPath = SidecarPathFor(controllerPath);
+            if (sidecarPath == null)
+                return string.IsNullOrEmpty(controllerPath)
+                    ? "this controller is not saved in the project, so it has no data to detach"
+                    : "'" + controllerPath + "' is outside Assets/, and a sidecar can only be "
+                        + "written inside the project";
+
+            var data = Find(controller);
+            if (data == null) return null;
+            if (AssetDatabase.GetAssetPath(data) != controllerPath) return null;
+
+            var folder = ParentFolderOf(sidecarPath);
+            if (!AssetFolders.Ensure(folder))
+                return "'" + folder + "' could not be created, so there is nowhere to put the "
+                    + "detached data";
+            // Whatever else is already sitting there belongs to somebody: the mirrored name is
+            // convenience, not a claim on the path.
+            sidecarPath = AssetDatabase.GenerateUniqueAssetPath(sidecarPath);
+
+            AssetDatabase.RemoveObjectFromAsset(data);
+            // A sub-asset hides so the Project window does not list DaerD's bookkeeping among the
+            // controller's clips. A file of its own is exactly the opposite: the user is meant to
+            // see it, move it, and put it in version control.
+            data.hideFlags = HideFlags.None;
+            data.owner = controller;
+            AssetDatabase.CreateAsset(data, sidecarPath);
+            EditorUtility.SetDirty(controller);
+            // Both files, for the reason AddObjectToAsset needs it: until the controller is
+            // written and reimported it still carries the holder on disk, and a scan finds it.
+            AssetDatabase.SaveAssets();
+            AssetDatabase.ImportAsset(controllerPath);
+            s_holders[controller] = data;
+            LayerOwners.Forget();
+            return null;
+        }
+
+        /// <summary>
+        /// Puts detached data back inside the controller and deletes the sidecar file.
+        ///
+        /// A COPY RATHER THAN A MOVE, unlike <see cref="Detach"/>: the holder is its file's MAIN
+        /// asset, and there is no taking a main asset out of its file. So the copy is what gets
+        /// added to the controller and the original goes with the file — which is invisible from
+        /// the outside (the references inside are copied as references) and matters only to code
+        /// still holding the old instance, none of which outlives the call.
+        /// </summary>
+        public static string Embed(AnimatorController controller)
+        {
+            if (controller == null) return "there is no controller to embed data into";
+            var controllerPath = AssetDatabase.GetAssetPath(controller);
+            if (string.IsNullOrEmpty(controllerPath))
+                return "this controller is not saved in the project, so there is nothing to "
+                    + "embed data into";
+
+            var data = Find(controller);
+            if (data == null) return null;
+            var sidecarPath = AssetDatabase.GetAssetPath(data);
+            if (string.IsNullOrEmpty(sidecarPath) || sidecarPath == controllerPath) return null;
+
+            var moved = Instantiate(data);
+            moved.name = HolderName;
+            moved.hideFlags = HideFlags.HideInHierarchy;
+            moved.owner = null;
+            AssetDatabase.AddObjectToAsset(moved, controller);
+            EditorUtility.SetDirty(controller);
+            AssetDatabase.DeleteAsset(sidecarPath);
+            AssetDatabase.SaveAssets();
+            AssetDatabase.ImportAsset(controllerPath);
+            PruneSidecarFolders(sidecarPath);
+            s_holders[controller] = moved;
+            LayerOwners.Forget();
+            return null;
+        }
+
+        /// <summary>
+        /// Walks up from a deleted sidecar removing the folders the mirror created, and stops at
+        /// the first one that is not empty — somebody else's file, or another controller's
+        /// sidecar, ends the walk. Never goes above <see cref="SidecarRoot"/>: everything under
+        /// it is DaerD's to tidy, and everything above it is the user's project.
+        /// </summary>
+        static void PruneSidecarFolders(string sidecarPath)
+        {
+            var folder = ParentFolderOf(sidecarPath);
+            while (folder != null && folder.Length >= SidecarRoot.Length
+                   && folder.StartsWith(SidecarRoot, StringComparison.Ordinal))
+            {
+                if (!AssetDatabase.IsValidFolder(folder)) break;
+                var full = ProjectRelative(folder);
+                if (!System.IO.Directory.Exists(full)) break;
+                using (var entries = System.IO.Directory.EnumerateFileSystemEntries(full).GetEnumerator())
+                    if (entries.MoveNext()) break;
+                if (!AssetDatabase.DeleteAsset(folder)) break;
+                folder = ParentFolderOf(folder);
+            }
+        }
+
+        static string ParentFolderOf(string path)
+        {
+            int slash = path == null ? -1 : path.LastIndexOf('/');
+            return slash <= 0 ? null : path.Substring(0, slash);
+        }
+
+        /// <summary>An "Assets/…" path as the operating system spells it. The asset database has
+        /// no "is this folder empty" question — folders it can see are folders with something in
+        /// them — so emptiness is read off the disk.</summary>
+        static string ProjectRelative(string assetPath) =>
+            Application.dataPath.Substring(0, Application.dataPath.Length - "Assets".Length)
+            + assetPath;
 
         /// <summary>
         /// Destroys the controller's frame holder — every piece of DaerD's saved state at once:
@@ -1065,16 +1299,24 @@ namespace Yozolab.DaerD
         /// motions and generated machinery all stay, they just stop being DaerD-managed
         /// (no regeneration, no ownership marks, no records to delete from).
         ///
-        /// This is how a controller is stripped for a DaerD-less distribution, and it is why the
-        /// operation is NOT undoable: the holder is a sub-asset, and destroying one is an asset
-        /// save. The caller confirms with the user before calling.
+        /// This strips a controller for a DaerD-less distribution by throwing the records away;
+        /// <see cref="Detach"/> does it by keeping them somewhere else. It is why the operation is
+        /// NOT undoable: the holder is a sub-asset, and destroying one is an asset save. The
+        /// caller confirms with the user before calling.
         /// </summary>
         public static void Discard(AnimatorController controller)
         {
             var data = Find(controller);
             if (data == null) return;
             var path = AssetDatabase.GetAssetPath(data);
-            if (!string.IsNullOrEmpty(path))
+            if (!string.IsNullOrEmpty(path) && path != AssetDatabase.GetAssetPath(controller))
+            {
+                // Detached: the holder IS the file, so discarding it is deleting the file — and
+                // then the mirrored folders it was the only reason for.
+                AssetDatabase.DeleteAsset(path);
+                PruneSidecarFolders(path);
+            }
+            else if (!string.IsNullOrEmpty(path))
             {
                 AssetDatabase.RemoveObjectFromAsset(data);
                 DestroyImmediate(data, true);
@@ -1140,7 +1382,7 @@ namespace Yozolab.DaerD
             }
 
             var data = CreateInstance<GraphFrameData>();
-            data.name = "DaerD Frames";
+            data.name = HolderName;
             data.hideFlags = HideFlags.HideInHierarchy;
             data.savedByVersion = SavedByVersion.Current;
             var path = controller != null ? AssetDatabase.GetAssetPath(controller) : null;

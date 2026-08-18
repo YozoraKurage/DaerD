@@ -30,7 +30,7 @@ Styles / Utils / Localization（どこからでも使う道具）
 | **Engine** | 機構の生成（作る側） | DbtBuilder, ToggleBuilder, ObjectGadgets, AapGadgets, AsyncSync*（Builder/Applier/Schedule/Split/Cost/Naming）, NetworkSyncBuilder, SyncRequestBuilder |
 | **Analyze** | 読み取り専用の解析 | ControllerAnalyzer, ControllerReachability, LayerOwners（レイヤー所有の逆引き）, ParameterUsageFinder, AapWriteScan, ControllerLocator, StateSearch |
 | **IR** | コントローラーの中間表現 | ControllerIR（Parse）, ControllerIRDiff（Compare）, ControllerIRBuilder（Rebuild — レシピ Generate の実体） |
-| **Persist** | 直列化される型 | GraphFrameData（DD の全保存状態: objectGadgets, codeOwned, PrefabLink, asyncSync…）, DaerDLayerTemplate, DaerDBlendTreeTemplate |
+| **Persist** | 直列化される型 | GraphFrameData（DD の全保存状態: objectGadgets, codeOwned, PrefabLink, asyncSync…。既定は .controller のサブアセット、Detach で `Assets/zz_DaerD/…` のサイドカー .asset へ移せる — 紐づけはサイドカー側の owner のみ、探すのは Find）, DaerDLayerTemplate, DaerDBlendTreeTemplate |
 | **Bridge** | 外界への型非依存アクセサ | VrcParameters / VrcMenuAccess / VrcBehaviours / VrcParameterDriver（SDK 型を名前で）, ParameterStore（MA）, PrefabLinks / PrefabWriter（Check→純 Judge の前例）, LiveAnimator / AnimatorPlayback, SavedByVersion（PackageInfo→純 Format、GraphFrameData.savedByVersion のスタンプ元） |
 | **Edit** | ユーザー操作の構造編集 | 各種 Clipboard, ParameterRenamer / Converter, ClipRenamer / Repather, StateDuplicator / Packer, GraphLayout |
 

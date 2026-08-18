@@ -188,27 +188,12 @@ namespace Yozolab.DaerD.Authoring
             return true;
         }
 
-        /// <summary>Makes sure a project folder exists AND is imported, creating the chain
-        /// through the AssetDatabase (Directory.CreateDirectory alone leaves folders the
-        /// asset pipeline hasn't seen, which corrupts GenerateUniqueAssetPath).</summary>
-        internal static bool EnsureAssetFolder(string folder)
-        {
-            folder = NormalizeProjectFolder(folder);
-            if (folder == null) return false;
-            if (AssetDatabase.IsValidFolder(folder)) return true;
-
-            var parts = folder.Split('/');
-            string current = parts[0];
-            for (int i = 1; i < parts.Length; i++)
-            {
-                string next = current + "/" + parts[i];
-                if (!AssetDatabase.IsValidFolder(next)
-                    && string.IsNullOrEmpty(AssetDatabase.CreateFolder(current, parts[i])))
-                    return false;
-                current = next;
-            }
-            return AssetDatabase.IsValidFolder(folder);
-        }
+        /// <summary>Makes sure the folder an export was aimed at exists and is imported: what
+        /// the user typed, coerced into a project path, then created chain and all. The creating
+        /// half is <see cref="AssetFolders.Ensure"/>, shared with the other feature that has to
+        /// make a folder appear.</summary>
+        internal static bool EnsureAssetFolder(string folder) =>
+            AssetFolders.Ensure(NormalizeProjectFolder(folder));
 
         /// <summary>
         /// Coerces user input (typed text, an absolute picker path) into an "Assets/…"
