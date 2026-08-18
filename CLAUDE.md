@@ -64,9 +64,18 @@ Editor イメージ）。EditMode テストはコンテナ内で完結する。
 
 ```
 .devcontainer/unity/run-tests.sh                      # 全件
-.devcontainer/unity/run-tests.sh --filter '*Frame*'   # 絞り込み
+.devcontainer/unity/run-tests.sh --filter 'Yozolab.DaerD.Tests.FooTests'   # 絞り込み(完全名)
+.devcontainer/unity/test-daemon.sh start              # 常駐 Unity(推奨・下記)
 ```
 
+- **テストデーモン**: `test-daemon.sh start` で常駐 Unity を立てると、以後の
+  run-tests.sh は自動でそちらへ依頼される（死んでいればコールドへ自動フォールバック）。
+  **フィルタ実行が数秒**になる（コールドは毎回 ~2.5 分の起動費を払う）。全件は
+  テスト自身のアセット生成が支配的でコールドと同等（~3 分）。パッケージを出し入れ
+  したら `restart`。常駐中は同じプロジェクトを別の Unity で開けない。
+- **テストの規律（2026-08-18 ユーザー決定）**: コミット前は**変更に対応する
+  フィクスチャの部分選択でよい**。全件はシリーズ（wave）完了時に 1 回
+  （SDK 無し構成が要る変更ならそのときに一緒に）。
 - 出力はサマリと失敗内容だけ。Unity の生ログは
   `$DAERD_UNITY_PROJECT/Logs/tests.log`、結果 XML は同ディレクトリの
   `test-results.xml`。ログを丸ごと読み込まないこと（数万行ある）。

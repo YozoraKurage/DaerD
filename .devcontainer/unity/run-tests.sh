@@ -34,6 +34,48 @@ if [[ ! -f "$UNITY_PROJECT/Packages/manifest.json" ]]; then
   "$SCRIPT_DIR/setup.sh"
 fi
 
+# デーモン（test-daemon.sh start で常駐させた Unity）が生きていれば、起動費を払わずに
+# そちらへ依頼する。死んでいれば黙って従来のコールド実行へ落ちる。
+readonly DAEMON_DIR="$UNITY_PROJECT/TestDaemon"
+# 死活は PID だけで見る。ハートビートは使わない — 同期的な Refresh や長いテスト
+# フレームの間は update が止まって鼓動も止まるので、鮮度で判定すると「忙しい」を
+# 「死んだ」と誤読してコールドに落ち、常駐とロック衝突する(実測済み)。
+daemon_alive() {
+  [[ -f "$DAEMON_DIR/daemon.pid" ]] \
+    && kill -0 "$(cat "$DAEMON_DIR/daemon.pid")" 2>/dev/null
+}
+if daemon_alive; then
+  info "デーモンへ依頼 (PID $(cat "$DAEMON_DIR/daemon.pid"))"
+  rm -f "$DAEMON_DIR/done" "$DAEMON_DIR/result.xml"
+  printf '{"filter":"%s","category":"%s"}' "$FILTER" "$CATEGORY" \
+    > "$DAEMON_DIR/request.json"
+  for _ in $(seq 1 900); do
+    sleep 1
+    [[ -f "$DAEMON_DIR/done" ]] && break
+    daemon_alive || break
+  done
+  if [[ ! -f "$DAEMON_DIR/done" ]] && daemon_alive; then
+    # 生きているのに 15 分応答が無い。勝手に殺してコールドへ落ちると常駐と
+    # ロック衝突するので、ここでは状況を言って止まるだけにする。
+    warn "デーモンは生きているが 15 分応答が無い。test-daemon.sh restart を検討 (ログ: $UNITY_LOG_DIR/daemon.log)"
+    exit 1
+  fi
+  if [[ -f "$DAEMON_DIR/done" ]]; then
+    code=$(head -1 "$DAEMON_DIR/done")
+    if [[ "$code" == 3 ]]; then
+      warn "デーモン側でコンパイルエラー: $(sed -n 2p "$DAEMON_DIR/done")"
+      grep -o '[^ ]*\.cs([0-9]*,[0-9]*): error CS[0-9]*: .*' \
+        "$UNITY_LOG_DIR/daemon.log" 2>/dev/null | sort -u | head -50
+      exit 3
+    fi
+    echo ""
+    node "$SCRIPT_DIR/summarize-results.js" "$DAEMON_DIR/result.xml" || true
+    exit "$code"
+  fi
+  warn "デーモンのプロセスが死んでいた。後始末してコールドで続行する"
+  rm -f "$DAEMON_DIR/daemon.pid" "$DAEMON_DIR/running.json" "$DAEMON_DIR/request.json"
+fi
+
 mkdir -p "$UNITY_LOG_DIR"
 readonly LOG="$UNITY_LOG_DIR/tests.log"
 readonly RESULTS="$UNITY_LOG_DIR/test-results.xml"
