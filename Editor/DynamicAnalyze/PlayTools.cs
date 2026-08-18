@@ -41,7 +41,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// <summary>Which tool has an avatar. Nothing is ever both: GestureManager wins when
         /// both are looking at one avatar, because it is the one being driven by hand and so
         /// the one somebody is watching.</summary>
-        public enum Tool
+        internal enum Tool
         {
             None,
             GestureManager,
@@ -50,7 +50,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
 
         /// <summary>What this copy of the avatar IS to the tool holding it, which is the whole
         /// reason to ask a tool anything.</summary>
-        public enum Role
+        internal enum Role
         {
             /// <summary>Nobody has it.</summary>
             None,
@@ -69,7 +69,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
         }
 
         /// <summary>Who has this avatar and what it is to them.</summary>
-        public struct Hold
+        internal struct Hold
         {
             public Tool tool;
             public Role role;

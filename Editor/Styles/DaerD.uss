@@ -90,6 +90,14 @@ GridBackground {
     background-color: rgba(90, 140, 210, 0.55);
 }
 
+/* Prefab badge on a tab whose controller is pinned to a gimmick prefab. Sized to the label's
+   cap height so it reads as part of the name rather than as a button beside it. */
+.dd-tab__icon {
+    width: 13px;
+    height: 13px;
+    margin-right: 4px;
+}
+
 .dd-tab__label {
     -unity-font-style: bold;
     margin-right: 4px;

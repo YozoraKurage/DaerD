@@ -80,7 +80,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// <summary>A run and the experiment that produced it, which is what a file holds and
         /// what every caller that opens one wants both halves of. <see cref="settings"/> is null
         /// for a file that does not say — see <see cref="TraceManifest.Restored"/>.</summary>
-        public sealed class Run
+        internal sealed class Run
         {
             public SignalTrace trace = new SignalTrace();
             public SimSettings settings;

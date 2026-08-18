@@ -58,6 +58,46 @@ namespace Yozolab.DaerD
             return EditorWindow.GetWindow(type, false, "Animation", true);
         }
 
+        /// <summary>
+        /// The clip the window is currently editing, or null when it isn't reachable. Reading is
+        /// side-effect free, unlike writing — see <see cref="TrySetClip"/>.
+        /// </summary>
+        public static AnimationClip TryGetClip(EditorWindow window)
+        {
+            if (window == null || !ResolveClipAccess()) return null;
+            try { return s_clipProp.GetValue(window) as AnimationClip; }
+            catch (Exception ex)
+            {
+                if (VerboseLogging) Debug.LogWarning("[DaerD] TryGetClip threw: " + ex.Message);
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// True / false when the window's previewing state could be read, null when it couldn't.
+        /// </summary>
+        public static bool? TryIsPreviewing(EditorWindow window)
+        {
+            if (window == null) return null;
+            var animEditor = ResolveAnimEditor(window);
+            if (animEditor == null) return null;
+            var state = ResolveMember(animEditor, "state", "m_State");
+            var previewing = state != null ? ResolveMember(state, "previewing", null) : null;
+            if (previewing == null)
+            {
+                var control = ResolveMember(animEditor, "controlInterface", null)
+                              ?? (state != null ? ResolveMember(state, "controlInterface", "m_ControlInterface") : null);
+                previewing = control != null ? ResolveMember(control, "previewing", null) : null;
+            }
+            return previewing is bool value ? value : (bool?)null;
+        }
+
+        /// <summary>
+        /// Writes the clip into the window. Never call this with the clip that is already there:
+        /// <c>AnimationWindowState.activeAnimationClip</c> has no equality guard, so even a
+        /// same-clip write runs OnSelectionChanged → StopPreview → StopRecording and rewinds the
+        /// playhead to frame 0. Callers guard with <see cref="TryGetClip"/>.
+        /// </summary>
         public static bool TrySetClip(EditorWindow window, AnimationClip clip)
         {
             if (window == null || clip == null) return false;

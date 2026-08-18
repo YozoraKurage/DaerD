@@ -76,6 +76,35 @@ namespace Yozolab.DaerD.Tests
         }
 
         [Test]
+        public void Discard_TakesTheHolderOutOfTheFile_AndLeavesTheControllerAlone()
+        {
+            WithSavedController(controller =>
+            {
+                GraphFrameData.GetOrCreate(controller);
+                int layers = controller.layers.Length;
+
+                GraphFrameData.Discard(controller);
+
+                Assert.IsNull(GraphFrameData.Find(controller));
+                foreach (var asset in AssetDatabase.LoadAllAssetsAtPath(Path))
+                    Assert.IsFalse(asset is GraphFrameData,
+                        "the holder is still inside the .controller file");
+                Assert.AreEqual(layers, controller.layers.Length);
+            });
+        }
+
+        [Test]
+        public void Discard_WhenThereIsNothing_DoesNothing()
+        {
+            WithSavedController(controller =>
+            {
+                Assert.IsNull(GraphFrameData.Find(controller));
+                Assert.DoesNotThrow(() => GraphFrameData.Discard(controller));
+                Assert.IsNull(GraphFrameData.Find(controller));
+            });
+        }
+
+        [Test]
         public void ForgettingEverything_LosesNothingButTheShortcut()
         {
             WithSavedController(controller =>

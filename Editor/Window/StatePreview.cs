@@ -24,6 +24,10 @@ namespace Yozolab.DaerD
         /// our switch OFF only stops a preview we ourselves turned on.</summary>
         bool _owns;
 
+        /// <summary>The clip our last re-toggle acquired against; the re-toggle is skipped while
+        /// the window still previews it.</summary>
+        AnimationClip _previewedClip;
+
         public StatePreview(DaerDContext context) => _context = context;
 
         public void Start()
@@ -95,12 +99,21 @@ namespace Yozolab.DaerD
             var window = AnimationWindowAccess.FindOpen();
             if (window == null) return;
 
+            // Nothing to re-acquire against when the window is already previewing this very
+            // clip — and re-toggling anyway is destructive: StopPreview stops recording too, so
+            // an undo (which reaches us through GraphRebuilt, whatever was undone) would knock
+            // the user out of Rec mode. Only skip when previewing could actually be read;
+            // an unreadable state falls through to the re-toggle as before.
+            if (_owns && _previewedClip == clip && AnimationWindowAccess.TryIsPreviewing(window) == true)
+                return;
+
             // OFF then ON so an already-previewing window re-acquires against the new clip;
             // the setter is idempotent (false-when-already-false is a no-op) so the first
             // call only does work when something was previewing before.
             AnimationWindowAccess.TrySetPreviewing(window, false);
             AnimationWindowAccess.TrySetPreviewing(window, true);
             _owns = true;
+            _previewedClip = clip;
         }
 
         void StopOurPreview()
@@ -109,6 +122,7 @@ namespace Yozolab.DaerD
             var window = AnimationWindowAccess.FindOpen();
             if (window != null) AnimationWindowAccess.TrySetPreviewing(window, false);
             _owns = false;
+            _previewedClip = null;
         }
     }
 }

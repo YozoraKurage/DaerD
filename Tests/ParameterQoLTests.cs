@@ -1,6 +1,8 @@
 using NUnit.Framework;
 using UnityEditor.Animations;
 using UnityEngine;
+using Yozolab.DaerD.Edit;
+using Yozolab.DaerD.Engine;
 
 namespace Yozolab.DaerD.Tests
 {

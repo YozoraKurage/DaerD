@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using UnityEditor.Animations;
 using UnityEngine;
+using Yozolab.DaerD.IR;
 
 namespace Yozolab.DaerD.Authoring
 {
@@ -199,6 +200,36 @@ namespace Yozolab.DaerD.Authoring
 
         readonly Dictionary<string, GadgetRecipeBuilder> _gadgets =
             new Dictionary<string, GadgetRecipeBuilder>();
+
+        /// <summary>
+        /// Object gadgets — the toggles whose subject is an object inside the gimmick prefab
+        /// this controller is pinned to — as a post step. The controller side is rebuilt on
+        /// every Generate; the prefab is only ever read, and a target it cannot find stops the
+        /// step by name (ADR 0047).
+        ///
+        ///   c.Objects().Toggle("Hat").Shows("Head/Hat")
+        ///              .Toggle("Cape").AsTree().Hides("Body/Cape");
+        ///
+        /// One builder per recipe, unlike <see cref="Gadgets"/>, which is one per layer: a Bool
+        /// toggle is a layer of its own and the tree-wired ones all share one, so there is
+        /// nothing here to key a second builder by. <paramref name="layerName"/> is that shared
+        /// layer's name — it only decides where the tree-wired toggles land on a controller that
+        /// has no saved record to inherit a layer from, which is what a port to another gimmick
+        /// is. Named "DBT" by default, the same name the wizard gives it.
+        /// </summary>
+        public ObjectRecipeBuilder Objects(string layerName = null)
+        {
+            if (_objects == null)
+            {
+                _objects = new ObjectRecipeBuilder(this, layerName);
+                Script?.Declare(_objects, "Objects", this,
+                    string.IsNullOrEmpty(layerName) || layerName == ObjectRecipeBuilder.DefaultLayer
+                        ? "Objects()" : $"Objects({RecipeScript.S(layerName)})");
+            }
+            return _objects;
+        }
+
+        ObjectRecipeBuilder _objects;
 
         // ---- bake ---------------------------------------------------------------
 

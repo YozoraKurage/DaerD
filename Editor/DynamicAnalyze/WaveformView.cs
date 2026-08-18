@@ -345,7 +345,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
         readonly HashSet<string> _collapsed = new HashSet<string>();
 
         /// <summary>A line of the list: a scope's header, or one signal under it.</summary>
-        public struct Row
+        internal struct Row
         {
             public string scope;
             public SignalTrace.Signal signal;

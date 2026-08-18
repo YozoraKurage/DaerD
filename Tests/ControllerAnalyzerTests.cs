@@ -3,6 +3,9 @@ using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
+using Yozolab.DaerD.Analyze;
+using Yozolab.DaerD.Bridge;
+using Yozolab.DaerD.Engine;
 
 namespace Yozolab.DaerD.Tests
 {
@@ -187,6 +190,112 @@ namespace Yozolab.DaerD.Tests
             Assert.IsNotNull(issues[0].fix);
             issues[0].fix();
             Assert.AreEqual(0, a.transitions.Length);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        /// <summary>An exit time of 0 is not "leave at once" — it is Unity's way of writing
+        /// "leave at the end of a lap", the same as 1. Measured in PlayModeProbeTests; these
+        /// only pin what the analyzer says about it.</summary>
+        static AnimatorStateTransition ExitTimeTransition(AnimatorState from, AnimatorState to, float exitTime)
+        {
+            var t = from.AddTransition(to);
+            t.hasExitTime = true;
+            t.exitTime = exitTime;
+            return t;
+        }
+
+        [Test]
+        public void ExitTimeZero_WithAConditionOnIt_IsAWarningTheFixClears()
+        {
+            var controller = NewController(out var sm);
+            controller.AddParameter("Go", AnimatorControllerParameterType.Bool);
+            var a = sm.AddState("A");
+            var b = sm.AddState("B");
+            var t = ExitTimeTransition(a, b, 0f);
+            t.AddCondition(AnimatorConditionMode.If, 0f, "Go");
+
+            var issues = OfKind(controller, IssueKind.ExitTimeZero);
+
+            Assert.AreEqual(1, issues.Count);
+            Assert.AreEqual(IssueSeverity.Warning, issues[0].severity);
+            Assert.IsNotNull(issues[0].fix);
+            issues[0].fix();
+
+            Assert.IsFalse(t.hasExitTime);
+            Assert.IsEmpty(OfKind(controller, IssueKind.ExitTimeZero));
+            // The condition is what keeps the repair honest: clearing exit time off a
+            // transition that had none would only trade this row for a dead-transition one.
+            Assert.IsEmpty(OfKind(controller, IssueKind.DeadTransition));
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void ExitTimeZero_WithNoCondition_IsInfoWithNoFixToOffer()
+        {
+            var controller = NewController(out var sm);
+            var a = sm.AddState("A");
+            var b = sm.AddState("B");
+            ExitTimeTransition(a, b, 0f);
+
+            var issues = OfKind(controller, IssueKind.ExitTimeZero);
+
+            Assert.AreEqual(1, issues.Count);
+            Assert.AreEqual(IssueSeverity.Info, issues[0].severity);
+            Assert.IsNull(issues[0].fix, "which of the two repairs is right depends on the intent");
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void AnExitTimePartWayThroughTheLap_IsNothingToSayAnythingAbout()
+        {
+            var controller = NewController(out var sm);
+            controller.AddParameter("Go", AnimatorControllerParameterType.Bool);
+            var a = sm.AddState("A");
+            var b = sm.AddState("B");
+            var c = sm.AddState("C");
+            ExitTimeTransition(a, b, 0.5f).AddCondition(AnimatorConditionMode.If, 0f, "Go");
+            ExitTimeTransition(b, c, 0.5f);
+
+            Assert.IsEmpty(OfKind(controller, IssueKind.ExitTimeZero));
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void ATransitionWithExitTimeSwitchedOff_IsNotAnExitTimeZero()
+        {
+            var controller = NewController(out var sm);
+            controller.AddParameter("Go", AnimatorControllerParameterType.Bool);
+            var a = sm.AddState("A");
+            var b = sm.AddState("B");
+            var t = a.AddTransition(b);
+            t.hasExitTime = false;
+            t.exitTime = 0f;            // the field keeps its value; nothing reads it
+            t.AddCondition(AnimatorConditionMode.If, 0f, "Go");
+
+            Assert.IsEmpty(OfKind(controller, IssueKind.ExitTimeZero));
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void ExitTimeZero_OnAnAnyStateTransition_IsLeftAlone()
+        {
+            var controller = NewController(out var sm);
+            controller.AddParameter("Go", AnimatorControllerParameterType.Bool);
+            sm.AddState("A");
+            var z = sm.AddState("Z");
+            var t = sm.AddAnyStateTransition(z);
+            t.hasExitTime = true;
+            t.exitTime = 0f;
+            t.AddCondition(AnimatorConditionMode.If, 0f, "Go");
+
+            // What exit time counts against with no source state of its own was never
+            // measured, so the analyzer says nothing rather than guessing.
+            Assert.IsEmpty(OfKind(controller, IssueKind.ExitTimeZero));
 
             Object.DestroyImmediate(controller);
         }
@@ -819,6 +928,195 @@ namespace Yozolab.DaerD.Tests
             Object.DestroyImmediate(controller);
         }
 
+        // ---- dead entry branches ------------------------------------------------
+
+        /// <summary>
+        /// A layer begins at its default state however its Entry conditions read; the
+        /// conditions are only read on the way back through Entry. Measured in
+        /// PlayModeProbeTests — these pin what the analyzer makes of it.
+        /// </summary>
+        [Test]
+        public void ConditionalRootEntries_InALayerThatNeverReachesExit_AreReportedTogether()
+        {
+            var controller = NewController(out var sm);
+            controller.AddParameter("P", AnimatorControllerParameterType.Bool);
+            sm.AddState("Start");       // default — where the layer begins either way
+            var a = sm.AddState("A");
+            var b = sm.AddState("B");
+            sm.AddEntryTransition(a).AddCondition(AnimatorConditionMode.If, 0f, "P");
+            sm.AddEntryTransition(b).AddCondition(AnimatorConditionMode.IfNot, 0f, "P");
+
+            var issues = OfKind(controller, IssueKind.DeadEntryBranch);
+
+            Assert.AreEqual(1, issues.Count, "one row per layer, not one per branch");
+            Assert.AreEqual(IssueSeverity.Warning, issues[0].severity);
+            StringAssert.Contains("2", issues[0].message, "the branches it counted");
+            Assert.AreSame(sm, issues[0].context);
+            Assert.AreEqual(0, issues[0].layerIndex);
+            Assert.IsNull(issues[0].fix, "the repair depends on which of the two the author meant");
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void TheSameEntryBranch_InALayerThatCanPassExit_IsLeftAlone()
+        {
+            var controller = NewController(out var sm);
+            controller.AddParameter("P", AnimatorControllerParameterType.Bool);
+            var start = sm.AddState("Start");   // default
+            var a = sm.AddState("A");
+            sm.AddEntryTransition(a).AddCondition(AnimatorConditionMode.If, 0f, "P");
+            start.AddExitTransition();          // ...and the layer comes back round to Entry
+
+            Assert.IsEmpty(OfKind(controller, IssueKind.DeadEntryBranch));
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void AConditionalEntryInsideASubMachine_IsNotARootEntry()
+        {
+            var controller = NewController(out var sm);
+            controller.AddParameter("P", AnimatorControllerParameterType.Bool);
+            var start = sm.AddState("Start");   // default
+            var child = sm.AddStateMachine("Child");
+            var p = child.AddState("P1");
+            var q = child.AddState("Q");
+            child.defaultState = p;
+            child.AddEntryTransition(q).AddCondition(AnimatorConditionMode.If, 0f, "P");
+            start.AddTransition(child);
+
+            // A sub machine's Entry is read on every visit, so this branch does decide things.
+            Assert.IsEmpty(OfKind(controller, IssueKind.DeadEntryBranch));
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void RootEntriesWithNoConditions_DecideNothingToBeginWith()
+        {
+            var controller = NewController(out var sm);
+            sm.AddState("Start");       // default
+            var a = sm.AddState("A");
+            sm.AddEntryTransition(a);   // unconditional: the fall-through, not a branch
+
+            Assert.IsEmpty(OfKind(controller, IssueKind.DeadEntryBranch));
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void AnExitOnlyAnUnreachableIslandCouldTake_IsNoWayBackToEntry()
+        {
+            var controller = NewController(out var sm);
+            controller.AddParameter("P", AnimatorControllerParameterType.Bool);
+            sm.AddState("Start");       // default
+            var a = sm.AddState("A");
+            sm.AddEntryTransition(a).AddCondition(AnimatorConditionMode.If, 0f, "P");
+            var island = sm.AddState("Island");
+            var partner = sm.AddState("Partner");
+            island.AddTransition(partner);
+            partner.AddTransition(island);
+            island.AddExitTransition();   // an Exit nothing can ever walk to
+
+            Assert.AreEqual(1, OfKind(controller, IssueKind.DeadEntryBranch).Count);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void ASyncedLayer_DoesNotRepeatTheSourceLayersEntryFinding()
+        {
+            var controller = NewController(out var sm);
+            controller.AddParameter("P", AnimatorControllerParameterType.Bool);
+            sm.AddState("Start");       // default
+            var a = sm.AddState("A");
+            sm.AddEntryTransition(a).AddCondition(AnimatorConditionMode.If, 0f, "P");
+            controller.AddLayer("Mirror");
+            var layers = controller.layers;
+            layers[1].syncedLayerIndex = 0;
+            controller.layers = layers;
+
+            var issues = OfKind(controller, IssueKind.DeadEntryBranch);
+
+            Assert.AreEqual(1, issues.Count);
+            Assert.AreEqual(0, issues[0].layerIndex, "reported against the layer that owns the machine");
+
+            Object.DestroyImmediate(controller);
+        }
+
+        // ---- built-in parameter types -------------------------------------------
+
+        static List<AnalyzerIssue> BuiltInTypeIssues(AnimatorController controller, string name,
+            AnimatorControllerParameterType type)
+        {
+            controller.AddParameter(name, type);
+            return OfKind(controller, IssueKind.VrcParameters);
+        }
+
+        [Test]
+        public void AnIntBuiltInDeclaredFloat_IsReportedWithoutAnyStore()
+        {
+            var controller = NewController(out _);
+
+            // No expression parameter store anywhere: this check reads VRChat's own table, so
+            // it has to run on a controller that belongs to no avatar.
+            var issues = BuiltInTypeIssues(controller, "GestureLeft", AnimatorControllerParameterType.Float);
+
+            Assert.AreEqual(1, issues.Count);
+            Assert.AreEqual(IssueSeverity.Info, issues[0].severity);
+            StringAssert.Contains("GestureLeft", issues[0].message);
+            Assert.IsNull(issues[0].fix, "retyping a parameter would invalidate the conditions on it");
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void ABuiltInDeclaredTheWayVrChatWritesIt_IsNothingToReport()
+        {
+            var controller = NewController(out _);
+
+            Assert.IsEmpty(BuiltInTypeIssues(controller, "GestureLeft", AnimatorControllerParameterType.Int));
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void AFloatBuiltInDeclaredInt_IsReportedToo()
+        {
+            var controller = NewController(out _);
+
+            Assert.AreEqual(1,
+                BuiltInTypeIssues(controller, "VelocityX", AnimatorControllerParameterType.Int).Count);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void ABuiltInDeclaredTrigger_IsReported()
+        {
+            var controller = NewController(out _);
+
+            // Nothing in the official table is a Trigger, so this disagrees by construction.
+            Assert.AreEqual(1,
+                BuiltInTypeIssues(controller, "Grounded", AnimatorControllerParameterType.Trigger).Count);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void AParameterTheAvatarInventedItself_HasNoOfficialTypeToDisagreeWith()
+        {
+            var controller = NewController(out _);
+            controller.AddParameter("Costume", AnimatorControllerParameterType.Int);
+            // VRChat matches built-in names exactly, so this one is the avatar's own too.
+            controller.AddParameter("gestureleft", AnimatorControllerParameterType.Float);
+
+            Assert.IsEmpty(OfKind(controller, IssueKind.VrcParameters));
+
+            Object.DestroyImmediate(controller);
+        }
+
         // ---- what the builders write, read back by the analyzer ----------------
 
         /// <summary>
@@ -962,18 +1260,18 @@ namespace Yozolab.DaerD.Tests
             var controller = new AnimatorController();
             controller.AddLayer("Base");
 
-            var request = new ToggleBuilder.Request
+            var plan = new ToggleBuilder.Plan
             {
                 controller = controller,
                 mode = ToggleBuilder.Mode.Layer,
-                toggleName = "Hat",
+                name = "Hat",
                 parameter = "Hat",
                 layerIndex = -1,
                 newLayerName = "Toggles",
             };
-            request.targets.Add(new ToggleBuilder.Target { path = "Armature/Head/Hat" });
-            Assert.IsNull(ToggleBuilder.Validate(request));
-            Assert.IsTrue(ToggleBuilder.Apply(request));
+            plan.targets.Add(new ToggleBuilder.Target { path = "Armature/Head/Hat" });
+            ToggleBuilder.BuildLayer(plan, ToggleBuilder.BuildClip(plan, on: true),
+                ToggleBuilder.BuildClip(plan, on: false), out _);
 
             AssertNothingIsWiredDeaf(controller, "the object toggle");
 

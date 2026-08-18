@@ -40,6 +40,8 @@ RUN apt-get -q update \
   vim \
   tzdata \
   locales \
+  # distillery のログ repo を remote 同期するときの保存時暗号化に使う。
+  git-crypt \
   # VS Code / Claude Code が LANG=en_US.UTF-8 を送ってくるのに、ベースイメージには
   # C.UTF-8 しか無くて毎コマンド setlocale 警告が出る。生成しておく。
   && sed -i 's/^# *\(en_US.UTF-8\)/\1/' /etc/locale.gen && locale-gen \

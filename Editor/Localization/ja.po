@@ -52,11 +52,17 @@ msgstr "無効な条件"
 msgid "Dead Transition"
 msgstr "発火しない遷移"
 
+msgid "Exit Time 0"
+msgstr "Exit Time 0"
+
 msgid "Soloed Transition"
 msgstr "Solo された遷移"
 
 msgid "Unreachable State"
 msgstr "到達不能 State"
+
+msgid "Dead Entry Branch"
+msgstr "読まれない Entry 分岐"
 
 msgid "Duplicate Name"
 msgstr "名前の重複"
@@ -99,6 +105,18 @@ msgstr "モード '{0}' は {1} 型パラメーター '{2}' に対して無効�
 msgid "Transition {0} has no conditions and no exit time; it can never fire."
 msgstr "遷移 {0} には条件も Exit Time もないため、発火することがありません。"
 
+msgid "Transition '{0}' {1} waits for the loop boundary even once its conditions hold: Exit Time 0 means the same as Exit Time 1 — once per clip length, once a second in a state with no motion — and never 'immediately'."
+msgstr "State '{0}' の遷移 {1} は、条件が成立してもループ境界まで待ちます。Exit Time 0 は Exit Time 1 と同じ意味（クリップ長ごと、モーションの無い State では 1 秒ごと）で、「即座」には決してなりません。"
+
+msgid "Transition '{0}' {1} has Exit Time 0, which behaves exactly like Exit Time 1: it falls through at every loop boundary (once per clip length, once a second in a state with no motion). If it was meant to fire immediately, give it a condition that always holds and turn Exit Time off."
+msgstr "State '{0}' の遷移 {1} の Exit Time 0 は、Exit Time 1 とまったく同じ動きをします（ループ境界ごと＝クリップ長ごと、モーションの無い State では 1 秒ごとに fall-through します）。即座に遷移させるつもりだったなら、常に成立する条件を足したうえで Exit Time を切ってください。"
+
+msgid "Turn Off Exit Time"
+msgstr "Exit Time を切る"
+
+msgid "Clear Exit Time so the conditions alone decide when it fires"
+msgstr "Exit Time を外し、発火タイミングを条件だけで決めるようにします"
+
 msgid "'{0}' has a soloed transition, so its other {1} transition(s) never run."
 msgstr "'{0}' には Solo された遷移があるため、他の {1} 本は評価されません。"
 
@@ -113,6 +131,9 @@ msgstr "State '{0}' には入ってくる遷移がなく、Default State でも�
 
 msgid "State '{0}' is only reachable from states that are themselves unreachable."
 msgstr "State '{0}' に入れるのは、それ自体が到達不能な State からだけです。"
+
+msgid "Layer '{0}' starts at its default state whatever its Entry conditions say; a root Entry is only read again on the way back from Exit, and nothing in this layer reaches Exit. Its {1} conditional Entry transition(s) never decide anything."
+msgstr "レイヤー '{0}' は、Entry の条件がどうであっても Default State から始まります。root の Entry が読み直されるのは Exit を通って戻ってきたときだけですが、このレイヤーは Exit に辿り着けません。条件付きの Entry 遷移 {1} 本は何も決めていません。"
 
 msgid "State name '{0}' is used more than once in '{1}'."
 msgstr "State 名 '{0}' が '{1}' 内で複数回使われています。"
@@ -205,9 +226,6 @@ msgstr "ガジェット・巡回同期の設定・各種ツールはホーム画
 msgid "{0} layers · {1} parameters"
 msgstr "レイヤー {0} 個 · パラメーター {1} 個"
 
-msgid "The VRC Expressions Menu this controller belongs to, opened by the menu editor. Assigned explicitly — DaerD never guesses it from the scene."
-msgstr "このコントローラーが属する VRC Expressions Menu。メニューエディターが開く対象です。明示的に指定するもので、DaerD がシーンから推測することはありません。"
-
 msgid "DBT Gadgets"
 msgstr "DBT ガジェット"
 
@@ -223,6 +241,36 @@ msgstr "+ ガジェットを追加"
 msgid "Add a Direct blend tree gadget that computes a float operation every frame."
 msgstr "Float 演算を毎フレーム計算する Direct Blend Tree ガジェットを追加します。"
 
+msgid "Object Gadgets"
+msgstr "オブジェクトガジェット"
+
+msgid "No object gadgets yet."
+msgstr "オブジェクトガジェットはまだありません。"
+
+msgid "{0} object(s)"
+msgstr "対象 {0} 個"
+
+msgid "Add a gadget whose subject is an object inside the linked prefab. One kind so far: a toggle, which switches those objects on and off from a parameter."
+msgstr "リンク先プレハブの中のオブジェクトを対象にするガジェットを追加します。今のところ種類は 1 つ、パラメーターで表示/非表示を切り替えるトグルです。"
+
+msgid "Delete the object gadget '{0}'?\n\nThis removes {1}. Nothing inside the prefab is changed."
+msgstr "オブジェクトガジェット '{0}' を削除しますか？\n\n{1} が削除されます。プレハブの中身は一切変更されません。"
+
+msgid "the layer '{0}'"
+msgstr "レイヤー '{0}'"
+
+msgid "its blend tree in the layer '{0}'"
+msgstr "レイヤー '{0}' の中の Blend Tree"
+
+msgid "{0} generated clip(s)"
+msgstr "生成されたクリップ {0} 個"
+
+msgid "this gadget's rows in {0} clip(s) you supplied"
+msgstr "あなたが指定したクリップ {0} 個の中の、このガジェットの行"
+
+msgid "the parameter '{0}'"
+msgstr "パラメーター '{0}'"
+
 msgid "No async sync setups yet."
 msgstr "巡回同期の設定はまだありません。"
 
@@ -232,11 +280,20 @@ msgstr "対象 {0} 件 / ステップ間隔 {1} 秒"
 msgid "+ New Async Sync"
 msgstr "+ 巡回同期を新規作成"
 
+msgid "Delete the async sync setup '{0}'?\n\nThis removes {1}. The multiplexed parameters, the Empty clip and the parameter store rows are left alone."
+msgstr "巡回同期の設定 '{0}' を削除しますか？\n\n{1} が削除されます。多重化していたパラメーター・Empty クリップ・パラメーターストアの宣言行は、いずれもそのまま残ります。"
+
+msgid "the layers {0}"
+msgstr "レイヤー {0}"
+
+msgid "{0} generated parameter(s)"
+msgstr "生成されたパラメーター {0} 個"
+
+msgid "{0} sync request(s) on states"
+msgstr "ステートに付いた同期リクエスト {0} 件"
+
 msgid "C# Recipes"
 msgstr "C# レシピ"
-
-msgid "No recipe-owned layers."
-msgstr "レシピが生成したレイヤーはありません。"
 
 msgid "Tools"
 msgstr "ツール"
@@ -255,12 +312,6 @@ msgstr "解析"
 
 msgid "Recipe Export"
 msgstr "レシピ書き出し"
-
-msgid "The menu editor works on the avatar's menu tree, in a window of its own."
-msgstr "メニューエディターはアバターのメニュー階層を編集するため、独立したウィンドウで開きます。"
-
-msgid "Open Menu Editor"
-msgstr "メニューエディターを開く"
 
 # ---- overview / analysis UI ----
 
@@ -355,6 +406,60 @@ msgstr "Empty クリップ"
 
 msgid "Stored with this controller. New states are created with it, and the analyzer's Fill fix assigns it to states with no motion."
 msgstr "このコントローラーと一緒に保存されます。新規 State 作成時に自動で設定され、解析の「穴埋め」修正でモーション未設定の State や Blend Tree の空スロットにも割り当てられます。"
+
+msgid "DaerD Data"
+msgstr "DaerD データ"
+
+msgid "This controller's DaerD data is kept in a file of its own, so the controller carries none of it."
+msgstr "このコントローラーの DaerD データは専用のファイルに置かれています。コントローラー本体には一切入っていません。"
+
+msgid "Detach DaerD Data…"
+msgstr "DaerD データを分離…"
+
+msgid "Move what DaerD stores into a file of its own, so this controller can be handed over without it."
+msgstr "DaerD が保存しているものを専用のファイルへ移します。DaerD データを含まない状態でこのコントローラーを配布できます。"
+
+msgid "Detach DaerD Data"
+msgstr "DaerD データの分離"
+
+msgid "Move everything DaerD stores with '{0}' into a file of its own?\n\nThe controller stops carrying any DaerD data at all — which is what makes it clean to hand over — and keeps every layer, parameter, motion and generated clip. Nothing is lost here: DaerD goes on managing it from the new file.\n\nIt is written to '{1}'. Keep that file in your project: without it this controller looks like one DaerD has never seen.\n\nThe assets are saved immediately; this cannot be undone."
+msgstr "'{0}' と一緒に DaerD が保存しているものを、すべて専用のファイルへ移しますか？\n\nコントローラー側には DaerD データが一切残らなくなり（配布用に綺麗な状態になります）、レイヤー・パラメーター・モーション・生成済みクリップはそのままです。手元では何も失われません: DaerD は新しいファイルから引き続き管理します。\n\n書き出し先は '{1}' です。このファイルはプロジェクトに残しておいてください。無くなると、このコントローラーは DaerD が一度も触っていないものと同じに見えます。\n\nアセットは即座に保存され、この操作は取り消せません。"
+
+msgid "Detach"
+msgstr "分離"
+
+msgid "Embed DaerD Data…"
+msgstr "DaerD データを統合…"
+
+msgid "Move the detached data back into this controller and delete the file."
+msgstr "分離したデータをこのコントローラーへ戻し、ファイルを削除します。"
+
+msgid "Embed DaerD Data"
+msgstr "DaerD データの統合"
+
+msgid "Move the DaerD data at '{0}' back into '{1}'?\n\nEverything DaerD remembers is kept — only where it lives changes. The file is deleted, along with the folders that were made for it, and the controller carries the data again.\n\nThe assets are saved immediately; this cannot be undone."
+msgstr "'{0}' にある DaerD データを '{1}' へ戻しますか？\n\nDaerD が覚えている内容はすべて保たれ、置き場所だけが変わります。ファイルは削除され（そのために作られたフォルダも一緒に）、コントローラーが再びデータを持ちます。\n\nアセットは即座に保存され、この操作は取り消せません。"
+
+msgid "Embed"
+msgstr "統合"
+
+msgid "Discard DaerD Data…"
+msgstr "DaerD データを破棄…"
+
+msgid "Remove everything DaerD stores with this controller. The controller itself is untouched."
+msgstr "DaerD がこのコントローラーと一緒に保存しているものをすべて取り除きます。コントローラー本体には触れません。"
+
+msgid "Discard DaerD Data"
+msgstr "DaerD データの破棄"
+
+msgid "Remove everything DaerD stores with '{0}'?\n\nGone: graph frames and notes, gadget and sync records, the prefab and recipe links, the store and Empty clip assignments.\n\nKept: every layer, parameter, motion and generated clip — the controller plays exactly as before, DaerD just no longer manages it (no regeneration, no ownership marks).\n\nThe asset is saved immediately; this cannot be undone."
+msgstr "'{0}' と一緒に DaerD が保存しているものをすべて取り除きますか？\n\n消えるもの: グラフのフレームとノート、ガジェットと同期の記録、プレハブ / レシピのリンク、ストアと Empty クリップの割り当て。\n\n残るもの: すべてのレイヤー・パラメーター・モーション・生成済みクリップ — コントローラーの再生は何も変わらず、DaerD の管理下から外れるだけです（再生成・所有表示はできなくなります）。\n\nアセットは即座に保存され、この操作は取り消せません。"
+
+msgid "This controller's data is detached: the file '{0}' is deleted too."
+msgstr "このコントローラーのデータは分離されています: ファイル '{0}' も一緒に削除されます。"
+
+msgid "Discard"
+msgstr "破棄"
 
 msgid "List Clips"
 msgstr "クリップ一覧"
@@ -501,6 +606,32 @@ msgstr "新規レイヤーの名前を入力してください。"
 
 msgid "Every state in this layer is a Direct blend tree"
 msgstr "このレイヤーの State はすべて Direct Blend Tree です"
+
+# ---- what DaerD generated a layer for (the generated-layer icon's tooltip) ----
+
+msgid "The cycle of the async sync setup '{0}'."
+msgstr "巡回同期の設定 '{0}' の巡回本体のレイヤーです。"
+
+msgid "The Ready watcher of the async sync setup '{0}'."
+msgstr "巡回同期の設定 '{0}' の Ready 監視レイヤーです。"
+
+msgid "The Stale watcher of the async sync setup '{0}'."
+msgstr "巡回同期の設定 '{0}' の Stale 監視レイヤーです。"
+
+msgid "The commit layer of the group '{0}' in the async sync setup '{1}'."
+msgstr "巡回同期の設定 '{1}' のグループ '{0}' を確定させるレイヤーです。"
+
+msgid "The object gadget '{0}'."
+msgstr "オブジェクトガジェット '{0}' のレイヤーです。"
+
+msgid "Generated by the recipe '{0}'."
+msgstr "レシピ '{0}' が生成したレイヤーです。"
+
+msgid "Hosts {0} DBT gadget(s) in its root Direct blend tree."
+msgstr "ルートの Direct Blend Tree に DBT ガジェットを {0} 個ぶら下げているレイヤーです。"
+
+msgid "Hosts {0} object gadget(s) in its root Direct blend tree."
+msgstr "ルートの Direct Blend Tree にオブジェクトガジェットを {0} 個ぶら下げているレイヤーです。"
 
 msgid "DBT Gadget"
 msgstr "DBT ガジェット"
@@ -757,19 +888,40 @@ msgstr "この演算はコントローラーの末尾に専用のレイヤーも
 msgid "This operation is a layer of its own: one state whose motion time follows the input. Nothing is added to a blend tree."
 msgstr "この演算はレイヤーそのものです。モーションタイムが入力に追従する State を 1 つ作るだけで、Blend Tree には何も追加しません。"
 
-# ---- object toggle wizard ----
+# ---- object gadget wizard ----
 
-msgid "Object Toggle"
-msgstr "オブジェクトトグル"
+msgid "Object Gadget"
+msgstr "オブジェクトガジェット"
 
-msgid "Generate ON/OFF clips for picked GameObjects and the layer or Direct blend tree machinery that plays them."
-msgstr "選択した GameObject の ON/OFF クリップと、それを再生するレイヤーまたは Direct Blend Tree の仕掛けを生成します。"
+msgid "Animates objects inside the linked prefab. Paths are worked out from '{0}' every time the gadget is generated, so renaming an object in the prefab does not break it."
+msgstr "リンク先プレハブの中のオブジェクトをアニメーションします。パスは生成のたびに '{0}' を起点として計算されるため、プレハブ内でオブジェクトの名前を変えてもガジェットは壊れません。"
 
-msgid "Creates ON/OFF clips that toggle the listed GameObjects and wires them to a parameter. The clips are saved next to the controller asset."
-msgstr "リストした GameObject を切り替える ON/OFF クリップを作成し、パラメーターに配線します。クリップはコントローラーアセットと同じフォルダに保存されます。"
+msgid "Close"
+msgstr "閉じる"
 
-msgid "Toggle Name"
-msgstr "トグル名"
+msgid "Gadget Name"
+msgstr "ガジェット名"
+
+msgid "Declare"
+msgstr "パラメーターを宣言"
+
+msgid "Add the parameter to this controller's parameter store, so the built avatar knows about it. Off for a parameter driven from inside the controller."
+msgstr "このコントローラーのパラメーターストアに行を追加し、ビルドされたアバターへ宣言します。コントローラー内部から駆動するパラメーターの場合はオフにします。"
+
+msgid "Pick an object from the linked prefab. Only objects under the merge can be animated."
+msgstr "リンク先プレハブからオブジェクトを選びます。アニメーションできるのは Merge Animator の配下にあるオブジェクトだけです。"
+
+msgid "No targets yet. Add objects from the linked prefab."
+msgstr "対象がまだありません。リンク先プレハブからオブジェクトを追加してください。"
+
+msgid "(missing object)"
+msgstr "（オブジェクトが見つかりません）"
+
+msgid "This target is gone from the prefab. Remove the row, or add the object again."
+msgstr "この対象はプレハブから失われています。行を削除するか、オブジェクトを追加し直してください。"
+
+msgid "A binding this window has no button for. It is kept exactly as it is."
+msgstr "このウィンドウにボタンが無い種類の指定です。そのまま保持されます。"
 
 msgid "Wiring"
 msgstr "配線方式"
@@ -795,41 +947,29 @@ msgstr "既存のパラメーター '{0}' を使用します。"
 msgid "Parameter '{0}' exists but is a {1} — pick another name or wiring."
 msgstr "パラメーター '{0}' は {1} 型として既に存在します。別の名前か配線方式を選んでください。"
 
+msgid "ON Clip"
+msgstr "ON クリップ"
+
+msgid "OFF Clip"
+msgstr "OFF クリップ"
+
+msgid "Leave empty to generate this side as a clip inside the controller. Assign one to write into your own clip instead."
+msgstr "空のままにすると、この側のクリップをコントローラー内に生成します。指定すると、そのクリップに書き込みます。"
+
+msgid "DaerD writes only this gadget's own rows into a clip you supply, removes exactly those rows again when it is regenerated or deleted, and never deletes the file. A row it needs that the clip already has stops the generate by name."
+msgstr "指定したクリップには、このガジェット自身の行だけを書き込みます。再生成・削除のときは、その行だけを取り除きます。ファイル自体を削除することはありません。書き込もうとする行がクリップに既にある場合は、名指しで生成を中止します。"
+
 msgid "Target Objects"
 msgstr "対象オブジェクト"
 
-msgid "Path Root"
-msgstr "パスのルート"
-
-msgid "The GameObject holding the Animator; dropped objects get their path relative to it."
-msgstr "Animator を持つ GameObject です。ドロップしたオブジェクトのパスはここからの相対で計算されます。"
-
 msgid "Add Object"
 msgstr "オブジェクト追加"
-
-msgid "Drop a scene GameObject to add it as a target."
-msgstr "シーン上の GameObject をドロップすると対象に追加されます。"
-
-msgid "Add Selection"
-msgstr "選択中を追加"
-
-msgid "Add every GameObject selected in the Hierarchy."
-msgstr "Hierarchy で選択中のすべての GameObject を追加します。"
 
 msgid "Active"
 msgstr "ON で表示"
 
 msgid "Checked: the object is active while the toggle is ON. Unchecked inverts it."
 msgstr "チェック時はトグル ON でオブジェクトが有効になります。外すと反転します。"
-
-msgid "No targets yet. Drop GameObjects above or type hierarchy paths (relative to the Animator root)."
-msgstr "対象がまだありません。上の欄に GameObject をドロップするか、階層パス（Animator ルートからの相対）を入力してください。"
-
-msgid "'{0}' is not a child of the path root '{1}'."
-msgstr "'{0}' はパスのルート '{1}' の子ではありません。"
-
-msgid "The path root itself can't be toggled — animations can't re-enable the object that hosts the Animator."
-msgstr "パスのルート自体はトグルできません。Animator を持つオブジェクトを無効にすると、アニメーションで再有効化できなくなります。"
 
 msgid "Animate GameObject.m_IsActive"
 msgstr "GameObject の有効状態 (m_IsActive) をアニメーションします"
@@ -867,9 +1007,6 @@ msgstr "対象 '{0}' にアニメーションする項目がありません。Ob
 msgid "Target '{0}' has an invalid component binding."
 msgstr "対象 '{0}' のコンポーネント指定が不正です。"
 
-msgid "The toggle needs a name."
-msgstr "トグルの名前を入力してください。"
-
 msgid "The parameter needs a name."
 msgstr "パラメーターの名前を入力してください。"
 
@@ -879,11 +1016,61 @@ msgstr "パラメーター '{0}' は存在しますが Bool ではありませ�
 msgid "Add at least one target object."
 msgstr "対象オブジェクトを 1 つ以上追加してください。"
 
-msgid "Every target needs a hierarchy path."
-msgstr "すべての対象に階層パスが必要です。"
+# ---- object gadgets ----
 
-msgid "Target path '{0}' is listed more than once."
-msgstr "対象パス '{0}' が重複しています。"
+msgid "There is no gadget to build."
+msgstr "生成するガジェットがありません。"
+
+msgid "The gadget needs a name."
+msgstr "ガジェットの名前を入力してください。"
+
+msgid "This controller is not linked to a gimmick prefab yet — an object gadget animates the objects inside one."
+msgstr "このコントローラーはまだギミックプレハブにリンクしていません。オブジェクトガジェットはリンク先プレハブの中のオブジェクトをアニメーションします。"
+
+msgid "The prefab this controller is linked to cannot be found, so there is nothing to animate inside it."
+msgstr "このコントローラーがリンクしているプレハブが見つかりません。中のオブジェクトをアニメーションすることはできません。"
+
+msgid "The MA Merge Animator this controller was linked to is no longer inside '{0}'."
+msgstr "リンク先の MA Merge Animator は '{0}' の中にもう存在しません。"
+
+msgid "The MA Merge Animator in '{0}' now merges something else, so its objects are no longer this controller's to animate."
+msgstr "'{0}' の MA Merge Animator は現在別のコントローラーをマージしています。その中のオブジェクトは、このコントローラーがアニメーションする対象ではありません。"
+
+msgid "Modular Avatar is not installed, so the prefab link cannot be read and no object gadget can be built from it."
+msgstr "Modular Avatar が入っていないため、プレハブリンクを読めません。オブジェクトガジェットは生成できません。"
+
+msgid "The linked Merge Animator could not be resolved."
+msgstr "リンクされた Merge Animator を解決できませんでした。"
+
+msgid "The Merge Animator in '{0}' is set to Absolute paths. DaerD only builds object gadgets for Relative merges — with Absolute the prefab alone cannot say where the objects will end up."
+msgstr "'{0}' の Merge Animator は Absolute パスに設定されています。DaerD がオブジェクトガジェットを生成できるのは Relative のマージだけです。Absolute ではプレハブ単体からオブジェクトの最終的な位置が分かりません。"
+
+msgid "An object this gadget animates is gone from the prefab. DaerD does not pick a replacement for you — point the gadget at an object again, or delete it."
+msgstr "このガジェットがアニメーションするオブジェクトがプレハブから失われています。DaerD が代わりを推測することはありません。対象を指定し直すか、ガジェットを削除してください。"
+
+msgid "Target '{0}' is listed more than once."
+msgstr "対象 '{0}' が重複しています。"
+
+msgid "'{0}' is not inside '{1}', which the merge's paths are relative to."
+msgstr "'{0}' は '{1}' の中にありません。マージのパスは '{1}' からの相対です。"
+
+msgid "Target '{0}' animates a '{1}', and this project has no component by that name."
+msgstr "対象 '{0}' は '{1}' をアニメーションしますが、そのコンポーネントはこのプロジェクトにありません。"
+
+msgid "Another object gadget ('{0}') already drives the parameter '{1}'."
+msgstr "別のオブジェクトガジェット（'{0}'）がパラメーター '{1}' を既に使っています。"
+
+msgid "The ON and OFF sides are the same clip ('{0}'). Each side writes the same rows with different values, so one clip cannot hold both."
+msgstr "ON と OFF に同じクリップ（'{0}'）が指定されています。両側は同じ行を異なる値で書き込むため、1 つのクリップで両方を持つことはできません。"
+
+msgid "'{0}' already animates '{1}' ({2}), and this gadget did not write that curve. DaerD does not take over rows in a clip you supplied — remove the curve, or point this side at another clip."
+msgstr "'{0}' には既に '{1}' の {2} を動かすカーブがありますが、このガジェットが書いたものではありません。DaerD が、あなたの指定したクリップの行を横取りすることはありません。そのカーブを削除するか、別のクリップを指定してください。"
+
+msgid "(the merge's own object)"
+msgstr "（Merge Animator 自身のオブジェクト）"
+
+msgid "'{0}' will not be declared anywhere: this controller has no parameter store. Link the prefab's MA Parameters on the home screen, or turn Declare off."
+msgstr "'{0}' はどこにも宣言されません。このコントローラーにはパラメーターストアが設定されていません。ホーム画面でプレハブの MA Parameters をリンクするか、Declare を切ってください。"
 
 # ---- round-robin sync ----
 
@@ -1161,17 +1348,20 @@ msgstr "既存のパラメーター '{0}' を再利用します。"
 
 # ---- VRC expression parameters ----
 
+msgid "Built-in parameter '{0}' is declared {1} while VRChat writes it as {2} — the value arrives converted (parameter mismatching), so conditions on it read the converted number; make sure it's intentional."
+msgstr "組み込みパラメーター '{0}' は {1} で宣言されていますが、VRChat が書き込むのは {2} です。値は変換されて届く（parameter mismatching）ため、条件は変換後の数値を読むことになります。意図したものか確認してください。"
+
 msgid "VRC Parameters"
 msgstr "VRC パラメーター"
-
-msgid "Sync"
-msgstr "同期"
 
 msgid "Network synced (costs bits)"
 msgstr "ネットワーク同期（bit を消費）"
 
 msgid "Saved between worlds"
 msgstr "ワールド間で保存"
+
+msgid "This row is declared {0} while the controller's parameter is {1}. VRChat converts between them (parameter mismatching) — a Bool row driving a Float costs one synced bit instead of eight, so this is a saving as often as it is a slip."
+msgstr "この行は {0} として宣言されていますが、コントローラー側のパラメーターは {1} です。VRChat は両者を変換します（parameter mismatching）。Float を Bool の行で駆動すると同期ビットは 8 ではなく 1 で済むため、これは間違いであることもあれば節約であることもあります。"
 
 msgid "Add to the VRC expression parameters asset"
 msgstr "VRC Expression Parameters アセットに追加します"
@@ -1283,61 +1473,16 @@ msgstr "AudioSource から解決"
 msgid "Drop the avatar's AudioSource to fill the source path."
 msgstr "アバターの AudioSource をドロップするとソースパスが入力されます。"
 
-# ---- VRC expressions menu ----
-
-msgid "DaerD Menu"
-msgstr "DaerD メニュー"
-
-msgid "Expressions Menu"
-msgstr "Expressions メニュー"
-
-msgid "Edit the avatar's VRC Expressions Menu (auto-detected from the scene)."
-msgstr "アバターの VRC Expressions Menu を編集します（シーンから自動検出）。"
-
-msgid "Assign a VRC Expressions Menu asset (auto-detected from the scene avatar when possible)."
-msgstr "VRC Expressions Menu アセットを指定してください（可能な場合はシーンのアバターから自動検出されます）。"
-
-msgid "That asset is not a VRC Expressions Menu."
-msgstr "そのアセットは VRC Expressions Menu ではありません。"
+# ---- one-word field labels shared by several inspectors ----
 
 msgid "Open"
 msgstr "開く"
 
-msgid "Edit this submenu"
-msgstr "このサブメニューを編集します"
-
-msgid "Icon"
-msgstr "アイコン"
-
 msgid "Type"
 msgstr "種類"
 
-msgid "Sub Menu"
-msgstr "サブメニュー"
-
 msgid "Value"
 msgstr "値"
-
-msgid "Rotation"
-msgstr "回転"
-
-msgid "Horizontal"
-msgstr "水平"
-
-msgid "Vertical"
-msgstr "垂直"
-
-msgid "Label {0}"
-msgstr "ラベル {0}"
-
-msgid "No matching parameters"
-msgstr "該当するパラメーターがありません"
-
-msgid "Parameter '{0}' is not in the controller."
-msgstr "パラメーター '{0}' はコントローラーに存在しません。"
-
-msgid "Puppet parameters must be Float; '{0}' is {1}."
-msgstr "Puppet のパラメーターは Float である必要があります。'{0}' は {1} 型です。"
 
 # ---- layer clipboard / templates ----
 
@@ -1696,20 +1841,14 @@ msgstr "VRC Expression Parameters アセット、または MA Parameters コン�
 msgid "Detect"
 msgstr "検出"
 
-msgid "Search the scene for an exact match: an avatar running this controller, or an MA Merge Animator referencing it. Nothing is picked up automatically without this button."
-msgstr "シーンから完全一致のみを検索します。このコントローラーを実行するアバター、またはこれを参照する MA Merge Animator が対象です。このボタンを押さない限り自動検出は行われません。"
+msgid "Search the scene for an exact match: an avatar running this controller, or an MA Merge Animator referencing it. A gimmick that lives only as a prefab is in no scene at all — Scan above is the button for that one. Nothing is picked up automatically without one of them."
+msgstr "シーンから完全一致のみを検索します。このコントローラーを実行するアバター、またはこれを参照する MA Merge Animator が対象です。Prefab のままのギミックはシーンに存在しないので、その場合は上の Scan を使ってください。どちらかのボタンを押さない限り自動検出は行われません。"
 
-msgid "No exact match in the scene — no avatar or MA Merge Animator references this controller."
-msgstr "シーンに完全一致がありません。このコントローラーを参照するアバターや MA Merge Animator が見つかりませんでした。"
+msgid "No exact match in the scene — no avatar or MA Merge Animator references this controller. A gimmick that lives only as a prefab is found by Scan instead."
+msgstr "シーンに完全一致がありません。このコントローラーを参照するアバターや MA Merge Animator が見つかりませんでした。Prefab のままのギミックは Scan で探してください。"
 
-msgid "In Prefabs"
-msgstr "Prefab から"
-
-msgid "Search the project's prefabs for an MA Merge Animator referencing this controller, and take the MA Parameters beside it. Only prefabs that already reference this controller are opened, and the answer is remembered until something in the project changes."
-msgstr "プロジェクト内の Prefab から、このコントローラーを参照する MA Merge Animator を検索し、その隣の MA Parameters を採用します。開くのは既にこのコントローラーを参照している Prefab だけで、結果はプロジェクトに変更があるまで記憶されます。"
-
-msgid "No prefab in this project has an MA Merge Animator referencing this controller."
-msgstr "このコントローラーを参照する MA Merge Animator を持つ Prefab がプロジェクトにありません。"
+msgid "No parameter store. Assign one in the Prefab Link card on the Home screen."
+msgstr "パラメーターストアが未設定です。ホーム画面の Prefab Link カードで割り当ててください。"
 
 msgid "The name the built avatar gives this parameter. This row is declared internal, so it is renamed on the way in — this, not the name on the left, is what travels and what a build log will call it."
 msgstr "ビルド後のアバターがこのパラメーターに与える名前です。この行は internal 指定なので取り込み時にリネームされます。左の名前ではなくこちらが実際に同期され、ビルドログにも出ます。"
@@ -1723,14 +1862,17 @@ msgstr "{0}: {1} bit"
 msgid "Synced bits used by this store (Bool = 1, Int / Float = 8). MA components contribute to the avatar's total, so no capacity is shown."
 msgstr "このストアが使用中の同期ビット数です（Bool = 1、Int / Float = 8）。MA コンポーネントはアバター全体の予算に合算されるため、上限は表示されません。"
 
-msgid "Align the parameter store to this controller's parameter list (with a diff preview)."
-msgstr "パラメーターストアをこのコントローラーのパラメーター一覧に合わせます（差分プレビュー付き）。"
+msgid "Sync List"
+msgstr "同期リスト"
 
-msgid "Add All"
-msgstr "すべて追加"
+msgid "Open the list that holds the store's rows against this controller's parameters, row by row. Nothing is added or removed until it is applied there."
+msgstr "ストアの行とこのコントローラーのパラメーターを 1 行ずつ突き合わせるリストを開きます。追加も削除も、そのリストで適用するまで実行されません。"
 
-msgid "Add every controller parameter the store doesn't list yet (Triggers aside) as an async row: neither synced nor saved. An MA Parameters component has to declare a parameter before anything can use it, so this is the starting point for a prefab gimmick."
-msgstr "ストアにまだ無いコントローラーのパラメーター（Trigger を除く）を、非同期の行として追加します（synced も saved も付けません）。MA Parameters は使用するパラメーターをすべて宣言する必要があるため、プレハブギミックではここが出発点になります。"
+msgid "Declare Missing"
+msgstr "未宣言を追加"
+
+msgid "Declare every controller parameter the store doesn't list yet (Triggers aside): the rows go in neither synced nor saved. That is the opposite default from the per-row '+', which adds one parameter somebody deliberately picked and usually wants on the wire. An MA Parameters component has to declare a parameter before anything can use it, so this is the starting point for a prefab gimmick."
+msgstr "ストアにまだ無いコントローラーのパラメーター（Trigger を除く）を宣言します。追加される行は synced も saved も付きません。1 行ごとの「+」とは既定が逆で、あちらは狙って選んだ 1 件を同期に載せる想定です。MA Parameters は使用するパラメーターをすべて宣言する必要があるため、プレハブギミックではここが出発点になります。"
 
 msgid "Every controller parameter is already in the store."
 msgstr "コントローラーのパラメーターはすべてストアに登録済みです。"
@@ -1744,11 +1886,142 @@ msgstr "パラメーター同期"
 msgid "Aligns the parameter store to this controller's parameter list. Unchecked rows are left untouched."
 msgstr "パラメーターストアをコントローラーのパラメーター一覧に整列します。チェックを外した行は変更されません。"
 
-msgid "Search the scene for an avatar whose playable layers run this controller (exact match only)."
-msgstr "このコントローラーを Playable レイヤーで実行しているアバターをシーンから検索します（完全一致のみ）。"
+# ---- prefab link ----
 
-msgid "No exact match in the scene — no avatar runs this controller."
-msgstr "シーンに完全一致がありません。このコントローラーを実行しているアバターが見つかりませんでした。"
+msgid "Linked to the prefab '{0}' ({1})"
+msgstr "プレハブ '{0}' にリンクしています（{1}）"
+
+msgid "Prefab Link"
+msgstr "プレハブリンク"
+
+msgid "Prefab"
+msgstr "プレハブ"
+
+msgid "The gimmick prefab whose MA Merge Animator merges this controller. Drop one here, or press Scan to search the project. DaerD never picks one on its own."
+msgstr "このコントローラーを Merge する MA Merge Animator を持つギミックプレハブです。ここにドロップするか、「検索してリンク」でプロジェクトを検索してください。DaerD が勝手に選ぶことはありません。"
+
+msgid "Not linked. Scan lists every prefab whose MA Merge Animator names this controller."
+msgstr "未リンクです。「検索してリンク」を押すと、このコントローラーを名指しする MA Merge Animator を持つプレハブを一覧できます。"
+
+msgid "Scan & Link"
+msgstr "検索してリンク"
+
+msgid "Search the project's prefabs for an MA Merge Animator that merges this controller. Only prefabs that already reference it are opened, and the answer is remembered until something in the project changes."
+msgstr "プロジェクト内の Prefab から、このコントローラーを Merge する MA Merge Animator を検索します。開くのは既にこのコントローラーを参照している Prefab だけで、結果はプロジェクトに変更があるまで記憶されます。"
+
+msgid "Rescan"
+msgstr "再検索"
+
+msgid "Search the project again from scratch, ignoring the remembered answer."
+msgstr "記憶している結果を捨てて、プロジェクトを最初から検索し直します。"
+
+msgid "Unlink"
+msgstr "リンク解除"
+
+msgid "Forget which prefab this controller belongs to. Nothing inside the prefab is changed."
+msgstr "このコントローラーがどのプレハブに属するかの記録を破棄します。プレハブの中身は変更しません。"
+
+msgid "Link"
+msgstr "リンク"
+
+msgid "The linked prefab cannot be found — deleted, or on a branch that is not checked out. The link is kept exactly as it is; nothing is guessed in its place."
+msgstr "リンク先のプレハブが見つかりません。削除されたか、チェックアウトしていないブランチにある可能性があります。リンクはそのまま保持し、代わりのものを推測することはありません。"
+
+msgid "The MA Merge Animator this controller was linked to is no longer inside '{0}'. The link is kept as it is — Rescan searches the project again."
+msgstr "このコントローラーがリンクしていた MA Merge Animator が '{0}' の中に見つかりません。リンクはそのまま保持します。「再検索」でプロジェクトを検索し直せます。"
+
+msgid "The MA Merge Animator in '{0}' now merges {1}, not this controller. Nothing is re-pointed for you: fix it in the prefab, or link this controller to another one."
+msgstr "'{0}' の MA Merge Animator が Merge するのは、このコントローラーではなく {1} です。DaerD が張り替えることはありません。プレハブ側を直すか、別のプレハブにリンクし直してください。"
+
+msgid "nothing at all"
+msgstr "（未設定）"
+
+msgid "Modular Avatar is not installed, so this link cannot be read. The saved link is untouched and comes back with it."
+msgstr "Modular Avatar が導入されていないため、このリンクを読み取れません。保存されたリンクはそのまま保持され、Modular Avatar を入れれば元どおり読めます。"
+
+msgid "{0}: {1} — {2} of {3} synced bits"
+msgstr "{0}: {1} — 同期ビット {2} / {3}"
+
+msgid "{0}: {1} — {2} synced bits"
+msgstr "{0}: {1} — 同期ビット {2}"
+
+msgid "The rows themselves are edited in the Parameters panel on the left, which is showing this same store."
+msgstr "行そのものの編集は左の Parameters パネルで行います。そこに出ているのも同じストアです。"
+
+msgid "The linked prefab has no MA Parameters above its merge yet."
+msgstr "リンク先のプレハブには、merge から見て上位に MA Parameters がまだありません。"
+
+msgid "Use The Prefab's MA Parameters"
+msgstr "プレハブの MA Parameters を使う"
+
+msgid "Point the parameter store slot at the MA Parameters that governs the linked merge. A button rather than something linking does for you, because the slot already holds an answer somebody gave."
+msgstr "パラメーターストアのスロットを、リンク先の merge を管理する MA Parameters に向けます。スロットには既に誰かが与えた答えが入っているため、リンク時に自動で置き換えず、明示的なボタンにしています。"
+
+msgid "No prefab in this project has an MA Merge Animator that merges '{0}'."
+msgstr "'{0}' を Merge する MA Merge Animator を持つ Prefab が、プロジェクトにありません。"
+
+msgid "'{0}' is not a prefab asset. Only a prefab in the project can be linked."
+msgstr "'{0}' はプレハブアセットではありません。リンクできるのはプロジェクト内のプレハブだけです。"
+
+msgid "'{0}' has no MA Merge Animator that merges '{1}'."
+msgstr "'{0}' には '{1}' を Merge する MA Merge Animator がありません。"
+
+msgid ""
+"Link this controller to '{0}'?\n"
+"\n"
+"Prefab: {1}\n"
+"Merge Animator: {2}"
+msgstr ""
+"このコントローラーを '{0}' にリンクしますか？\n"
+"\n"
+"プレハブ: {1}\n"
+"Merge Animator: {2}"
+
+msgid "The parameter store slot is empty, so it is set to the MA Parameters on '{0}' at the same time."
+msgstr "パラメーターストアのスロットが空なので、同時に '{0}' の MA Parameters を設定します。"
+
+msgid "The parameter store slot already holds '{0}' and is left alone. A button below adopts the prefab's own instead."
+msgstr "パラメーターストアのスロットには既に '{0}' が入っているため、変更しません。プレハブ側のものを使うには、下のボタンを押してください。"
+
+msgid ""
+"Forget which prefab this controller belongs to?\n"
+"\n"
+"Nothing inside the prefab is changed, and the parameter store slot is left as it is."
+msgstr ""
+"このコントローラーがどのプレハブに属するかの記録を破棄しますか？\n"
+"\n"
+"プレハブの中身は変更せず、パラメーターストアのスロットもそのまま残します。"
+
+msgid "Add MA Parameters"
+msgstr "MA Parameters を追加"
+
+msgid "Add an MA Parameters component to the linked prefab's root, so this controller's parameters have somewhere to be declared. This writes the prefab file."
+msgstr "リンク先プレハブのルートに MA Parameters コンポーネントを追加し、このコントローラーのパラメーターを宣言する場所を作ります。プレハブのファイルを書き換えます。"
+
+msgid ""
+"Add an MA Parameters component to the root of '{0}'?\n"
+"\n"
+"That is the only change: one component on the root, nothing removed, nothing moved. It goes on the root because Modular Avatar looks for it on the merge's own object and upwards, so every Merge Animator in this prefab — including ones added later — can see it there.\n"
+"\n"
+"The prefab file is saved immediately, and saving an asset cannot be undone."
+msgstr ""
+"'{0}' のルートに MA Parameters コンポーネントを追加しますか？\n"
+"\n"
+"変更はこれだけです。ルートにコンポーネントを 1 つ追加するのみで、削除も移動もしません。ルートに置くのは、Modular Avatar が merge のオブジェクトから親方向へ探すためで、このプレハブ内のすべての Merge Animator（後から追加したものも含む）から見えるようにするためです。\n"
+"\n"
+"プレハブのファイルはその場で保存されます。アセットの保存は元に戻せません。"
+
+msgid "'{0}' lives in a package the package manager owns, so DaerD will not write to it. Copy the prefab into this project's Assets folder first."
+msgstr "'{0}' はパッケージマネージャーが管理するパッケージ内にあるため、DaerD は書き込みません。先にプレハブをこのプロジェクトの Assets フォルダーへコピーしてください。"
+
+msgid "'{0}' is open in prefab mode with unsaved changes. Save or discard them first — writing the file underneath an open stage would lose one of the two sets of edits."
+msgstr "'{0}' は未保存の変更を持ったままプレハブモードで開かれています。先に保存するか破棄してください。開いたステージの下でファイルを書き換えると、どちらかの編集内容が失われます。"
+
+msgid "The linked prefab is not a prefab asset any more, so there is nothing to write to."
+msgstr "リンク先のプレハブが既にプレハブアセットではないため、書き込む先がありません。"
+
+msgid "'{0}' was not changed — Modular Avatar is not installed, or the prefab could not be opened."
+msgstr "'{0}' は変更していません。Modular Avatar が導入されていないか、プレハブを開けませんでした。"
 
 # ---- settings ----
 
@@ -2061,9 +2334,6 @@ msgstr "Empty クリップ '{0}' は長さが 0 のためステップ時間を�
 msgid "The target layer's weight is 0 — the send cycle won't run until it is raised."
 msgstr "対象レイヤーのウェイトが 0 です。上げるまで送信サイクルは動作しません。"
 
-msgid "Generated by Async Sync — regenerating from the wizard rebuilds this layer's states"
-msgstr "巡回同期が生成したレイヤーです。ウィザードから再生成すると、このレイヤーの State は作り直されます"
-
 # ---- async sync (sync timing) ----
 
 msgid "Remote Floats are 8-bit fixed point over -1..1 (about 0.008 per step), so multiplexed Floats read back quantized for everyone but the wearer, and values outside -1..1 don't survive the trip at all."
@@ -2227,8 +2497,44 @@ msgstr "この Recipe には比較対象のエクスポート側がありませ�
 msgid "Layer '{0}' was already there and no recipe generated it — the DBT gadgets replaced it. Give one of the two another name to keep both."
 msgstr "レイヤー '{0}' は元からあったもので、どの Recipe も生成していません。DBT ガジェットがこれを置き換えました。両方残すなら、どちらかの名前を変えてください。"
 
-msgid "Post steps (Raw, Async Sync, DBT gadgets) declare nothing comparable — check those by hand."
-msgstr "後段ステップ（Raw・巡回同期・DBT ガジェット）は比較対象になりません。そこは目視で確認してください。"
+msgid "No object gadget was built: {0}"
+msgstr "オブジェクトガジェットは 1 つも生成されませんでした: {0}"
+
+msgid "'{0}' (needed by '{1}')"
+msgstr "'{0}'（'{1}' が必要とするもの）"
+
+msgid "No object gadget was built: the linked prefab '{0}' has no object at {1}."
+msgstr "オブジェクトガジェットは 1 つも生成されませんでした: リンク先プレハブ '{0}' に {1} のオブジェクトがありません。"
+
+msgid "No object gadget was built: this project has no animation clip at {0}."
+msgstr "オブジェクトガジェットは 1 つも生成されませんでした: このプロジェクトに {0} のアニメーションクリップがありません。"
+
+msgid "Object gadget '{0}': {1}"
+msgstr "オブジェクトガジェット '{0}': {1}"
+
+msgid "Object gadget layers are regenerated at the end of the controller; the layer order will differ from the original."
+msgstr "オブジェクトガジェットのレイヤーはコントローラーの末尾に再生成されるため、レイヤー順は元と変わります。"
+
+msgid "Layer '{0}' holds object gadgets, but this controller is not linked to a healthy gimmick prefab any more, so their target paths cannot be worked out; exported as raw states."
+msgstr "レイヤー '{0}' にはオブジェクトガジェットがありますが、このコントローラーはギミックプレハブに正常にリンクしていないため、対象のパスを導出できません。State をそのままエクスポートします。"
+
+msgid "Object gadget '{0}' animates an object that is no longer in the linked prefab, so layer '{1}' is exported as raw states instead of an Objects call."
+msgstr "オブジェクトガジェット '{0}' がアニメーションする対象が、リンク先プレハブにもう存在しません。レイヤー '{1}' は Objects 呼び出しではなく State のままエクスポートします。"
+
+msgid "Layer '{0}' is claimed by {1} object gadgets at once; exported as raw states."
+msgstr "レイヤー '{0}' を {1} 個のオブジェクトガジェットが同時に自分のものとしています。State をそのままエクスポートします。"
+
+msgid "Layer '{0}' is declared by this recipe, so generating it rebuilt what these saved gadgets were built into and DaerD has lost their records: {1}. What they built is still in the controller as plain states — export the layer again to write them back as calls, or rebuild them from the home screen."
+msgstr "レイヤー '{0}' はこのレシピが宣言しているため、生成時に作り直され、次のガジェットの記録が失われました: {1}。作られたものはプレーンな State としてコントローラーに残っています。もう一度エクスポートして呼び出しとして書き出すか、ホーム画面から作り直してください。"
+
+msgid "Layer '{0}' no longer holds what the object gadget '{1}' would build; exported as raw states instead of an Objects call."
+msgstr "レイヤー '{0}' の中身は、オブジェクトガジェット '{1}' が生成するものと一致しません。Objects 呼び出しではなく State のままエクスポートします。"
+
+msgid "The clip '{0}' an object gadget writes into is not the main asset of a file, so a recipe cannot name it; that side is exported as a generated clip."
+msgstr "オブジェクトガジェットが書き込むクリップ '{0}' はファイルのメインアセットではないため、Recipe から名前で指せません。その側は生成クリップとしてエクスポートします。"
+
+msgid "Post steps (Raw, Async Sync, DBT gadgets, object gadgets) declare nothing comparable — check those by hand."
+msgstr "後段ステップ（Raw・巡回同期・DBT ガジェット・オブジェクトガジェット）は比較対象になりません。そこは目視で確認してください。"
 
 msgid "Compare what the code declares against the controller's current contents."
 msgstr "コードの宣言内容とコントローラーの現状を比較します。"
@@ -2274,9 +2580,6 @@ msgstr "チェックしたレイヤーを DaerD の Authoring API で再構築�
 
 msgid "Layer '{0}' is declared more than once."
 msgstr "レイヤー '{0}' が複数回宣言されています。"
-
-msgid "Layer '{0}': {1} of {2} blend tree children have no saved gadget config; exported as a raw tree."
-msgstr "レイヤー '{0}': Blend Tree の子 {2} 個のうち {1} 個に保存されたガジェット設定がありません。ツリーのままエクスポートしました。"
 
 msgid "LUT curve for '{0}' uses weighted tangents; the exported curve drops the weights."
 msgstr "'{0}' の LUT カーブが重み付きタンジェントを使っています。エクスポートされるカーブでは重みが失われます。"
@@ -2335,8 +2638,8 @@ msgstr "明示スケジュールで同じスロットが隣接ステップに並
 msgid "The folder is not under an 'Editor' folder — an 'Editor' subfolder will be added so player builds don't try to compile the recipe."
 msgstr "出力先が 'Editor' フォルダ配下ではありません。プレイヤービルドで Recipe がコンパイルされないよう、'Editor' サブフォルダを自動で追加します。"
 
-msgid "This recipe has post steps (Raw, Async Sync, DBT gadgets); their output is not covered by Verify."
-msgstr "この Recipe には後段ステップ（Raw・巡回同期・DBT ガジェット）があります。その出力は Verify の対象外です。"
+msgid "This recipe has post steps (Raw, Async Sync, DBT gadgets, object gadgets); their output is not covered by Verify."
+msgstr "この Recipe には後段ステップ（Raw・巡回同期・DBT ガジェット・オブジェクトガジェット）があります。その出力は Verify の対象外です。"
 
 msgid "DBT gadget '{0}' in layer '{1}': {2}"
 msgstr "レイヤー '{1}' の DBT ガジェット '{0}': {2}"
@@ -2379,6 +2682,69 @@ msgstr "Assembly Definition（コンパイル高速化）"
 
 msgid "Put the recipe folder in its own small assembly, so an export recompiles only the recipes instead of your whole editor assembly. Skipped when the folder already belongs to an asmdef or contains scripts DaerD didn't generate."
 msgstr "Recipe フォルダを専用の小さなアセンブリに分離し、エクスポート時の再コンパイルをエディタアセンブリ全体ではなく Recipe だけに抑えます。フォルダが既に asmdef 管理下にある場合や、DaerD 以外のスクリプトを含む場合はスキップします。"
+
+# ---- C# recipes (home card) ----
+
+msgid "owns no layers yet"
+msgstr "まだレイヤーを所有していません"
+
+msgid "Up to date"
+msgstr "最新"
+
+msgid "Compiling"
+msgstr "コンパイル中"
+
+msgid "Compile error"
+msgstr "コンパイルエラー"
+
+msgid ".cs is newer"
+msgstr ".cs が新しい"
+
+msgid "Wrong target"
+msgstr "対象不一致"
+
+msgid "Unusable"
+msgstr "使用不可"
+
+msgid "This asset is not a recipe DaerD can run."
+msgstr "このアセットは DaerD が実行できる Recipe ではありません。"
+
+msgid "This recipe generates into {0}, not this controller — running it from here would write somewhere else. Open it and check its target controller."
+msgstr "この Recipe の生成先は {0} で、このコントローラーではありません。ここから実行すると別のアセットに書き込まれます。Recipe を開いて対象コントローラーを確認してください。"
+
+msgid "The compiled code matches this recipe's .cs. Whether the CONTROLLER matches the recipe is the question Verify answers."
+msgstr "コンパイル済みコードは この Recipe の .cs と一致しています。コントローラーの側が Recipe と一致しているかは Verify が答えます。"
+
+msgid "Select this recipe asset and highlight it in the Project window."
+msgstr "この Recipe アセットを選択し、Project ウィンドウで強調表示します。"
+
+# ---- C# recipes (export target) ----
+
+msgid "Export To"
+msgstr "出力先"
+
+msgid "New recipe…"
+msgstr "新規作成…"
+
+msgid "Update one of the recipes this controller is already linked to, or write a new one. An update rewrites that recipe's generated half in place and never touches your half."
+msgstr "このコントローラーに既に紐付いている Recipe を更新するか、新規に作成するかを選びます。更新ではその Recipe の生成側ファイルだけをその場で書き換え、手編集側には触れません。"
+
+msgid "Updating an existing recipe: its class name and folder are shown as they are and cannot be changed here — that pair of files IS the recipe. Only the generated half is rewritten; your half is left alone. To write one under a different name, choose 'New recipe…'."
+msgstr "既存 Recipe の更新: クラス名とフォルダはそのまま表示するだけで、ここでは変更できません。その 2 ファイルの組が Recipe そのものだからです。書き換えるのは生成側だけで、手編集側はそのまま残ります。別の名前で作りたい場合は「新規作成…」を選んでください。"
+
+msgid "DaerD cannot find the script behind this recipe asset, so there is no pair of files to update. Choose 'New recipe…' to write a fresh one."
+msgstr "この Recipe アセットの元になっているスクリプトが見つからないため、更新すべきファイルの組がありません。「新規作成…」を選んで新しく書き出してください。"
+
+# ---- C# recipes (freshness guard) ----
+
+msgid "Scripts are still compiling — run this again once the compile has finished."
+msgstr "コンパイル中です — 完了後にもう一度実行してください。"
+
+msgid "A compile error means the new code was never loaded — what would run is the last version that compiled successfully. Check the Console."
+msgstr "コンパイルエラーで新しいコードが読み込まれていません — 実行されるのは最後に成功した古いコードです。Console を確認してください。"
+
+msgid "This recipe's .cs is newer than the compiled code — wait for the recompile before running this."
+msgstr ".cs がコンパイル済みコードより新しい — 再コンパイルを待ってから実行してください。"
 
 # ---- state inspector ----
 

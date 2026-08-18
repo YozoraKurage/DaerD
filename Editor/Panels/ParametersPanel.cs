@@ -3,6 +3,10 @@ using System.Collections.Generic;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
+using Yozolab.DaerD.Analyze;
+using Yozolab.DaerD.Bridge;
+using Yozolab.DaerD.Edit;
+using Yozolab.DaerD.Engine;
 
 namespace Yozolab.DaerD
 {
@@ -178,6 +182,11 @@ namespace Yozolab.DaerD
                     else
                     {
                         _store?.Rename(p.name, newName);
+                        // A menu whose controls name this parameter would be left pointing at a
+                        // name nothing answers to. Nothing assigns that association any more
+                        // (see GraphFrameData.expressionsMenu) — this reaches controllers that
+                        // were given a menu while the slot existed, and follows a rename through
+                        // for them rather than breaking their menu on the way out.
                         var rootMenu = GraphFrameData.GetExpressionsMenu(controller);
                         if (VrcMenuAccess.Is(rootMenu))
                             VrcMenuAccess.RenameParameterReferences(rootMenu, p.name, newName);
@@ -323,14 +332,24 @@ namespace Yozolab.DaerD
             }
         }
 
-        /// <summary>The shared parameter-store slot, plus what only this panel shows for it:
-        /// the synced-bit budget, Add All and Sync.</summary>
+        /// <summary>
+        /// What this panel shows ABOUT the store rather than about one row: the synced-bit
+        /// budget and the two bulk actions on the declaration list.
+        ///
+        /// The slot that assigns the store used to be this row too. It is on the home screen now,
+        /// in the Prefab Link card, where the pin can answer it — so what is left here is the
+        /// half that is about the list on screen, and a controller with no store gets a sentence
+        /// saying where the slot went instead of a second copy of it.
+        /// </summary>
         void DrawVrcBudget()
         {
-            var controller = Context.Controller;
-            PanelGui.ParameterStoreField(controller, InvalidateStore);
-
-            if (_store == null) return;
+            if (_store == null)
+            {
+                EditorGUILayout.LabelField(
+                    L.Tr("No parameter store. Assign one in the Prefab Link card on the Home screen."),
+                    EditorStyles.centeredGreyMiniLabel);
+                return;
+            }
             int used = _store.UsedBits();
             int capacity = _store.Capacity();
 
@@ -346,16 +365,20 @@ namespace Yozolab.DaerD
                 EditorStyles.miniLabel);
             GUI.color = prev;
             GUILayout.FlexibleSpace();
-            if (GUILayout.Button(new GUIContent(L.Tr("Add All"),
-                    L.Tr("Add every controller parameter the store doesn't list yet (Triggers aside) as an async row: neither synced nor saved. An MA Parameters component has to declare a parameter before anything can use it, so this is the starting point for a prefab gimmick.")),
-                    EditorStyles.miniButton, GUILayout.Width(64)))
+            // Both labels say what the button DOES rather than what it is about. "Add All" and
+            // "Sync" named the subject twice over and the action not at all: one of them adds
+            // rows that are deliberately NOT synced, and the other syncs nothing — it opens a
+            // list to look at.
+            if (GUILayout.Button(new GUIContent(L.Tr("Declare Missing"),
+                    L.Tr("Declare every controller parameter the store doesn't list yet (Triggers aside): the rows go in neither synced nor saved. That is the opposite default from the per-row '+', which adds one parameter somebody deliberately picked and usually wants on the wire. An MA Parameters component has to declare a parameter before anything can use it, so this is the starting point for a prefab gimmick.")),
+                    EditorStyles.miniButton, GUILayout.Width(100)))
             {
                 AddMissingToStore();
                 GUIUtility.ExitGUI();
             }
-            if (GUILayout.Button(new GUIContent(L.Tr("Sync"),
-                    L.Tr("Align the parameter store to this controller's parameter list (with a diff preview).")),
-                    EditorStyles.miniButton, GUILayout.Width(52)))
+            if (GUILayout.Button(new GUIContent(L.Tr("Sync List"),
+                    L.Tr("Open the list that holds the store's rows against this controller's parameters, row by row. Nothing is added or removed until it is applied there.")),
+                    EditorStyles.miniButton, GUILayout.Width(64)))
             {
                 VrcParamSyncWindow.Open(Context.Controller, _store, Refresh);
                 GUIUtility.ExitGUI();
@@ -389,8 +412,8 @@ namespace Yozolab.DaerD
             Refresh();
         }
 
-        /// <summary>Per-row S (synced) / D (saved) toggles for parameters present in the
-        /// expression asset, and a "+" to add the ones that aren't.</summary>
+        /// <summary>Per-row S (synced) / D (saved) toggles and the declared type for parameters
+        /// present in the expression asset, and a "+" to add the ones that aren't.</summary>
         void DrawVrcFlags(AnimatorControllerParameter parameter)
         {
             if (_store == null || _exprEntries == null) return;
@@ -409,6 +432,7 @@ namespace Yozolab.DaerD
                         e.synced = synced;
                         e.saved = saved;
                     });
+                DrawStoreType(parameter, entry);
                 return;
             }
 
@@ -426,6 +450,44 @@ namespace Yozolab.DaerD
                                 ? parameter.defaultInt
                                 : parameter.defaultBool ? 1f : 0f,
                     });
+        }
+
+        /// <summary>In VrcExpressionParameters.ValueType order — the popup writes its index
+        /// straight back as the type, so the two lists are the same list.</summary>
+        static readonly string[] StoreTypeLabels = { "Int", "Float", "Bool" };
+
+        /// <summary>
+        /// What the store declares this parameter AS, which is a different question from what
+        /// the animator holds and is answered here because it is the only place both answers are
+        /// on screen at once.
+        ///
+        /// It is worth a control rather than a trip to the asset: the type decides the synced
+        /// bits the row costs (Bool = 1, Int / Float = 8) and what a menu control does with it,
+        /// so it is the one field somebody trimming an over-budget avatar edits over and over.
+        /// The bit meter above is read from the store, so it follows on the same repaint.
+        ///
+        /// A row that disagrees with the animator gets a mark and no more. VRChat converts
+        /// between every combination on the way in, and a Bool row driving a Float parameter is a
+        /// documented way to spend one bit instead of eight — so the mark says what is happening
+        /// in the same voice the analyzer uses, and does not tell anyone off.
+        ///
+        /// An MA "NotSynced" row gets no popup at all. It declares no type, and the control would
+        /// have to invent one to show a value — which would charge the avatar bits for a
+        /// parameter nobody asked to sync.
+        /// </summary>
+        void DrawStoreType(AnimatorControllerParameter parameter,
+            VrcExpressionParameters.Entry entry)
+        {
+            if (!entry.typed) return;
+            int chosen = EditorGUILayout.Popup((int)entry.valueType, StoreTypeLabels,
+                EditorStyles.miniButton, GUILayout.Width(DaerDLayout.RowAction + 12f));
+            if (chosen != (int)entry.valueType)
+                _store.SetValueType(parameter.name, (VrcExpressionParameters.ValueType)chosen);
+            if (!VrcExpressionParameters.Mismatched(entry, parameter.type)) return;
+            GUILayout.Label(new GUIContent("≠",
+                    L.Tr("This row is declared {0} while the controller's parameter is {1}. VRChat converts between them (parameter mismatching) — a Bool row driving a Float costs one synced bit instead of eight, so this is a saving as often as it is a slip.",
+                        entry.valueType, parameter.type)),
+                EditorStyles.miniLabel, GUILayout.Width(12f));
         }
 
         /// <summary>
@@ -639,12 +701,11 @@ namespace Yozolab.DaerD
                 menu.AddItem(new GUIContent(type.ToString()), false, () => AddParameter(captured));
             }
 
-            // The generators that add computed parameters — DBT gadgets and async sync — are
-            // reached from the home screen, which lists what a controller already has as well
-            // as offering to add more. Adding one is not the part that needs an entry point:
-            // finding the four you built last month is, and this menu could never show that.
-            // Object Toggle is not on the home screen either, by an older decision — it records
-            // nothing in the controller, so there is nothing for a management surface to list.
+            // The generators that add parameters of their own — DBT gadgets, object gadgets and
+            // async sync — are reached from the home screen, which lists what a controller
+            // already has as well as offering to add more. Adding one is not the part that needs
+            // an entry point: finding the four you built last month is, and this menu could
+            // never show that.
 
             // VRChat built-in parameters. Already-present ones show as a checked, disabled entry so
             // the menu doubles as a quick "which standard parameters does this controller have?".
@@ -680,23 +741,13 @@ namespace Yozolab.DaerD
             menu.ShowAsContext();
         }
 
-        static AnimatorControllerParameterType ToUnityType(VrcParameters.ParamType type)
-        {
-            switch (type)
-            {
-                case VrcParameters.ParamType.Int: return AnimatorControllerParameterType.Int;
-                case VrcParameters.ParamType.Bool: return AnimatorControllerParameterType.Bool;
-                default: return AnimatorControllerParameterType.Float;
-            }
-        }
-
         void AddVrcParameter(VrcParameters.Definition def)
         {
             var controller = Context.Controller;
             foreach (var p in controller.parameters)
                 if (p.name == def.name) return;   // never duplicate a built-in name
             Undo.RegisterCompleteObjectUndo(controller, "Add VRChat Parameter");
-            controller.AddParameter(def.name, ToUnityType(def.type));
+            controller.AddParameter(def.name, VrcParameters.UnityType(def.type));
             EditorUtility.SetDirty(controller);
             Context.NotifyParametersChanged();
         }
@@ -712,7 +763,7 @@ namespace Yozolab.DaerD
             foreach (var def in VrcParameters.All)
                 if (existing.Add(def.name))
                 {
-                    controller.AddParameter(def.name, ToUnityType(def.type));
+                    controller.AddParameter(def.name, VrcParameters.UnityType(def.type));
                     added++;
                 }
             if (added > 0)

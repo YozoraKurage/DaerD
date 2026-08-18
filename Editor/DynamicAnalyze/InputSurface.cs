@@ -1,6 +1,8 @@
 using System.Collections.Generic;
 using UnityEditor.Animations;
 using UnityEngine;
+using Yozolab.DaerD.Analyze;
+using Yozolab.DaerD.Bridge;
 
 namespace Yozolab.DaerD.DynamicAnalyze
 {
@@ -54,7 +56,7 @@ namespace Yozolab.DaerD.DynamicAnalyze
         /// <summary>
         /// What came out of a recording: the tracks, and what was deliberately not put in one.
         /// </summary>
-        public sealed class Extraction
+        internal sealed class Extraction
         {
             public readonly Stimulus stimulus = new Stimulus();
 

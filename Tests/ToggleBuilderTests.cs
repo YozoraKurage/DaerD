@@ -1,11 +1,19 @@
-using System.Collections.Generic;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
+using Yozolab.DaerD.Engine;
 
 namespace Yozolab.DaerD.Tests
 {
+    /// <summary>
+    /// The toggle generation core: given targets whose paths are already derived, what lands in
+    /// the controller. Nothing here validates anything and nothing is recorded — deciding
+    /// whether a toggle may be built, working the paths out of prefab references and keeping the
+    /// record are <see cref="ObjectGadgets"/>' half, and are tested against a real prefab in
+    /// <c>ObjectGadgetTests</c>. Which is why these tests need neither a prefab nor Modular
+    /// Avatar: the core is the part of a toggle that is the same wherever the paths came from.
+    /// </summary>
     public class ToggleBuilderTests
     {
         static AnimatorController NewController()
@@ -15,21 +23,34 @@ namespace Yozolab.DaerD.Tests
             return controller;
         }
 
-        static ToggleBuilder.Request NewRequest(AnimatorController controller,
+        static ToggleBuilder.Plan NewPlan(AnimatorController controller,
             ToggleBuilder.Mode mode, params string[] paths)
         {
-            var request = new ToggleBuilder.Request
+            var plan = new ToggleBuilder.Plan
             {
                 controller = controller,
                 mode = mode,
-                toggleName = "Hat",
+                name = "Hat",
                 parameter = "Hat",
                 layerIndex = -1,
                 newLayerName = "DBT",
             };
             foreach (var path in paths)
-                request.targets.Add(new ToggleBuilder.Target { path = path });
-            return request;
+                plan.targets.Add(new ToggleBuilder.Target { path = path });
+            return plan;
+        }
+
+        /// <summary>Both clips and the wiring, the way <see cref="ObjectGadgets"/> puts them
+        /// together — minus the sub-asset attaching, which an in-memory controller has nowhere
+        /// to do.</summary>
+        static void Build(ToggleBuilder.Plan plan)
+        {
+            var onClip = ToggleBuilder.BuildClip(plan, on: true);
+            var offClip = ToggleBuilder.BuildClip(plan, on: false);
+            if (plan.mode == ToggleBuilder.Mode.Layer)
+                ToggleBuilder.BuildLayer(plan, onClip, offClip, out _);
+            else
+                ToggleBuilder.BuildDirectBlendTree(plan, onClip, offClip, out _);
         }
 
         static float ActiveValue(Motion motion, string path)
@@ -46,48 +67,49 @@ namespace Yozolab.DaerD.Tests
             return -1f;
         }
 
-        // ---- validation ----------------------------------------------------
+        // ---- rows ------------------------------------------------------------
 
+        /// <summary>The rows are enumerated once and both clips are written from them, so what a
+        /// record books as "written" cannot disagree with what the curves say (ADR 0046).</summary>
         [Test]
-        public void Validate_RejectsMissingPieces()
+        public void Rows_DescribeEveryCurveBothClipsGet()
         {
-            var controller = NewController();
-            Assert.IsNotNull(ToggleBuilder.Validate(NewRequest(null, ToggleBuilder.Mode.Layer, "A")));
-            Assert.IsNotNull(ToggleBuilder.Validate(NewRequest(controller, ToggleBuilder.Mode.Layer)));
+            var plan = NewPlan(null, ToggleBuilder.Mode.Layer, "Body/Hat");
+            plan.targets[0].bindings.Add(ToggleBuilder.Binding.Enabled(typeof(Light)));
 
-            var noName = NewRequest(controller, ToggleBuilder.Mode.Layer, "A");
-            noName.toggleName = string.Empty;
-            Assert.IsNotNull(ToggleBuilder.Validate(noName));
+            var rows = ToggleBuilder.Rows(plan);
 
-            var noParameter = NewRequest(controller, ToggleBuilder.Mode.Layer, "A");
-            noParameter.parameter = string.Empty;
-            Assert.IsNotNull(ToggleBuilder.Validate(noParameter));
-
-            var emptyPath = NewRequest(controller, ToggleBuilder.Mode.Layer, "A", "  ");
-            Assert.IsNotNull(ToggleBuilder.Validate(emptyPath));
-
-            var duplicate = NewRequest(controller, ToggleBuilder.Mode.Layer, "A", "A");
-            Assert.IsNotNull(ToggleBuilder.Validate(duplicate));
+            Assert.AreEqual(2, rows.Count);
+            Assert.AreEqual("Body/Hat", rows[0].binding.path);
+            Assert.AreEqual(typeof(GameObject), rows[0].binding.type);
+            Assert.AreEqual("m_IsActive", rows[0].binding.propertyName);
+            Assert.AreEqual(0f, rows[0].Value(false));
+            Assert.AreEqual(1f, rows[0].Value(true));
+            Assert.AreEqual(typeof(Light), rows[1].binding.type);
+            Assert.AreEqual("m_Enabled", rows[1].binding.propertyName);
         }
 
         [Test]
-        public void Validate_RejectsParameterTypeMismatch()
+        public void Rows_InvertedTargetSwapsTheTwoSides()
         {
-            var controller = NewController();
-            controller.AddParameter("Hat", AnimatorControllerParameterType.Float);
-            Assert.IsNotNull(ToggleBuilder.Validate(NewRequest(controller, ToggleBuilder.Mode.Layer, "A")));
+            var plan = NewPlan(null, ToggleBuilder.Mode.Layer, "Hat");
+            plan.targets[0].activeWhenOn = false;
 
-            var dbt = NewController();
-            dbt.AddParameter("Hat", AnimatorControllerParameterType.Bool);
-            Assert.IsNotNull(ToggleBuilder.Validate(NewRequest(dbt, ToggleBuilder.Mode.DirectBlendTree, "A")));
+            var rows = ToggleBuilder.Rows(plan);
+
+            Assert.AreEqual(1f, rows[0].Value(false), "the OFF clip shows an inverted target");
+            Assert.AreEqual(0f, rows[0].Value(true));
         }
 
+        /// <summary>The merge's own object is "" and is a legitimate target — a gadget that
+        /// hides the object the merge sits on is a normal thing to build.</summary>
         [Test]
-        public void Validate_AcceptsMatchingExistingParameter()
+        public void Rows_TakeTheEmptyPathAsItComes()
         {
-            var controller = NewController();
-            controller.AddParameter("Hat", AnimatorControllerParameterType.Bool);
-            Assert.IsNull(ToggleBuilder.Validate(NewRequest(controller, ToggleBuilder.Mode.Layer, "A")));
+            var plan = NewPlan(null, ToggleBuilder.Mode.Layer, string.Empty);
+            var rows = ToggleBuilder.Rows(plan);
+            Assert.AreEqual(1, rows.Count);
+            Assert.AreEqual(string.Empty, rows[0].binding.path);
         }
 
         // ---- layer mode ----------------------------------------------------
@@ -96,7 +118,7 @@ namespace Yozolab.DaerD.Tests
         public void Layer_BuildsTwoStatesWithInstantTransitions()
         {
             var controller = NewController();
-            Assert.IsTrue(ToggleBuilder.Apply(NewRequest(controller, ToggleBuilder.Mode.Layer, "Body/Hat")));
+            Build(NewPlan(controller, ToggleBuilder.Mode.Layer, "Body/Hat"));
 
             Assert.AreEqual(2, controller.layers.Length);
             var layer = controller.layers[1];
@@ -133,12 +155,25 @@ namespace Yozolab.DaerD.Tests
         }
 
         [Test]
+        public void Layer_ReturnsTheMachineTheRecordIsKeyedBy()
+        {
+            var controller = NewController();
+            var plan = NewPlan(controller, ToggleBuilder.Mode.Layer, "Hat");
+            var machine = ToggleBuilder.BuildLayer(plan,
+                ToggleBuilder.BuildClip(plan, true), ToggleBuilder.BuildClip(plan, false), out _);
+
+            Assert.AreSame(controller.layers[1].stateMachine, machine,
+                "the record identifies its layer by the root machine, so the builder has to "
+                + "hand that back rather than an index that a reorder would invalidate");
+        }
+
+        [Test]
         public void Layer_DefaultOnStartsOnTheOnState()
         {
             var controller = NewController();
-            var request = NewRequest(controller, ToggleBuilder.Mode.Layer, "Hat");
-            request.defaultOn = true;
-            Assert.IsTrue(ToggleBuilder.Apply(request));
+            var plan = NewPlan(controller, ToggleBuilder.Mode.Layer, "Hat");
+            plan.defaultOn = true;
+            Build(plan);
 
             var layer = controller.layers[1];
             Assert.AreEqual("Hat ON", layer.stateMachine.defaultState.name);
@@ -149,9 +184,9 @@ namespace Yozolab.DaerD.Tests
         public void Layer_InvertedTargetSwapsClipValues()
         {
             var controller = NewController();
-            var request = NewRequest(controller, ToggleBuilder.Mode.Layer, "Hat");
-            request.targets.Add(new ToggleBuilder.Target { path = "Cape", activeWhenOn = false });
-            Assert.IsTrue(ToggleBuilder.Apply(request));
+            var plan = NewPlan(controller, ToggleBuilder.Mode.Layer, "Hat");
+            plan.targets.Add(new ToggleBuilder.Target { path = "Cape", activeWhenOn = false });
+            Build(plan);
 
             var states = controller.layers[1].stateMachine.states;
             var offMotion = states[0].state.motion;
@@ -167,8 +202,11 @@ namespace Yozolab.DaerD.Tests
         {
             var controller = NewController();
             controller.AddParameter("Hat", AnimatorControllerParameterType.Bool);
-            Assert.IsTrue(ToggleBuilder.Apply(NewRequest(controller, ToggleBuilder.Mode.Layer, "Hat")));
+            var plan = NewPlan(controller, ToggleBuilder.Mode.Layer, "Hat");
+            ToggleBuilder.BuildLayer(plan, ToggleBuilder.BuildClip(plan, true),
+                ToggleBuilder.BuildClip(plan, false), out bool created);
 
+            Assert.IsFalse(created, "which is what stops removing the gadget from taking it away");
             int count = 0;
             foreach (var p in controller.parameters)
                 if (p.name == "Hat") count++;
@@ -187,7 +225,7 @@ namespace Yozolab.DaerD.Tests
             });
             // defaultOn is false, but the reused parameter defaults to true — the layer must
             // start ON so nothing transitions on the first frame.
-            Assert.IsTrue(ToggleBuilder.Apply(NewRequest(controller, ToggleBuilder.Mode.Layer, "Hat")));
+            Build(NewPlan(controller, ToggleBuilder.Mode.Layer, "Hat"));
             Assert.AreEqual("Hat ON", controller.layers[1].stateMachine.defaultState.name);
         }
 
@@ -196,7 +234,7 @@ namespace Yozolab.DaerD.Tests
         {
             var controller = NewController();
             controller.AddLayer("Hat");
-            Assert.IsTrue(ToggleBuilder.Apply(NewRequest(controller, ToggleBuilder.Mode.Layer, "Hat")));
+            Build(NewPlan(controller, ToggleBuilder.Mode.Layer, "Hat"));
             Assert.AreEqual("Hat 1", controller.layers[2].name);
         }
 
@@ -206,7 +244,7 @@ namespace Yozolab.DaerD.Tests
         public void Dbt_Builds1DTreeInsideDirectLayer()
         {
             var controller = NewController();
-            Assert.IsTrue(ToggleBuilder.Apply(NewRequest(controller, ToggleBuilder.Mode.DirectBlendTree, "Body/Hat")));
+            Build(NewPlan(controller, ToggleBuilder.Mode.DirectBlendTree, "Body/Hat"));
 
             Assert.AreEqual(2, controller.layers.Length);
             var layer = controller.layers[1];
@@ -234,12 +272,26 @@ namespace Yozolab.DaerD.Tests
         }
 
         [Test]
+        public void Dbt_ReturnsTheChildItHung()
+        {
+            var controller = NewController();
+            var plan = NewPlan(controller, ToggleBuilder.Mode.DirectBlendTree, "Hat");
+            var tree = ToggleBuilder.BuildDirectBlendTree(plan,
+                ToggleBuilder.BuildClip(plan, true), ToggleBuilder.BuildClip(plan, false), out _);
+
+            var root = (BlendTree)controller.layers[1].stateMachine.states[0].state.motion;
+            Assert.AreSame(root.children[0].motion, tree,
+                "the record holds the child by reference — that is the whole of what sweeping "
+                + "it is allowed to remove");
+        }
+
+        [Test]
         public void Dbt_DefaultOnSetsFloatDefaultToOne()
         {
             var controller = NewController();
-            var request = NewRequest(controller, ToggleBuilder.Mode.DirectBlendTree, "Hat");
-            request.defaultOn = true;
-            Assert.IsTrue(ToggleBuilder.Apply(request));
+            var plan = NewPlan(controller, ToggleBuilder.Mode.DirectBlendTree, "Hat");
+            plan.defaultOn = true;
+            Build(plan);
             Assert.AreEqual(1f, DbtBuilder.FindParameter(controller, "Hat").defaultFloat);
         }
 
@@ -247,28 +299,17 @@ namespace Yozolab.DaerD.Tests
         public void Dbt_SecondToggleSharesTheExistingLayer()
         {
             var controller = NewController();
-            Assert.IsTrue(ToggleBuilder.Apply(NewRequest(controller, ToggleBuilder.Mode.DirectBlendTree, "Hat")));
+            Build(NewPlan(controller, ToggleBuilder.Mode.DirectBlendTree, "Hat"));
 
-            var second = NewRequest(controller, ToggleBuilder.Mode.DirectBlendTree, "Cape");
-            second.toggleName = "Cape";
+            var second = NewPlan(controller, ToggleBuilder.Mode.DirectBlendTree, "Cape");
+            second.name = "Cape";
             second.parameter = "Cape";
             second.layerIndex = 1;
-            Assert.IsTrue(ToggleBuilder.Apply(second));
+            Build(second);
 
             Assert.AreEqual(2, controller.layers.Length);
             var root = (BlendTree)controller.layers[1].stateMachine.states[0].state.motion;
             Assert.AreEqual(2, root.children.Length);
-        }
-
-        [Test]
-        public void Dbt_RejectsNonDbtTargetLayer()
-        {
-            var controller = NewController();
-            controller.layers[0].stateMachine.AddState("Busy");
-            var request = NewRequest(controller, ToggleBuilder.Mode.DirectBlendTree, "Hat");
-            request.layerIndex = 0;
-            Assert.IsNotNull(ToggleBuilder.Validate(request));
-            Assert.IsFalse(ToggleBuilder.Apply(request));
         }
 
         // ---- component / blendshape bindings --------------------------------
@@ -287,9 +328,9 @@ namespace Yozolab.DaerD.Tests
         public void Bindings_EnabledCurvesFollowTheToggle()
         {
             var controller = NewController();
-            var request = NewRequest(controller, ToggleBuilder.Mode.Layer, "Hat");
-            request.targets[0].bindings.Add(ToggleBuilder.Binding.Enabled(typeof(Light)));
-            Assert.IsTrue(ToggleBuilder.Apply(request));
+            var plan = NewPlan(controller, ToggleBuilder.Mode.Layer, "Hat");
+            plan.targets[0].bindings.Add(ToggleBuilder.Binding.Enabled(typeof(Light)));
+            Build(plan);
 
             var states = controller.layers[1].stateMachine.states;
             Assert.AreEqual(0f, BindingValue(states[0].state.motion, "Hat", typeof(Light), "m_Enabled"));
@@ -300,10 +341,10 @@ namespace Yozolab.DaerD.Tests
         public void Bindings_BlendShapeUsesOffOnValues()
         {
             var controller = NewController();
-            var request = NewRequest(controller, ToggleBuilder.Mode.Layer, "Face");
-            request.targets[0].toggleActive = false;
-            request.targets[0].bindings.Add(ToggleBuilder.Binding.BlendShape("Smile", 10f, 90f));
-            Assert.IsTrue(ToggleBuilder.Apply(request));
+            var plan = NewPlan(controller, ToggleBuilder.Mode.Layer, "Face");
+            plan.targets[0].toggleActive = false;
+            plan.targets[0].bindings.Add(ToggleBuilder.Binding.BlendShape("Smile", 10f, 90f));
+            Build(plan);
 
             var states = controller.layers[1].stateMachine.states;
             Assert.AreEqual(10f, BindingValue(states[0].state.motion, "Face",
@@ -319,10 +360,10 @@ namespace Yozolab.DaerD.Tests
         public void Bindings_InvertedTargetSwapsComponentValuesToo()
         {
             var controller = NewController();
-            var request = NewRequest(controller, ToggleBuilder.Mode.Layer, "Hat");
-            request.targets[0].activeWhenOn = false;
-            request.targets[0].bindings.Add(ToggleBuilder.Binding.BlendShape("Smile", 10f, 90f));
-            Assert.IsTrue(ToggleBuilder.Apply(request));
+            var plan = NewPlan(controller, ToggleBuilder.Mode.Layer, "Hat");
+            plan.targets[0].activeWhenOn = false;
+            plan.targets[0].bindings.Add(ToggleBuilder.Binding.BlendShape("Smile", 10f, 90f));
+            Build(plan);
 
             var states = controller.layers[1].stateMachine.states;
             // OFF clip carries the ON values because the target is inverted.
@@ -332,22 +373,15 @@ namespace Yozolab.DaerD.Tests
                 typeof(SkinnedMeshRenderer), "blendShape.Smile"));
         }
 
+        /// <summary>A binding whose type could not be resolved is dropped rather than written as
+        /// a curve bound to nothing. <see cref="ObjectGadgets"/> refuses such a record by name
+        /// before it gets here; this is what happens if anything ever gets past that.</summary>
         [Test]
-        public void Validate_RejectsTargetWithNothingToAnimate()
+        public void Bindings_WithNoTypeAreLeftOutOfTheClips()
         {
-            var controller = NewController();
-            var request = NewRequest(controller, ToggleBuilder.Mode.Layer, "Hat");
-            request.targets[0].toggleActive = false;
-            Assert.IsNotNull(ToggleBuilder.Validate(request));
-        }
-
-        [Test]
-        public void Validate_RejectsInvalidBinding()
-        {
-            var controller = NewController();
-            var request = NewRequest(controller, ToggleBuilder.Mode.Layer, "Hat");
-            request.targets[0].bindings.Add(new ToggleBuilder.Binding { type = null, property = "m_Enabled" });
-            Assert.IsNotNull(ToggleBuilder.Validate(request));
+            var plan = NewPlan(null, ToggleBuilder.Mode.Layer, "Hat");
+            plan.targets[0].bindings.Add(new ToggleBuilder.Binding { type = null, property = "m_Enabled" });
+            Assert.AreEqual(1, ToggleBuilder.Rows(plan).Count, "only the m_IsActive row");
         }
 
         // ---- clips ---------------------------------------------------------
@@ -356,7 +390,7 @@ namespace Yozolab.DaerD.Tests
         public void Clips_AreNamedAfterTheToggle()
         {
             var controller = NewController();
-            Assert.IsTrue(ToggleBuilder.Apply(NewRequest(controller, ToggleBuilder.Mode.Layer, "Hat")));
+            Build(NewPlan(controller, ToggleBuilder.Mode.Layer, "Hat"));
             var states = controller.layers[1].stateMachine.states;
             Assert.AreEqual("Hat OFF", states[0].state.motion.name);
             Assert.AreEqual("Hat ON", states[1].state.motion.name);
@@ -366,8 +400,7 @@ namespace Yozolab.DaerD.Tests
         public void Clips_KeyEveryTargetInBothClips()
         {
             var controller = NewController();
-            var request = NewRequest(controller, ToggleBuilder.Mode.Layer, "A", "B/C");
-            Assert.IsTrue(ToggleBuilder.Apply(request));
+            Build(NewPlan(controller, ToggleBuilder.Mode.Layer, "A", "B/C"));
 
             var states = controller.layers[1].stateMachine.states;
             foreach (var child in states)

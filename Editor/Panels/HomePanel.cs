@@ -2,6 +2,10 @@ using System.Collections.Generic;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
+using Yozolab.DaerD.Analyze;
+using Yozolab.DaerD.Authoring;
+using Yozolab.DaerD.Bridge;
+using Yozolab.DaerD.Engine;
 
 namespace Yozolab.DaerD
 {
@@ -52,6 +56,7 @@ namespace Yozolab.DaerD
         // The lists start expanded: seeing what the controller carries is the reason to open
         // this screen at all, so folding them away is the exception, not the default.
         bool _gadgetsOpen = true;
+        bool _objectGadgetsOpen = true;
         bool _syncsOpen = true;
         bool _recipesOpen = true;
         // The tools start folded, for the opposite reason: each is a working surface of its
@@ -162,6 +167,8 @@ namespace Yozolab.DaerD
             EditorGUILayout.BeginVertical(GUILayout.MaxWidth(SplitColumnWidth));
             DrawController(controller);
             EditorGUILayout.Space(8);
+            DrawPrefabLink(controller);
+            EditorGUILayout.Space(8);
             DrawTools(controller);
             EditorGUILayout.EndVertical();
 
@@ -170,8 +177,9 @@ namespace Yozolab.DaerD
             EditorGUILayout.BeginVertical(GUILayout.MaxWidth(SplitColumnWidth));
             DrawGadgets(controller);
             EditorGUILayout.Space(8);
-            DrawAsyncSyncs(controller);
+            DrawObjectGadgets(controller);
             EditorGUILayout.Space(8);
+            DrawAsyncSyncs(controller);
             DrawRecipes(controller);
             EditorGUILayout.EndVertical();
 
@@ -191,10 +199,13 @@ namespace Yozolab.DaerD
 
             DrawController(controller);
             EditorGUILayout.Space(8);
+            DrawPrefabLink(controller);
+            EditorGUILayout.Space(8);
             DrawGadgets(controller);
             EditorGUILayout.Space(8);
-            DrawAsyncSyncs(controller);
+            DrawObjectGadgets(controller);
             EditorGUILayout.Space(8);
+            DrawAsyncSyncs(controller);
             DrawRecipes(controller);
             EditorGUILayout.Space(8);
             DrawTools(controller);
@@ -260,8 +271,10 @@ namespace Yozolab.DaerD
         // ---- controller --------------------------------------------------------
 
         /// <summary>Identity, plus the assets this controller is explicitly associated with.
-        /// The store and the menu are assigned by hand and never guessed from the scene, since
-        /// DaerD is also used on gimmick controllers that belong to no avatar.</summary>
+        /// They are assigned by hand and never guessed from the scene, since DaerD is also used
+        /// on gimmick controllers that belong to no avatar. The parameter store used to be a
+        /// fourth slot here and is now in the Prefab Link card below, where the pin can offer an
+        /// answer for it.</summary>
         void DrawController(AnimatorController controller)
         {
             BeginCard(L.Tr("Controller"));
@@ -283,26 +296,7 @@ namespace Yozolab.DaerD
                 if (pickedEmpty != currentEmpty)
                     GraphFrameData.SetEmptyClip(controller, pickedEmpty);
 
-                // Announced as a parameter change so the parameters panel drops the store it has
-                // cached and redraws its budget against the new one.
-                PanelGui.ParameterStoreField(controller, Context.NotifyParametersChanged);
-
-                var currentMenu = GraphFrameData.GetExpressionsMenu(controller);
-                var pickedMenu = EditorGUILayout.ObjectField(
-                    new GUIContent(L.Tr("Expressions Menu"),
-                        L.Tr("The VRC Expressions Menu this controller belongs to, opened by the menu editor. Assigned explicitly — DaerD never guesses it from the scene.")),
-                    currentMenu, typeof(ScriptableObject), false);
-                if (pickedMenu != currentMenu)
-                {
-                    // The slot only accepts what the menu editor can actually read back.
-                    if (pickedMenu == null || VrcMenuAccess.Is(pickedMenu))
-                        GraphFrameData.SetExpressionsMenu(controller, pickedMenu);
-                    else
-                        EditorUtility.DisplayDialog(L.Tr("DaerD Menu"),
-                            L.Tr("That asset is not a VRC Expressions Menu."), "OK");
-                }
-
-                // Inside the scope too, so its prefix lines up with the three slots above it.
+                // Inside the scope too, so its prefix lines up with the slot above it.
                 var wdTooltip = L.Tr("Bulk-set every state. Layers containing only Direct blend trees stay ON.");
                 EditorGUILayout.BeginHorizontal();
                 EditorGUILayout.PrefixLabel(new GUIContent(L.Tr("Write Defaults"), wdTooltip));
@@ -313,7 +307,88 @@ namespace Yozolab.DaerD
                 EditorGUILayout.EndHorizontal();
             }
 
+            // Bottom of the card and spelled with an ellipsis: rare, not undoable, and never
+            // the reason this card is open. Only shown when there is anything to act on.
+            var holder = GraphFrameData.Find(controller);
+            if (holder != null)
+            {
+                string sidecar = GraphFrameData.SidecarPathOf(controller);
+                if (sidecar != null)
+                    using (new PanelGui.LabelWidthScope(FieldLabelWidth))
+                    {
+                        // Where it went is the one thing a detached controller has to say out
+                        // loud: the file is the user's to keep, move and commit.
+                        EditorGUILayout.BeginHorizontal();
+                        EditorGUILayout.LabelField(
+                            new GUIContent(L.Tr("DaerD Data"),
+                                L.Tr("This controller's DaerD data is kept in a file of its own, so the controller carries none of it.")),
+                            new GUIContent(sidecar, sidecar));
+                        if (RowButton(L.Tr("Ping"), L.Tr("Highlight this object in the Project / graph")))
+                            EditorGUIUtility.PingObject(holder);
+                        EditorGUILayout.EndHorizontal();
+                    }
+
+                EditorGUILayout.BeginHorizontal();
+                GUILayout.FlexibleSpace();
+                if (sidecar == null)
+                {
+                    // Nowhere to put a sidecar (a controller in a package, say) means no button:
+                    // the refusal is a fact about the controller, not something to find out by
+                    // pressing.
+                    if (GraphFrameData.SidecarPathFor(AssetDatabase.GetAssetPath(controller)) != null
+                        && GUILayout.Button(new GUIContent(L.Tr("Detach DaerD Data…"),
+                            L.Tr("Move what DaerD stores into a file of its own, so this controller can be handed over without it."))))
+                        DetachData(controller);
+                }
+                else if (GUILayout.Button(new GUIContent(L.Tr("Embed DaerD Data…"),
+                        L.Tr("Move the detached data back into this controller and delete the file."))))
+                    EmbedData(controller);
+                if (GUILayout.Button(new GUIContent(L.Tr("Discard DaerD Data…"),
+                        L.Tr("Remove everything DaerD stores with this controller. The controller itself is untouched."))))
+                    DiscardData(controller);
+                EditorGUILayout.EndHorizontal();
+            }
+
             EndCard();
+        }
+
+        static void DetachData(AnimatorController controller)
+        {
+            if (!EditorUtility.DisplayDialog(L.Tr("Detach DaerD Data"),
+                    L.Tr("Move everything DaerD stores with '{0}' into a file of its own?\n\nThe controller stops carrying any DaerD data at all — which is what makes it clean to hand over — and keeps every layer, parameter, motion and generated clip. Nothing is lost here: DaerD goes on managing it from the new file.\n\nIt is written to '{1}'. Keep that file in your project: without it this controller looks like one DaerD has never seen.\n\nThe assets are saved immediately; this cannot be undone.",
+                        controller.name,
+                        GraphFrameData.SidecarPathFor(AssetDatabase.GetAssetPath(controller))),
+                    L.Tr("Detach"), L.Tr("Cancel")))
+                return;
+            var reason = GraphFrameData.Detach(controller);
+            if (reason != null) Debug.LogWarning("DaerD: could not detach the data — " + reason);
+        }
+
+        static void EmbedData(AnimatorController controller)
+        {
+            if (!EditorUtility.DisplayDialog(L.Tr("Embed DaerD Data"),
+                    L.Tr("Move the DaerD data at '{0}' back into '{1}'?\n\nEverything DaerD remembers is kept — only where it lives changes. The file is deleted, along with the folders that were made for it, and the controller carries the data again.\n\nThe assets are saved immediately; this cannot be undone.",
+                        GraphFrameData.SidecarPathOf(controller), controller.name),
+                    L.Tr("Embed"), L.Tr("Cancel")))
+                return;
+            var reason = GraphFrameData.Embed(controller);
+            if (reason != null) Debug.LogWarning("DaerD: could not embed the data — " + reason);
+        }
+
+        static void DiscardData(AnimatorController controller)
+        {
+            string message = L.Tr("Remove everything DaerD stores with '{0}'?\n\nGone: graph frames and notes, gadget and sync records, the prefab and recipe links, the store and Empty clip assignments.\n\nKept: every layer, parameter, motion and generated clip — the controller plays exactly as before, DaerD just no longer manages it (no regeneration, no ownership marks).\n\nThe asset is saved immediately; this cannot be undone.",
+                controller.name);
+            // Detached data is a file, and discarding it is deleting that file — said here
+            // rather than left to be discovered in the Project window afterwards.
+            var sidecar = GraphFrameData.SidecarPathOf(controller);
+            if (sidecar != null)
+                message += "\n\n" + L.Tr("This controller's data is detached: the file '{0}' is deleted too.",
+                    sidecar);
+            if (!EditorUtility.DisplayDialog(L.Tr("Discard DaerD Data"), message,
+                    L.Tr("Discard"), L.Tr("Cancel")))
+                return;
+            GraphFrameData.Discard(controller);
         }
 
         void BulkSetWriteDefaults(AnimatorController controller, bool value)
@@ -327,6 +402,420 @@ namespace Yozolab.DaerD
             ControllerAnalyzer.SetAllWriteDefaults(controller, value);
             // WD badges update immediately
             Context.NotifyGraphVisualsChanged(DaerDContext.GraphVisuals.AllStateNodes);
+        }
+
+        // ---- prefab link -------------------------------------------------------
+
+        /// <summary>
+        /// Which gimmick prefab this controller belongs to, and what follows from knowing it.
+        ///
+        /// Its own card rather than a fourth slot in the Controller card above, because the two
+        /// answer different questions. The slots up there are assets the user hands DaerD; this
+        /// is a claim about the project that DaerD then has to keep checking — it can go stale
+        /// on its own, without anybody touching the controller, and a stale link needs a
+        /// sentence rather than an empty field.
+        ///
+        /// Nothing here searches on its own (ADR 0028): the sweep runs on Scan and on nothing
+        /// else, and drawing this card costs one reference resolution.
+        /// </summary>
+        void DrawPrefabLink(AnimatorController controller)
+        {
+            BeginCard(L.Tr("Prefab Link"));
+            var status = PrefabLinks.Status(controller);
+
+            using (new PanelGui.LabelWidthScope(FieldLabelWidth))
+            {
+                var picked = (GameObject)EditorGUILayout.ObjectField(
+                    new GUIContent(L.Tr("Prefab"),
+                        L.Tr("The gimmick prefab whose MA Merge Animator merges this controller. Drop one here, or press Scan to search the project. DaerD never picks one on its own.")),
+                    status.prefab, typeof(GameObject), false);
+                if (picked != status.prefab)
+                {
+                    DropPrefab(controller, picked);
+                    GUIUtility.ExitGUI();   // the card was redrawn under this layout pass
+                }
+            }
+
+            DrawLinkState(controller, status);
+
+            EditorGUILayout.BeginHorizontal();
+            if (GUILayout.Button(new GUIContent(L.Tr("Scan & Link"),
+                    L.Tr("Search the project's prefabs for an MA Merge Animator that merges this controller. Only prefabs that already reference it are opened, and the answer is remembered until something in the project changes."))))
+            {
+                ScanAndLink(controller, rescan: false);
+                GUIUtility.ExitGUI();
+            }
+            if (IsStale(status.state) && GUILayout.Button(new GUIContent(L.Tr("Rescan"),
+                    L.Tr("Search the project again from scratch, ignoring the remembered answer."))))
+            {
+                ScanAndLink(controller, rescan: true);
+                GUIUtility.ExitGUI();
+            }
+            using (new EditorGUI.DisabledScope(status.state == PrefabLinkState.None))
+                if (GUILayout.Button(new GUIContent(L.Tr("Unlink"),
+                        L.Tr("Forget which prefab this controller belongs to. Nothing inside the prefab is changed."))))
+                {
+                    Unlink(controller);
+                    GUIUtility.ExitGUI();
+                }
+            EditorGUILayout.EndHorizontal();
+
+            EditorGUILayout.Space(6);
+            DrawStore(controller, status);
+            EndCard();
+        }
+
+        /// <summary>The states a Rescan can plausibly answer: the link once resolved and no
+        /// longer does, or points somewhere else. "None" is not stale — there is nothing to
+        /// re-check — and Scan is the button for it.</summary>
+        static bool IsStale(PrefabLinkState state) =>
+            state == PrefabLinkState.PrefabMissing || state == PrefabLinkState.MergeMissing
+            || state == PrefabLinkState.Diverged;
+
+        /// <summary>
+        /// The link in one line, or the sentence its state needs. Every broken state names what
+        /// it is talking about, and none of them offers to repair itself: a link that points at
+        /// another controller is somebody's edit, and which of the two is now the mistake is not
+        /// a thing DaerD can know (the same rule the analyzer keeps).
+        /// </summary>
+        void DrawLinkState(AnimatorController controller, PrefabLinkStatus status)
+        {
+            switch (status.state)
+            {
+                case PrefabLinkState.Healthy:
+                    string path = AssetDatabase.GetAssetPath(status.prefab);
+                    EditorGUILayout.BeginHorizontal();
+                    DrawRowName(status.prefab.name, path);
+                    DrawRowNote(PrefabLinks.PathIn(status.prefab, status.mergeAnimator));
+                    if (RowButton(L.Tr("Ping"), L.Tr("Highlight this object in the Project / graph")))
+                        EditorGUIUtility.PingObject(status.prefab);
+                    EditorGUILayout.EndHorizontal();
+                    break;
+                case PrefabLinkState.PrefabMissing:
+                    // The prefab cannot be named: naming it would mean having saved its path,
+                    // and a saved path is the thing this design does not do.
+                    EditorGUILayout.HelpBox(
+                        L.Tr("The linked prefab cannot be found — deleted, or on a branch that is not checked out. The link is kept exactly as it is; nothing is guessed in its place."),
+                        MessageType.Warning);
+                    break;
+                case PrefabLinkState.MergeMissing:
+                    EditorGUILayout.HelpBox(
+                        L.Tr("The MA Merge Animator this controller was linked to is no longer inside '{0}'. The link is kept as it is — Rescan searches the project again.",
+                            status.prefab.name),
+                        MessageType.Warning);
+                    break;
+                case PrefabLinkState.Diverged:
+                    EditorGUILayout.HelpBox(
+                        L.Tr("The MA Merge Animator in '{0}' now merges {1}, not this controller. Nothing is re-pointed for you: fix it in the prefab, or link this controller to another one.",
+                            status.prefab.name, Quoted(status.mergedController)),
+                        MessageType.Warning);
+                    break;
+                case PrefabLinkState.Unverifiable:
+                    EditorGUILayout.HelpBox(
+                        L.Tr("Modular Avatar is not installed, so this link cannot be read. The saved link is untouched and comes back with it."),
+                        MessageType.Info);
+                    break;
+                default:
+                    EditorGUILayout.LabelField(
+                        L.Tr("Not linked. Scan lists every prefab whose MA Merge Animator names this controller."),
+                        EditorStyles.centeredGreyMiniLabel);
+                    break;
+            }
+        }
+
+        /// <summary>An object's name for a message, or a word for the empty slot — a Merge
+        /// Animator with nothing in its animator field is a real thing to run into, and
+        /// "merges ''" would read as a bug.</summary>
+        static string Quoted(UnityEngine.Object target) =>
+            target != null ? "'" + target.name + "'" : L.Tr("nothing at all");
+
+        /// <summary>
+        /// Which store this controller declares its parameters into — and, when the pin is
+        /// healthy, what the linked prefab says the answer should be.
+        ///
+        /// <para>THE ONE PLACE A STORE IS ASSIGNED.</para>
+        /// It used to be assignable from two (a slot in the Controller card, the same row again
+        /// above the Parameters panel) while this card showed a third, read-only summary of the
+        /// same association. Three surfaces for one field is how the same question came to be
+        /// asked in three different vocabularies on one screen. It belongs HERE rather than in
+        /// the Controller card because the pin is what answers it: for a gimmick, the store is
+        /// the MA Parameters above the linked merge nearly every time, and that answer is one
+        /// button away only while the two sit together.
+        ///
+        /// What is still not here is the ROWS. They are edited in the Parameters panel, which is
+        /// in the left column and visible from here — a second editing surface for the same list
+        /// is two implementations of it, and the panel's one already knows about effective names,
+        /// the budget and the sync diff.
+        /// </summary>
+        void DrawStore(AnimatorController controller, PrefabLinkStatus status)
+        {
+            using (new PanelGui.LabelWidthScope(FieldLabelWidth))
+                DrawStoreSlot(controller);
+
+            var current = GraphFrameData.GetParameterStore(controller);
+            var store = ParameterStore.TryWrap(current);
+            if (store != null)
+            {
+                int capacity = store.Capacity();
+                string summary = capacity >= 0
+                    ? L.Tr("{0}: {1} — {2} of {3} synced bits",
+                        store.Kind, store.Target.name, store.UsedBits(), capacity)
+                    : L.Tr("{0}: {1} — {2} synced bits",
+                        store.Kind, store.Target.name, store.UsedBits());
+                EditorGUILayout.LabelField(new GUIContent(summary,
+                    L.Tr("The rows themselves are edited in the Parameters panel on the left, which is showing this same store.")));
+            }
+
+            // Everything below is what the PIN knows about the store, so a controller with no
+            // usable link gets the slot and nothing else — there is nothing to compare against.
+            if (!status.IsHealthy) return;
+            var linked = PrefabLinks.StoreOf(status);
+            if (linked == null)
+            {
+                if (store == null)
+                    EditorGUILayout.LabelField(
+                        L.Tr("The linked prefab has no MA Parameters above its merge yet."),
+                        EditorStyles.centeredGreyMiniLabel);
+                // The one thing that is missing and that DaerD can supply, offered where the
+                // absence is stated rather than in a menu somewhere else.
+                if (GUILayout.Button(new GUIContent(L.Tr("Add MA Parameters"),
+                        L.Tr("Add an MA Parameters component to the linked prefab's root, so this controller's parameters have somewhere to be declared. This writes the prefab file."))))
+                {
+                    AddParametersToPrefab(controller, status);
+                    GUIUtility.ExitGUI();   // the prefab was reimported under this layout pass
+                }
+                return;
+            }
+            if (linked == current) return;
+            if (GUILayout.Button(new GUIContent(L.Tr("Use The Prefab's MA Parameters"),
+                    L.Tr("Point the parameter store slot at the MA Parameters that governs the linked merge. A button rather than something linking does for you, because the slot already holds an answer somebody gave."))))
+            {
+                GraphFrameData.SetParameterStore(controller, linked);
+                Context.NotifyParametersChanged();
+                GUIUtility.ExitGUI();
+            }
+        }
+
+        /// <summary>
+        /// The slot itself, plus the one search cheap enough to sit beside it.
+        ///
+        /// There used to be a second button here that swept every prefab in the project for a
+        /// merge of this controller and took the MA Parameters above it. Scan, at the top of this
+        /// card, now walks the same prefabs for the same reason and comes back with the prefab
+        /// NAMED — and filling the store from a link somebody confirmed is the same answer with
+        /// its provenance attached, which the silent one never had.
+        ///
+        /// Every change is announced as a parameter change: the parameters panel keeps a wrapped
+        /// store of its own and would otherwise draw the old one's budget.
+        /// </summary>
+        void DrawStoreSlot(AnimatorController controller)
+        {
+            EditorGUILayout.BeginHorizontal();
+            var current = GraphFrameData.GetParameterStore(controller);
+            var picked = EditorGUILayout.ObjectField(
+                new GUIContent(L.Tr("Params"),
+                    L.Tr("The parameter store this controller belongs to: a VRC Expression Parameters asset, or a GameObject carrying an MA Parameters component. Assigned explicitly — DaerD never guesses it from the scene.")),
+                current, typeof(UnityEngine.Object), true);
+            if (picked != current)
+            {
+                var wrapped = ParameterStore.TryWrap(picked);
+                if (picked != null && wrapped == null)
+                    EditorUtility.DisplayDialog(L.Tr("Parameter Store"),
+                        L.Tr("Assign a VRC Expression Parameters asset or an object with an MA Parameters component."), "OK");
+                else
+                {
+                    // The wrapped component, not the whole GameObject, so the slot shows exactly
+                    // what will be edited.
+                    GraphFrameData.SetParameterStore(controller, wrapped != null ? wrapped.Target : null);
+                    Context.NotifyParametersChanged();
+                }
+            }
+            if (GUILayout.Button(new GUIContent(L.Tr("Detect"),
+                    L.Tr("Search the scene for an exact match: an avatar running this controller, or an MA Merge Animator referencing it. A gimmick that lives only as a prefab is in no scene at all — Scan above is the button for that one. Nothing is picked up automatically without one of them.")),
+                    EditorStyles.miniButton, GUILayout.Width(52)))
+            {
+                var detected = ParameterStore.DetectFor(controller);
+                if (detected == null)
+                    EditorUtility.DisplayDialog(L.Tr("Parameter Store"),
+                        L.Tr("No exact match in the scene — no avatar or MA Merge Animator references this controller. A gimmick that lives only as a prefab is found by Scan instead."), "OK");
+                else
+                {
+                    GraphFrameData.SetParameterStore(controller, detected);
+                    Context.NotifyParametersChanged();
+                }
+                GUIUtility.ExitGUI();
+            }
+            EditorGUILayout.EndHorizontal();
+        }
+
+        // ---- prefab link actions -----------------------------------------------
+
+        /// <summary>
+        /// Scan, then link — or say why not. The three answers are told apart by
+        /// <see cref="PrefabLinks.ScanFor"/> rather than by counting the list here, so the
+        /// branch is one decision with a test on it instead of a shape the UI happens to have.
+        /// </summary>
+        void ScanAndLink(AnimatorController controller, bool rescan)
+        {
+            // Rescan exists for the case the memory is the problem: an answer remembered from
+            // before the prefab was fixed. Ordinary Scan keeps it, since refilling means walking
+            // the project again.
+            if (rescan) PrefabLinks.ForgetCandidates();
+            var scan = PrefabLinks.ScanFor(controller);
+            switch (scan.choice)
+            {
+                case PrefabLinkChoice.One:
+                    Confirm(controller, scan.plan);
+                    break;
+                case PrefabLinkChoice.Several:
+                    ShowCandidateMenu(controller, scan.candidates);
+                    break;
+                default:
+                    EditorUtility.DisplayDialog(L.Tr("Prefab Link"),
+                        L.Tr("No prefab in this project has an MA Merge Animator that merges '{0}'.",
+                            controller.name), "OK");
+                    break;
+            }
+        }
+
+        /// <summary>A prefab dropped on the slot: the same three answers asked of that one
+        /// prefab, which costs no sweep at all — the user already said which.</summary>
+        void DropPrefab(AnimatorController controller, GameObject prefab)
+        {
+            if (prefab == null)
+            {
+                Unlink(controller);
+                return;
+            }
+            // A scene object cannot be the answer: a gimmick spends most of its life as a prefab
+            // in no scene at all, and a link into a scene would die with the scene.
+            if (!PrefabUtility.IsPartOfPrefabAsset(prefab))
+            {
+                EditorUtility.DisplayDialog(L.Tr("Prefab Link"),
+                    L.Tr("'{0}' is not a prefab asset. Only a prefab in the project can be linked.",
+                        prefab.name), "OK");
+                return;
+            }
+            var scan = PrefabLinks.ScanIn(prefab, controller);
+            switch (scan.choice)
+            {
+                case PrefabLinkChoice.One:
+                    Confirm(controller, scan.plan);
+                    break;
+                case PrefabLinkChoice.Several:
+                    ShowCandidateMenu(controller, scan.candidates);
+                    break;
+                default:
+                    EditorUtility.DisplayDialog(L.Tr("Prefab Link"),
+                        L.Tr("'{0}' has no MA Merge Animator that merges '{1}'.",
+                            prefab.name, controller.name), "OK");
+                    break;
+            }
+        }
+
+        /// <summary>
+        /// The picker for several candidates. Slashes are replaced in the label because
+        /// GenericMenu reads one as "start a submenu", and both halves of what identifies a
+        /// candidate — where the prefab is, where the merge is inside it — are paths.
+        /// </summary>
+        void ShowCandidateMenu(AnimatorController controller, List<PrefabLinkCandidate> candidates)
+        {
+            var menu = new GenericMenu();
+            foreach (var candidate in candidates)
+            {
+                var captured = candidate;
+                string label = AssetDatabase.GetAssetPath(candidate.prefab) + "  :  "
+                    + PrefabLinks.PathIn(candidate.prefab, candidate.mergeAnimator);
+                menu.AddItem(new GUIContent(label.Replace("/", " › ")), false,
+                    () => Confirm(controller, PrefabLinks.PlanFor(controller, captured)));
+            }
+            menu.ShowAsContext();
+        }
+
+        /// <summary>
+        /// The confirmation, written out of the plan rather than out of the UI's own idea of
+        /// what is about to happen — including the store slot, which is the half a person would
+        /// not otherwise expect a button called "link" to touch.
+        /// </summary>
+        void Confirm(AnimatorController controller, PrefabLinkPlan plan)
+        {
+            if (plan == null || plan.candidate == null) return;
+            string message = L.Tr("Link this controller to '{0}'?\n\nPrefab: {1}\nMerge Animator: {2}",
+                plan.candidate.prefab.name, AssetDatabase.GetAssetPath(plan.candidate.prefab),
+                PrefabLinks.PathIn(plan.candidate.prefab, plan.candidate.mergeAnimator));
+            if (plan.FillsStore)
+                message += "\n\n" + L.Tr("The parameter store slot is empty, so it is set to the MA Parameters on '{0}' at the same time.",
+                    plan.store.name);
+            else if (plan.StoreDiffers)
+                message += "\n\n" + L.Tr("The parameter store slot already holds '{0}' and is left alone. A button below adopts the prefab's own instead.",
+                    plan.currentStore.name);
+
+            if (!EditorUtility.DisplayDialog(L.Tr("Prefab Link"), message, L.Tr("Link"), L.Tr("Cancel")))
+                return;
+            PrefabLinks.Apply(controller, plan);
+            Context.NotifyPrefabLinkChanged();
+            if (plan.FillsStore) Context.NotifyParametersChanged();
+        }
+
+        /// <summary>
+        /// The first thing DaerD writes into somebody's prefab, and the shape every later one
+        /// follows: refuse first, then say what is about to be added, then write once.
+        ///
+        /// The refusal comes before the question rather than after it, because a dialog that
+        /// asks and then fails is a dialog that taught the user nothing. Saving an asset cannot
+        /// be undone, so the sentence about what is being added IS the undo — there is no second
+        /// chance to read it.
+        /// </summary>
+        void AddParametersToPrefab(AnimatorController controller, PrefabLinkStatus status)
+        {
+            var prefab = status.prefab;
+            switch (PrefabWriter.Check(prefab))
+            {
+                case PrefabWriteRefusal.ImmutablePackage:
+                    EditorUtility.DisplayDialog(L.Tr("Prefab Link"),
+                        L.Tr("'{0}' lives in a package the package manager owns, so DaerD will not write to it. Copy the prefab into this project's Assets folder first.",
+                            AssetDatabase.GetAssetPath(prefab)), "OK");
+                    return;
+                case PrefabWriteRefusal.OpenWithUnsavedEdits:
+                    EditorUtility.DisplayDialog(L.Tr("Prefab Link"),
+                        L.Tr("'{0}' is open in prefab mode with unsaved changes. Save or discard them first — writing the file underneath an open stage would lose one of the two sets of edits.",
+                            prefab.name), "OK");
+                    return;
+                case PrefabWriteRefusal.NotAPrefabAsset:
+                    EditorUtility.DisplayDialog(L.Tr("Prefab Link"),
+                        L.Tr("The linked prefab is not a prefab asset any more, so there is nothing to write to."), "OK");
+                    return;
+            }
+
+            if (!EditorUtility.DisplayDialog(L.Tr("Prefab Link"),
+                    L.Tr("Add an MA Parameters component to the root of '{0}'?\n\nThat is the only change: one component on the root, nothing removed, nothing moved. It goes on the root because Modular Avatar looks for it on the merge's own object and upwards, so every Merge Animator in this prefab — including ones added later — can see it there.\n\nThe prefab file is saved immediately, and saving an asset cannot be undone.",
+                        prefab.name),
+                    L.Tr("Add"), L.Tr("Cancel")))
+                return;
+
+            var added = PrefabWriter.AddParameters(prefab);
+            if (added == null)
+            {
+                EditorUtility.DisplayDialog(L.Tr("Prefab Link"),
+                    L.Tr("'{0}' was not changed — Modular Avatar is not installed, or the prefab could not be opened.",
+                        prefab.name), "OK");
+                return;
+            }
+            // The slot is filled only when it is empty, the same rule linking follows: a store
+            // somebody chose is an answer, not a gap.
+            if (GraphFrameData.GetParameterStore(controller) == null)
+                GraphFrameData.SetParameterStore(controller, added);
+            Context.NotifyParametersChanged();
+        }
+
+        void Unlink(AnimatorController controller)
+        {
+            if (!EditorUtility.DisplayDialog(L.Tr("Prefab Link"),
+                    L.Tr("Forget which prefab this controller belongs to?\n\nNothing inside the prefab is changed, and the parameter store slot is left as it is."),
+                    L.Tr("Unlink"), L.Tr("Cancel")))
+                return;
+            GraphFrameData.ClearPrefabLink(controller);
+            Context.NotifyPrefabLinkChanged();
         }
 
         // ---- DBT gadgets -------------------------------------------------------
@@ -404,6 +893,128 @@ namespace Yozolab.DaerD
             OnGadgetApplied();
         }
 
+        // ---- object gadgets ----------------------------------------------------
+
+        /// <summary>
+        /// The gadgets whose subject is an object in the linked prefab, listed apart from the
+        /// DBT gadgets above. Two lists rather than one because they are two families: these are
+        /// regenerated against a prefab and are meaningless without a healthy pin, while a DBT
+        /// gadget is arithmetic over parameters and cares about no prefab at all. Sharing a card
+        /// would mean one heading that is true of half its rows.
+        ///
+        /// With the pin unusable the card says so and offers nothing. There is no half of this
+        /// that works without it — every path is relative to the merge — and buttons that refuse
+        /// one by one on being pressed teach less than one sentence that says why.
+        /// </summary>
+        void DrawObjectGadgets(AnimatorController controller)
+        {
+            var gadgets = GraphFrameData.GetObjectGadgets(controller);
+            _objectGadgetsOpen = BeginFoldCard(L.Tr("Object Gadgets"), gadgets.Count,
+                _objectGadgetsOpen);
+            if (!_objectGadgetsOpen)
+            {
+                EndCard();
+                return;
+            }
+
+            string refusal = ObjectGadgets.LinkRefusal(controller);
+            if (refusal != null)
+            {
+                EditorGUILayout.HelpBox(refusal, MessageType.Info);
+                EndCard();
+                return;
+            }
+            if (gadgets.Count == 0)
+                EditorGUILayout.LabelField(L.Tr("No object gadgets yet."),
+                    EditorStyles.centeredGreyMiniLabel);
+
+            foreach (var config in gadgets)
+            {
+                string kind = ObjectGadgets.KindLabel(config);
+                string mode = ObjectGadgets.ModeLabel(config);
+                string targets = L.Tr("{0} object(s)", config.targets.Count);
+                EditorGUILayout.BeginHorizontal();
+                DrawRowName(config.name,
+                    config.name + " (" + kind + ", " + mode + ") — " + targets);
+                DrawRowNote(kind);
+                DrawRowNote(mode);
+                DrawRowNote(targets);
+                if (RowButton(L.Tr("Edit")))
+                {
+                    ObjectGadgetWindow.Open(controller, config, OnGadgetApplied);
+                    GUIUtility.ExitGUI();   // the focus moved to another window under this layout pass
+                }
+                if (RowButton(L.Tr("Delete")))
+                {
+                    DeleteObjectGadget(controller, config);
+                    GUIUtility.ExitGUI();   // the list was rebuilt under this layout pass
+                }
+                EditorGUILayout.EndHorizontal();
+            }
+
+            // Named for the family, not for the one kind that exists — the card's heading
+            // already says which family, exactly as the DBT gadgets card above it does. The
+            // family is meant to grow into "pick objects in the prefab and do something to
+            // them", so a button called Add Toggle would have to be renamed on the day a second
+            // kind lands, and until then it says that toggling is all this list can ever hold.
+            // The editor it opens is still the toggle one; the tooltip is where that is said.
+            if (GUILayout.Button(new GUIContent(L.Tr("+ Add Gadget"),
+                    L.Tr("Add a gadget whose subject is an object inside the linked prefab. One kind so far: a toggle, which switches those objects on and off from a parameter."))))
+            {
+                ObjectGadgetWindow.Open(controller, OnGadgetApplied);
+                GUIUtility.ExitGUI();   // the focus moved to another window under this layout pass
+            }
+            EndCard();
+        }
+
+        /// <summary>Deleting names what goes with it. Not politeness: an asset save cannot be
+        /// undone once it reaches a prefab, and even here the parameter is the piece somebody
+        /// else's layer may be reading — so the sentence lists exactly what the record holds.
+        /// </summary>
+        void DeleteObjectGadget(AnimatorController controller,
+            GraphFrameData.ObjectGadgetConfig config)
+        {
+            if (!EditorUtility.DisplayDialog(L.Tr("Object Gadget"),
+                    L.Tr("Delete the object gadget '{0}'?\n\nThis removes {1}. Nothing inside the prefab is changed.",
+                        config.name, ObjectGadgetLoss(controller, config)),
+                    L.Tr("Delete"), L.Tr("Cancel")))
+                return;
+            ObjectGadgets.Remove(controller, config);
+            // No build follows this one, so the sub-assets it freed are flushed here.
+            DbtBuilder.CommitSubAssets(controller);
+            OnGadgetApplied();
+        }
+
+        /// <summary>What deleting one object gadget takes with it, read off the record rather
+        /// than described from memory — the dialog and the sweep have to be the same list.
+        /// Internal so a test can hold the two side by side: a dialog that under-states what is
+        /// about to go is worse than no dialog.</summary>
+        internal static string ObjectGadgetLoss(AnimatorController controller,
+            GraphFrameData.ObjectGadgetConfig config)
+        {
+            var lost = new List<string>();
+            string layer = LayerNameOf(controller, config.layer);
+            lost.Add(config.mode == (int)ToggleBuilder.Mode.Layer
+                ? L.Tr("the layer '{0}'", layer)
+                : L.Tr("its blend tree in the layer '{0}'", layer));
+
+            int clips = 0, supplied = 0;
+            foreach (var output in new[] { config.onClip, config.offClip })
+            {
+                if (output == null || output.clip == null) continue;
+                if (output.userProvided) supplied++;
+                else clips++;
+            }
+            if (clips > 0) lost.Add(L.Tr("{0} generated clip(s)", clips));
+            // Named apart from the generated ones because what happens to them is different:
+            // the file stays and only this gadget's rows leave it. Somebody about to press
+            // Delete on a gadget pointed at their own clip is owed that distinction.
+            if (supplied > 0) lost.Add(L.Tr("this gadget's rows in {0} clip(s) you supplied", supplied));
+            if (config.createdParameter)
+                lost.Add(L.Tr("the parameter '{0}'", config.parameter));
+            return string.Join(", ", lost);
+        }
+
         // ---- async sync --------------------------------------------------------
 
         /// <summary>The sync setups saved with this controller. Selecting one opens its layer,
@@ -435,6 +1046,11 @@ namespace Yozolab.DaerD
                     if (index >= 0) Context.SetLayer(index);
                     GUIUtility.ExitGUI();
                 }
+                if (RowButton(L.Tr("Delete")))
+                {
+                    DeleteAsyncSync(controller, config);
+                    GUIUtility.ExitGUI();   // the setup list was rebuilt under this layout pass
+                }
                 EditorGUILayout.EndHorizontal();
             }
 
@@ -447,64 +1063,224 @@ namespace Yozolab.DaerD
             EndCard();
         }
 
+        /// <summary>
+        /// Deleting names what goes with it, for the reason the object gadget's dialog does and
+        /// then some: a setup spreads over as many as four kinds of layer and a namespace full
+        /// of parameters, and until now the only way to be rid of one was to delete its main
+        /// layer by hand — which left the Ready, Stale and group layers standing as orphans
+        /// nothing pointed at any more.
+        ///
+        /// The sentence also says what STAYS, because those are the two pieces somebody about
+        /// to press Delete would most reasonably fear for: the Empty clip (shared, possibly
+        /// theirs) and the parameter store's declaration rows.
+        /// </summary>
+        void DeleteAsyncSync(AnimatorController controller,
+            GraphFrameData.AsyncSyncConfig config)
+        {
+            if (!EditorUtility.DisplayDialog(L.Tr("Async Sync"),
+                    L.Tr("Delete the async sync setup '{0}'?\n\nThis removes {1}. The multiplexed parameters, the Empty clip and the parameter store rows are left alone.",
+                        config.baseName, AsyncSyncLoss(controller, config)),
+                    L.Tr("Delete"), L.Tr("Cancel")))
+                return;
+            AsyncSyncBuilder.Remove(controller, config);
+            Context.NotifyLayerStructureChanged();
+        }
+
+        /// <summary>What deleting one async sync setup takes with it, read off the record and
+        /// off the same enumerators the removal uses — the dialog and the sweep have to be the
+        /// same list. Internal so a test can hold the two side by side, exactly as
+        /// <see cref="ObjectGadgetLoss"/> is.</summary>
+        internal static string AsyncSyncLoss(AnimatorController controller,
+            GraphFrameData.AsyncSyncConfig config)
+        {
+            var lost = new List<string>();
+            // The layers by the names they answer to NOW: a setup's layers can be renamed, and
+            // the row somebody is about to delete has to be findable in the layer list.
+            var layers = new List<string>();
+            foreach (var machine in AsyncSyncBuilder.OwnedLayers(config))
+                layers.Add(LayerNameOf(controller, machine));
+            // The singular goes through the object gadget's own phrase, so the one thing the
+            // two delete dialogs have in common is said the same way in both.
+            if (layers.Count == 1) lost.Add(L.Tr("the layer '{0}'", layers[0]));
+            else if (layers.Count > 1)
+                lost.Add(L.Tr("the layers {0}", "'" + string.Join("', '", layers) + "'"));
+
+            int parameters = AsyncSyncBuilder.OwnedParameters(controller, config).Count;
+            if (parameters > 0) lost.Add(L.Tr("{0} generated parameter(s)", parameters));
+
+            int requests = 0;
+            foreach (var request in GraphFrameData.GetSyncRequests(controller))
+                if (request.baseName == config.baseName) requests++;
+            if (requests > 0) lost.Add(L.Tr("{0} sync request(s) on states", requests));
+            return string.Join(", ", lost);
+        }
+
         // ---- C# recipes --------------------------------------------------------
 
+        // The last Generate or Verify run's result, kept until the next action replaces it —
+        // the rule the recipe inspector keeps, because a result that vanishes on the next
+        // repaint has said nothing at all. Held per recipe so it cannot appear under a row it
+        // did not come from.
+        UnityEngine.Object _recipeResultFor;
+        List<string> _recipeMessages;
+        string _recipeCleanMessage;
+
         /// <summary>
-        /// The recipes that own layers in this controller, one row per asset rather than per
-        /// layer — a recipe generates as many as it likes, and it is the asset that is the
-        /// source of truth for all of them. Generate lives on the asset, so the useful action
-        /// here is finding it.
+        /// The C# recipes this controller is linked to: where its source is, whether the code
+        /// that WOULD run is the code on disk, and the two actions that belong to a recipe.
+        ///
+        /// One row per recipe ASSET rather than per layer — a recipe generates as many layers as
+        /// it likes and the asset is the source of truth for all of them. The rows come from the
+        /// link, which is the controller's own record of where its recipes are, with any recipe
+        /// that owns layers here without being linked appended after them: that is a recipe from
+        /// before links existed, and it joins the first list the next time it generates.
+        ///
+        /// Unlike the gadget cards above, this one hides itself when there is nothing to list.
+        /// Those say "none yet" because adding one is something you do from that card; a recipe
+        /// is made by the export tool further down the screen, so an empty card here would be a
+        /// heading with nothing to offer.
         /// </summary>
         void DrawRecipes(AnimatorController controller)
         {
-            // The record is keyed by layer; regrouped the other way round here, with a list of
-            // its own to keep the rows in the order the layers were found in.
+            // The code-owned record is keyed by layer; regrouped the other way round here, with
+            // a list of its own to keep the rows in the order the layers were found in.
             var byRecipe = new Dictionary<UnityEngine.Object, List<AnimatorStateMachine>>();
-            var recipes = new List<UnityEngine.Object>();
+            var owners = new List<UnityEngine.Object>();
             foreach (var entry in GraphFrameData.GetCodeOwned(controller))
             {
                 if (!byRecipe.TryGetValue(entry.Value, out var machines))
                 {
                     byRecipe[entry.Value] = machines = new List<AnimatorStateMachine>();
-                    recipes.Add(entry.Value);
+                    owners.Add(entry.Value);
                 }
                 machines.Add(entry.Key);
             }
 
-            _recipesOpen = BeginFoldCard(L.Tr("C# Recipes"), recipes.Count, _recipesOpen);
+            var rows = new List<UnityEngine.Object>(GraphFrameData.LinkedRecipes(controller));
+            foreach (var owner in owners)
+                if (!rows.Contains(owner)) rows.Add(owner);
+            if (rows.Count == 0) return;
+
+            EditorGUILayout.Space(8);
+            _recipesOpen = BeginFoldCard(L.Tr("C# Recipes"), rows.Count, _recipesOpen);
             if (!_recipesOpen)
             {
                 EndCard();
                 return;
             }
-            if (recipes.Count == 0)
-                EditorGUILayout.LabelField(L.Tr("No recipe-owned layers."),
-                    EditorStyles.centeredGreyMiniLabel);
 
-            foreach (var recipe in recipes)
+            foreach (var row in rows)
             {
-                var machines = byRecipe[recipe];
+                var recipe = row as ControllerRecipe;
                 var names = new List<string>();
-                foreach (var machine in machines)
-                    names.Add(LayerNameOf(controller, machine));
-                string owned = string.Join(", ", names);
+                if (byRecipe.TryGetValue(row, out var machines))
+                    foreach (var machine in machines)
+                        names.Add(LayerNameOf(controller, machine));
+                // A linked recipe that has never generated owns nothing, which is a state to say
+                // rather than an empty gap — it is what a freshly exported recipe looks like.
+                string owned = names.Count > 0
+                    ? string.Join(", ", names) : L.Tr("owns no layers yet");
+
+                string state = RecipeState(controller, recipe, out string reason);
 
                 EditorGUILayout.BeginHorizontal();
-                DrawRowName(recipe.name, recipe.name + " — " + owned);
+                DrawRowName(row.name, row.name + " — " + owned);
                 DrawRowNote(owned);
-                if (RowButton(L.Tr("Ping"), L.Tr("Highlight this object in the Project / graph")))
-                    EditorGUIUtility.PingObject(recipe);
-                // One layer is unambiguous; several would need a picker nobody asked for, and
-                // the recipe asset is the better destination for those anyway.
-                using (new EditorGUI.DisabledScope(machines.Count != 1))
-                    if (RowButton(L.Tr("Select")))
+                DrawRowNote(state, reason ?? L.Tr("The compiled code matches this recipe's .cs. Whether the CONTROLLER matches the recipe is the question Verify answers."));
+                // Disabled rather than refusing on the press: the reason is on the row already,
+                // and a button that explains itself only after being clicked teaches later than
+                // it needs to.
+                using (new EditorGUI.DisabledScope(reason != null))
+                {
+                    if (RowButton(L.Tr("Generate"),
+                        L.Tr("Apply this recipe to the target controller (undoable).")))
                     {
-                        SelectLayer(controller, machines[0]);
+                        ShowRecipeResult(row, recipe.Generate(),
+                            L.Tr("Clean — code and controller match."));
+                        Context.NotifyLayerStructureChanged();
+                        GUIUtility.ExitGUI();   // layers changed under this layout pass
+                    }
+                    if (RowButton(L.Tr("Verify"),
+                        L.Tr("Compare what the code declares against the controller's current contents.")))
+                    {
+                        ShowRecipeResult(row, recipe.Verify(),
+                            L.Tr("Clean — code and controller match."));
                         GUIUtility.ExitGUI();
                     }
+                }
+                if (RowButton(L.Tr("Open"),
+                    L.Tr("Select this recipe asset and highlight it in the Project window.")))
+                {
+                    Selection.activeObject = row;
+                    EditorGUIUtility.PingObject(row);
+                }
                 EditorGUILayout.EndHorizontal();
+
+                if (reason != null)
+                    EditorGUILayout.LabelField(reason, EditorStyles.wordWrappedMiniLabel);
+                if (_recipeResultFor == row) DrawRecipeResult();
             }
             EndCard();
+        }
+
+        /// <summary>
+        /// A recipe's state as the short word for its row, with the sentence that explains it
+        /// when there is one — a null <paramref name="reason"/> means the row can be run.
+        ///
+        /// The order is the card's own. Whether the recipe points at THIS controller comes first,
+        /// because one with another target would write into a different asset entirely and no
+        /// amount of freshness makes that safe. Everything under it is
+        /// <see cref="RecipeFreshness"/>'s verdict, reused rather than re-derived: the button and
+        /// the method behind it have to agree on what runnable means, or the button offers a run
+        /// that the method then refuses.
+        /// </summary>
+        static string RecipeState(AnimatorController controller, ControllerRecipe recipe,
+            out string reason)
+        {
+            if (recipe == null)
+            {
+                reason = L.Tr("This asset is not a recipe DaerD can run.");
+                return L.Tr("Unusable");
+            }
+            if (recipe.targetController != controller)
+            {
+                reason = L.Tr("This recipe generates into {0}, not this controller — running it from here would write somewhere else. Open it and check its target controller.",
+                    Quoted(recipe.targetController));
+                return L.Tr("Wrong target");
+            }
+            var staleness = RecipeFreshness.Check(recipe);
+            reason = RecipeFreshness.Reason(staleness);
+            switch (staleness)
+            {
+                case RecipeFreshness.Staleness.CompileFailed: return L.Tr("Compile error");
+                case RecipeFreshness.Staleness.Compiling: return L.Tr("Compiling");
+                case RecipeFreshness.Staleness.SourceNewer: return L.Tr(".cs is newer");
+                default: return L.Tr("Up to date");
+            }
+        }
+
+        void ShowRecipeResult(UnityEngine.Object recipe, List<string> messages, string clean)
+        {
+            _recipeResultFor = recipe;
+            _recipeMessages = messages;
+            _recipeCleanMessage = clean;
+        }
+
+        /// <summary>The last run's findings, said the same way the recipe inspector says them —
+        /// one screen showing the same list in two vocabularies is how a reader ends up unsure
+        /// whether they are looking at the same answer.</summary>
+        void DrawRecipeResult()
+        {
+            if (_recipeMessages == null) return;
+            if (_recipeMessages.Count == 0)
+            {
+                EditorGUILayout.HelpBox(_recipeCleanMessage, MessageType.Info);
+                return;
+            }
+            EditorGUILayout.HelpBox(L.Tr("{0} finding(s):", _recipeMessages.Count),
+                MessageType.Warning);
+            foreach (var message in _recipeMessages)
+                EditorGUILayout.LabelField("• " + message, EditorStyles.wordWrappedMiniLabel);
         }
 
         // ---- tools -------------------------------------------------------------
@@ -520,8 +1296,6 @@ namespace Yozolab.DaerD
             DrawClipsTool(controller);
             EditorGUILayout.Space(8);
             DrawRecipeExportTool(controller);
-            EditorGUILayout.Space(8);
-            DrawMenuTool(controller);
             EditorGUILayout.Space(8);
             DrawCleanupTool(controller);
         }
@@ -609,27 +1383,6 @@ namespace Yozolab.DaerD
             EndCard();
         }
 
-        /// <summary>
-        /// The one tool that is still only a window. It edits a different asset — the menu
-        /// tree, not this controller — through a breadcrumb, a control list and an inspector
-        /// for the selected control, which wants a pane of its own rather than a card in a
-        /// column beside four others.
-        /// </summary>
-        void DrawMenuTool(AnimatorController controller)
-        {
-            BeginCard(L.Tr("Expressions Menu"));
-            EditorGUILayout.LabelField(
-                L.Tr("The menu editor works on the avatar's menu tree, in a window of its own."),
-                EditorStyles.miniLabel);
-            if (GUILayout.Button(new GUIContent(L.Tr("Open Menu Editor"),
-                    L.Tr("Edit the avatar's VRC Expressions Menu (auto-detected from the scene)."))))
-            {
-                VrcMenuWindow.Open(controller);
-                GUIUtility.ExitGUI();   // the focus moved to another window under this layout pass
-            }
-            EndCard();
-        }
-
         /// <summary>Leftover sub-asset housekeeping. Folded away because it has nothing to say
         /// until a scan has been run, and no window of its own to offer.</summary>
         void DrawCleanupTool(AnimatorController controller)
@@ -653,6 +1406,13 @@ namespace Yozolab.DaerD
         /// text so a long one is not cut in half.</summary>
         static void DrawRowNote(string note) =>
             GUILayout.Label(note, EditorStyles.centeredGreyMiniLabel, GUILayout.ExpandWidth(false));
+
+        /// <summary>The same aside with something to say on hover — for the notes that are a
+        /// verdict rather than a description, where the short word is only half the answer.
+        /// </summary>
+        static void DrawRowNote(string note, string tooltip) =>
+            GUILayout.Label(new GUIContent(note, tooltip), EditorStyles.centeredGreyMiniLabel,
+                GUILayout.ExpandWidth(false));
 
         /// <summary>A row action, at the one width they all share.</summary>
         static bool RowButton(string label) =>
