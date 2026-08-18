@@ -178,6 +178,11 @@ namespace Yozolab.DaerD
                     else
                     {
                         _store?.Rename(p.name, newName);
+                        // A menu whose controls name this parameter would be left pointing at a
+                        // name nothing answers to. Nothing assigns that association any more
+                        // (see GraphFrameData.expressionsMenu) — this reaches controllers that
+                        // were given a menu while the slot existed, and follows a rename through
+                        // for them rather than breaking their menu on the way out.
                         var rootMenu = GraphFrameData.GetExpressionsMenu(controller);
                         if (VrcMenuAccess.Is(rootMenu))
                             VrcMenuAccess.RenameParameterReferences(rootMenu, p.name, newName);

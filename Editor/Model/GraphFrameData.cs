@@ -54,7 +54,19 @@ namespace Yozolab.DaerD
         /// </summary>
         public UnityEngine.Object parameterStore;
 
-        /// <summary>The VRC Expressions Menu this controller is explicitly associated with.</summary>
+        /// <summary>
+        /// The VRC Expressions Menu this controller was explicitly associated with.
+        ///
+        /// The UI that assigned it — the slot on the home screen and the menu editor window —
+        /// was removed by the user decision of 2026-08-18: editing an avatar's menu is MA Menu's
+        /// territory, not DaerD's. The field stays because saved data is not rewritten to suit a
+        /// UI change (ADR 0016), and it is still READ, for the two things that were never menu
+        /// editing: the async-sync wizard's warning about puppet-driven targets, and carrying a
+        /// parameter rename over to the controls that name it. Both are answers about a
+        /// controller somebody associated a menu with while the slot existed; a controller
+        /// saved since then has nothing here and gets neither, which is the honest outcome of
+        /// not asking the question any more.
+        /// </summary>
         public UnityEngine.Object expressionsMenu;
 
         /// <summary>
@@ -859,19 +871,12 @@ namespace Yozolab.DaerD
             EditorUtility.SetDirty(data);
         }
 
+        /// <summary>Read-only by design — see <see cref="expressionsMenu"/> for why there is no
+        /// setter beside this one any more.</summary>
         public static UnityEngine.Object GetExpressionsMenu(AnimatorController controller)
         {
             var data = Find(controller);
             return data != null ? data.expressionsMenu : null;
-        }
-
-        public static void SetExpressionsMenu(AnimatorController controller, UnityEngine.Object menu)
-        {
-            var data = menu == null ? Find(controller) : GetOrCreate(controller);
-            if (data == null || data.expressionsMenu == menu) return;
-            Undo.RegisterCompleteObjectUndo(data, "Set Expressions Menu");
-            data.expressionsMenu = menu;
-            EditorUtility.SetDirty(data);
         }
 
         /// <summary>

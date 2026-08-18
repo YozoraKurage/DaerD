@@ -226,9 +226,6 @@ msgstr "ガジェット・巡回同期の設定・各種ツールはホーム画
 msgid "{0} layers · {1} parameters"
 msgstr "レイヤー {0} 個 · パラメーター {1} 個"
 
-msgid "The VRC Expressions Menu this controller belongs to, opened by the menu editor. Assigned explicitly — DaerD never guesses it from the scene."
-msgstr "このコントローラーが属する VRC Expressions Menu。メニューエディターが開く対象です。明示的に指定するもので、DaerD がシーンから推測することはありません。"
-
 msgid "DBT Gadgets"
 msgstr "DBT ガジェット"
 
@@ -321,12 +318,6 @@ msgstr "解析"
 
 msgid "Recipe Export"
 msgstr "レシピ書き出し"
-
-msgid "The menu editor works on the avatar's menu tree, in a window of its own."
-msgstr "メニューエディターはアバターのメニュー階層を編集するため、独立したウィンドウで開きます。"
-
-msgid "Open Menu Editor"
-msgstr "メニューエディターを開く"
 
 # ---- overview / analysis UI ----
 
@@ -1408,61 +1399,16 @@ msgstr "AudioSource から解決"
 msgid "Drop the avatar's AudioSource to fill the source path."
 msgstr "アバターの AudioSource をドロップするとソースパスが入力されます。"
 
-# ---- VRC expressions menu ----
-
-msgid "DaerD Menu"
-msgstr "DaerD メニュー"
-
-msgid "Expressions Menu"
-msgstr "Expressions メニュー"
-
-msgid "Edit the avatar's VRC Expressions Menu (auto-detected from the scene)."
-msgstr "アバターの VRC Expressions Menu を編集します（シーンから自動検出）。"
-
-msgid "Assign a VRC Expressions Menu asset (auto-detected from the scene avatar when possible)."
-msgstr "VRC Expressions Menu アセットを指定してください（可能な場合はシーンのアバターから自動検出されます）。"
-
-msgid "That asset is not a VRC Expressions Menu."
-msgstr "そのアセットは VRC Expressions Menu ではありません。"
+# ---- one-word field labels shared by several inspectors ----
 
 msgid "Open"
 msgstr "開く"
 
-msgid "Edit this submenu"
-msgstr "このサブメニューを編集します"
-
-msgid "Icon"
-msgstr "アイコン"
-
 msgid "Type"
 msgstr "種類"
 
-msgid "Sub Menu"
-msgstr "サブメニュー"
-
 msgid "Value"
 msgstr "値"
-
-msgid "Rotation"
-msgstr "回転"
-
-msgid "Horizontal"
-msgstr "水平"
-
-msgid "Vertical"
-msgstr "垂直"
-
-msgid "Label {0}"
-msgstr "ラベル {0}"
-
-msgid "No matching parameters"
-msgstr "該当するパラメーターがありません"
-
-msgid "Parameter '{0}' is not in the controller."
-msgstr "パラメーター '{0}' はコントローラーに存在しません。"
-
-msgid "Puppet parameters must be Float; '{0}' is {1}."
-msgstr "Puppet のパラメーターは Float である必要があります。'{0}' は {1} 型です。"
 
 # ---- layer clipboard / templates ----
 
@@ -1865,12 +1811,6 @@ msgstr "パラメーター同期"
 
 msgid "Aligns the parameter store to this controller's parameter list. Unchecked rows are left untouched."
 msgstr "パラメーターストアをコントローラーのパラメーター一覧に整列します。チェックを外した行は変更されません。"
-
-msgid "Search the scene for an avatar whose playable layers run this controller (exact match only)."
-msgstr "このコントローラーを Playable レイヤーで実行しているアバターをシーンから検索します（完全一致のみ）。"
-
-msgid "No exact match in the scene — no avatar runs this controller."
-msgstr "シーンに完全一致がありません。このコントローラーを実行しているアバターが見つかりませんでした。"
 
 # ---- prefab link ----
 

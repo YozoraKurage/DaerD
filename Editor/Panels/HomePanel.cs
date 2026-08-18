@@ -294,22 +294,7 @@ namespace Yozolab.DaerD
                 if (pickedEmpty != currentEmpty)
                     GraphFrameData.SetEmptyClip(controller, pickedEmpty);
 
-                var currentMenu = GraphFrameData.GetExpressionsMenu(controller);
-                var pickedMenu = EditorGUILayout.ObjectField(
-                    new GUIContent(L.Tr("Expressions Menu"),
-                        L.Tr("The VRC Expressions Menu this controller belongs to, opened by the menu editor. Assigned explicitly — DaerD never guesses it from the scene.")),
-                    currentMenu, typeof(ScriptableObject), false);
-                if (pickedMenu != currentMenu)
-                {
-                    // The slot only accepts what the menu editor can actually read back.
-                    if (pickedMenu == null || VrcMenuAccess.Is(pickedMenu))
-                        GraphFrameData.SetExpressionsMenu(controller, pickedMenu);
-                    else
-                        EditorUtility.DisplayDialog(L.Tr("DaerD Menu"),
-                            L.Tr("That asset is not a VRC Expressions Menu."), "OK");
-                }
-
-                // Inside the scope too, so its prefix lines up with the three slots above it.
+                // Inside the scope too, so its prefix lines up with the slot above it.
                 var wdTooltip = L.Tr("Bulk-set every state. Layers containing only Direct blend trees stay ON.");
                 EditorGUILayout.BeginHorizontal();
                 EditorGUILayout.PrefixLabel(new GUIContent(L.Tr("Write Defaults"), wdTooltip));
@@ -1115,8 +1100,6 @@ namespace Yozolab.DaerD
             EditorGUILayout.Space(8);
             DrawRecipeExportTool(controller);
             EditorGUILayout.Space(8);
-            DrawMenuTool(controller);
-            EditorGUILayout.Space(8);
             DrawCleanupTool(controller);
         }
 
@@ -1199,27 +1182,6 @@ namespace Yozolab.DaerD
                 GUILayout.FlexibleSpace();
                 _recipeExport.DrawExportButton();
                 EditorGUILayout.EndHorizontal();
-            }
-            EndCard();
-        }
-
-        /// <summary>
-        /// The one tool that is still only a window. It edits a different asset — the menu
-        /// tree, not this controller — through a breadcrumb, a control list and an inspector
-        /// for the selected control, which wants a pane of its own rather than a card in a
-        /// column beside four others.
-        /// </summary>
-        void DrawMenuTool(AnimatorController controller)
-        {
-            BeginCard(L.Tr("Expressions Menu"));
-            EditorGUILayout.LabelField(
-                L.Tr("The menu editor works on the avatar's menu tree, in a window of its own."),
-                EditorStyles.miniLabel);
-            if (GUILayout.Button(new GUIContent(L.Tr("Open Menu Editor"),
-                    L.Tr("Edit the avatar's VRC Expressions Menu (auto-detected from the scene)."))))
-            {
-                VrcMenuWindow.Open(controller);
-                GUIUtility.ExitGUI();   // the focus moved to another window under this layout pass
             }
             EndCard();
         }

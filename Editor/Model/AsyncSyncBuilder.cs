@@ -509,6 +509,10 @@ namespace Yozolab.DaerD
 
             // Only the menu explicitly associated with this controller — this runs on every
             // repaint of the wizard, and DaerD never goes looking through the scene on its own.
+            // Nothing assigns that association any more (see GraphFrameData.expressionsMenu), so
+            // this warning now only reaches controllers that were given a menu while the slot
+            // existed. It is kept rather than deleted because it costs a null check to be right
+            // for them, and being wrong here means recommending a technique that visibly stutters.
             var menu = GraphFrameData.GetExpressionsMenu(r.controller);
             if (menu == null) return driven;
 
