@@ -72,6 +72,140 @@ namespace Yozolab.DaerD
             return true;
         }
 
+        // ---- removing a setup ---------------------------------------------------
+
+        /// <summary>
+        /// Takes one saved setup back out: the layers its record holds, the parameters the
+        /// build generated, the per-state sync requests aimed at it, and the record itself.
+        ///
+        /// <para>WHAT OWNERSHIP MEANS HERE.</para>
+        /// The layers are reached through the record's own references and never by name — the
+        /// rule ADR 0045 draws for what DaerD owns inside a prefab, read here for what it owns
+        /// inside a controller: a layer somebody renamed is still this setup's, and a layer
+        /// that merely answers to the generated name is not. The parameters are the ones
+        /// <see cref="EnsureParameters"/> mints, asked of the same five enumerators it calls —
+        /// so what a delete removes and what a regenerate creates cannot drift apart. IsLocal
+        /// is outside those five on purpose and stays: it is the one name async sync shares
+        /// with every other network-aware layer on the avatar. The multiplexed targets stay
+        /// too; they are the user's own parameters and the reason the setup existed.
+        ///
+        /// <para>WHAT IS DELIBERATELY LEFT ALONE.</para>
+        /// The Empty clip, which is shared between setups and may be one the user designated,
+        /// and the declaration rows in the parameter store, which the Sync window's own remove
+        /// list already offers a way to clean up. Both are things a setup borrowed rather than
+        /// made, and this is the one place that must not guess about the difference.
+        ///
+        /// <para>WHAT IT DOES NOT GUARANTEE.</para>
+        /// The Seen and Fresh bits are named after SLOTS, and slots are derived from the
+        /// targets and the channel counts as they are NOW. A setup whose targets were edited
+        /// away underneath it — a multiplexed parameter deleted by hand, the channel count
+        /// changed without regenerating — batches into different slots than the ones that were
+        /// built, and the bits of the old slots are left behind. Regenerating before deleting
+        /// puts the two back in step; sweeping the whole "base/" namespace instead would catch
+        /// them, and would also catch a parameter the user happens to have named that way.
+        /// </summary>
+        public static void Remove(AnimatorController controller,
+            GraphFrameData.AsyncSyncConfig config)
+        {
+            if (controller == null || config == null) return;
+            // Both worked out before anything is taken away: the parameter names come off the
+            // slots, and a layer the sweep already removed is a reference that reads as null.
+            var layers = OwnedLayers(config);
+            var parameters = OwnedParameters(controller, config);
+
+            using (new UndoScope("Remove Async Sync"))
+            {
+                Undo.RegisterCompleteObjectUndo(controller, "Remove Async Sync");
+                // The record goes first, while the layer it is keyed by is still there.
+                GraphFrameData.RemoveAsyncSync(controller, config);
+                RemoveSyncRequests(controller, config.baseName);
+                foreach (var machine in layers) RemoveLayer(controller, machine);
+                RemoveParameters(controller, parameters);
+                EditorUtility.SetDirty(controller);
+            }
+        }
+
+        /// <summary>
+        /// The layers this setup's record holds: the cycle's own, the two watchers, and one per
+        /// group — in that order, deduplicated, and skipping the ones already gone. A null
+        /// reference is a layer somebody deleted by hand, which is nothing to report and
+        /// nothing to do.
+        /// </summary>
+        public static List<AnimatorStateMachine> OwnedLayers(GraphFrameData.AsyncSyncConfig config)
+        {
+            var layers = new List<AnimatorStateMachine>();
+            if (config == null) return layers;
+            void Claim(AnimatorStateMachine machine)
+            {
+                if (machine != null && !layers.Contains(machine)) layers.Add(machine);
+            }
+            Claim(config.layer);
+            Claim(config.readyLayer);
+            Claim(config.staleLayer);
+            if (config.groups != null)
+                foreach (var group in config.groups)
+                    if (group != null) Claim(group.layer);
+            return layers;
+        }
+
+        /// <summary>
+        /// The parameters this setup generated: the five enumerators
+        /// <see cref="EnsureParameters"/> calls, asked of the request the saved setup rebuilds
+        /// to. <see cref="AsyncSyncBuilder.FromConfig"/> is that reconstruction — the same one
+        /// the per-state sync request and the layer panel regenerate through, rather than a
+        /// second reading of the saved data that could disagree with it.
+        ///
+        /// Deduplicated because the enumerators can name the same parameter twice: a target in
+        /// two groups is filtered to one by <see cref="AsyncSyncBuilder.EffectiveGroups"/>, but
+        /// nothing stops a saved index bit count from meeting a channel name.
+        /// </summary>
+        public static List<string> OwnedParameters(AnimatorController controller,
+            GraphFrameData.AsyncSyncConfig config)
+        {
+            var names = new List<string>();
+            if (controller == null || config == null) return names;
+            var r = FromConfig(controller, config);
+            void Claim(List<(string name, AnimatorControllerParameterType type)> generated)
+            {
+                foreach (var (name, _) in generated)
+                    if (!string.IsNullOrEmpty(name) && !names.Contains(name)) names.Add(name);
+            }
+            Claim(GeneratedParameters(r));
+            Claim(RequestParameters(r));
+            Claim(ReadyParameters(r));
+            Claim(StaleParameters(r));
+            Claim(GroupParameters(r));
+            return names;
+        }
+
+        /// <summary>
+        /// Takes the per-state sync requests aimed at this setup off the states that carry
+        /// them. Through <see cref="SyncRequestBuilder.Remove"/> rather than straight at the
+        /// record, because the record is only the authoring half: the runtime half is a
+        /// Parameter Driver raising "base/Req/target" flags this delete is about to remove, and
+        /// a driver left setting a parameter that no longer exists is exactly the kind of
+        /// orphan this whole operation is for.
+        /// </summary>
+        static void RemoveSyncRequests(AnimatorController controller, string baseName)
+        {
+            foreach (var request in GraphFrameData.GetSyncRequests(controller))
+                if (request.baseName == baseName)
+                    SyncRequestBuilder.Remove(controller, request.state, baseName);
+        }
+
+        /// <summary>Drops the named parameters in one write — the controller's parameter array
+        /// is rebuilt per assignment, so removing them one at a time would rebuild it once per
+        /// name.</summary>
+        static void RemoveParameters(AnimatorController controller, List<string> names)
+        {
+            if (names.Count == 0) return;
+            var kept = new List<AnimatorControllerParameter>();
+            foreach (var parameter in controller.parameters)
+                if (!names.Contains(parameter.name)) kept.Add(parameter);
+            if (kept.Count != controller.parameters.Length)
+                controller.parameters = kept.ToArray();
+        }
+
         /// <summary>IsLocal, the synced set and the local request flags. Returns the synced
         /// set, because that is exactly the list the parameter store step below wants.</summary>
         static List<(string name, AnimatorControllerParameterType type)> EnsureParameters(

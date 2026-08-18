@@ -1278,5 +1278,22 @@ namespace Yozolab.DaerD
 
         /// <summary>Runs the (pre-validated) request; returns false when validation fails.</summary>
         public static bool Apply(Request r) => AsyncSyncApplier.Apply(r);
+
+        /// <summary>Takes one saved setup back out — see <see cref="AsyncSyncApplier.Remove"/>
+        /// for what "this setup owns it" means and for the two things it leaves alone.</summary>
+        public static void Remove(AnimatorController controller,
+            GraphFrameData.AsyncSyncConfig config) => AsyncSyncApplier.Remove(controller, config);
+
+        /// <summary>The layers a saved setup's record holds, for a caller that wants to name
+        /// them before <see cref="Remove"/> takes them away.</summary>
+        public static List<AnimatorStateMachine> OwnedLayers(
+            GraphFrameData.AsyncSyncConfig config) => AsyncSyncApplier.OwnedLayers(config);
+
+        /// <summary>The parameters a saved setup generated, on the same terms — and read off
+        /// the same enumerators the removal itself uses, so a delete preview cannot promise a
+        /// different list than the one that goes.</summary>
+        public static List<string> OwnedParameters(AnimatorController controller,
+            GraphFrameData.AsyncSyncConfig config) =>
+            AsyncSyncApplier.OwnedParameters(controller, config);
     }
 }

@@ -582,6 +582,27 @@ namespace Yozolab.DaerD
             EditorUtility.SetDirty(this);
         }
 
+        /// <summary>
+        /// Drops one saved setup. The pruning in <see cref="AsyncSyncs"/> answers a different
+        /// question — it forgets a record whose layer somebody else deleted — and answering it
+        /// is not the same as saying "this setup is gone": a caller that takes the layer away
+        /// itself has to say so, or the record survives until the next read and the setup goes
+        /// on owning a base name and a namespace in the meantime.
+        ///
+        /// Matched by identity first and by layer second, which is the key
+        /// <see cref="SaveAsyncSync"/> replaces on. Identity is what lets this be called before
+        /// the layers are removed — and it has to be, because a record whose layer is already
+        /// gone can no longer be matched by it.
+        /// </summary>
+        public void RemoveAsyncSync(AsyncSyncConfig config)
+        {
+            if (config == null) return;
+            Undo.RegisterCompleteObjectUndo(this, "Remove Async Sync Config");
+            asyncSyncs.RemoveAll(existing => existing == null || existing == config
+                || (config.layer != null && existing.layer == config.layer));
+            EditorUtility.SetDirty(this);
+        }
+
         public static List<AsyncSyncConfig> GetAsyncSyncs(AnimatorController controller)
         {
             var data = Find(controller);
@@ -592,6 +613,15 @@ namespace Yozolab.DaerD
         {
             var data = GetOrCreate(controller);
             if (data != null) data.SaveAsyncSync(config);
+        }
+
+        /// <summary>Removing must not create the holder on a controller that never had one —
+        /// same reason <see cref="RemoveGadget(AnimatorController, string)"/> uses
+        /// <see cref="Find"/>.</summary>
+        public static void RemoveAsyncSync(AnimatorController controller, AsyncSyncConfig config)
+        {
+            var data = Find(controller);
+            if (data != null) data.RemoveAsyncSync(config);
         }
 
         /// <summary>The saved setup with this base name, or null. Base names are how sync

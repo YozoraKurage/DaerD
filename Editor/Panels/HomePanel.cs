@@ -909,6 +909,11 @@ namespace Yozolab.DaerD
                     if (index >= 0) Context.SetLayer(index);
                     GUIUtility.ExitGUI();
                 }
+                if (RowButton(L.Tr("Delete")))
+                {
+                    DeleteAsyncSync(controller, config);
+                    GUIUtility.ExitGUI();   // the setup list was rebuilt under this layout pass
+                }
                 EditorGUILayout.EndHorizontal();
             }
 
@@ -919,6 +924,58 @@ namespace Yozolab.DaerD
                 GUIUtility.ExitGUI();   // the focus moved to another window under this layout pass
             }
             EndCard();
+        }
+
+        /// <summary>
+        /// Deleting names what goes with it, for the reason the object gadget's dialog does and
+        /// then some: a setup spreads over as many as four kinds of layer and a namespace full
+        /// of parameters, and until now the only way to be rid of one was to delete its main
+        /// layer by hand — which left the Ready, Stale and group layers standing as orphans
+        /// nothing pointed at any more.
+        ///
+        /// The sentence also says what STAYS, because those are the two pieces somebody about
+        /// to press Delete would most reasonably fear for: the Empty clip (shared, possibly
+        /// theirs) and the parameter store's declaration rows.
+        /// </summary>
+        void DeleteAsyncSync(AnimatorController controller,
+            GraphFrameData.AsyncSyncConfig config)
+        {
+            if (!EditorUtility.DisplayDialog(L.Tr("Async Sync"),
+                    L.Tr("Delete the async sync setup '{0}'?\n\nThis removes {1}. The multiplexed parameters, the Empty clip and the parameter store rows are left alone.",
+                        config.baseName, AsyncSyncLoss(controller, config)),
+                    L.Tr("Delete"), L.Tr("Cancel")))
+                return;
+            AsyncSyncBuilder.Remove(controller, config);
+            Context.NotifyLayerStructureChanged();
+        }
+
+        /// <summary>What deleting one async sync setup takes with it, read off the record and
+        /// off the same enumerators the removal uses — the dialog and the sweep have to be the
+        /// same list. Internal so a test can hold the two side by side, exactly as
+        /// <see cref="ObjectGadgetLoss"/> is.</summary>
+        internal static string AsyncSyncLoss(AnimatorController controller,
+            GraphFrameData.AsyncSyncConfig config)
+        {
+            var lost = new List<string>();
+            // The layers by the names they answer to NOW: a setup's layers can be renamed, and
+            // the row somebody is about to delete has to be findable in the layer list.
+            var layers = new List<string>();
+            foreach (var machine in AsyncSyncBuilder.OwnedLayers(config))
+                layers.Add(LayerNameOf(controller, machine));
+            // The singular goes through the object gadget's own phrase, so the one thing the
+            // two delete dialogs have in common is said the same way in both.
+            if (layers.Count == 1) lost.Add(L.Tr("the layer '{0}'", layers[0]));
+            else if (layers.Count > 1)
+                lost.Add(L.Tr("the layers {0}", "'" + string.Join("', '", layers) + "'"));
+
+            int parameters = AsyncSyncBuilder.OwnedParameters(controller, config).Count;
+            if (parameters > 0) lost.Add(L.Tr("{0} generated parameter(s)", parameters));
+
+            int requests = 0;
+            foreach (var request in GraphFrameData.GetSyncRequests(controller))
+                if (request.baseName == config.baseName) requests++;
+            if (requests > 0) lost.Add(L.Tr("{0} sync request(s) on states", requests));
+            return string.Join(", ", lost);
         }
 
         // ---- C# recipes --------------------------------------------------------

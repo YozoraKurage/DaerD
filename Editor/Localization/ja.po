@@ -286,6 +286,18 @@ msgstr "対象 {0} 件 / ステップ間隔 {1} 秒"
 msgid "+ New Async Sync"
 msgstr "+ 巡回同期を新規作成"
 
+msgid "Delete the async sync setup '{0}'?\n\nThis removes {1}. The multiplexed parameters, the Empty clip and the parameter store rows are left alone."
+msgstr "巡回同期の設定 '{0}' を削除しますか？\n\n{1} が削除されます。多重化していたパラメーター・Empty クリップ・パラメーターストアの宣言行は、いずれもそのまま残ります。"
+
+msgid "the layers {0}"
+msgstr "レイヤー {0}"
+
+msgid "{0} generated parameter(s)"
+msgstr "生成されたパラメーター {0} 個"
+
+msgid "{0} sync request(s) on states"
+msgstr "ステートに付いた同期リクエスト {0} 件"
+
 msgid "C# Recipes"
 msgstr "C# レシピ"
 
