@@ -1058,6 +1058,39 @@ namespace Yozolab.DaerD
             return null;
         }
 
+        /// <summary>
+        /// Destroys the controller's frame holder — every piece of DaerD's saved state at once:
+        /// frames and notes, gadget and sync records, the prefab and recipe links, the store and
+        /// Empty clip assignments. The controller itself is untouched: its layers, parameters,
+        /// motions and generated machinery all stay, they just stop being DaerD-managed
+        /// (no regeneration, no ownership marks, no records to delete from).
+        ///
+        /// This is how a controller is stripped for a DaerD-less distribution, and it is why the
+        /// operation is NOT undoable: the holder is a sub-asset, and destroying one is an asset
+        /// save. The caller confirms with the user before calling.
+        /// </summary>
+        public static void Discard(AnimatorController controller)
+        {
+            var data = Find(controller);
+            if (data == null) return;
+            var path = AssetDatabase.GetAssetPath(data);
+            if (!string.IsNullOrEmpty(path))
+            {
+                AssetDatabase.RemoveObjectFromAsset(data);
+                DestroyImmediate(data, true);
+                // The same commit AddObjectToAsset needs, for the same reason: without the
+                // save + reimport pair the file still carries the object and a scan finds it.
+                AssetDatabase.SaveAssets();
+                AssetDatabase.ImportAsset(path);
+            }
+            else
+                DestroyImmediate(data);
+            // Written through as a real null — "this controller has none" — and everything
+            // built out of the old answer goes with it.
+            s_holders[controller] = null;
+            LayerOwners.Forget();
+        }
+
         /// <summary>Drops what Find remembered. Called for you when assets change; exposed for
         /// tests, which build and delete controllers faster than the importer reports.
         ///

@@ -407,6 +407,21 @@ msgstr "Empty クリップ"
 msgid "Stored with this controller. New states are created with it, and the analyzer's Fill fix assigns it to states with no motion."
 msgstr "このコントローラーと一緒に保存されます。新規 State 作成時に自動で設定され、解析の「穴埋め」修正でモーション未設定の State や Blend Tree の空スロットにも割り当てられます。"
 
+msgid "Discard DaerD Data…"
+msgstr "DaerD データを破棄…"
+
+msgid "Remove everything DaerD stores with this controller. The controller itself is untouched."
+msgstr "DaerD がこのコントローラーと一緒に保存しているものをすべて取り除きます。コントローラー本体には触れません。"
+
+msgid "Discard DaerD Data"
+msgstr "DaerD データの破棄"
+
+msgid "Remove everything DaerD stores with '{0}'?\n\nGone: graph frames and notes, gadget and sync records, the prefab and recipe links, the store and Empty clip assignments.\n\nKept: every layer, parameter, motion and generated clip — the controller plays exactly as before, DaerD just no longer manages it (no regeneration, no ownership marks).\n\nThe asset is saved immediately; this cannot be undone."
+msgstr "'{0}' と一緒に DaerD が保存しているものをすべて取り除きますか？\n\n消えるもの: グラフのフレームとノート、ガジェットと同期の記録、プレハブ / レシピのリンク、ストアと Empty クリップの割り当て。\n\n残るもの: すべてのレイヤー・パラメーター・モーション・生成済みクリップ — コントローラーの再生は何も変わらず、DaerD の管理下から外れるだけです（再生成・所有表示はできなくなります）。\n\nアセットは即座に保存され、この操作は取り消せません。"
+
+msgid "Discard"
+msgstr "破棄"
+
 msgid "List Clips"
 msgstr "クリップ一覧"
 

@@ -307,7 +307,29 @@ namespace Yozolab.DaerD
                 EditorGUILayout.EndHorizontal();
             }
 
+            // Bottom-right and spelled with an ellipsis: destructive, rare, and never the
+            // reason this card is open. Only shown when there is anything to discard.
+            if (GraphFrameData.Find(controller) != null)
+            {
+                EditorGUILayout.BeginHorizontal();
+                GUILayout.FlexibleSpace();
+                if (GUILayout.Button(new GUIContent(L.Tr("Discard DaerD Data…"),
+                        L.Tr("Remove everything DaerD stores with this controller. The controller itself is untouched."))))
+                    DiscardData(controller);
+                EditorGUILayout.EndHorizontal();
+            }
+
             EndCard();
+        }
+
+        static void DiscardData(AnimatorController controller)
+        {
+            if (!EditorUtility.DisplayDialog(L.Tr("Discard DaerD Data"),
+                    L.Tr("Remove everything DaerD stores with '{0}'?\n\nGone: graph frames and notes, gadget and sync records, the prefab and recipe links, the store and Empty clip assignments.\n\nKept: every layer, parameter, motion and generated clip — the controller plays exactly as before, DaerD just no longer manages it (no regeneration, no ownership marks).\n\nThe asset is saved immediately; this cannot be undone.",
+                        controller.name),
+                    L.Tr("Discard"), L.Tr("Cancel")))
+                return;
+            GraphFrameData.Discard(controller);
         }
 
         void BulkSetWriteDefaults(AnimatorController controller, bool value)
