@@ -6,9 +6,8 @@ using UnityEngine;
 
 namespace Yozolab.DaerD
 {
-    /// <summary>Small IMGUI pieces shared by the side panels: separators, the selection tint,
-    /// the parameter-store slot and the parameter lookups every parameter popup is built
-    /// from.</summary>
+    /// <summary>Small IMGUI pieces shared by the side panels: separators, the narrow-column
+    /// label scope and the parameter lookups every parameter popup is built from.</summary>
     static class PanelGui
     {
         static readonly AnimatorConditionMode[] IntModes =
@@ -32,9 +31,9 @@ namespace Yozolab.DaerD
         /// Usage: <c>using (new PanelGui.LabelWidthScope(110f)) { ... }</c>
         ///
         /// A scope rather than a save / restore pair because the fields it wraps can abandon
-        /// the layout pass with <see cref="GUIUtility.ExitGUI"/> (the store slot's Detect does),
-        /// which would jump straight over a trailing restore and leave every other panel drawing
-        /// with this width.
+        /// the layout pass with <see cref="GUIUtility.ExitGUI"/> (the home screen's store slot
+        /// Detect does), which would jump straight over a trailing restore and leave every other
+        /// panel drawing with this width.
         /// </summary>
         public readonly struct LabelWidthScope : IDisposable
         {
@@ -47,73 +46,6 @@ namespace Yozolab.DaerD
             }
 
             public void Dispose() => EditorGUIUtility.labelWidth = _previous;
-        }
-
-        /// <summary>
-        /// The explicit parameter-store slot (a VRC Expression Parameters asset, or a
-        /// GameObject / component carrying MA Parameters) plus the opt-in Detect button.
-        /// Drawn from both the parameters panel, where the budget hangs off it, and the home
-        /// screen, where it sits with the controller's other associations — one row, so the
-        /// two can't drift apart. <paramref name="onChanged"/> runs after the association was
-        /// actually rewritten, for the caller's cached store.
-        /// </summary>
-        public static void ParameterStoreField(AnimatorController controller, Action onChanged)
-        {
-            EditorGUILayout.BeginHorizontal();
-            var current = GraphFrameData.GetParameterStore(controller);
-            var picked = EditorGUILayout.ObjectField(
-                new GUIContent(L.Tr("Params"),
-                    L.Tr("The parameter store this controller belongs to: a VRC Expression Parameters asset, or a GameObject carrying an MA Parameters component. Assigned explicitly — DaerD never guesses it from the scene.")),
-                current, typeof(UnityEngine.Object), true);
-            if (picked != current)
-            {
-                var wrapped = ParameterStore.TryWrap(picked);
-                if (picked != null && wrapped == null)
-                    EditorUtility.DisplayDialog(L.Tr("Parameter Store"),
-                        L.Tr("Assign a VRC Expression Parameters asset or an object with an MA Parameters component."), "OK");
-                else
-                {
-                    // Store the wrapped component (not the whole GameObject) so the slot
-                    // shows exactly what will be edited.
-                    GraphFrameData.SetParameterStore(controller, wrapped != null ? wrapped.Target : null);
-                    onChanged?.Invoke();
-                }
-            }
-            if (GUILayout.Button(new GUIContent(L.Tr("Detect"),
-                    L.Tr("Search the scene for an exact match: an avatar running this controller, or an MA Merge Animator referencing it. Nothing is picked up automatically without this button.")),
-                    EditorStyles.miniButton, GUILayout.Width(52)))
-            {
-                var detected = ParameterStore.DetectFor(controller);
-                if (detected == null)
-                    EditorUtility.DisplayDialog(L.Tr("Parameter Store"),
-                        L.Tr("No exact match in the scene — no avatar or MA Merge Animator references this controller."), "OK");
-                else
-                {
-                    GraphFrameData.SetParameterStore(controller, detected);
-                    onChanged?.Invoke();
-                }
-                GUIUtility.ExitGUI();
-            }
-            // Beside Detect rather than inside it: a gimmick that is a prefab and nothing else
-            // is invisible to the scene search, and a walk over every prefab in the project is
-            // not something to do silently on the chance that it helps. Two buttons say which
-            // search is about to run and let the cheap one stay the reflex.
-            if (GUILayout.Button(new GUIContent(L.Tr("In Prefabs"),
-                    L.Tr("Search the project's prefabs for an MA Merge Animator referencing this controller, and take the MA Parameters beside it. Only prefabs that already reference this controller are opened, and the answer is remembered until something in the project changes.")),
-                    EditorStyles.miniButton, GUILayout.Width(70)))
-            {
-                var found = ParameterStore.DetectInPrefabs(controller);
-                if (found == null)
-                    EditorUtility.DisplayDialog(L.Tr("Parameter Store"),
-                        L.Tr("No prefab in this project has an MA Merge Animator referencing this controller."), "OK");
-                else
-                {
-                    GraphFrameData.SetParameterStore(controller, found);
-                    onChanged?.Invoke();
-                }
-                GUIUtility.ExitGUI();
-            }
-            EditorGUILayout.EndHorizontal();
         }
 
         public static AnimatorConditionMode[] ModesFor(AnimatorControllerParameterType type)

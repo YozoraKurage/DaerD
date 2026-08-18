@@ -323,14 +323,24 @@ namespace Yozolab.DaerD
             }
         }
 
-        /// <summary>The shared parameter-store slot, plus what only this panel shows for it:
-        /// the synced-bit budget, Add All and Sync.</summary>
+        /// <summary>
+        /// What this panel shows ABOUT the store rather than about one row: the synced-bit
+        /// budget and the two bulk actions on the declaration list.
+        ///
+        /// The slot that assigns the store used to be this row too. It is on the home screen now,
+        /// in the Prefab Link card, where the pin can answer it — so what is left here is the
+        /// half that is about the list on screen, and a controller with no store gets a sentence
+        /// saying where the slot went instead of a second copy of it.
+        /// </summary>
         void DrawVrcBudget()
         {
-            var controller = Context.Controller;
-            PanelGui.ParameterStoreField(controller, InvalidateStore);
-
-            if (_store == null) return;
+            if (_store == null)
+            {
+                EditorGUILayout.LabelField(
+                    L.Tr("No parameter store. Assign one in the Prefab Link card on the Home screen."),
+                    EditorStyles.centeredGreyMiniLabel);
+                return;
+            }
             int used = _store.UsedBits();
             int capacity = _store.Capacity();
 
@@ -346,16 +356,20 @@ namespace Yozolab.DaerD
                 EditorStyles.miniLabel);
             GUI.color = prev;
             GUILayout.FlexibleSpace();
-            if (GUILayout.Button(new GUIContent(L.Tr("Add All"),
-                    L.Tr("Add every controller parameter the store doesn't list yet (Triggers aside) as an async row: neither synced nor saved. An MA Parameters component has to declare a parameter before anything can use it, so this is the starting point for a prefab gimmick.")),
-                    EditorStyles.miniButton, GUILayout.Width(64)))
+            // Both labels say what the button DOES rather than what it is about. "Add All" and
+            // "Sync" named the subject twice over and the action not at all: one of them adds
+            // rows that are deliberately NOT synced, and the other syncs nothing — it opens a
+            // list to look at.
+            if (GUILayout.Button(new GUIContent(L.Tr("Declare Missing"),
+                    L.Tr("Declare every controller parameter the store doesn't list yet (Triggers aside): the rows go in neither synced nor saved. That is the opposite default from the per-row '+', which adds one parameter somebody deliberately picked and usually wants on the wire. An MA Parameters component has to declare a parameter before anything can use it, so this is the starting point for a prefab gimmick.")),
+                    EditorStyles.miniButton, GUILayout.Width(100)))
             {
                 AddMissingToStore();
                 GUIUtility.ExitGUI();
             }
-            if (GUILayout.Button(new GUIContent(L.Tr("Sync"),
-                    L.Tr("Align the parameter store to this controller's parameter list (with a diff preview).")),
-                    EditorStyles.miniButton, GUILayout.Width(52)))
+            if (GUILayout.Button(new GUIContent(L.Tr("Sync List"),
+                    L.Tr("Open the list that holds the store's rows against this controller's parameters, row by row. Nothing is added or removed until it is applied there.")),
+                    EditorStyles.miniButton, GUILayout.Width(64)))
             {
                 VrcParamSyncWindow.Open(Context.Controller, _store, Refresh);
                 GUIUtility.ExitGUI();

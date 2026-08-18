@@ -269,8 +269,10 @@ namespace Yozolab.DaerD
         // ---- controller --------------------------------------------------------
 
         /// <summary>Identity, plus the assets this controller is explicitly associated with.
-        /// The store and the menu are assigned by hand and never guessed from the scene, since
-        /// DaerD is also used on gimmick controllers that belong to no avatar.</summary>
+        /// They are assigned by hand and never guessed from the scene, since DaerD is also used
+        /// on gimmick controllers that belong to no avatar. The parameter store used to be a
+        /// fourth slot here and is now in the Prefab Link card below, where the pin can offer an
+        /// answer for it.</summary>
         void DrawController(AnimatorController controller)
         {
             BeginCard(L.Tr("Controller"));
@@ -291,10 +293,6 @@ namespace Yozolab.DaerD
                     currentEmpty, typeof(AnimationClip), false);
                 if (pickedEmpty != currentEmpty)
                     GraphFrameData.SetEmptyClip(controller, pickedEmpty);
-
-                // Announced as a parameter change so the parameters panel drops the store it has
-                // cached and redraws its budget against the new one.
-                PanelGui.ParameterStoreField(controller, Context.NotifyParametersChanged);
 
                 var currentMenu = GraphFrameData.GetExpressionsMenu(controller);
                 var pickedMenu = EditorGUILayout.ObjectField(
@@ -394,7 +392,8 @@ namespace Yozolab.DaerD
                 }
             EditorGUILayout.EndHorizontal();
 
-            DrawLinkedStore(controller, status);
+            EditorGUILayout.Space(6);
+            DrawStore(controller, status);
             EndCard();
         }
 
@@ -463,20 +462,30 @@ namespace Yozolab.DaerD
             target != null ? "'" + target.name + "'" : L.Tr("nothing at all");
 
         /// <summary>
-        /// The store the link implies, beside the store the controller actually uses.
+        /// Which store this controller declares its parameters into — and, when the pin is
+        /// healthy, what the linked prefab says the answer should be.
         ///
-        /// Read-only on purpose. The rows are edited in the Parameters panel, which is in the
-        /// left column and visible from here — a second editing surface for the same rows is
-        /// two implementations of the same list, and the panel's one already knows about
-        /// effective names, the budget and the sync diff.
+        /// <para>THE ONE PLACE A STORE IS ASSIGNED.</para>
+        /// It used to be assignable from two (a slot in the Controller card, the same row again
+        /// above the Parameters panel) while this card showed a third, read-only summary of the
+        /// same association. Three surfaces for one field is how the same question came to be
+        /// asked in three different vocabularies on one screen. It belongs HERE rather than in
+        /// the Controller card because the pin is what answers it: for a gimmick, the store is
+        /// the MA Parameters above the linked merge nearly every time, and that answer is one
+        /// button away only while the two sit together.
+        ///
+        /// What is still not here is the ROWS. They are edited in the Parameters panel, which is
+        /// in the left column and visible from here — a second editing surface for the same list
+        /// is two implementations of it, and the panel's one already knows about effective names,
+        /// the budget and the sync diff.
         /// </summary>
-        void DrawLinkedStore(AnimatorController controller, PrefabLinkStatus status)
+        void DrawStore(AnimatorController controller, PrefabLinkStatus status)
         {
-            if (!status.IsHealthy) return;
-            var linked = PrefabLinks.StoreOf(status);
+            using (new PanelGui.LabelWidthScope(FieldLabelWidth))
+                DrawStoreSlot(controller);
+
             var current = GraphFrameData.GetParameterStore(controller);
             var store = ParameterStore.TryWrap(current);
-
             if (store != null)
             {
                 int capacity = store.Capacity();
@@ -488,15 +497,17 @@ namespace Yozolab.DaerD
                 EditorGUILayout.LabelField(new GUIContent(summary,
                     L.Tr("The rows themselves are edited in the Parameters panel on the left, which is showing this same store.")));
             }
-            else if (linked == null)
-            {
-                EditorGUILayout.LabelField(
-                    L.Tr("The linked prefab has no MA Parameters above its merge yet."),
-                    EditorStyles.centeredGreyMiniLabel);
-            }
 
+            // Everything below is what the PIN knows about the store, so a controller with no
+            // usable link gets the slot and nothing else — there is nothing to compare against.
+            if (!status.IsHealthy) return;
+            var linked = PrefabLinks.StoreOf(status);
             if (linked == null)
             {
+                if (store == null)
+                    EditorGUILayout.LabelField(
+                        L.Tr("The linked prefab has no MA Parameters above its merge yet."),
+                        EditorStyles.centeredGreyMiniLabel);
                 // The one thing that is missing and that DaerD can supply, offered where the
                 // absence is stated rather than in a menu somewhere else.
                 if (GUILayout.Button(new GUIContent(L.Tr("Add MA Parameters"),
@@ -515,6 +526,58 @@ namespace Yozolab.DaerD
                 Context.NotifyParametersChanged();
                 GUIUtility.ExitGUI();
             }
+        }
+
+        /// <summary>
+        /// The slot itself, plus the one search cheap enough to sit beside it.
+        ///
+        /// There used to be a second button here that swept every prefab in the project for a
+        /// merge of this controller and took the MA Parameters above it. Scan, at the top of this
+        /// card, now walks the same prefabs for the same reason and comes back with the prefab
+        /// NAMED — and filling the store from a link somebody confirmed is the same answer with
+        /// its provenance attached, which the silent one never had.
+        ///
+        /// Every change is announced as a parameter change: the parameters panel keeps a wrapped
+        /// store of its own and would otherwise draw the old one's budget.
+        /// </summary>
+        void DrawStoreSlot(AnimatorController controller)
+        {
+            EditorGUILayout.BeginHorizontal();
+            var current = GraphFrameData.GetParameterStore(controller);
+            var picked = EditorGUILayout.ObjectField(
+                new GUIContent(L.Tr("Params"),
+                    L.Tr("The parameter store this controller belongs to: a VRC Expression Parameters asset, or a GameObject carrying an MA Parameters component. Assigned explicitly — DaerD never guesses it from the scene.")),
+                current, typeof(UnityEngine.Object), true);
+            if (picked != current)
+            {
+                var wrapped = ParameterStore.TryWrap(picked);
+                if (picked != null && wrapped == null)
+                    EditorUtility.DisplayDialog(L.Tr("Parameter Store"),
+                        L.Tr("Assign a VRC Expression Parameters asset or an object with an MA Parameters component."), "OK");
+                else
+                {
+                    // The wrapped component, not the whole GameObject, so the slot shows exactly
+                    // what will be edited.
+                    GraphFrameData.SetParameterStore(controller, wrapped != null ? wrapped.Target : null);
+                    Context.NotifyParametersChanged();
+                }
+            }
+            if (GUILayout.Button(new GUIContent(L.Tr("Detect"),
+                    L.Tr("Search the scene for an exact match: an avatar running this controller, or an MA Merge Animator referencing it. A gimmick that lives only as a prefab is in no scene at all — Scan above is the button for that one. Nothing is picked up automatically without one of them.")),
+                    EditorStyles.miniButton, GUILayout.Width(52)))
+            {
+                var detected = ParameterStore.DetectFor(controller);
+                if (detected == null)
+                    EditorUtility.DisplayDialog(L.Tr("Parameter Store"),
+                        L.Tr("No exact match in the scene — no avatar or MA Merge Animator references this controller. A gimmick that lives only as a prefab is found by Scan instead."), "OK");
+                else
+                {
+                    GraphFrameData.SetParameterStore(controller, detected);
+                    Context.NotifyParametersChanged();
+                }
+                GUIUtility.ExitGUI();
+            }
+            EditorGUILayout.EndHorizontal();
         }
 
         // ---- prefab link actions -----------------------------------------------

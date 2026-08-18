@@ -1289,9 +1289,6 @@ msgstr "組み込みパラメーター '{0}' は {1} で宣言されています
 msgid "VRC Parameters"
 msgstr "VRC パラメーター"
 
-msgid "Sync"
-msgstr "同期"
-
 msgid "Network synced (costs bits)"
 msgstr "ネットワーク同期（bit を消費）"
 
@@ -1824,20 +1821,14 @@ msgstr "VRC Expression Parameters アセット、または MA Parameters コン�
 msgid "Detect"
 msgstr "検出"
 
-msgid "Search the scene for an exact match: an avatar running this controller, or an MA Merge Animator referencing it. Nothing is picked up automatically without this button."
-msgstr "シーンから完全一致のみを検索します。このコントローラーを実行するアバター、またはこれを参照する MA Merge Animator が対象です。このボタンを押さない限り自動検出は行われません。"
+msgid "Search the scene for an exact match: an avatar running this controller, or an MA Merge Animator referencing it. A gimmick that lives only as a prefab is in no scene at all — Scan above is the button for that one. Nothing is picked up automatically without one of them."
+msgstr "シーンから完全一致のみを検索します。このコントローラーを実行するアバター、またはこれを参照する MA Merge Animator が対象です。Prefab のままのギミックはシーンに存在しないので、その場合は上の Scan を使ってください。どちらかのボタンを押さない限り自動検出は行われません。"
 
-msgid "No exact match in the scene — no avatar or MA Merge Animator references this controller."
-msgstr "シーンに完全一致がありません。このコントローラーを参照するアバターや MA Merge Animator が見つかりませんでした。"
+msgid "No exact match in the scene — no avatar or MA Merge Animator references this controller. A gimmick that lives only as a prefab is found by Scan instead."
+msgstr "シーンに完全一致がありません。このコントローラーを参照するアバターや MA Merge Animator が見つかりませんでした。Prefab のままのギミックは Scan で探してください。"
 
-msgid "In Prefabs"
-msgstr "Prefab から"
-
-msgid "Search the project's prefabs for an MA Merge Animator referencing this controller, and take the MA Parameters beside it. Only prefabs that already reference this controller are opened, and the answer is remembered until something in the project changes."
-msgstr "プロジェクト内の Prefab から、このコントローラーを参照する MA Merge Animator を検索し、その隣の MA Parameters を採用します。開くのは既にこのコントローラーを参照している Prefab だけで、結果はプロジェクトに変更があるまで記憶されます。"
-
-msgid "No prefab in this project has an MA Merge Animator referencing this controller."
-msgstr "このコントローラーを参照する MA Merge Animator を持つ Prefab がプロジェクトにありません。"
+msgid "No parameter store. Assign one in the Prefab Link card on the Home screen."
+msgstr "パラメーターストアが未設定です。ホーム画面の Prefab Link カードで割り当ててください。"
 
 msgid "The name the built avatar gives this parameter. This row is declared internal, so it is renamed on the way in — this, not the name on the left, is what travels and what a build log will call it."
 msgstr "ビルド後のアバターがこのパラメーターに与える名前です。この行は internal 指定なので取り込み時にリネームされます。左の名前ではなくこちらが実際に同期され、ビルドログにも出ます。"
@@ -1851,14 +1842,17 @@ msgstr "{0}: {1} bit"
 msgid "Synced bits used by this store (Bool = 1, Int / Float = 8). MA components contribute to the avatar's total, so no capacity is shown."
 msgstr "このストアが使用中の同期ビット数です（Bool = 1、Int / Float = 8）。MA コンポーネントはアバター全体の予算に合算されるため、上限は表示されません。"
 
-msgid "Align the parameter store to this controller's parameter list (with a diff preview)."
-msgstr "パラメーターストアをこのコントローラーのパラメーター一覧に合わせます（差分プレビュー付き）。"
+msgid "Sync List"
+msgstr "同期リスト"
 
-msgid "Add All"
-msgstr "すべて追加"
+msgid "Open the list that holds the store's rows against this controller's parameters, row by row. Nothing is added or removed until it is applied there."
+msgstr "ストアの行とこのコントローラーのパラメーターを 1 行ずつ突き合わせるリストを開きます。追加も削除も、そのリストで適用するまで実行されません。"
 
-msgid "Add every controller parameter the store doesn't list yet (Triggers aside) as an async row: neither synced nor saved. An MA Parameters component has to declare a parameter before anything can use it, so this is the starting point for a prefab gimmick."
-msgstr "ストアにまだ無いコントローラーのパラメーター（Trigger を除く）を、非同期の行として追加します（synced も saved も付けません）。MA Parameters は使用するパラメーターをすべて宣言する必要があるため、プレハブギミックではここが出発点になります。"
+msgid "Declare Missing"
+msgstr "未宣言を追加"
+
+msgid "Declare every controller parameter the store doesn't list yet (Triggers aside): the rows go in neither synced nor saved. That is the opposite default from the per-row '+', which adds one parameter somebody deliberately picked and usually wants on the wire. An MA Parameters component has to declare a parameter before anything can use it, so this is the starting point for a prefab gimmick."
+msgstr "ストアにまだ無いコントローラーのパラメーター（Trigger を除く）を宣言します。追加される行は synced も saved も付きません。1 行ごとの「+」とは既定が逆で、あちらは狙って選んだ 1 件を同期に載せる想定です。MA Parameters は使用するパラメーターをすべて宣言する必要があるため、プレハブギミックではここが出発点になります。"
 
 msgid "Every controller parameter is already in the store."
 msgstr "コントローラーのパラメーターはすべてストアに登録済みです。"

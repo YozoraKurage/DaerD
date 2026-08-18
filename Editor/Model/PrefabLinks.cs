@@ -272,10 +272,10 @@ namespace Yozolab.DaerD
         /// first hit: the point of the list is that a person picks from it, and a sweep that
         /// stopped early would hide the second prefab precisely when the question matters.
         ///
-        /// Nested prefabs are found as themselves, for the reason
-        /// <see cref="ParameterStore.DetectInPrefabs"/> gives: a prefab that merely CONTAINS the
-        /// one carrying the merge does not depend on the controller directly, and the inner
-        /// prefab is in the sweep on its own account anyway.
+        /// Nested prefabs are found as themselves. A prefab that merely CONTAINS the one carrying
+        /// the merge does not depend on the controller directly, so the dependency table skips it
+        /// — and the inner prefab is in the sweep on its own account anyway, which is the one
+        /// somebody would want to link to.
         /// </summary>
         public static List<PrefabLinkCandidate> FindCandidates(AnimatorController controller)
         {
@@ -371,5 +371,22 @@ namespace Yozolab.DaerD
                 yield return root;
             }
         }
+    }
+
+    /// <summary>
+    /// The sweep's one blind spot: prefabs change on disk without any code of DaerD's running.
+    /// A pull can add the Merge Animator that would have been the answer, or take away the prefab
+    /// that was. Dropping every candidate list on any import costs a button press to refill and
+    /// is the only invalidation that cannot be wrong about which import mattered.
+    ///
+    /// It used to drop the parameter store's project sweep as well, which was the second thing
+    /// that walked these prefabs. That sweep is gone — the link finds the prefab and the store
+    /// comes from the merge it names — so there is one memory left to invalidate and it lives
+    /// beside it.
+    /// </summary>
+    class PrefabLinkImportWatcher : AssetPostprocessor
+    {
+        static void OnPostprocessAllAssets(string[] imported, string[] deleted,
+            string[] moved, string[] movedFrom) => PrefabLinks.ForgetCandidates();
     }
 }

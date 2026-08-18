@@ -384,11 +384,11 @@ namespace Yozolab.DaerD.Tests
 
             PrefabLinks.ForgetCandidates();
             int scans = PrefabLinks.Scans;
-            int loads = ParameterStore.PrefabLoads;
+            int loads = PrefabAssetSweep.Loads;
 
             Assert.AreEqual(1, PrefabLinks.FindCandidates(controller).Count);
             Assert.AreEqual(scans + 1, PrefabLinks.Scans);
-            Assert.AreEqual(loads + 1, ParameterStore.PrefabLoads,
+            Assert.AreEqual(loads + 1, PrefabAssetSweep.Loads,
                 "the decoy carries a merge too, and the sweep must never have opened it to "
                 + "know that — the dependency table already said it names another controller");
 

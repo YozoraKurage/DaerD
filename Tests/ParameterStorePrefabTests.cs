@@ -14,22 +14,17 @@ using MaMergeAnimator = nadena.dev.modular_avatar.core.ModularAvatarMergeAnimato
 namespace Yozolab.DaerD.Tests
 {
     /// <summary>
-    /// Finding — and editing — the parameter store of a gimmick that is a PREFAB and nothing
-    /// else, which is the shape a gimmick has for most of its life. Nothing here is in a scene:
-    /// the objects are built, written to a prefab and destroyed, so a scene search would find
-    /// none of it and the only thing that can answer is the project sweep.
+    /// Editing the parameter store of a gimmick that is a PREFAB and nothing else, which is the
+    /// shape a gimmick has for most of its life. Nothing here is in a scene: the objects are
+    /// built, written to a prefab and destroyed.
     ///
-    /// Three claims are pinned rather than remembered, because all three are about somebody
-    /// else's machinery and all three would fail silently:
-    /// <list type="bullet">
-    /// <item>the dependency table is enough of a filter — a prefab that does not reference the
-    /// controller is never opened, which is the only reason a sweep over every prefab in the
-    /// project is affordable at all;</item>
-    /// <item>an answer is remembered until an asset changes, and an import drops it;</item>
-    /// <item>a write into a component that lives inside a prefab asset reaches the FILE. This
-    /// is the one that had to be measured rather than reasoned about — a dirty asset nobody
-    /// saves looks exactly like a saved one until the next domain reload.</item>
-    /// </list>
+    /// The claim pinned here is the one that had to be measured rather than reasoned about: a
+    /// write into a component that lives inside a prefab asset reaches the FILE. A dirty asset
+    /// nobody saves looks exactly like a saved one until the next domain reload.
+    ///
+    /// The route to that component is <see cref="ParameterStore.StoreFor"/> — the MA Parameters
+    /// above a merge somebody already chose. It used to be a project-wide sweep with a button of
+    /// its own; that sweep is gone, and the prefab link's Scan is what names a prefab now.
     ///
     /// Skipped by name where Modular Avatar is absent, so the two runs have the same number of
     /// tests in them.
@@ -38,9 +33,7 @@ namespace Yozolab.DaerD.Tests
     {
         const string Folder = "Assets/DDPrefabScan";
         const string ControllerPath = Folder + "/Gimmick.controller";
-        const string OtherControllerPath = Folder + "/Other.controller";
         const string GimmickPrefab = Folder + "/Gimmick.prefab";
-        const string DecoyPrefab = Folder + "/Decoy.prefab";
 
         [SetUp]
         public void SetUp()
@@ -50,11 +43,7 @@ namespace Yozolab.DaerD.Tests
         }
 
         [TearDown]
-        public void TearDown()
-        {
-            AssetDatabase.DeleteAsset(Folder);
-            ParameterStore.ForgetPrefabScan();
-        }
+        public void TearDown() => AssetDatabase.DeleteAsset(Folder);
 
         static AnimatorController Controller(string path)
         {
@@ -88,6 +77,15 @@ namespace Yozolab.DaerD.Tests
             return root == null ? null : root.GetComponentInChildren<MaParameters>(true);
         }
 
+        /// <summary>The store governing the merge inside a prefab asset, reached the way the
+        /// prefab link reaches it once a prefab has been picked.</summary>
+        static ParameterStore StoreIn(string prefabPath)
+        {
+            var root = AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath);
+            var merge = root == null ? null : root.GetComponentInChildren<MaMergeAnimator>(true);
+            return ParameterStore.TryWrap(ParameterStore.StoreFor(merge));
+        }
+
         /// <summary>Whether the FILE holds this text, whichever way the project serialises its
         /// assets — Unity writes string fields as UTF-8 in both modes.</summary>
         static bool FileMentions(string path, string text) =>
@@ -95,7 +93,7 @@ namespace Yozolab.DaerD.Tests
 #endif
 
         [Test]
-        public void APrefabbedGimmickIsFoundByTheProjectSweepAndNotByTheSceneOne()
+        public void APrefabbedGimmicksStoreIsReadThroughTheMergeAndNotFromTheScene()
         {
 #if DAERD_MA && DAERD_VRC
             var controller = Controller(ControllerPath);
@@ -104,82 +102,11 @@ namespace Yozolab.DaerD.Tests
             Assert.IsNull(ParameterStore.DetectFor(controller),
                 "nothing built here is in the scene, so the scene search has nothing to find");
 
-            var found = ParameterStore.DetectInPrefabs(controller);
-            Assert.IsNotNull(found, "the prefab's merge names this controller");
-            Assert.AreSame(ParametersIn(GimmickPrefab), found);
-
-            var store = ParameterStore.TryWrap(found);
+            var store = StoreIn(GimmickPrefab);
+            Assert.IsNotNull(store, "the merge inside the prefab has MA Parameters above it");
+            Assert.AreSame(ParametersIn(GimmickPrefab), store.Target);
             Assert.AreEqual("MA Params", store.Kind);
             Assert.IsNotNull(store.Find("Hat"), "the store reads out of the prefab asset");
-#else
-            Assert.Ignore("Modular Avatar is not installed in this project.");
-#endif
-        }
-
-        [Test]
-        public void OnlyPrefabsThatAlreadyReferenceTheControllerAreOpened()
-        {
-#if DAERD_MA && DAERD_VRC
-            var controller = Controller(ControllerPath);
-            var other = Controller(OtherControllerPath);
-            Prefab(GimmickPrefab, controller, "Hat");
-            Prefab(DecoyPrefab, other, "Bag");
-
-            ParameterStore.ForgetPrefabScan();
-            int loads = ParameterStore.PrefabLoads;
-            var found = ParameterStore.DetectInPrefabs(controller);
-
-            Assert.AreSame(ParametersIn(GimmickPrefab), found);
-            Assert.AreEqual(loads + 1, ParameterStore.PrefabLoads,
-                "the decoy carries MA Parameters too, and the sweep must never have opened it "
-                + "to know that — the dependency table already said it names another controller");
-#else
-            Assert.Ignore("Modular Avatar is not installed in this project.");
-#endif
-        }
-
-        [Test]
-        public void TheAnswerIsRememberedUntilSomethingInTheProjectChanges()
-        {
-#if DAERD_MA && DAERD_VRC
-            var controller = Controller(ControllerPath);
-            Prefab(GimmickPrefab, controller, "Hat");
-
-            ParameterStore.ForgetPrefabScan();
-            int scans = ParameterStore.PrefabScans;
-
-            Assert.IsNotNull(ParameterStore.DetectInPrefabs(controller));
-            Assert.AreEqual(scans + 1, ParameterStore.PrefabScans);
-            Assert.IsNotNull(ParameterStore.DetectInPrefabs(controller));
-            Assert.AreEqual(scans + 1, ParameterStore.PrefabScans,
-                "pressing the button twice must not sweep the project twice");
-
-            // The one thing a remembered answer cannot survive: a prefab that has just started
-            // (or stopped) referencing the controller. The import itself is what drops it.
-            Prefab(DecoyPrefab, controller, "Bag");
-            Assert.IsNotNull(ParameterStore.DetectInPrefabs(controller));
-            Assert.AreEqual(scans + 2, ParameterStore.PrefabScans,
-                "an asset import drops the memory");
-#else
-            Assert.Ignore("Modular Avatar is not installed in this project.");
-#endif
-        }
-
-        [Test]
-        public void AControllerThatIsNotAFileIsAnsweredForRatherThanSwept()
-        {
-#if DAERD_MA && DAERD_VRC
-            var loose = new AnimatorController();
-            loose.AddLayer("Base");
-            ParameterStore.ForgetPrefabScan();
-            int scans = ParameterStore.PrefabScans;
-
-            Assert.IsNull(ParameterStore.DetectInPrefabs(loose));
-            Assert.IsNull(ParameterStore.DetectInPrefabs(null));
-            Assert.AreEqual(scans, ParameterStore.PrefabScans,
-                "a controller with no path cannot be any prefab's dependency, so there is "
-                + "nothing to sweep for");
-            Object.DestroyImmediate(loose);
 #else
             Assert.Ignore("Modular Avatar is not installed in this project.");
 #endif
@@ -191,7 +118,7 @@ namespace Yozolab.DaerD.Tests
 #if DAERD_MA && DAERD_VRC
             var controller = Controller(ControllerPath);
             Prefab(GimmickPrefab, controller, "Hat");
-            var store = ParameterStore.TryWrap(ParameterStore.DetectInPrefabs(controller));
+            var store = StoreIn(GimmickPrefab);
 
             store.Add(new VrcExpressionParameters.Entry
             {

@@ -161,38 +161,11 @@ namespace Yozolab.DaerD
         }
 
         /// <summary>
-        /// The same question asked of the PROJECT rather than of the scene: an MA Parameters
-        /// component in a prefab asset whose MA Merge Animator references this controller.
-        ///
-        /// A separate entry point rather than a fallback inside <see cref="DetectFor"/>, and
-        /// one nothing calls on its own. A gimmick spends most of its life as a prefab that is
-        /// in no scene at all, so the scene sweep answers "nothing" about exactly the
-        /// controllers this is for — but the project sweep is a walk over every prefab in the
-        /// project, which is not a thing to do behind somebody's back while they move a mouse
-        /// (ADR 0028: the sweep is stopped at its source, and here the source is a button).
-        /// The cost is kept off the ordinary path twice over: the answer is cached per
-        /// controller until an asset changes, and prefabs are only LOADED when the dependency
-        /// table already says they mention this controller.
-        ///
-        /// Nested prefabs are found as themselves. A prefab that merely CONTAINS the prefab
-        /// carrying the Merge Animator does not depend on the controller directly, so it is
-        /// skipped — and the inner prefab is in the sweep on its own account, which is the
-        /// component a person would want to edit anyway.
-        /// </summary>
-        public static Object DetectInPrefabs(AnimatorController controller)
-        {
-#if DAERD_MA
-            return MaStore.FindInPrefabs(controller);
-#else
-            return null;
-#endif
-        }
-
-        /// <summary>
         /// The store that governs one MA Merge Animator: the MA Parameters on its own object or
         /// on the nearest parent that has one, which is where Modular Avatar itself looks. Asked
-        /// of a merge the user has already chosen, so unlike <see cref="DetectFor"/> and
-        /// <see cref="DetectInPrefabs"/> this searches nothing and opens nothing.
+        /// of a merge the user has already chosen, so unlike <see cref="DetectFor"/> this
+        /// searches nothing and opens nothing — and it is how the prefab link fills this slot,
+        /// which is the project-wide answer with the prefab it came from named.
         ///
         /// Null in a project without MA, and null when nothing above the merge declares any
         /// parameters — which is a gimmick prefab that has not been given a store yet, not an
@@ -208,31 +181,6 @@ namespace Yozolab.DaerD
             return null;
 #endif
         }
-
-        /// <summary>Drops the prefab sweep's memory. Called on every asset import — a prefab
-        /// that has just started (or stopped) referencing the controller is the one thing a
-        /// cached answer cannot survive, and refilling costs a button press.</summary>
-        internal static void ForgetPrefabScan()
-        {
-#if DAERD_MA
-            MaStore.ForgetPrefabScan();
-#endif
-        }
-
-        /// <summary>How many project sweeps have run since the editor started, and how many
-        /// prefabs those sweeps opened. Both exist so a test can assert the two things the
-        /// design claims: that the answer is remembered, and that the dependency table keeps
-        /// the sweep from loading prefabs that have nothing to do with the controller. The load
-        /// count is the shared walk's, so it counts the prefab link's sweeps too — the claim it
-        /// backs is about the walk, not about who asked for it.</summary>
-        internal static int PrefabScans =>
-#if DAERD_MA
-            MaStore.Scans;
-#else
-            0;
-#endif
-
-        internal static int PrefabLoads => PrefabAssetSweep.Loads;
 
         /// <summary>
         /// The controller's parameters that have no row in the store yet, as entries ready to
@@ -375,9 +323,9 @@ namespace Yozolab.DaerD
         /// component and skip themselves where it is absent.
         ///
         /// <para>WHAT A PROJECT WITHOUT MA SEES.</para>
-        /// The same as before: nothing. <see cref="TryWrap"/> does not recognise MA components,
-        /// <see cref="DetectFor"/> and <see cref="DetectInPrefabs"/> find none — which is the
-        /// honest answer, because a project without MA has no MA components in it.
+        /// The same as before: nothing. <see cref="TryWrap"/> does not recognise MA components
+        /// and <see cref="DetectFor"/> finds none — which is the honest answer, because a project
+        /// without MA has no MA components in it.
         ///
         /// Prefix rows (PhysBone families) are read past and never touched: they name a family
         /// rather than a parameter, and the shared entry shape has nowhere to put one.
@@ -416,58 +364,6 @@ namespace Yozolab.DaerD
                     var parameters = transform.GetComponent<MaParameters>();
                     if (parameters != null) return parameters;
                 }
-                return null;
-            }
-
-            // ---- the project sweep ------------------------------------------
-
-            /// <summary>Answers per controller GUID, including "none" — a sweep that found
-            /// nothing is the expensive one, and the one most likely to be repeated.</summary>
-            static readonly Dictionary<string, Object> Answers = new Dictionary<string, Object>();
-
-            public static int Scans { get; private set; }
-
-            public static void ForgetPrefabScan() => Answers.Clear();
-
-            /// <summary>See <see cref="ParameterStore.DetectInPrefabs"/> for why this is a
-            /// button rather than a fallback.</summary>
-            public static Object FindInPrefabs(AnimatorController controller)
-            {
-                if (controller == null) return null;
-                var path = AssetDatabase.GetAssetPath(controller);
-                // A controller that is not a file cannot be a prefab's dependency, so there is
-                // nothing for the sweep to match on — and no key to remember it under.
-                if (string.IsNullOrEmpty(path)) return null;
-                var guid = AssetDatabase.AssetPathToGUID(path);
-                if (Answers.TryGetValue(guid, out var known)) return known;
-                var found = Sweep(controller, path);
-                Answers[guid] = found;
-                return found;
-            }
-
-            /// <summary>
-            /// The first merge of this controller found anywhere in the project, and the MA
-            /// Parameters above it. The walk itself — dependency table first, prefab loaded only
-            /// when the table already says it names this controller — lives in
-            /// <see cref="PrefabAssetSweep"/>, shared with the prefab link's sweep so the two
-            /// cannot drift apart on what "opening a prefab costs" means.
-            ///
-            /// Stops at the first match, which the shared walk being lazy is what makes true:
-            /// the prefabs after it are never loaded. This answer is a default to fill a slot
-            /// with, not a list to choose from — choosing is what the prefab link is for.
-            /// </summary>
-            static Object Sweep(AnimatorController controller, string controllerPath)
-            {
-                Scans++;
-#if DAERD_VRC
-                foreach (var root in PrefabAssetSweep.Depending(controllerPath))
-                    foreach (var merge in root.GetComponentsInChildren<MaMergeAnimator>(true))
-                    {
-                        if (merge == null || merge.animator != controller) continue;
-                        var parameters = Above(merge.transform);
-                        if (parameters != null) return parameters;
-                    }
-#endif
                 return null;
             }
 
@@ -662,8 +558,8 @@ namespace Yozolab.DaerD
             /// Writes the change out, wherever the component lives.
             ///
             /// A scene component only needs to be marked dirty — the scene is saved by the
-            /// person, when they save it. A component found by the project sweep is INSIDE A
-            /// PREFAB ASSET, and a dirty asset that nobody saves is a change that survives
+            /// person, when they save it. A component reached through the prefab link is INSIDE
+            /// A PREFAB ASSET, and a dirty asset that nobody saves is a change that survives
             /// until the next domain reload and then is not there any more. Measured: editing
             /// the component of a loaded prefab asset in place and saving it is enough — the
             /// change is in the file and comes back after a reimport — so there is no round
@@ -681,23 +577,4 @@ namespace Yozolab.DaerD
 #endif
     }
 
-    /// <summary>
-    /// The prefab sweeps' one blind spot: prefabs change on disk without any code of DaerD's
-    /// running. A pull can add the Merge Animator that would have been the answer, or take away
-    /// the prefab that was. Dropping every answer on any import costs a button press to refill
-    /// and is the only invalidation that cannot be wrong about which import mattered.
-    ///
-    /// Both sweeps are dropped here rather than each watching for itself: they answer the same
-    /// question about the same prefabs, so a second postprocessor would be a second chance for
-    /// the two to disagree about when an answer went stale.
-    /// </summary>
-    class ParameterStoreImportWatcher : AssetPostprocessor
-    {
-        static void OnPostprocessAllAssets(string[] imported, string[] deleted,
-            string[] moved, string[] movedFrom)
-        {
-            ParameterStore.ForgetPrefabScan();
-            PrefabLinks.ForgetCandidates();
-        }
-    }
 }
