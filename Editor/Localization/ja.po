@@ -295,9 +295,6 @@ msgstr "ステートに付いた同期リクエスト {0} 件"
 msgid "C# Recipes"
 msgstr "C# レシピ"
 
-msgid "No recipe-owned layers."
-msgstr "レシピが生成したレイヤーはありません。"
-
 msgid "Tools"
 msgstr "ツール"
 
@@ -2634,6 +2631,58 @@ msgstr "Assembly Definition（コンパイル高速化）"
 
 msgid "Put the recipe folder in its own small assembly, so an export recompiles only the recipes instead of your whole editor assembly. Skipped when the folder already belongs to an asmdef or contains scripts DaerD didn't generate."
 msgstr "Recipe フォルダを専用の小さなアセンブリに分離し、エクスポート時の再コンパイルをエディタアセンブリ全体ではなく Recipe だけに抑えます。フォルダが既に asmdef 管理下にある場合や、DaerD 以外のスクリプトを含む場合はスキップします。"
+
+# ---- C# recipes (home card) ----
+
+msgid "owns no layers yet"
+msgstr "まだレイヤーを所有していません"
+
+msgid "Up to date"
+msgstr "最新"
+
+msgid "Compiling"
+msgstr "コンパイル中"
+
+msgid "Compile error"
+msgstr "コンパイルエラー"
+
+msgid ".cs is newer"
+msgstr ".cs が新しい"
+
+msgid "Wrong target"
+msgstr "対象不一致"
+
+msgid "Unusable"
+msgstr "使用不可"
+
+msgid "This asset is not a recipe DaerD can run."
+msgstr "このアセットは DaerD が実行できる Recipe ではありません。"
+
+msgid "This recipe generates into {0}, not this controller — running it from here would write somewhere else. Open it and check its target controller."
+msgstr "この Recipe の生成先は {0} で、このコントローラーではありません。ここから実行すると別のアセットに書き込まれます。Recipe を開いて対象コントローラーを確認してください。"
+
+msgid "The compiled code matches this recipe's .cs. Whether the CONTROLLER matches the recipe is the question Verify answers."
+msgstr "コンパイル済みコードは この Recipe の .cs と一致しています。コントローラーの側が Recipe と一致しているかは Verify が答えます。"
+
+msgid "Select this recipe asset and highlight it in the Project window."
+msgstr "この Recipe アセットを選択し、Project ウィンドウで強調表示します。"
+
+# ---- C# recipes (export target) ----
+
+msgid "Export To"
+msgstr "出力先"
+
+msgid "New recipe…"
+msgstr "新規作成…"
+
+msgid "Update one of the recipes this controller is already linked to, or write a new one. An update rewrites that recipe's generated half in place and never touches your half."
+msgstr "このコントローラーに既に紐付いている Recipe を更新するか、新規に作成するかを選びます。更新ではその Recipe の生成側ファイルだけをその場で書き換え、手編集側には触れません。"
+
+msgid "Updating an existing recipe: its class name and folder are shown as they are and cannot be changed here — that pair of files IS the recipe. Only the generated half is rewritten; your half is left alone. To write one under a different name, choose 'New recipe…'."
+msgstr "既存 Recipe の更新: クラス名とフォルダはそのまま表示するだけで、ここでは変更できません。その 2 ファイルの組が Recipe そのものだからです。書き換えるのは生成側だけで、手編集側はそのまま残ります。別の名前で作りたい場合は「新規作成…」を選んでください。"
+
+msgid "DaerD cannot find the script behind this recipe asset, so there is no pair of files to update. Choose 'New recipe…' to write a fresh one."
+msgstr "この Recipe アセットの元になっているスクリプトが見つからないため、更新すべきファイルの組がありません。「新規作成…」を選んで新しく書き出してください。"
 
 # ---- C# recipes (freshness guard) ----
 

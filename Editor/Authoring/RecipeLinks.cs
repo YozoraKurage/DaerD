@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.IO;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
@@ -55,6 +56,57 @@ namespace Yozolab.DaerD.Authoring
                     + controller.name + "': " + string.Join(", ", adopted)
                     + " — a re-export now updates one of these instead of writing a second copy.");
             return adopted.Count;
+        }
+
+        /// <summary>
+        /// Which linked recipe an export should default to updating: an index into
+        /// <paramref name="links"/>, or -1 when there is nothing to update and the export is a
+        /// new one.
+        ///
+        /// One link is the whole answer — that is the case the link exists for, and asking a
+        /// second question about it would be theatre. With several, the layers somebody has
+        /// ticked are the only evidence on the screen about which recipe they mean, so the first
+        /// link that already owns one of them wins; a recipe that owns nothing of what is being
+        /// exported is a poor guess however recently it was touched. Falling back to the first
+        /// link rather than to "new" is deliberate: writing a second recipe is the accident this
+        /// whole wave is about, so the default never proposes it while any link exists.
+        ///
+        /// A decision function rather than a shape the popup happens to have, because it is the
+        /// one part of the form worth pinning — the IMGUI around it is checked by hand.
+        /// </summary>
+        internal static int PickDefault(IReadOnlyList<ControllerRecipe> links,
+            ICollection<string> checkedLayers)
+        {
+            if (links == null || links.Count == 0) return -1;
+            if (links.Count == 1) return 0;
+            if (checkedLayers != null && checkedLayers.Count > 0)
+                for (int i = 0; i < links.Count; i++)
+                {
+                    var owned = links[i] != null ? links[i].OwnedLayers : null;
+                    if (owned == null) continue;
+                    foreach (var name in owned)
+                        if (checkedLayers.Contains(name)) return i;
+                }
+            return 0;
+        }
+
+        /// <summary>
+        /// Where a linked recipe's code lives: the folder holding its hand half and the class
+        /// name the two halves share. False when Unity cannot name the script — a recipe asset
+        /// whose class is gone, or one made some way that left no MonoScript behind — in which
+        /// case there is no pair to update and the form says so instead of guessing a folder.
+        /// </summary>
+        internal static bool ScriptLocation(ControllerRecipe recipe, out string folder,
+            out string className)
+        {
+            folder = null;
+            className = recipe != null ? recipe.GetType().Name : null;
+            if (recipe == null) return false;
+            var script = MonoScript.FromScriptableObject(recipe);
+            var path = script != null ? AssetDatabase.GetAssetPath(script) : null;
+            if (string.IsNullOrEmpty(path)) return false;
+            folder = Path.GetDirectoryName(path)?.Replace('\\', '/');
+            return !string.IsNullOrEmpty(folder);
         }
 
         /// <summary>Membership through the <c>==</c> Unity overloads, spelled out rather than left

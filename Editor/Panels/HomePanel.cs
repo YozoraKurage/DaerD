@@ -3,6 +3,7 @@ using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
 using Yozolab.DaerD.Analyze;
+using Yozolab.DaerD.Authoring;
 using Yozolab.DaerD.Bridge;
 using Yozolab.DaerD.Engine;
 
@@ -179,7 +180,6 @@ namespace Yozolab.DaerD
             DrawObjectGadgets(controller);
             EditorGUILayout.Space(8);
             DrawAsyncSyncs(controller);
-            EditorGUILayout.Space(8);
             DrawRecipes(controller);
             EditorGUILayout.EndVertical();
 
@@ -206,7 +206,6 @@ namespace Yozolab.DaerD
             DrawObjectGadgets(controller);
             EditorGUILayout.Space(8);
             DrawAsyncSyncs(controller);
-            EditorGUILayout.Space(8);
             DrawRecipes(controller);
             EditorGUILayout.Space(8);
             DrawTools(controller);
@@ -1037,62 +1036,170 @@ namespace Yozolab.DaerD
 
         // ---- C# recipes --------------------------------------------------------
 
+        // The last Generate or Verify run's result, kept until the next action replaces it —
+        // the rule the recipe inspector keeps, because a result that vanishes on the next
+        // repaint has said nothing at all. Held per recipe so it cannot appear under a row it
+        // did not come from.
+        UnityEngine.Object _recipeResultFor;
+        List<string> _recipeMessages;
+        string _recipeCleanMessage;
+
         /// <summary>
-        /// The recipes that own layers in this controller, one row per asset rather than per
-        /// layer — a recipe generates as many as it likes, and it is the asset that is the
-        /// source of truth for all of them. Generate lives on the asset, so the useful action
-        /// here is finding it.
+        /// The C# recipes this controller is linked to: where its source is, whether the code
+        /// that WOULD run is the code on disk, and the two actions that belong to a recipe.
+        ///
+        /// One row per recipe ASSET rather than per layer — a recipe generates as many layers as
+        /// it likes and the asset is the source of truth for all of them. The rows come from the
+        /// link, which is the controller's own record of where its recipes are, with any recipe
+        /// that owns layers here without being linked appended after them: that is a recipe from
+        /// before links existed, and it joins the first list the next time it generates.
+        ///
+        /// Unlike the gadget cards above, this one hides itself when there is nothing to list.
+        /// Those say "none yet" because adding one is something you do from that card; a recipe
+        /// is made by the export tool further down the screen, so an empty card here would be a
+        /// heading with nothing to offer.
         /// </summary>
         void DrawRecipes(AnimatorController controller)
         {
-            // The record is keyed by layer; regrouped the other way round here, with a list of
-            // its own to keep the rows in the order the layers were found in.
+            // The code-owned record is keyed by layer; regrouped the other way round here, with
+            // a list of its own to keep the rows in the order the layers were found in.
             var byRecipe = new Dictionary<UnityEngine.Object, List<AnimatorStateMachine>>();
-            var recipes = new List<UnityEngine.Object>();
+            var owners = new List<UnityEngine.Object>();
             foreach (var entry in GraphFrameData.GetCodeOwned(controller))
             {
                 if (!byRecipe.TryGetValue(entry.Value, out var machines))
                 {
                     byRecipe[entry.Value] = machines = new List<AnimatorStateMachine>();
-                    recipes.Add(entry.Value);
+                    owners.Add(entry.Value);
                 }
                 machines.Add(entry.Key);
             }
 
-            _recipesOpen = BeginFoldCard(L.Tr("C# Recipes"), recipes.Count, _recipesOpen);
+            var rows = new List<UnityEngine.Object>(GraphFrameData.LinkedRecipes(controller));
+            foreach (var owner in owners)
+                if (!rows.Contains(owner)) rows.Add(owner);
+            if (rows.Count == 0) return;
+
+            EditorGUILayout.Space(8);
+            _recipesOpen = BeginFoldCard(L.Tr("C# Recipes"), rows.Count, _recipesOpen);
             if (!_recipesOpen)
             {
                 EndCard();
                 return;
             }
-            if (recipes.Count == 0)
-                EditorGUILayout.LabelField(L.Tr("No recipe-owned layers."),
-                    EditorStyles.centeredGreyMiniLabel);
 
-            foreach (var recipe in recipes)
+            foreach (var row in rows)
             {
-                var machines = byRecipe[recipe];
+                var recipe = row as ControllerRecipe;
                 var names = new List<string>();
-                foreach (var machine in machines)
-                    names.Add(LayerNameOf(controller, machine));
-                string owned = string.Join(", ", names);
+                if (byRecipe.TryGetValue(row, out var machines))
+                    foreach (var machine in machines)
+                        names.Add(LayerNameOf(controller, machine));
+                // A linked recipe that has never generated owns nothing, which is a state to say
+                // rather than an empty gap — it is what a freshly exported recipe looks like.
+                string owned = names.Count > 0
+                    ? string.Join(", ", names) : L.Tr("owns no layers yet");
+
+                string state = RecipeState(controller, recipe, out string reason);
 
                 EditorGUILayout.BeginHorizontal();
-                DrawRowName(recipe.name, recipe.name + " — " + owned);
+                DrawRowName(row.name, row.name + " — " + owned);
                 DrawRowNote(owned);
-                if (RowButton(L.Tr("Ping"), L.Tr("Highlight this object in the Project / graph")))
-                    EditorGUIUtility.PingObject(recipe);
-                // One layer is unambiguous; several would need a picker nobody asked for, and
-                // the recipe asset is the better destination for those anyway.
-                using (new EditorGUI.DisabledScope(machines.Count != 1))
-                    if (RowButton(L.Tr("Select")))
+                DrawRowNote(state, reason ?? L.Tr("The compiled code matches this recipe's .cs. Whether the CONTROLLER matches the recipe is the question Verify answers."));
+                // Disabled rather than refusing on the press: the reason is on the row already,
+                // and a button that explains itself only after being clicked teaches later than
+                // it needs to.
+                using (new EditorGUI.DisabledScope(reason != null))
+                {
+                    if (RowButton(L.Tr("Generate"),
+                        L.Tr("Apply this recipe to the target controller (undoable).")))
                     {
-                        SelectLayer(controller, machines[0]);
+                        ShowRecipeResult(row, recipe.Generate(),
+                            L.Tr("Clean — code and controller match."));
+                        Context.NotifyLayerStructureChanged();
+                        GUIUtility.ExitGUI();   // layers changed under this layout pass
+                    }
+                    if (RowButton(L.Tr("Verify"),
+                        L.Tr("Compare what the code declares against the controller's current contents.")))
+                    {
+                        ShowRecipeResult(row, recipe.Verify(),
+                            L.Tr("Clean — code and controller match."));
                         GUIUtility.ExitGUI();
                     }
+                }
+                if (RowButton(L.Tr("Open"),
+                    L.Tr("Select this recipe asset and highlight it in the Project window.")))
+                {
+                    Selection.activeObject = row;
+                    EditorGUIUtility.PingObject(row);
+                }
                 EditorGUILayout.EndHorizontal();
+
+                if (reason != null)
+                    EditorGUILayout.LabelField(reason, EditorStyles.wordWrappedMiniLabel);
+                if (_recipeResultFor == row) DrawRecipeResult();
             }
             EndCard();
+        }
+
+        /// <summary>
+        /// A recipe's state as the short word for its row, with the sentence that explains it
+        /// when there is one — a null <paramref name="reason"/> means the row can be run.
+        ///
+        /// The order is the card's own. Whether the recipe points at THIS controller comes first,
+        /// because one with another target would write into a different asset entirely and no
+        /// amount of freshness makes that safe. Everything under it is
+        /// <see cref="RecipeFreshness"/>'s verdict, reused rather than re-derived: the button and
+        /// the method behind it have to agree on what runnable means, or the button offers a run
+        /// that the method then refuses.
+        /// </summary>
+        static string RecipeState(AnimatorController controller, ControllerRecipe recipe,
+            out string reason)
+        {
+            if (recipe == null)
+            {
+                reason = L.Tr("This asset is not a recipe DaerD can run.");
+                return L.Tr("Unusable");
+            }
+            if (recipe.targetController != controller)
+            {
+                reason = L.Tr("This recipe generates into {0}, not this controller — running it from here would write somewhere else. Open it and check its target controller.",
+                    Quoted(recipe.targetController));
+                return L.Tr("Wrong target");
+            }
+            var staleness = RecipeFreshness.Check(recipe);
+            reason = RecipeFreshness.Reason(staleness);
+            switch (staleness)
+            {
+                case RecipeFreshness.Staleness.CompileFailed: return L.Tr("Compile error");
+                case RecipeFreshness.Staleness.Compiling: return L.Tr("Compiling");
+                case RecipeFreshness.Staleness.SourceNewer: return L.Tr(".cs is newer");
+                default: return L.Tr("Up to date");
+            }
+        }
+
+        void ShowRecipeResult(UnityEngine.Object recipe, List<string> messages, string clean)
+        {
+            _recipeResultFor = recipe;
+            _recipeMessages = messages;
+            _recipeCleanMessage = clean;
+        }
+
+        /// <summary>The last run's findings, said the same way the recipe inspector says them —
+        /// one screen showing the same list in two vocabularies is how a reader ends up unsure
+        /// whether they are looking at the same answer.</summary>
+        void DrawRecipeResult()
+        {
+            if (_recipeMessages == null) return;
+            if (_recipeMessages.Count == 0)
+            {
+                EditorGUILayout.HelpBox(_recipeCleanMessage, MessageType.Info);
+                return;
+            }
+            EditorGUILayout.HelpBox(L.Tr("{0} finding(s):", _recipeMessages.Count),
+                MessageType.Warning);
+            foreach (var message in _recipeMessages)
+                EditorGUILayout.LabelField("• " + message, EditorStyles.wordWrappedMiniLabel);
         }
 
         // ---- tools -------------------------------------------------------------
@@ -1218,6 +1325,13 @@ namespace Yozolab.DaerD
         /// text so a long one is not cut in half.</summary>
         static void DrawRowNote(string note) =>
             GUILayout.Label(note, EditorStyles.centeredGreyMiniLabel, GUILayout.ExpandWidth(false));
+
+        /// <summary>The same aside with something to say on hover — for the notes that are a
+        /// verdict rather than a description, where the short word is only half the answer.
+        /// </summary>
+        static void DrawRowNote(string note, string tooltip) =>
+            GUILayout.Label(new GUIContent(note, tooltip), EditorStyles.centeredGreyMiniLabel,
+                GUILayout.ExpandWidth(false));
 
         /// <summary>A row action, at the one width they all share.</summary>
         static bool RowButton(string label) =>
