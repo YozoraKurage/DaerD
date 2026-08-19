@@ -28,7 +28,7 @@ Styles / Utils / Localization（どこからでも使う道具）
 | 棟 | 役割 | 主な型 |
 |---|---|---|
 | **Engine** | 機構の生成（作る側） | DbtBuilder, ToggleBuilder, ObjectGadgets, AapGadgets, AsyncSync*（Builder/Applier/Schedule/Split/Cost/Naming）, NetworkSyncBuilder, SyncRequestBuilder |
-| **Analyze** | 読み取り専用の解析 | ControllerAnalyzer, ControllerReachability, LayerOwners（レイヤー所有の逆引き）, ParameterUsageFinder, AapWriteScan, ControllerLocator, StateSearch |
+| **Analyze** | 読み取り専用の解析 | ControllerAnalyzer, ControllerReachability, LayerOwners（レイヤー所有の逆引き）, ParameterUsageFinder, AapWriteScan, ControllerLocator, StateSearch, ClipDigest（.anim の事実要約 — UI 露出なし、デーモンの exec-method.sh から ClipDigestEntry 経由で叩く） |
 | **IR** | コントローラーの中間表現 | ControllerIR（Parse）, ControllerIRDiff（Compare）, ControllerIRBuilder（Rebuild — レシピ Generate の実体） |
 | **Persist** | 直列化される型 | GraphFrameData（DD の全保存状態: objectGadgets, codeOwned, PrefabLink, asyncSync…。既定は .controller のサブアセット、Detach で `Assets/zz_DaerD/…` のサイドカー .asset へ移せる — 紐づけはサイドカー側の owner のみ、探すのは Find）, DaerDLayerTemplate, DaerDBlendTreeTemplate |
 | **Bridge** | 外界への型非依存アクセサ | VrcParameters / VrcMenuAccess / VrcBehaviours / VrcParameterDriver（SDK 型を名前で）, ParameterStore（MA）, PrefabLinks / PrefabWriter（Check→純 Judge の前例）, LiveAnimator / AnimatorPlayback, SavedByVersion（PackageInfo→純 Format、GraphFrameData.savedByVersion のスタンプ元） |
