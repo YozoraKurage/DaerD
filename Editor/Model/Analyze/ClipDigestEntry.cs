@@ -53,6 +53,8 @@ namespace Yozolab.DaerD.Analyze
             sb.Append("controller \"").Append(controller.name).Append("\" (").Append(path)
               .Append("): ").Append(controller.layers.Length).Append(" layers, ")
               .Append(uses.Count).Append(" distinct clips\n\n");
+            var trees = ClipDigest.FormatTrees(controller);
+            if (trees.Length > 0) sb.Append(trees).Append('\n');
             foreach (var use in uses)
             {
                 sb.Append("used by: ").Append(string.Join("; ", use.sites)).Append('\n');

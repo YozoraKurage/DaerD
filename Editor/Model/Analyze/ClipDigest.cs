@@ -296,6 +296,99 @@ namespace Yozolab.DaerD.Analyze
             use.sites.Add(site);
         }
 
+        /// <summary>Blend-tree structure, one indented block per tree-playing state. This is
+        /// the half of a gadget the clip digests cannot show: a Direct tree's per-child
+        /// weight parameters are the arithmetic, a 1D tree's thresholds are the LUT — with
+        /// only the child clips visible, a DBT gadget reads as "a pile of AAP clips".</summary>
+        public static string FormatTrees(AnimatorController controller)
+        {
+            var sb = new StringBuilder();
+            if (controller == null) return "";
+            var layers = controller.layers;
+            for (int i = 0; i < layers.Length; i++)
+            {
+                var root = ControllerReachability.PlayedMachine(controller, i);
+                if (root == null) continue;
+                bool synced = layers[i].syncedLayerIndex >= 0;
+                foreach (var sm in root.SelfAndDescendants())
+                    foreach (var childState in sm.states)
+                    {
+                        var state = childState.state;
+                        if (state == null) continue;
+                        var motion = synced
+                            ? layers[i].GetOverrideMotion(state) ?? state.motion
+                            : state.motion;
+                        if (!(motion is BlendTree tree)) continue;
+                        sb.Append("  ").Append(layers[i].name).Append('/').Append(state.name)
+                          .Append(":\n");
+                        AppendTree(sb, tree, 2, new HashSet<Motion>());
+                    }
+            }
+            return sb.Length == 0 ? "" : "trees:\n" + sb;
+        }
+
+        static void AppendTree(StringBuilder sb, BlendTree tree, int depth, HashSet<Motion> visited)
+        {
+            sb.Append(new string(' ', depth * 2)).Append("tree \"").Append(tree.name)
+              .Append("\" ").Append(TreeKind(tree)).Append(":\n");
+            if (!visited.Add(tree))
+            {
+                sb.Append(new string(' ', depth * 2 + 2)).Append("(already shown)\n");
+                return;
+            }
+            foreach (var child in tree.children)
+            {
+                if (child.motion is BlendTree nested)
+                {
+                    // The child's own axis label still matters, so print it above the block.
+                    var label = ChildLabel(tree, child);
+                    if (label.Length > 0)
+                        sb.Append(new string(' ', depth * 2 + 2)).Append(label).Append(":\n");
+                    AppendTree(sb, nested, depth + 2, visited);
+                    continue;
+                }
+                sb.Append(new string(' ', depth * 2 + 2));
+                sb.Append(child.motion is AnimationClip clip ? "\"" + clip.name + "\"" : "(none)");
+                var axis = ChildLabel(tree, child);
+                if (axis.Length > 0) sb.Append(' ').Append(axis);
+                if (child.timeScale != 1f) sb.Append(" speed ").Append(F(child.timeScale));
+                if (child.mirror) sb.Append(" mirrored");
+                sb.Append('\n');
+            }
+        }
+
+        static string TreeKind(BlendTree tree)
+        {
+            switch (tree.blendType)
+            {
+                case BlendTreeType.Simple1D:
+                    return "1D(" + tree.blendParameter + ")";
+                case BlendTreeType.SimpleDirectional2D:
+                    return "2D SimpleDirectional(" + tree.blendParameter + ", " + tree.blendParameterY + ")";
+                case BlendTreeType.FreeformDirectional2D:
+                    return "2D FreeformDirectional(" + tree.blendParameter + ", " + tree.blendParameterY + ")";
+                case BlendTreeType.FreeformCartesian2D:
+                    return "2D FreeformCartesian(" + tree.blendParameter + ", " + tree.blendParameterY + ")";
+                case BlendTreeType.Direct:
+                    return "Direct";
+                default:
+                    return tree.blendType.ToString();
+            }
+        }
+
+        static string ChildLabel(BlendTree parent, ChildMotion child)
+        {
+            switch (parent.blendType)
+            {
+                case BlendTreeType.Simple1D:
+                    return "@ " + F(child.threshold);
+                case BlendTreeType.Direct:
+                    return "x " + child.directBlendParameter;
+                default:
+                    return "@ (" + F(child.position.x) + ", " + F(child.position.y) + ")";
+            }
+        }
+
         // Humanoid curves bind to typeof(Animator) with an empty path, exactly like an AAP
         // — only the name tells them apart (same trap AapWriteScan documents). Muscle names
         // come from HumanTrait; finger and root/IK bindings use spellings HumanTrait does

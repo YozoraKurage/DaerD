@@ -189,5 +189,51 @@ namespace Yozolab.DaerD.Tests
 
             Object.DestroyImmediate(controller);
         }
+
+        [Test]
+        public void FormatTrees_ShowsAxesThresholdsAndDirectWeights()
+        {
+            var controller = new AnimatorController();
+            controller.AddLayer("FX");
+            var lut = new BlendTree
+            {
+                name = "Lut",
+                blendType = BlendTreeType.Simple1D,
+                blendParameter = "Index",
+                // Left on, Unity redistributes thresholds evenly and 2 becomes 1.
+                useAutomaticThresholds = false,
+            };
+            lut.AddChild(Clip("Low"), 0f);
+            lut.AddChild(Clip("High"), 2f);
+            var direct = new BlendTree { name = "Gadget", blendType = BlendTreeType.Direct };
+            direct.AddChild(Clip("X_aap"));
+            var children = direct.children;
+            children[0].directBlendParameter = "GadgetX";
+            direct.children = children;
+            direct.AddChild(lut);
+            controller.layers[0].stateMachine.AddState("Tree").motion = direct;
+
+            var text = ClipDigest.FormatTrees(controller);
+
+            StringAssert.Contains("FX/Tree:", text);
+            StringAssert.Contains("tree \"Gadget\" Direct:", text);
+            StringAssert.Contains("\"X_aap\" x GadgetX", text);
+            StringAssert.Contains("tree \"Lut\" 1D(Index):", text);
+            StringAssert.Contains("\"High\" @ 2", text);
+
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void FormatTrees_NoTrees_IsEmpty()
+        {
+            var controller = new AnimatorController();
+            controller.AddLayer("FX");
+            controller.layers[0].stateMachine.AddState("Plain").motion = Clip("Plain");
+
+            Assert.AreEqual("", ClipDigest.FormatTrees(controller));
+
+            Object.DestroyImmediate(controller);
+        }
     }
 }
