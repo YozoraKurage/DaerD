@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Reflection;
 using System.Text;
 using UnityEditor;
 using UnityEditor.TestTools.TestRunner.Api;
@@ -30,6 +31,7 @@ namespace Yozolab.DaerDTestDaemon
         static string RequestPath => Path.Combine(Dir, "request.json");
         static string RunningPath => Path.Combine(Dir, "running.json");
         static string ResultXmlPath => Path.Combine(Dir, "result.xml");
+        static string ExecResultPath => Path.Combine(Dir, "exec-result.txt");
         static string DonePath => Path.Combine(Dir, "done");
         static string AlivePath => Path.Combine(Dir, "alive");
         static string QuitPath => Path.Combine(Dir, "quit");
@@ -133,6 +135,14 @@ namespace Yozolab.DaerDTestDaemon
             var request = JsonUtility.FromJson<Request>(
                 string.IsNullOrWhiteSpace(requestJson) ? "{}" : requestJson) ?? new Request();
 
+            // テスト以外の依頼: static メソッドをリフレクションで実行して文字列を返す
+            // （exec-method.sh 参照）。テストと違い同期で終わるので、ここで完結する。
+            if (!string.IsNullOrEmpty(request.exec))
+            {
+                RunExec(request.exec, request.execArg);
+                return;
+            }
+
             var filter = new Filter { testMode = TestMode.EditMode };
             if (!string.IsNullOrEmpty(request.filter))
                 filter.groupNames = new[] { request.filter };
@@ -148,6 +158,44 @@ namespace Yozolab.DaerDTestDaemon
             var api = ScriptableObject.CreateInstance<TestRunnerApi>();
             api.RegisterCallbacks(new Callbacks());
             api.Execute(new ExecutionSettings(filter));
+        }
+
+        /// <summary>「Type の完全名.メソッド名」を全アセンブリから探し、
+        /// static string Method(string) として呼ぶ。internal でよい — リフレクションは
+        /// 可視性を見ないので、DaerD 側の受け口を public にしないで済む。</summary>
+        static void RunExec(string target, string arg)
+        {
+            try
+            {
+                int dot = target.LastIndexOf('.');
+                if (dot <= 0) { Finish(1, "exec target must be Full.Type.Name.Method: " + target); return; }
+                var typeName = target.Substring(0, dot);
+                var methodName = target.Substring(dot + 1);
+                Type type = null;
+                foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+                {
+                    type = assembly.GetType(typeName);
+                    if (type != null) break;
+                }
+                if (type == null) { Finish(1, "type not found: " + typeName); return; }
+                var method = type.GetMethod(methodName,
+                    BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic,
+                    null, new[] { typeof(string) }, null);
+                if (method == null)
+                {
+                    Finish(1, "no static " + methodName + "(string) on " + typeName);
+                    return;
+                }
+                var result = method.Invoke(null, new object[] { arg });
+                File.WriteAllText(ExecResultPath, result as string ?? "");
+                Finish(0, "");
+            }
+            catch (Exception e)
+            {
+                var root = e.GetBaseException();
+                File.WriteAllText(ExecResultPath, root.ToString());
+                Finish(1, root.Message);
+            }
         }
 
         static bool s_locked;
@@ -185,6 +233,8 @@ namespace Yozolab.DaerDTestDaemon
         {
             public string filter;
             public string category;
+            public string exec;      // 空でなければテストではなくメソッド実行の依頼
+            public string execArg;
         }
 
         class Callbacks : ICallbacks
