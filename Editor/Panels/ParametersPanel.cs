@@ -44,6 +44,17 @@ namespace Yozolab.DaerD
         /// switches so parameters can be copied across open tabs.</summary>
         static AnimatorControllerParameter s_parameterClipboard;
 
+        // The name box holds its text here until something takes the rename decision, because the
+        // decision is this panel's and not the text field's. A DelayedTextField would only hand
+        // the text over when Unity's own delayed editor notices the focus change, which never
+        // happens for a click on empty space — nothing there claims focus — so a typed name was
+        // lost unless the user pressed Enter. _editingFrom is the name the box was opened on and
+        // identifies the row: it survives reordering and filtering, which a row index doesn't.
+        string _editingFrom;
+        string _editingText;
+
+        static string NameControl(string parameterName) => "daerd-parameter-name:" + parameterName;
+
         /// <summary>Show runtime values while the editor plays. Session-static like the
         /// analyzer's severity filter — a display preference, not worth an EditorPref. On by
         /// default: during play mode the defaults are the less useful of the two.</summary>
@@ -58,6 +69,8 @@ namespace Yozolab.DaerD
             context.ControllerChanged += Refresh;
             context.ParametersChanged += Refresh;
             context.ControllerChanged += InvalidateStore;
+            // A half-typed name belongs to the controller it was typed against.
+            context.ControllerChanged += CancelNameEdit;
             // The store slot is also editable from the home screen, which announces the change
             // as a parameter change — the cached wrapper here would otherwise stay stale.
             context.ParametersChanged += InvalidateStore;
@@ -133,6 +146,14 @@ namespace Yozolab.DaerD
 
         protected override void DrawContent()
         {
+            // The one place a rename is decided: the box stopped being the focused control, so
+            // whatever is in it is the user's answer. Sitting at the top of the pass rather than
+            // in the row means a row that has meanwhile been filtered out, reordered or scrolled
+            // away still commits — and the rename mutates the array the loop below reads, which
+            // is exactly what it must not do mid-loop.
+            if (_editingFrom != null && GUI.GetNameOfFocusedControl() != NameControl(_editingFrom))
+                CommitNameEdit();
+
             var controller = Context.Controller;
             var parameters = controller.parameters;
 
@@ -170,33 +191,7 @@ namespace Yozolab.DaerD
                 _reorder.DrawHandle();
                 visibleReal.Add(i);
 
-                var prevColor = GUI.color;
-                if (unused.Contains(p.name)) GUI.color = DaerDColors.Warning;
-                EditorGUI.BeginChangeCheck();
-                string newName = EditorGUILayout.DelayedTextField(p.name, GUILayout.MinWidth(90));
-                if (EditorGUI.EndChangeCheck() && newName != p.name && !string.IsNullOrEmpty(newName))
-                {
-                    if (!ParameterRenamer.Rename(controller, p.name, newName))
-                        EditorUtility.DisplayDialog(L.Tr("Rename Failed"),
-                            L.Tr("A parameter named '{0}' already exists.", newName), L.Tr("OK"));
-                    else
-                    {
-                        _store?.Rename(p.name, newName);
-                        // A menu whose controls name this parameter would be left pointing at a
-                        // name nothing answers to. Nothing assigns that association any more
-                        // (see GraphFrameData.expressionsMenu) — this reaches controllers that
-                        // were given a menu while the slot existed, and follows a rename through
-                        // for them rather than breaking their menu on the way out.
-                        var rootMenu = GraphFrameData.GetExpressionsMenu(controller);
-                        if (VrcMenuAccess.Is(rootMenu))
-                            VrcMenuAccess.RenameParameterReferences(rootMenu, p.name, newName);
-                        OfferSiblingRename(controller, p.name, newName);
-                    }
-                    Context.NotifyParametersChanged();
-                    Context.NotifyGraphStructureChanged();
-                    GUIUtility.ExitGUI();
-                }
-                GUI.color = prevColor;
+                DrawNameField(p, i, unused.Contains(p.name));
 
                 EditorGUI.BeginChangeCheck();
                 var newType = (AnimatorControllerParameterType)EditorGUILayout.EnumPopup(p.type, GUILayout.Width(66));
@@ -244,6 +239,95 @@ namespace Yozolab.DaerD
 
             if (parameters.Length == 0)
                 EditorGUILayout.LabelField(L.Tr("No parameters."), EditorStyles.centeredGreyMiniLabel);
+        }
+
+        /// <summary>
+        /// The name box. Drawn into a rect this method reserves itself rather than through
+        /// EditorGUILayout, because both things it has to do need the rect before the text field
+        /// sees the event: a right-click has to become the row menu (the text editor answers
+        /// ContextClick with its own cut/copy/paste menu and consumes it), and the typed text has
+        /// to be kept where this panel can commit it — see _editingFrom.
+        /// </summary>
+        void DrawNameField(AnimatorControllerParameter parameter, int index, bool unused)
+        {
+            var rect = GUILayoutUtility.GetRect(GUIContent.none, EditorStyles.textField,
+                GUILayout.MinWidth(90), GUILayout.ExpandWidth(true));
+            if (Event.current.type == EventType.ContextClick && rect.Contains(Event.current.mousePosition))
+            {
+                Event.current.Use();
+                ShowUsagesMenu(parameter.name, index);
+                GUIUtility.ExitGUI();
+            }
+
+            var control = NameControl(parameter.name);
+            bool editing = _editingFrom == parameter.name;
+
+            var prevColor = GUI.color;
+            if (unused) GUI.color = DaerDColors.Warning;
+            GUI.SetNextControlName(control);
+            string typed = EditorGUI.TextField(rect, editing ? _editingText : parameter.name);
+            GUI.color = prevColor;
+
+            if (GUI.GetNameOfFocusedControl() != control) return;
+            _editingFrom = parameter.name;
+            _editingText = typed;
+
+            // Enter and Escape only settle where the focus goes; the commit itself happens on the
+            // next pass, in the one place that owns it.
+            var evt = Event.current;
+            if (evt.type != EventType.KeyDown) return;
+            if (evt.keyCode == KeyCode.Return || evt.keyCode == KeyCode.KeypadEnter)
+            {
+                evt.Use();
+                GUIUtility.keyboardControl = 0;
+                EditorGUIUtility.editingTextField = false;
+            }
+            else if (evt.keyCode == KeyCode.Escape)
+            {
+                evt.Use();
+                CancelNameEdit();
+                GUIUtility.keyboardControl = 0;
+                EditorGUIUtility.editingTextField = false;
+            }
+        }
+
+        /// <summary>Apply what the name box holds. Renames by the name the box was opened on, so
+        /// it stays right even if the list moved underneath it; a blank box, an unchanged name or
+        /// a parameter that has since gone is simply dropped.</summary>
+        void CommitNameEdit()
+        {
+            var from = _editingFrom;
+            var to = _editingText == null ? string.Empty : _editingText.Trim();
+            CancelNameEdit();
+            if (from == null || to.Length == 0 || to == from) return;
+
+            var controller = Context.Controller;
+            if (controller == null || DbtBuilder.FindParameter(controller, from) == null) return;
+
+            if (!ParameterRenamer.Rename(controller, from, to))
+                EditorUtility.DisplayDialog(L.Tr("Rename Failed"),
+                    L.Tr("A parameter named '{0}' already exists.", to), L.Tr("OK"));
+            else
+            {
+                _store?.Rename(from, to);
+                // A menu whose controls name this parameter would be left pointing at a name
+                // nothing answers to. Nothing assigns that association any more (see
+                // GraphFrameData.expressionsMenu) — this reaches controllers that were given a
+                // menu while the slot existed, and follows a rename through for them rather than
+                // breaking their menu on the way out.
+                var rootMenu = GraphFrameData.GetExpressionsMenu(controller);
+                if (VrcMenuAccess.Is(rootMenu))
+                    VrcMenuAccess.RenameParameterReferences(rootMenu, from, to);
+                OfferSiblingRename(controller, from, to);
+            }
+            Context.NotifyParametersChanged();
+            Context.NotifyGraphStructureChanged();
+        }
+
+        void CancelNameEdit()
+        {
+            _editingFrom = null;
+            _editingText = null;
         }
 
         /// <summary>The value column: what the Animator holds while something is running it,
