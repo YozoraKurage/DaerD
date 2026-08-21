@@ -3052,6 +3052,12 @@ msgstr "'{0}' はどこにも使われていません"
 msgid "{0} usage(s) of '{1}'"
 msgstr "'{1}' の使用箇所 {0} 件"
 
+msgid "Add {0}  ({1})"
+msgstr "{0} を追加  ({1})"
+
+msgid "Add All Missing ({0})"
+msgstr "未追加をすべて追加 ({0})"
+
 msgid "Duplicate"
 msgstr "複製"
 

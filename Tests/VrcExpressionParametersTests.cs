@@ -168,6 +168,34 @@ namespace Yozolab.DaerD.Tests
         }
 
         [Test]
+        public void MissingFamily_SeedsFromAMemberName_AndSkipsWhatExists()
+        {
+            var controller = new AnimatorController();
+            controller.AddParameter("Tail_IsGrabbed", AnimatorControllerParameterType.Bool);
+            controller.AddParameter("Tail_Angle", AnimatorControllerParameterType.Float);
+
+            var missing = PhysBoneSiblings.MissingFamily(controller, "Tail_Angle");
+
+            Assert.AreEqual(3, missing.Count);
+            Assert.Contains(("Tail_IsPosed", AnimatorControllerParameterType.Bool), missing);
+            Assert.Contains(("Tail_Stretch", AnimatorControllerParameterType.Float), missing);
+            Assert.Contains(("Tail_Squish", AnimatorControllerParameterType.Float), missing);
+        }
+
+        [Test]
+        public void MissingFamily_TreatsAnUnsuffixedNameAsThePrefix()
+        {
+            var controller = new AnimatorController();
+            controller.AddParameter("Tail", AnimatorControllerParameterType.Float);
+
+            var missing = PhysBoneSiblings.MissingFamily(controller, "Tail");
+
+            Assert.AreEqual(5, missing.Count);
+            Assert.Contains(("Tail_IsGrabbed", AnimatorControllerParameterType.Bool), missing);
+            Assert.Contains(("Tail_Angle", AnimatorControllerParameterType.Float), missing);
+        }
+
+        [Test]
         public void RenamedSibling_CarriesThePrefixChange()
         {
             Assert.AreEqual("Tail2_Angle",

@@ -220,7 +220,7 @@ namespace Yozolab.DaerD
 
                 // Find-uses: lists every transition condition / blend-tree blend slot / state
                 // parameter override that mentions this parameter, plus row actions
-                // (duplicate / copy / remap / delete-and-clean).
+                // (duplicate / copy / remap / delete-and-clean, PhysBone family completion).
                 if (GUILayout.Button(FindContent, EditorStyles.miniButton, GUILayout.Width(DaerDLayout.GlyphButton)))
                 {
                     ShowUsagesMenu(p.name, i);
@@ -231,6 +231,16 @@ namespace Yozolab.DaerD
                 { RemoveParameter(i); GUIUtility.ExitGUI(); }
 
                 EditorGUILayout.EndHorizontal();
+
+                // Right-click anywhere on the row is the same menu as "?" — the glyph is easy
+                // to miss and a context click is what the hand tries first.
+                if (Event.current.type == EventType.ContextClick &&
+                    rowRect.Contains(Event.current.mousePosition))
+                {
+                    Event.current.Use();
+                    ShowUsagesMenu(p.name, i);
+                    GUIUtility.ExitGUI();
+                }
                 _reorder.Row(rowRect);
             }
             _reorder.End((from, to) => MoveParameter(visibleReal[from], visibleReal[to]));
@@ -564,6 +574,33 @@ namespace Yozolab.DaerD
                 }
             }
 
+            // PhysBone family completion. Any row can seed it: a member name contributes its
+            // prefix, any other name IS the prefix — so "make one parameter, right-click,
+            // complete the family" needs no prefix prompt. Present members show checked so the
+            // submenu also answers "which of the five does this controller have?"; the types
+            // are fixed by what the PhysBone system writes, hence shown, not chosen.
+            menu.AddSeparator(string.Empty);
+            var familyPrefix = PhysBoneSiblings.PrefixOf(parameterName) ?? parameterName;
+            var missingFamily = PhysBoneSiblings.MissingFamily(controller, parameterName);
+            foreach (var (suffix, type) in PhysBoneSiblings.Family)
+            {
+                var fullName = familyPrefix + suffix;
+                var shownName = fullName.Replace('/', '∕');
+                if (missingFamily.Contains((fullName, type)))
+                {
+                    var captured = (fullName, type);
+                    menu.AddItem(new GUIContent("PhysBone/" + L.Tr("Add {0}  ({1})", shownName, type)),
+                        false, () => AddPhysBoneFamily(index,
+                            new List<(string, AnimatorControllerParameterType)> { captured }));
+                }
+                else
+                    menu.AddItem(new GUIContent("PhysBone/" + shownName + "  (" + type + ")"),
+                        true, null);   // already on the controller — shown checked, non-clickable
+            }
+            if (missingFamily.Count > 1)
+                menu.AddItem(new GUIContent("PhysBone/" + L.Tr("Add All Missing ({0})", missingFamily.Count)),
+                    false, () => AddPhysBoneFamily(index, missingFamily));
+
             menu.AddSeparator(string.Empty);
             menu.AddItem(new GUIContent(L.Tr("Duplicate")), false, () => DuplicateParameter(index));
             menu.AddItem(new GUIContent(L.Tr("Copy")), false, () => CopyParameter(index));
@@ -602,6 +639,27 @@ namespace Yozolab.DaerD
                 Context.NotifyGraphStructureChanged();
             });
             menu.ShowAsContext();
+        }
+
+        /// <summary>Add PhysBone family members right after the seed row, in family order, as
+        /// one undo step. Deliberately touches neither the store nor the defaults: these are
+        /// written by each client's own PhysBone system, so declaring them in expression
+        /// parameters would only spend synced bits on values the wire never carries.</summary>
+        void AddPhysBoneFamily(int index,
+            List<(string name, AnimatorControllerParameterType type)> members)
+        {
+            var controller = Context.Controller;
+            Undo.RegisterCompleteObjectUndo(controller, "Add PhysBone Parameters");
+            int insertAt = index + 1;
+            foreach (var (name, type) in members)
+            {
+                if (DbtBuilder.FindParameter(controller, name) != null) continue;
+                controller.AddParameter(name, type);
+                MoveParameter(controller.parameters.Length - 1,
+                    Mathf.Min(insertAt++, controller.parameters.Length - 1));
+            }
+            EditorUtility.SetDirty(controller);
+            Context.NotifyParametersChanged();
         }
 
         /// <summary>Parameters written by clips (AAP); cached per controller and dropped on
