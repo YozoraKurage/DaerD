@@ -220,15 +220,12 @@ namespace Yozolab.DaerD
 
                 // Find-uses: lists every transition condition / blend-tree blend slot / state
                 // parameter override that mentions this parameter, plus row actions
-                // (duplicate / copy / remap / delete-and-clean, PhysBone family completion).
+                // (duplicate / copy / remap / delete, PhysBone family completion).
                 if (GUILayout.Button(FindContent, EditorStyles.miniButton, GUILayout.Width(DaerDLayout.GlyphButton)))
                 {
                     ShowUsagesMenu(p.name, i);
                     GUIUtility.ExitGUI();
                 }
-
-                if (GUILayout.Button("✕", EditorStyles.miniButton, GUILayout.Width(DaerDLayout.GlyphButton)))
-                { RemoveParameter(i); GUIUtility.ExitGUI(); }
 
                 EditorGUILayout.EndHorizontal();
 
@@ -628,6 +625,11 @@ namespace Yozolab.DaerD
             if (!anyTarget)
                 menu.AddDisabledItem(new GUIContent(L.Tr("Remap References To")));
 
+            // Plain delete moved here from the per-row "✕": a destructive control on every row
+            // was one misclick from losing a parameter, and the menu is where the rest of the
+            // row's actions already live. No confirm, same as the button it replaces — the
+            // references it may orphan are exactly what "Delete and Clean" below is for.
+            menu.AddItem(new GUIContent(L.Tr("Delete")), false, () => RemoveParameter(index));
             menu.AddItem(new GUIContent(L.Tr("Delete and Clean")), false, () =>
             {
                 if (!EditorUtility.DisplayDialog(L.Tr("Delete and Clean"),
