@@ -656,11 +656,11 @@ namespace Yozolab.DaerD
             }
             else
             {
+                string redirect = L.Tr("Redirect Transition") + suffix;
                 foreach (var target in targets)
                 {
-                    var destination = target;
-                    evt.menu.AppendAction(
-                        MenuEscape(L.Tr("Redirect Transition") + suffix) + "/" + MenuEscape(GraphSync.NodeLabel(destination)),
+                    var destination = target.End;
+                    evt.menu.AppendAction(target.MenuPath(redirect),
                         _ => _sync.RedirectEdge(edge, destination));
                 }
             }

@@ -193,6 +193,101 @@ namespace Yozolab.DaerD.Tests
             Assert.IsNull(first.destinationState);
         }
 
+        static bool Offers(List<EdgeCommands.RedirectTarget> targets, TransitionEnd end, params string[] path)
+        {
+            foreach (var target in targets)
+            {
+                if (!target.End.SameAs(end)) continue;
+                Assert.AreEqual(path, target.Path, "the same destination under a different path");
+                return true;
+            }
+            return false;
+        }
+
+        [Test]
+        public void RedirectTargets_ReachTheStatesInsideASubStateMachine()
+        {
+            var loco = _sm.AddStateMachine("Loco", new Vector3(0f, 200f, 0f));
+            var walk = loco.AddState("Walk", new Vector3(0f, 260f, 0f));
+            var inner = loco.AddStateMachine("Inner", new Vector3(0f, 320f, 0f));
+            var crouch = inner.AddState("Crouch", new Vector3(0f, 380f, 0f));
+            var transition = _a.AddTransition(_b);
+
+            var targets = EdgeCommands.RedirectTargets(_sm, TransitionEnd.Of(_a),
+                TransitionEnd.DestinationOf(transition));
+
+            // The machine itself stays reachable — entering it is a destination of its own — and
+            // sits inside its own submenu, where it cannot collide with the states listed beside it.
+            Assert.IsTrue(Offers(targets, TransitionEnd.Of(loco), "Loco", "(Entry)"));
+            Assert.IsTrue(Offers(targets, TransitionEnd.Of(walk), "Loco", "Walk"));
+            // Nesting keeps going: a state two machines down is named by the whole path.
+            Assert.IsTrue(Offers(targets, TransitionEnd.Of(inner), "Loco", "Inner", "(Entry)"));
+            Assert.IsTrue(Offers(targets, TransitionEnd.Of(crouch), "Loco", "Inner", "Crouch"));
+        }
+
+        [Test]
+        public void RedirectTarget_ReadsAsOneMenuPath_WithSlashesInNamesNeutralised()
+        {
+            var loco = _sm.AddStateMachine("Loco", new Vector3(0f, 200f, 0f));
+            var walk = loco.AddState("Walk/Run", new Vector3(0f, 260f, 0f));
+
+            var targets = EdgeCommands.RedirectTargets(_sm, TransitionEnd.Of(_a), TransitionEnd.None);
+
+            foreach (var target in targets)
+            {
+                if (!target.End.SameAs(TransitionEnd.Of(walk))) continue;
+                // The machine opens a submenu; the '/' the user typed into the state name does not.
+                Assert.AreEqual("Redirect/Loco/Walk\u2215Run", target.MenuPath("Redirect"));
+                return;
+            }
+            Assert.Fail("the nested state was not offered at all");
+        }
+
+        [Test]
+        public void RedirectTargets_LeaveOutWhereTheTransitionAlreadyGoesAndComesFrom()
+        {
+            var transition = _a.AddTransition(_b);
+
+            var targets = EdgeCommands.RedirectTargets(_sm, TransitionEnd.Of(_a),
+                TransitionEnd.DestinationOf(transition));
+
+            Assert.IsFalse(Offers(targets, TransitionEnd.Of(_a)), "the source is not a destination");
+            Assert.IsFalse(Offers(targets, TransitionEnd.Of(_b)), "it already goes there");
+            Assert.IsTrue(Offers(targets, TransitionEnd.Of(_c), "C"));
+            Assert.IsTrue(Offers(targets, TransitionEnd.Exit, "Exit"));
+        }
+
+        [Test]
+        public void RedirectTargets_OfAnAnyStateTransition_StopShortOfExit()
+        {
+            var transition = _sm.AddAnyStateTransition(_b);
+
+            var targets = EdgeCommands.RedirectTargets(_sm, TransitionEnd.AnyState,
+                TransitionEnd.DestinationOf(transition));
+
+            Assert.IsTrue(Offers(targets, TransitionEnd.Of(_c), "C"));
+            // Any State and Entry cannot transition straight to Exit, so it is never offered.
+            Assert.IsFalse(Offers(targets, TransitionEnd.Exit));
+        }
+
+        [Test]
+        public void DestinationOf_ReadsTheTransitionRatherThanTheGraph()
+        {
+            var loco = _sm.AddStateMachine("Loco", new Vector3(0f, 200f, 0f));
+            var walk = loco.AddState("Walk", new Vector3(0f, 260f, 0f));
+
+            // Drawn to the machine's node, but it names the state inside it.
+            var nested = _a.AddTransition(walk);
+            Assert.IsTrue(TransitionEnd.DestinationOf(nested).SameAs(TransitionEnd.Of(walk)));
+
+            var machine = _a.AddTransition(loco);
+            Assert.IsTrue(TransitionEnd.DestinationOf(machine).SameAs(TransitionEnd.Of(loco)));
+
+            var exit = _a.AddExitTransition();
+            Assert.IsTrue(TransitionEnd.DestinationOf(exit).SameAs(TransitionEnd.Exit));
+            Assert.AreEqual(TransitionEndKind.None, TransitionEnd.DestinationOf(null).Kind);
+        }
+
         [Test]
         public void RemoveTransitionFrom_TakesTheTransitionOffItsOwner()
         {

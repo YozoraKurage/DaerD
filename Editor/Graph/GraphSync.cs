@@ -610,37 +610,36 @@ namespace Yozolab.DaerD
             if (created.Count > 0) _context.Select(created[0]);
         }
 
-        /// <summary>Candidate destinations the edge's transitions can be pointed at instead.</summary>
-        public List<GraphNodeBase> RedirectTargets(TransitionEdge edge)
+        /// <summary>
+        /// Candidate destinations the edge's transitions can be pointed at instead — including the
+        /// states inside this level's sub-state machines, which no node here stands for. The list
+        /// is built from the state machine rather than from the graph's nodes for exactly that
+        /// reason; the graph draws one node per machine, and a transition into a machine is a
+        /// different destination from a transition into a state within it.
+        /// </summary>
+        public List<EdgeCommands.RedirectTarget> RedirectTargets(TransitionEdge edge)
         {
-            var targets = new List<GraphNodeBase>();
-            if (edge == null || edge.IsDefaultEdge) return targets;
-            var source = edge.output?.node as GraphNodeBase;
-            var current = edge.input?.node as GraphNodeBase;
-
-            var states = new List<GraphNodeBase>(_stateNodes.Values);
-            var machines = new List<GraphNodeBase>(_ssmNodes.Values);
-            states.Sort((a, b) => string.CompareOrdinal(NodeLabel(a), NodeLabel(b)));
-            machines.Sort((a, b) => string.CompareOrdinal(NodeLabel(a), NodeLabel(b)));
-
-            foreach (var node in states)
-                if (node != source && node != current) targets.Add(node);
-            foreach (var node in machines)
-                if (node != source && node != current) targets.Add(node);
-            // Only states and sub-state machines may transition to Exit.
-            if (_exitNode != null && current != _exitNode && IsConnectableState(source))
-                targets.Add(_exitNode);
-            return targets;
+            if (edge == null || edge.IsDefaultEdge)
+                return new List<EdgeCommands.RedirectTarget>();
+            // The destination comes off the first transition, not off the node the edge lands on:
+            // an edge that ends on a machine node may carry transitions that name states inside it,
+            // and reading the node would drop that machine's own entry from the candidates.
+            var current = edge.Transitions.Count > 0
+                ? TransitionEnd.DestinationOf(edge.Transitions[0])
+                : EndOf(edge.input?.node as GraphNodeBase);
+            return EdgeCommands.RedirectTargets(_context.CurrentStateMachine,
+                EndOf(edge.output?.node as GraphNodeBase), current);
         }
 
-        /// <summary>Points every transition on the edge at a new destination node.</summary>
-        public void RedirectEdge(TransitionEdge edge, GraphNodeBase newDestination)
+        /// <summary>Points every transition on the edge at a new destination.</summary>
+        public void RedirectEdge(TransitionEdge edge, TransitionEnd newDestination)
         {
-            if (edge == null || edge.IsDefaultEdge || newDestination == null) return;
+            if (edge == null || edge.IsDefaultEdge) return;
+            if (newDestination.Kind == TransitionEndKind.None) return;
             if (edge.Transitions.Count == 0) return;
             var anchor = edge.Transitions[0];
 
-            _transitions.Redirect(edge.Transitions, EndOf(newDestination));
+            _transitions.Redirect(edge.Transitions, newDestination);
 
             Rebuild();
             _context.Select(anchor);

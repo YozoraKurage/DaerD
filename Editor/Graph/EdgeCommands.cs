@@ -222,6 +222,109 @@ namespace Yozolab.DaerD
             return created;
         }
 
+        /// <summary>
+        /// A destination a transition can be pointed at, together with the path it reads as in a
+        /// menu. States nested inside a sub-state machine appear under that machine's name rather
+        /// than as bare names among the states beside them, so two states called "Idle" in
+        /// different machines stay tellable apart.
+        /// </summary>
+        internal readonly struct RedirectTarget
+        {
+            public readonly TransitionEnd End;
+            public readonly string[] Path;
+
+            public RedirectTarget(TransitionEnd end, string[] path)
+            {
+                End = end;
+                Path = path;
+            }
+
+            /// <summary>
+            /// This target as one menu path under <paramref name="group"/>. Each segment is
+            /// escaped on its own, so a '/' somebody put in a state name reads as part of the
+            /// name instead of opening a submenu nobody asked for.
+            /// </summary>
+            public string MenuPath(string group)
+            {
+                var path = new System.Text.StringBuilder(Escape(group));
+                foreach (var segment in Path)
+                    path.Append('/').Append(Escape(segment));
+                return path.ToString();
+            }
+
+            static string Escape(string segment) =>
+                string.IsNullOrEmpty(segment) ? "?" : segment.Replace('/', '\u2215');
+        }
+
+        /// <summary>
+        /// How a sub-state machine names itself inside its own submenu. Naming the machine is a
+        /// destination of its own — the transition enters through its entry and the machine
+        /// decides where from there — so it cannot be dropped just because the states inside are
+        /// listed too. It sits under the machine rather than beside it because a menu cannot hold
+        /// an item and a submenu of the same name.
+        /// </summary>
+        const string MachineEntry = "(Entry)";
+
+        /// <summary>
+        /// Every destination the transitions leaving <paramref name="source"/> could be pointed at
+        /// instead of <paramref name="current"/>: this level's states and sub-state machines, the
+        /// states nested inside those machines at any depth, and Exit where the source may reach
+        /// it. The nested ones are the point — the Animator lets a transition name a state inside
+        /// a child machine directly (the graph draws such a transition to the machine node), and
+        /// listing only this level meant a redirect could land on a machine but never inside one.
+        /// </summary>
+        public static List<RedirectTarget> RedirectTargets(AnimatorStateMachine sm,
+            TransitionEnd source, TransitionEnd current)
+        {
+            var targets = new List<RedirectTarget>();
+            if (sm == null) return targets;
+            AddLevelTargets(sm, new string[0], source, current, targets);
+            AddTarget(TransitionEnd.Exit, new[] { TransitionEnd.Exit.Label }, source, current, targets);
+            return targets;
+        }
+
+        /// <summary>One machine's own states and child machines, each sorted by name, followed by
+        /// the contents of each child machine under that machine's path segment.</summary>
+        static void AddLevelTargets(AnimatorStateMachine sm, string[] prefix, TransitionEnd source,
+            TransitionEnd current, List<RedirectTarget> targets)
+        {
+            var states = new List<AnimatorState>();
+            foreach (var child in sm.states)
+                if (child.state != null) states.Add(child.state);
+            states.Sort((a, b) => string.CompareOrdinal(a.name, b.name));
+            foreach (var state in states)
+                AddTarget(TransitionEnd.Of(state), Append(prefix, state.name), source, current, targets);
+
+            var machines = new List<AnimatorStateMachine>();
+            foreach (var child in sm.stateMachines)
+                if (child.stateMachine != null) machines.Add(child.stateMachine);
+            machines.Sort((a, b) => string.CompareOrdinal(a.name, b.name));
+            foreach (var machine in machines)
+            {
+                var path = Append(prefix, machine.name);
+                AddTarget(TransitionEnd.Of(machine), Append(path, MachineEntry), source, current, targets);
+                AddLevelTargets(machine, path, source, current, targets);
+            }
+        }
+
+        /// <summary>Keeps a candidate unless it is where the transitions already go, where they
+        /// come from, or somewhere this source may not reach at all.</summary>
+        static void AddTarget(TransitionEnd end, string[] path, TransitionEnd source,
+            TransitionEnd current, List<RedirectTarget> targets)
+        {
+            if (end.SameAs(source) || end.SameAs(current)) return;
+            if (!TransitionEnd.CanConnect(source, end)) return;
+            targets.Add(new RedirectTarget(end, path));
+        }
+
+        static string[] Append(string[] path, string segment)
+        {
+            var result = new string[path.Length + 1];
+            path.CopyTo(result, 0);
+            result[path.Length] = segment;
+            return result;
+        }
+
         /// <summary>Points every given transition at a new destination.</summary>
         public void Redirect(IEnumerable<AnimatorTransitionBase> transitions, TransitionEnd newDestination)
         {
