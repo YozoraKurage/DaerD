@@ -106,6 +106,12 @@ namespace Yozolab.DaerD
             var result = _list.Draw(rows, null, () => _context.NotifyGraphVisualsChanged(DaerDContext.GraphVisuals.AllEdges), onMove);
             if (result.hoverKnown) _sync.SetHoveredTransition(result.hovered);
 
+            if (result.contextClicked >= 0)
+            {
+                TransitionRowMenu.Show(_context, rows[result.contextClicked]);
+                GUIUtility.ExitGUI();
+            }
+
             if (result.clicked >= 0)
             {
                 var picked = rows[result.clicked].Transition;

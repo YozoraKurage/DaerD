@@ -226,6 +226,11 @@ namespace Yozolab.DaerD
 
             if (result.clicked >= 0)
                 HandleRowClick(rows, result.clicked);
+            if (result.contextClicked >= 0)
+            {
+                TransitionRowMenu.Show(_context, rows[result.contextClicked]);
+                GUIUtility.ExitGUI();
+            }
             if (result.deleted != null)
             {
                 DeleteTransitionRow(result.deleted, rows);

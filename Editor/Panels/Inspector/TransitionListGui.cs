@@ -50,6 +50,8 @@ namespace Yozolab.DaerD
             public bool hoverKnown;
             /// <summary>Index of the row that was clicked this event, or -1.</summary>
             public int clicked;
+            /// <summary>Index of the row that was right-clicked this event, or -1.</summary>
+            public int contextClicked;
             /// <summary>The transition whose delete button was pressed, or null.</summary>
             public AnimatorTransitionBase deleted;
         }
@@ -61,7 +63,12 @@ namespace Yozolab.DaerD
         public Result Draw(IList<TransitionRow> rows, Func<AnimatorTransitionBase, bool> isSelected,
             Action onSoloMuteChanged, Action<int, int> onMove)
         {
-            var result = new Result { clicked = -1, hoverKnown = Event.current.type == EventType.Repaint };
+            var result = new Result
+            {
+                clicked = -1,
+                contextClicked = -1,
+                hoverKnown = Event.current.type == EventType.Repaint,
+            };
 
             EditorGUILayout.BeginHorizontal();
             if (onMove != null) GUILayout.Space(ListReorder.HandleWidth);
@@ -95,7 +102,14 @@ namespace Yozolab.DaerD
 
                 var previousBackground = GUI.backgroundColor;
                 if (isSelected != null && isSelected(t)) GUI.backgroundColor = DaerDColors.SelectedRow;
-                if (GUILayout.Button(Label(row), EditorStyles.miniButton))
+                // The label goes into a rect this loop reserves itself, so the right-click can be
+                // taken before the button sees it: an IMGUI button claims a press of any mouse
+                // button, and a button this wide would swallow the whole gesture — no context
+                // click is ever synthesised for a press that a control already took.
+                var labelContent = new GUIContent(Label(row));
+                var labelRect = GUILayoutUtility.GetRect(labelContent, EditorStyles.miniButton);
+                if (TakeRightClick(labelRect)) result.contextClicked = i;
+                else if (GUI.Button(labelRect, labelContent, EditorStyles.miniButton))
                     result.clicked = i;
                 GUI.backgroundColor = previousBackground;
 
@@ -103,6 +117,12 @@ namespace Yozolab.DaerD
                     result.deleted = t;
 
                 EditorGUILayout.EndHorizontal();
+
+                // The rest of the row — the grip, the two toggles, the gap around them — answers
+                // the same gesture as the label does. Read after the row drew, so it only sees a
+                // press none of those controls wanted.
+                if (result.contextClicked < 0 && TakeRightClick(rowRect))
+                    result.contextClicked = i;
 
                 // Only the repaint pass has real rectangles; during layout every row would
                 // claim the pointer.
@@ -114,6 +134,21 @@ namespace Yozolab.DaerD
 
             if (onMove != null) _reorder.End(onMove);
             return result;
+        }
+
+        /// <summary>
+        /// A right-click inside <paramref name="rect"/>, consumed here and now. Both events count:
+        /// the ContextClick Unity synthesises after the release, and the right press itself — the
+        /// press is what a control would take first, and once it has, no ContextClick follows.
+        /// </summary>
+        static bool TakeRightClick(Rect rect)
+        {
+            var e = Event.current;
+            bool right = e.type == EventType.ContextClick
+                || (e.type == EventType.MouseDown && e.button == 1);
+            if (!right || !rect.Contains(e.mousePosition)) return false;
+            e.Use();
+            return true;
         }
 
         /// <summary>
@@ -165,6 +200,59 @@ namespace Yozolab.DaerD
                     : new TransitionRow(t, TransitionEnd.None, 0));
             }
             return rows;
+        }
+    }
+
+    /// <summary>
+    /// The right-click menu of one transition row. It exists because an edge collapses every
+    /// transition between the same two ends into one line, so the graph's own Redirect can only
+    /// speak for all of them at once; a row names exactly one transition, which is the only place
+    /// "send this one somewhere else" can be said.
+    /// </summary>
+    static class TransitionRowMenu
+    {
+        /// <summary>
+        /// Shows the menu for <paramref name="row"/>. It acts on that row alone even when other
+        /// rows are selected — moving one transition out of a bundle is the whole point of it, and
+        /// the graph's edge menu is still there for the "all of them" case.
+        /// </summary>
+        public static void Show(DaerDContext context, TransitionRow row)
+        {
+            var transition = row.Transition;
+            if (context == null || transition == null) return;
+
+            var menu = new GenericMenu();
+            string group = L.Tr("Redirect Transition");
+            var targets = EdgeCommands.RedirectTargets(context.CurrentStateMachine, row.Source,
+                TransitionEnd.DestinationOf(transition));
+            if (targets.Count == 0)
+            {
+                // No source to reason from (a row of a list that mixes sources and could not
+                // place this one), or nowhere else to go.
+                menu.AddDisabledItem(new GUIContent(group));
+            }
+            else
+            {
+                foreach (var target in targets)
+                {
+                    var destination = target.End;
+                    menu.AddItem(new GUIContent(target.MenuPath(group)), false,
+                        () => Redirect(context, transition, destination));
+                }
+            }
+            menu.ShowAsContext();
+        }
+
+        /// <summary>
+        /// Points one transition at a new destination. Structural rather than visual: the
+        /// transition may leave the edge it was drawn on and join another, so the graph is
+        /// rebuilt rather than repainted.
+        /// </summary>
+        static void Redirect(DaerDContext context, AnimatorTransitionBase transition,
+            TransitionEnd destination)
+        {
+            new EdgeCommands(context).Redirect(new[] { transition }, destination);
+            context.NotifyGraphStructureChanged();
         }
     }
 }
