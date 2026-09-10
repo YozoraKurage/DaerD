@@ -463,7 +463,8 @@ namespace Yozolab.DaerD
             if (change.edgesToCreate != null && change.edgesToCreate.Count > 0)
             {
                 foreach (var edge in change.edgesToCreate)
-                    CreateTransition(edge.output?.node as GraphNodeBase, edge.input?.node as GraphNodeBase);
+                    ConnectByDrop(edge.output?.node as GraphNodeBase, edge.input?.node as GraphNodeBase,
+                        _graphView.LastMouseWorld);
                 change.edgesToCreate.Clear();
                 structural = true;
             }
@@ -594,6 +595,70 @@ namespace Yozolab.DaerD
             return _transitions.CreateTransition(EndOf(source), EndOf(destination));
         }
 
+        /// <summary>
+        /// Completes a transition dragged from <paramref name="source"/> and dropped on
+        /// <paramref name="destination"/> — the one entry point for a drop on a port and a drop on
+        /// a node's body. A machine node and "(Up)" each stand for many possible destinations
+        /// (the machine and what it holds; everything outside this machine), so a drop there asks
+        /// which with a menu at <paramref name="dropWorld"/> (panel coordinates) — unless there is
+        /// only one, which is simply taken. Anything else connects straight to the node.
+        /// </summary>
+        public void ConnectByDrop(GraphNodeBase source, GraphNodeBase destination, Vector2 dropWorld)
+        {
+            if (source == null || destination == null) return;
+            var from = EndOf(source);
+            List<EdgeCommands.RedirectTarget> candidates;
+            if (destination is SubStateMachineNode machineNode)
+                candidates = EdgeCommands.TargetsInside(machineNode.StateMachine, from);
+            else if (destination is SpecialNode spn && spn.Kind == SpecialNodeKind.Up)
+                candidates = EdgeCommands.TargetsOutside(_context.StateMachinePath, from);
+            else
+            {
+                if (!TransitionConnect.CanConnect(source, destination)) return;
+                // Deferred: this runs inside Unity's EdgeDragHelper.HandleMouseUp, which keeps using
+                // the drag candidate / ports after we return.
+                if (CreateTransition(source, destination) != null) RequestRebuild();
+                return;
+            }
+
+            if (candidates.Count == 0) return;
+            if (candidates.Count == 1)
+            {
+                if (_transitions.CreateTransition(from, candidates[0].End) != null) RequestRebuild();
+                return;
+            }
+            // Opened from inside the drop's own mouse event: that is the context IMGUI menus are
+            // known to open from in a UIElements view, where a scheduled callback runs outside any
+            // view. Nothing is rebuilt until an item is picked, which comes after the drag is over.
+            ShowDropMenu(_context.CurrentStateMachine, from, candidates, dropWorld);
+        }
+
+        /// <summary>
+        /// The drop menu: one item per candidate, by its path. The graph is UIElements, so there is
+        /// no IMGUI event for <see cref="GenericMenu.ShowAsContext"/> to read the pointer from; the
+        /// menu is dropped down at the drop point instead.
+        /// </summary>
+        void ShowDropMenu(AnimatorStateMachine sm, TransitionEnd source,
+            List<EdgeCommands.RedirectTarget> candidates, Vector2 dropWorld)
+        {
+            var menu = new GenericMenu();
+            foreach (var candidate in candidates)
+            {
+                var destination = candidate.End;
+                menu.AddItem(new GUIContent(candidate.MenuPath()), false, () =>
+                {
+                    // The screen may have moved on while the menu was open; the ends were read
+                    // off the machine that was showing then.
+                    if (_context.CurrentStateMachine != sm) return;
+                    var created = _transitions.CreateTransition(source, destination);
+                    if (created == null) return;
+                    Rebuild();
+                    _context.Select(created);
+                });
+            }
+            menu.DropDown(new Rect(_graphView.WorldToGuiPoint(dropWorld), Vector2.zero));
+        }
+
         /// <summary>Shorthand for <see cref="GraphNodeBase.EndOf"/>, the single node-to-end conversion.</summary>
         static TransitionEnd EndOf(GraphNodeBase node) => GraphNodeBase.EndOf(node);
 
@@ -650,7 +715,7 @@ namespace Yozolab.DaerD
                 ? TransitionEnd.DestinationOf(edge.Transitions[0])
                 : EndOf(edge.input?.node as GraphNodeBase);
             return EdgeCommands.RedirectTargets(_context.CurrentStateMachine,
-                EndOf(edge.output?.node as GraphNodeBase), current);
+                EndOf(edge.output?.node as GraphNodeBase), current, _context.StateMachinePath);
         }
 
         /// <summary>Points every transition on the edge at a new destination.</summary>

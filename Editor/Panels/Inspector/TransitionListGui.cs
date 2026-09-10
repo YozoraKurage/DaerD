@@ -224,7 +224,7 @@ namespace Yozolab.DaerD
             var menu = new GenericMenu();
             string group = L.Tr("Redirect Transition");
             var targets = EdgeCommands.RedirectTargets(context.CurrentStateMachine, row.Source,
-                TransitionEnd.DestinationOf(transition));
+                TransitionEnd.DestinationOf(transition), context.StateMachinePath);
             if (targets.Count == 0)
             {
                 // No source to reason from (a row of a list that mixes sources and could not

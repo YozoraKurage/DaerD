@@ -516,6 +516,78 @@ namespace Yozolab.DaerD.Tests
             Assert.IsFalse(EdgeCommands.LeavesMachine(_sm, _a.AddTransition(deep)));
         }
 
+        static string[] Paths(List<EdgeCommands.RedirectTarget> targets)
+        {
+            var paths = new string[targets.Count];
+            for (int i = 0; i < targets.Count; i++)
+                paths[i] = string.Join("/", targets[i].Path);
+            return paths;
+        }
+
+        [Test]
+        public void TargetsInside_ListTheMachineItselfFirst_ThenWhatItHolds()
+        {
+            var (loco, _, _, _, _) = BuildNestedMachines();
+
+            var targets = EdgeCommands.TargetsInside(loco, TransitionEnd.Of(_a));
+
+            Assert.AreEqual(new[] { "(Entry)", "Run", "Walk", "Inner/(Entry)", "Inner/Deep" }, Paths(targets));
+            Assert.IsTrue(targets[0].End.SameAs(TransitionEnd.Of(loco)));
+        }
+
+        [Test]
+        public void TargetsOutside_ListTheWholeLayer_ExceptTheMachineOnScreen()
+        {
+            var (loco, walk, _, _, _) = BuildNestedMachines();
+
+            var targets = EdgeCommands.TargetsOutside(new[] { _sm, loco }, TransitionEnd.Of(walk));
+
+            Assert.AreEqual(new[] { "(Entry)", "A", "B", "C", "D", "Sibling/(Entry)", "Sibling/Other" },
+                Paths(targets));
+            Assert.IsTrue(targets[0].End.SameAs(TransitionEnd.Of(_sm)), "the root machine itself");
+        }
+
+        [Test]
+        public void TargetsOutside_TwoLevelsDown_KeepTheParentsOtherContents()
+        {
+            var (loco, _, _, deep, _) = BuildNestedMachines();
+            var inner = loco.stateMachines[0].stateMachine;
+
+            var targets = EdgeCommands.TargetsOutside(new[] { _sm, loco, inner }, TransitionEnd.Of(deep));
+
+            Assert.AreEqual(new[]
+            {
+                "(Entry)", "A", "B", "C", "D",
+                "Loco/(Entry)", "Loco/Run", "Loco/Walk",
+                "Sibling/(Entry)", "Sibling/Other"
+            }, Paths(targets));
+        }
+
+        [Test]
+        public void TargetsOutside_AtTheRoot_AreNone()
+        {
+            Assert.AreEqual(0, EdgeCommands.TargetsOutside(new[] { _sm }, TransitionEnd.Of(_a)).Count);
+            Assert.AreEqual(0, EdgeCommands.TargetsOutside(null, TransitionEnd.Of(_a)).Count);
+        }
+
+        [Test]
+        public void RedirectTargets_InsideASubStateMachine_ReachOutsideUnderUp()
+        {
+            var (loco, walk, run, _, other) = BuildNestedMachines();
+            var leaving = walk.AddTransition(_a);
+
+            var targets = EdgeCommands.RedirectTargets(loco, TransitionEnd.Of(walk),
+                TransitionEnd.DestinationOf(leaving), new[] { _sm, loco });
+
+            Assert.IsTrue(Offers(targets, TransitionEnd.Of(run), "Run"));
+            Assert.IsTrue(Offers(targets, TransitionEnd.Exit, "Exit"));
+            Assert.IsTrue(Offers(targets, TransitionEnd.Of(_sm), "(Up)", "(Entry)"));
+            Assert.IsTrue(Offers(targets, TransitionEnd.Of(_b), "(Up)", "B"));
+            Assert.IsTrue(Offers(targets, TransitionEnd.Of(other), "(Up)", "Sibling", "Other"));
+            Assert.IsFalse(Offers(targets, TransitionEnd.Of(_a)), "it already goes there");
+            Assert.IsFalse(Offers(targets, TransitionEnd.Of(walk)), "the source is not a destination");
+        }
+
         [Test]
         public void ADropOntoTheUpNode_CreatesNothing()
         {

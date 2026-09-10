@@ -267,13 +267,11 @@ namespace Yozolab.DaerD
             /// escaped on its own, so a '/' somebody put in a state name reads as part of the
             /// name instead of opening a submenu nobody asked for.
             /// </summary>
-            public string MenuPath(string group)
-            {
-                var path = new System.Text.StringBuilder(Escape(group));
-                foreach (var segment in Path)
-                    path.Append('/').Append(Escape(segment));
-                return path.ToString();
-            }
+            public string MenuPath(string group) => Escape(group) + "/" + MenuPath();
+
+            /// <summary>This target as a menu path of its own, for a menu that lists nothing
+            /// else — the drop menu. Escaped the same way as <see cref="MenuPath(string)"/>.</summary>
+            public string MenuPath() => string.Join("/", System.Array.ConvertAll(Path, Escape));
 
             static string Escape(string segment) =>
                 string.IsNullOrEmpty(segment) ? "?" : segment.Replace('/', '\u2215');
@@ -288,28 +286,70 @@ namespace Yozolab.DaerD
         /// </summary>
         const string MachineEntry = "(Entry)";
 
+        /// <summary>The path segment that opens what lies outside the machine on screen, spelled
+        /// like the "(Up) parent" node those destinations are drawn to.</summary>
+        const string Up = "(Up)";
+
         /// <summary>
         /// Every destination the transitions leaving <paramref name="source"/> could be pointed at
         /// instead of <paramref name="current"/>: this level's states and sub-state machines, the
-        /// states nested inside those machines at any depth, and Exit where the source may reach
-        /// it. The nested ones are the point — the Animator lets a transition name a state inside
-        /// a child machine directly (the graph draws such a transition to the machine node), and
-        /// listing only this level meant a redirect could land on a machine but never inside one.
+        /// states nested inside those machines at any depth, Exit where the source may reach it,
+        /// and — inside a sub-state machine, given its drill <paramref name="path"/> — everything
+        /// outside it under "(Up)". The nested ones are the point — the Animator lets a transition
+        /// name a state inside a child machine directly (the graph draws such a transition to the
+        /// machine node), and listing only this level meant a redirect could land on a machine but
+        /// never inside one. The outside ones are the same reach in the other direction.
         /// </summary>
         public static List<RedirectTarget> RedirectTargets(AnimatorStateMachine sm,
-            TransitionEnd source, TransitionEnd current)
+            TransitionEnd source, TransitionEnd current, IReadOnlyList<AnimatorStateMachine> path = null)
         {
             var targets = new List<RedirectTarget>();
             if (sm == null) return targets;
             AddLevelTargets(sm, new string[0], source, current, targets);
             AddTarget(TransitionEnd.Exit, new[] { TransitionEnd.Exit.Label }, source, current, targets);
+            foreach (var outside in TargetsOutside(path, source))
+                AddTarget(outside.End, Prepend(Up, outside.Path), source, current, targets);
+            return targets;
+        }
+
+        /// <summary>
+        /// Where a transition from <paramref name="source"/> dropped onto <paramref name="machine"/>'s
+        /// node could go: the machine itself first (entering through its entry), then its states
+        /// and everything nested in it. Paths are relative to the machine.
+        /// </summary>
+        internal static List<RedirectTarget> TargetsInside(AnimatorStateMachine machine, TransitionEnd source)
+        {
+            var targets = new List<RedirectTarget>();
+            if (machine == null) return targets;
+            AddTarget(TransitionEnd.Of(machine), new[] { MachineEntry }, source, TransitionEnd.None, targets);
+            AddLevelTargets(machine, new string[0], source, TransitionEnd.None, targets);
+            return targets;
+        }
+
+        /// <summary>
+        /// Where a transition from <paramref name="source"/> could go outside the machine on screen,
+        /// given the drill <paramref name="path"/> from the layer's root machine down to it: the
+        /// whole layer, named from the root (the root itself as "(Entry)"), except the machine on
+        /// screen and everything beneath it — those are reachable from where the user already is.
+        /// Its ancestors stay, as destinations of their own and with their other contents. Exit is
+        /// never outside: it belongs to the machine the transition starts in. Empty at the root.
+        /// </summary>
+        internal static List<RedirectTarget> TargetsOutside(IReadOnlyList<AnimatorStateMachine> path,
+            TransitionEnd source)
+        {
+            var targets = new List<RedirectTarget>();
+            if (path == null || path.Count < 2 || path[0] == null) return targets;
+            var root = path[0];
+            AddTarget(TransitionEnd.Of(root), new[] { MachineEntry }, source, TransitionEnd.None, targets);
+            AddLevelTargets(root, new string[0], source, TransitionEnd.None, targets, path[path.Count - 1]);
             return targets;
         }
 
         /// <summary>One machine's own states and child machines, each sorted by name, followed by
-        /// the contents of each child machine under that machine's path segment.</summary>
+        /// the contents of each child machine under that machine's path segment. A machine equal
+        /// to <paramref name="skip"/> is left out together with everything inside it.</summary>
         static void AddLevelTargets(AnimatorStateMachine sm, string[] prefix, TransitionEnd source,
-            TransitionEnd current, List<RedirectTarget> targets)
+            TransitionEnd current, List<RedirectTarget> targets, AnimatorStateMachine skip = null)
         {
             var states = new List<AnimatorState>();
             foreach (var child in sm.states)
@@ -324,9 +364,10 @@ namespace Yozolab.DaerD
             machines.Sort((a, b) => string.CompareOrdinal(a.name, b.name));
             foreach (var machine in machines)
             {
+                if (machine == skip) continue;
                 var path = Append(prefix, machine.name);
                 AddTarget(TransitionEnd.Of(machine), Append(path, MachineEntry), source, current, targets);
-                AddLevelTargets(machine, path, source, current, targets);
+                AddLevelTargets(machine, path, source, current, targets, skip);
             }
         }
 
@@ -345,6 +386,14 @@ namespace Yozolab.DaerD
             var result = new string[path.Length + 1];
             path.CopyTo(result, 0);
             result[path.Length] = segment;
+            return result;
+        }
+
+        static string[] Prepend(string segment, string[] path)
+        {
+            var result = new string[path.Length + 1];
+            result[0] = segment;
+            path.CopyTo(result, 1);
             return result;
         }
 
