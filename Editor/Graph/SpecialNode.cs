@@ -1,3 +1,4 @@
+using System;
 using UnityEditor.Experimental.GraphView;
 using UnityEngine;
 using UnityEngine.UIElements;
@@ -8,16 +9,22 @@ namespace Yozolab.DaerD
     {
         Entry,
         Exit,
-        AnyState
+        AnyState,
+        Up
     }
 
-    /// <summary>Entry / Exit / Any State pseudo-nodes. They cannot be deleted or copied.</summary>
+    /// <summary>
+    /// Entry / Exit / Any State pseudo-nodes, and the "(Up) parent" node shown inside a
+    /// sub-state machine. They cannot be deleted or copied.
+    /// </summary>
     class SpecialNode : GraphNodeBase
     {
         public SpecialNodeKind Kind { get; }
         public override object Model => Kind;
 
-        public SpecialNode(SpecialNodeKind kind)
+        /// <param name="parentName">The parent machine's name; read only by <see cref="SpecialNodeKind.Up"/>.</param>
+        /// <param name="onOpen">Double-click action; only <see cref="SpecialNodeKind.Up"/> has one.</param>
+        public SpecialNode(SpecialNodeKind kind, string parentName = null, Action onOpen = null)
         {
             Kind = kind;
             AddToClassList("special-node");
@@ -35,6 +42,13 @@ namespace Yozolab.DaerD
                 case SpecialNodeKind.Exit:
                     label = "Exit";
                     color = DaerDColors.ExitNode;
+                    AddInputPort();
+                    break;
+                case SpecialNodeKind.Up:
+                    // Where transitions leaving this sub-state machine are drawn to. Input only:
+                    // nothing starts at the parent from in here.
+                    label = "(Up) " + parentName;
+                    color = DaerDColors.SubStateMachineHeader;
                     AddInputPort();
                     break;
                 default: // AnyState
@@ -58,6 +72,18 @@ namespace Yozolab.DaerD
 
             capabilities &= ~(Capabilities.Deletable | Capabilities.Copiable);
             capabilities |= Capabilities.Movable | Capabilities.Selectable | Capabilities.Snappable;
+
+            if (onOpen != null)
+            {
+                RegisterCallback<MouseDownEvent>(evt =>
+                {
+                    if (evt.clickCount == 2 && evt.button == 0)
+                    {
+                        onOpen();
+                        evt.StopPropagation();
+                    }
+                });
+            }
 
             RefreshExpandedState();
             RefreshPorts();

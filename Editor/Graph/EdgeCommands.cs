@@ -104,6 +104,29 @@ namespace Yozolab.DaerD
             }
         }
 
+        /// <summary>
+        /// True when <paramref name="transition"/> names a destination outside
+        /// <paramref name="machine"/> — a state or machine that is neither in it nor anywhere
+        /// beneath it (the parent, a sibling sub-state machine, or something inside one). Such a
+        /// transition has no node on this screen and is drawn to the "(Up)" node. Exit
+        /// transitions and transitions without a destination stay inside.
+        /// </summary>
+        internal static bool LeavesMachine(AnimatorStateMachine machine, AnimatorTransitionBase transition)
+        {
+            if (machine == null || transition == null || transition.isExit) return false;
+            var state = transition.destinationState;
+            var target = transition.destinationStateMachine;
+            if (state == null && target == null) return false;
+            foreach (var sm in machine.SelfAndDescendants())
+            {
+                if (target != null && sm == target) return false;
+                if (state != null)
+                    foreach (var child in sm.states)
+                        if (child.state == state) return false;
+            }
+            return true;
+        }
+
         /// <summary>True when one of these transitions is soloed and not also muted — muting
         /// beats soloing, so a muted solo keeps nothing alive. Lives here rather than with the
         /// graph because the analyzer asks it of a controller nobody has opened.</summary>

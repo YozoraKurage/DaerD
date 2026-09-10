@@ -472,5 +472,60 @@ namespace Yozolab.DaerD.Tests
             Assert.AreEqual(2, rows[1].Priority);
             Assert.AreEqual("A", rows[0].Source.Label);
         }
+
+        // Root holds A–D, "Loco" (Walk, Run, and "Inner" holding Deep) and "Sibling" (Other).
+        (AnimatorStateMachine loco, AnimatorState walk, AnimatorState run, AnimatorState deep, AnimatorState other)
+            BuildNestedMachines()
+        {
+            var loco = _sm.AddStateMachine("Loco", new Vector3(0f, 200f, 0f));
+            var walk = loco.AddState("Walk", new Vector3(0f, 0f, 0f));
+            var run = loco.AddState("Run", new Vector3(100f, 0f, 0f));
+            var inner = loco.AddStateMachine("Inner", new Vector3(0f, 100f, 0f));
+            var deep = inner.AddState("Deep", new Vector3(0f, 0f, 0f));
+            var sibling = _sm.AddStateMachine("Sibling", new Vector3(200f, 200f, 0f));
+            var other = sibling.AddState("Other", new Vector3(0f, 0f, 0f));
+            return (loco, walk, run, deep, other);
+        }
+
+        [Test]
+        public void LeavesMachine_IsTrueForWhatLiesOutsideTheSubStateMachine()
+        {
+            var (loco, walk, _, _, other) = BuildNestedMachines();
+
+            Assert.IsTrue(EdgeCommands.LeavesMachine(loco, walk.AddTransition(_a)), "a parent-level state");
+            Assert.IsTrue(EdgeCommands.LeavesMachine(loco, walk.AddTransition(other)), "a state in a sibling machine");
+            Assert.IsTrue(EdgeCommands.LeavesMachine(loco, walk.AddTransition(_sm)), "the parent machine itself");
+        }
+
+        [Test]
+        public void LeavesMachine_IsFalseForWhatStaysInside()
+        {
+            var (loco, walk, run, deep, _) = BuildNestedMachines();
+
+            Assert.IsFalse(EdgeCommands.LeavesMachine(loco, walk.AddTransition(run)), "a state in the same machine");
+            Assert.IsFalse(EdgeCommands.LeavesMachine(loco, walk.AddTransition(deep)), "a state in a child machine");
+            Assert.IsFalse(EdgeCommands.LeavesMachine(loco, walk.AddExitTransition()), "an exit transition");
+            Assert.IsFalse(EdgeCommands.LeavesMachine(loco, null));
+        }
+
+        [Test]
+        public void LeavesMachine_AtTheRoot_IsFalseForAStateInAChildMachine()
+        {
+            var (_, _, _, deep, _) = BuildNestedMachines();
+
+            Assert.IsFalse(EdgeCommands.LeavesMachine(_sm, _a.AddTransition(deep)));
+        }
+
+        [Test]
+        public void ADropOntoTheUpNode_CreatesNothing()
+        {
+            var up = new SpecialNode(SpecialNodeKind.Up, "Base");
+            var end = GraphNodeBase.EndOf(up);
+
+            Assert.AreEqual(TransitionEndKind.None, end.Kind);
+            Assert.IsFalse(TransitionEnd.CanConnect(TransitionEnd.Of(_a), end));
+            Assert.IsNull(_edges.CreateTransition(TransitionEnd.Of(_a), end));
+            Assert.AreEqual(0, _a.transitions.Length);
+        }
     }
 }

@@ -2858,6 +2858,9 @@ msgstr "ヒント: Note をダブルクリック（または F2）すると、�
 msgid "{0} node. Drag from its port to create transitions."
 msgstr "{0} ノードです。ポートからドラッグすると Transition を作成できます。"
 
+msgid "The parent state machine. Transitions that leave this sub-state machine are drawn to it; double-click to go up."
+msgstr "親の State Machine です。この Sub-State Machine の外へ出る Transition はここへ描かれます。ダブルクリックで上の階層へ戻ります。"
+
 msgid "Blend Tree"
 msgstr "Blend Tree"
 

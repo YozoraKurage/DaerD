@@ -665,7 +665,9 @@ namespace Yozolab.DaerD
                 }
             }
 
-            evt.menu.AppendAction(L.Tr("Replicate Transition") + suffix, _ => _sync.ReplicateEdge(edge));
+            evt.menu.AppendAction(L.Tr("Replicate Transition") + suffix,
+                _ => _sync.ReplicateEdge(edge),
+                _sync.CanReplicateEdge(edge) ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
 
             int copyCount = 0;
             foreach (var e in selectedEdges)

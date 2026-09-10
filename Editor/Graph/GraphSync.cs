@@ -31,6 +31,8 @@ namespace Yozolab.DaerD
         readonly List<NoteNode> _noteNodes = new List<NoteNode>();
 
         SpecialNode _entryNode, _exitNode, _anyStateNode;
+        // "(Up) parent" inside a sub-state machine; null at the layer's root machine.
+        SpecialNode _upNode;
         bool _rebuildScheduled;
 
         // Full path hash -> the node that stands for that state on this screen. A state nested
@@ -123,6 +125,17 @@ namespace Yozolab.DaerD
             AddNode(_exitNode, sm.exitPosition);
             AddNode(_anyStateNode, sm.anyStatePosition);
 
+            _upNode = null;
+            var path = _context.StateMachinePath;
+            if (path.Count > 1)
+            {
+                int parentDepth = path.Count - 2;
+                var parent = path[parentDepth];
+                _upNode = new SpecialNode(SpecialNodeKind.Up, parent != null ? parent.name : string.Empty,
+                    () => _context.GoToBreadcrumb(parentDepth));
+                AddNode(_upNode, sm.parentStateMachinePosition);
+            }
+
             foreach (var child in sm.states)
             {
                 if (child.state == null) continue;
@@ -200,6 +213,9 @@ namespace Yozolab.DaerD
                 if (_ssmNodes.TryGetValue(transition.destinationStateMachine, out var mn)) return mn;
                 if (_nestedMachineOwners.TryGetValue(transition.destinationStateMachine, out var owner)) return owner;
             }
+            // Leaves this machine altogether: drawn to "(Up) parent", as Unity's editor does.
+            if (_upNode != null && EdgeCommands.LeavesMachine(_context.CurrentStateMachine, transition))
+                return _upNode;
             return null;
         }
 
@@ -257,6 +273,7 @@ namespace Yozolab.DaerD
                 {
                     case SpecialNodeKind.Entry: node = _entryNode; break;
                     case SpecialNodeKind.Exit: node = _exitNode; break;
+                    case SpecialNodeKind.Up: node = _upNode; break;
                     default: node = _anyStateNode; break;
                 }
                 if (node != null) elements.Add(node);
@@ -343,6 +360,7 @@ namespace Yozolab.DaerD
                     {
                         case SpecialNodeKind.Entry: return _entryNode;
                         case SpecialNodeKind.Exit: return _exitNode;
+                        case SpecialNodeKind.Up: return _upNode;
                         default: return _anyStateNode;
                     }
                 default:
@@ -509,9 +527,13 @@ namespace Yozolab.DaerD
                 {
                     var p = spn.GetPosition().position;
                     var v = new Vector3(p.x, p.y, 0f);
-                    if (spn.Kind == SpecialNodeKind.Entry) sm.entryPosition = v;
-                    else if (spn.Kind == SpecialNodeKind.Exit) sm.exitPosition = v;
-                    else sm.anyStatePosition = v;
+                    switch (spn.Kind)
+                    {
+                        case SpecialNodeKind.Entry: sm.entryPosition = v; break;
+                        case SpecialNodeKind.Exit: sm.exitPosition = v; break;
+                        case SpecialNodeKind.AnyState: sm.anyStatePosition = v; break;
+                        case SpecialNodeKind.Up: sm.parentStateMachinePosition = v; break;
+                    }
                 }
                 else if (element is NoteNode nn && nn.Note != null && _frames.Data != null)
                 {
@@ -645,13 +667,26 @@ namespace Yozolab.DaerD
             _context.Select(anchor);
         }
 
+        /// <summary>
+        /// True when the edge's transitions can be duplicated toward the node it lands on. Not for
+        /// an edge ending on "(Up) parent": it bundles transitions with different real
+        /// destinations, so there is no single one to recreate toward.
+        /// </summary>
+        public bool CanReplicateEdge(TransitionEdge edge)
+        {
+            if (edge == null || edge.IsDefaultEdge || edge.Transitions.Count == 0) return false;
+            var source = edge.output?.node as GraphNodeBase;
+            var destination = edge.input?.node as GraphNodeBase;
+            if (source == null || destination == null) return false;
+            return !(destination is SpecialNode spn && spn.Kind == SpecialNodeKind.Up);
+        }
+
         /// <summary>Adds a duplicate of every transition on the edge alongside the originals.</summary>
         public void ReplicateEdge(TransitionEdge edge)
         {
-            if (edge == null || edge.IsDefaultEdge || edge.Transitions.Count == 0) return;
+            if (!CanReplicateEdge(edge)) return;
             var source = edge.output?.node as GraphNodeBase;
             var destination = edge.input?.node as GraphNodeBase;
-            if (source == null || destination == null) return;
 
             var created = _transitions.Replicate(EndOf(source), EndOf(destination), edge.Transitions);
 
@@ -708,6 +743,7 @@ namespace Yozolab.DaerD
             AddIfInside(_entryNode);
             AddIfInside(_exitNode);
             AddIfInside(_anyStateNode);
+            AddIfInside(_upNode);
             foreach (var note in _noteNodes) AddIfInside(note);
             return result;
         }
