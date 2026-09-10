@@ -167,8 +167,7 @@ namespace Yozolab.DaerD.Tests
             var original = _a.AddTransition(_b);
             original.AddCondition(AnimatorConditionMode.If, 0f, "Go");
 
-            var created = _edges.Replicate(TransitionEnd.Of(_a), TransitionEnd.Of(_b),
-                new List<AnimatorTransitionBase> { original });
+            var created = _edges.Replicate(TransitionEnd.Of(_a), new List<AnimatorTransitionBase> { original });
 
             Assert.AreEqual(1, created.Count);
             Assert.AreEqual(2, _a.transitions.Length, "the original stays, the copy joins it");
@@ -586,6 +585,24 @@ namespace Yozolab.DaerD.Tests
             Assert.IsTrue(Offers(targets, TransitionEnd.Of(other), "(Up)", "Sibling", "Other"));
             Assert.IsFalse(Offers(targets, TransitionEnd.Of(_a)), "it already goes there");
             Assert.IsFalse(Offers(targets, TransitionEnd.Of(walk)), "the source is not a destination");
+        }
+
+        [Test]
+        public void Replicate_RecreatesTowardTheDestinationEachTransitionNames()
+        {
+            var (_, walk, _, deep, _) = BuildNestedMachines();
+            var nested = _a.AddTransition(deep);   // drawn to Loco's node at the root
+            var leaving = walk.AddTransition(_a);  // drawn to "(Up)" inside Loco
+
+            var intoDeep = _edges.Replicate(TransitionEnd.Of(_a), new List<AnimatorTransitionBase> { nested });
+            Assert.AreEqual(1, intoDeep.Count);
+            Assert.AreSame(deep, intoDeep[0].destinationState, "the state it names, not the machine it is drawn to");
+            Assert.IsNull(intoDeep[0].destinationStateMachine);
+
+            var outward = _edges.Replicate(TransitionEnd.Of(walk), new List<AnimatorTransitionBase> { leaving });
+            Assert.AreEqual(1, outward.Count);
+            Assert.AreSame(_a, outward[0].destinationState);
+            Assert.AreEqual(2, walk.transitions.Length);
         }
 
         [Test]

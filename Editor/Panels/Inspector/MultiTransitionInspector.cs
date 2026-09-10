@@ -245,10 +245,7 @@ namespace Yozolab.DaerD
             {
                 foreach (var transition in _selectedTransitions)
                 {
-                    var edge = _sync.FindEdge(transition);
-                    if (edge == null) continue;
-                    var created = _sync.CreateTransition(
-                        edge.output?.node as GraphNodeBase, edge.input?.node as GraphNodeBase);
+                    var created = _sync.CreateTransitionLike(transition);
                     if (created != null) { TransitionClipboard.Apply(created, snapshot); last = created; }
                 }
             }

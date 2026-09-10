@@ -345,14 +345,13 @@ namespace Yozolab.DaerD
         void AddTransitionToAnchorEdge(List<AnimatorTransitionBase> pool)
         {
             var anchor = _selectedTransitions.Count > 0 ? _selectedTransitions[0] : pool[0];
-            // The new transition runs between the anchor edge's two endpoint nodes, so this needs
-            // the edge object; like the delete row, it stays a GraphSync command.
-            var edge = _sync.FindEdge(anchor);
-            if (edge == null) return;
-            var created = _sync.CreateTransition(
-                edge.output?.node as GraphNodeBase, edge.input?.node as GraphNodeBase);
+            // The new transition leaves the anchor's source for the destination the anchor names.
+            // The source comes off the anchor's edge, so like the delete row this stays a
+            // GraphSync command.
+            var created = _sync.CreateTransitionLike(anchor);
+            if (created == null) return;
             _sync.Rebuild();
-            if (created != null) _context.Select(created);
+            _context.Select(created);
         }
 
         /// <summary>

@@ -596,6 +596,21 @@ namespace Yozolab.DaerD
         }
 
         /// <summary>
+        /// Adds a fresh transition from <paramref name="anchor"/>'s source to the destination the
+        /// anchor itself names — not the node its edge lands on, which for a transition into a
+        /// nested state is the machine box and for one leaving this machine is "(Up)". The source
+        /// comes off the edge, since the transition does not record where it starts.
+        /// </summary>
+        public AnimatorTransitionBase CreateTransitionLike(AnimatorTransitionBase anchor)
+        {
+            var source = FindEdge(anchor)?.output?.node as GraphNodeBase;
+            if (source == null) return null;
+            var destination = TransitionEnd.DestinationOf(anchor);
+            if (destination.Kind == TransitionEndKind.None) return null;
+            return _transitions.CreateTransition(EndOf(source), destination);
+        }
+
+        /// <summary>
         /// Completes a transition dragged from <paramref name="source"/> and dropped on
         /// <paramref name="destination"/> — the one entry point for a drop on a port and a drop on
         /// a node's body. A machine node and "(Up)" each stand for many possible destinations
@@ -733,17 +748,13 @@ namespace Yozolab.DaerD
         }
 
         /// <summary>
-        /// True when the edge's transitions can be duplicated toward the node it lands on. Not for
-        /// an edge ending on "(Up) parent": it bundles transitions with different real
-        /// destinations, so there is no single one to recreate toward.
+        /// True when the edge has transitions to duplicate. Every kind of edge qualifies, "(Up)"
+        /// included: each copy goes where its original goes, read off the transition.
         /// </summary>
         public bool CanReplicateEdge(TransitionEdge edge)
         {
             if (edge == null || edge.IsDefaultEdge || edge.Transitions.Count == 0) return false;
-            var source = edge.output?.node as GraphNodeBase;
-            var destination = edge.input?.node as GraphNodeBase;
-            if (source == null || destination == null) return false;
-            return !(destination is SpecialNode spn && spn.Kind == SpecialNodeKind.Up);
+            return edge.output?.node is GraphNodeBase && edge.input?.node is GraphNodeBase;
         }
 
         /// <summary>Adds a duplicate of every transition on the edge alongside the originals.</summary>
@@ -751,9 +762,8 @@ namespace Yozolab.DaerD
         {
             if (!CanReplicateEdge(edge)) return;
             var source = edge.output?.node as GraphNodeBase;
-            var destination = edge.input?.node as GraphNodeBase;
 
-            var created = _transitions.Replicate(EndOf(source), EndOf(destination), edge.Transitions);
+            var created = _transitions.Replicate(EndOf(source), edge.Transitions);
 
             Rebuild();
             if (created.Count > 0) _context.Select(created[0]);
@@ -1153,9 +1163,14 @@ namespace Yozolab.DaerD
             {
                 if (edge == null || edge.IsDefaultEdge) continue;
                 var source = edge.output?.node as GraphNodeBase;
-                var destination = edge.input?.node as GraphNodeBase;
-                if (source == null || destination == null) continue;
-                pairs.Add((EndOf(source), EndOf(destination)));
+                if (source == null) continue;
+                // Toward where the transitions go rather than the node the edge lands on, which
+                // for a nested or leaving transition is a machine box or "(Up)".
+                var destination = edge.Transitions.Count > 0
+                    ? TransitionEnd.DestinationOf(edge.Transitions[0])
+                    : EndOf(edge.input?.node as GraphNodeBase);
+                if (destination.Kind == TransitionEndKind.None) continue;
+                pairs.Add((EndOf(source), destination));
             }
             if (!_clipboard.PasteTransitionsAsNewOn(pairs, out var last)) return;
             Rebuild();

@@ -414,15 +414,28 @@ namespace Yozolab.DaerD
             }
         }
 
-        /// <summary>Adds a duplicate of every given transition alongside the originals.</summary>
-        public List<AnimatorTransitionBase> Replicate(TransitionEnd source, TransitionEnd destination,
-            IList<AnimatorTransitionBase> transitions)
+        /// <summary>
+        /// Adds a duplicate of every given transition alongside the originals, each toward the
+        /// destination that transition names rather than the node its edge lands on: an edge on a
+        /// machine node may carry transitions into states inside it, and an edge on "(Up)" carries
+        /// transitions to whatever lies outside, so one shared destination would rewrite them.
+        /// </summary>
+        public List<AnimatorTransitionBase> Replicate(TransitionEnd source, IList<AnimatorTransitionBase> transitions)
         {
-            var snapshots = CaptureAll(transitions);
-
-            List<AnimatorTransitionBase> created;
+            var created = new List<AnimatorTransitionBase>();
             using (new UndoScope("Replicate Transition"))
-                created = Recreate(snapshots, source, destination);
+            {
+                foreach (var original in transitions)
+                {
+                    var destination = TransitionEnd.DestinationOf(original);
+                    if (destination.Kind == TransitionEndKind.None) continue;
+                    var snapshot = TransitionClipboard.Capture(original);
+                    var t = CreateTransition(source, destination);
+                    if (t == null) continue;
+                    TransitionClipboard.Apply(t, snapshot);
+                    created.Add(t);
+                }
+            }
             return created;
         }
 
@@ -437,9 +450,9 @@ namespace Yozolab.DaerD
 
         /// <summary>
         /// Adds one transition per snapshot from <paramref name="source"/> to
-        /// <paramref name="destination"/> and stamps the captured settings back on. Reverse and
-        /// replicate differ only in which way round the two ends go; the caller opens the undo
-        /// scope so its name wins over the per-transition "Create Transition" label.
+        /// <paramref name="destination"/> and stamps the captured settings back on — reverse and
+        /// paste-as-new, which both know one pair of ends for the whole batch. The caller opens the
+        /// undo scope so its name wins over the per-transition "Create Transition" label.
         /// </summary>
         public List<AnimatorTransitionBase> Recreate(IEnumerable<TransitionClipboard.Snapshot> snapshots,
             TransitionEnd source, TransitionEnd destination)

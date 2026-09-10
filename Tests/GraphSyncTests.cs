@@ -59,7 +59,34 @@ namespace Yozolab.DaerD.Tests
             var edge = view.Sync.FindEdge(_leaving);
             Assert.IsNotNull(edge, "the leaving transition is drawn");
             Assert.AreSame(up, edge.input.node);
-            Assert.IsFalse(view.Sync.CanReplicateEdge(edge), "Up is no single destination to replicate toward");
+            Assert.IsTrue(view.Sync.CanReplicateEdge(edge), "each copy goes where its original goes");
+        }
+
+        [Test]
+        public void InsideASubStateMachine_ReplicatingTheUpEdge_CopiesTowardTheRealDestination()
+        {
+            _context.EnterStateMachine(_loco);
+            var view = new AnimatorGraphView(_context);
+            view.Sync.Rebuild();
+
+            view.Sync.ReplicateEdge(view.Sync.FindEdge(_leaving));
+
+            Assert.AreEqual(2, _walk.transitions.Length);
+            Assert.AreSame(_idle, _walk.transitions[1].destinationState);
+        }
+
+        [Test]
+        public void InsideASubStateMachine_AddingLikeALeavingTransition_GoesWhereItGoes()
+        {
+            _context.EnterStateMachine(_loco);
+            var view = new AnimatorGraphView(_context);
+            view.Sync.Rebuild();
+
+            var created = view.Sync.CreateTransitionLike(_leaving);
+
+            Assert.IsNotNull(created);
+            Assert.AreEqual(2, _walk.transitions.Length);
+            Assert.AreSame(_idle, created.destinationState);
         }
 
         [Test]
