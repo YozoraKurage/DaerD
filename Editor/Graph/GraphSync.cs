@@ -1262,15 +1262,16 @@ namespace Yozolab.DaerD
             GraphNodeBase current = null, next = null;
             if (playing)
             {
-                _runtimeNodes.TryGetValue(_playback.stateHash, out current);
+                current = RuntimeNode(_playback.stateHash);
                 if (_playback.inTransition)
-                    _runtimeNodes.TryGetValue(_playback.nextStateHash, out next);
+                    next = RuntimeNode(_playback.nextStateHash);
             }
 
             foreach (var pair in _stateNodes)
                 pair.Value.SetPlayback(pair.Value == current, pair.Value == next, _playback.progress);
             foreach (var pair in _ssmNodes)
                 pair.Value.SetPlayback(pair.Value == current, pair.Value == next, 0f);
+            _upNode?.SetPlayback(_upNode == current, _upNode == next, 0f);
 
             // An Any State transition leaves the Any State node, not the state it interrupted.
             var running = playing && _playback.inTransition
@@ -1279,6 +1280,15 @@ namespace Yozolab.DaerD
             foreach (var edge in _edges)
                 edge.SetRuntimeActive(edge == running);
         }
+
+        /// <summary>
+        /// The node standing for the state Unity reports by <paramref name="hash"/>. Every state in
+        /// this machine and beneath it is mapped, so inside a sub-state machine a hash that is not
+        /// belongs to a state outside it, which this screen shows as "(Up)" — the leaving edge to
+        /// it then lights like any other.
+        /// </summary>
+        GraphNodeBase RuntimeNode(int hash) =>
+            _runtimeNodes.TryGetValue(hash, out var node) ? node : _upNode;
 
         TransitionEdge FindRuntimeEdge(GraphNodeBase from, GraphNodeBase to)
         {
