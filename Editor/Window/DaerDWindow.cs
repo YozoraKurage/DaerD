@@ -239,7 +239,7 @@ namespace Yozolab.DaerD
             rootVisualElement.Add(mainSplit);
 
             // Shift + scroll steps through the controller's layers (scroll down = next layer), and
-            // Shift + sideways scroll through the open tabs (scroll right = next tab).
+            // Ctrl + Shift + scroll through the open tabs (scroll down = next tab).
             // TrickleDown on the root so the graph view's zoom never sees the event while Shift
             // is held; unregister first because CreateGUI can run again after a domain reload
             // and rootVisualElement.Clear() does not remove callbacks on the root itself.
@@ -301,26 +301,47 @@ namespace Yozolab.DaerD
             RefreshTabBar();
         }
 
+        /// <summary>Which of the window's two strips a wheel event walks.</summary>
+        internal enum WheelWalk { None, Layer, Tab }
+
+        /// <summary>
+        /// Reads a wheel event as a step along one of the window's strips: Shift walks the layers,
+        /// Ctrl + Shift the open tabs, and <paramref name="step"/> is +1 for the next one (down or
+        /// right), -1 for the previous, 0 for no movement. Anything with Shift is claimed, even a
+        /// zero step, so the graph never zooms under the gesture.
+        ///
+        /// The modifier picks the strip, never the axis. A Shift+wheel does not arrive on the axis
+        /// it was turned on: Windows and macOS both deliver it as a sideways scroll, and nothing in
+        /// the event says it was converted, so whichever axis moved more is read, for both strips.
+        /// </summary>
+        internal static WheelWalk ReadShiftWheel(bool shift, bool ctrl, Vector2 delta, out int step)
+        {
+            step = 0;
+            if (!shift) return WheelWalk.None;
+            float d = Mathf.Abs(delta.y) >= Mathf.Abs(delta.x) ? delta.y : delta.x;
+            if (!Mathf.Approximately(d, 0f)) step = d > 0f ? 1 : -1;
+            return ctrl ? WheelWalk.Tab : WheelWalk.Layer;
+        }
+
         void OnShiftScroll(WheelEvent evt)
         {
-            if (!evt.shiftKey || _context == null || _context.Controller == null) return;
+            if (_context == null || _context.Controller == null) return;
+            var walk = ReadShiftWheel(evt.shiftKey, evt.ctrlKey, evt.delta, out int step);
+            if (walk == WheelWalk.None) return;
             // Consume every Shift+wheel so the gesture never zooms the graph, even when the
             // layer index is already clamped at either end of the list.
             evt.StopPropagation();
+            if (step == 0) return;
 
-            // The axis picks the strip: sideways walks the tabs, up/down the layers. A platform
-            // that turns a Shift+wheel into a sideways scroll therefore switches tab there.
-            if (Mathf.Abs(evt.delta.x) > Mathf.Abs(evt.delta.y))
+            if (walk == WheelWalk.Tab)
             {
-                var tab = _tabs?.Neighbour(_controller, evt.delta.x > 0f ? 1 : -1);
+                var tab = _tabs?.Neighbour(_controller, step);
                 if (tab != null) ActivateController(tab);
                 return;
             }
-            float delta = evt.delta.y;
-            if (Mathf.Approximately(delta, 0f)) return;
 
             int count = _context.Controller.layers.Length;
-            bool down = delta > 0f;
+            bool down = step > 0;
             // Home sits above layer 0 in the list, so the gesture walks the two as one strip:
             // down off home lands on the first layer, up off the first layer goes back to it.
             if (_context.IsHomeSelected)

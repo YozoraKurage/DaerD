@@ -5,7 +5,7 @@ using UnityEngine;
 
 namespace Yozolab.DaerD.Tests
 {
-    /// <summary>Which tab a sideways Shift+scroll lands on.</summary>
+    /// <summary>How the window reads a Shift+wheel, and which tab a Ctrl+Shift+wheel lands on.</summary>
     public class TabStripTests
     {
         AnimatorController _a, _b, _c;
@@ -66,6 +66,55 @@ namespace Yozolab.DaerD.Tests
             {
                 Object.DestroyImmediate(stranger);
             }
+        }
+
+        static DaerDWindow.WheelWalk Read(bool shift, bool ctrl, float x, float y, out int step)
+            => DaerDWindow.ReadShiftWheel(shift, ctrl, new Vector2(x, y), out step);
+
+        [Test]
+        public void ShiftWheel_ArrivingSideways_StillWalksTheLayers()
+        {
+            // Windows and macOS hand a Shift+wheel over as a sideways scroll. Reading the axis as
+            // "tabs" is what turned every layer step into a tab switch there.
+            Assert.AreEqual(DaerDWindow.WheelWalk.Layer, Read(true, false, 3f, 0f, out int step));
+            Assert.AreEqual(1, step);
+            Assert.AreEqual(DaerDWindow.WheelWalk.Layer, Read(true, false, -3f, 0f, out step));
+            Assert.AreEqual(-1, step);
+        }
+
+        [Test]
+        public void ShiftWheel_Down_IsTheNextLayer()
+        {
+            Assert.AreEqual(DaerDWindow.WheelWalk.Layer, Read(true, false, 0f, 3f, out int step));
+            Assert.AreEqual(1, step);
+            Assert.AreEqual(DaerDWindow.WheelWalk.Layer, Read(true, false, 0f, -3f, out step));
+            Assert.AreEqual(-1, step);
+        }
+
+        [Test]
+        public void CtrlShiftWheel_WalksTheTabs_OnEitherAxis()
+        {
+            Assert.AreEqual(DaerDWindow.WheelWalk.Tab, Read(true, true, 0f, 3f, out int step));
+            Assert.AreEqual(1, step);
+            Assert.AreEqual(DaerDWindow.WheelWalk.Tab, Read(true, true, -3f, 0f, out step));
+            Assert.AreEqual(-1, step);
+        }
+
+        [Test]
+        public void WithoutShift_NothingIsClaimed()
+        {
+            // Ctrl + wheel alone stays whatever the panel under the pointer makes of it.
+            Assert.AreEqual(DaerDWindow.WheelWalk.None, Read(false, true, 0f, 3f, out int step));
+            Assert.AreEqual(0, step);
+            Assert.AreEqual(DaerDWindow.WheelWalk.None, Read(false, false, 3f, 0f, out step));
+        }
+
+        [Test]
+        public void AShiftWheelThatDoesNotMove_IsStillClaimed()
+        {
+            // Claimed with no step, so the graph does not zoom on it either.
+            Assert.AreEqual(DaerDWindow.WheelWalk.Layer, Read(true, false, 0f, 0f, out int step));
+            Assert.AreEqual(0, step);
         }
     }
 }

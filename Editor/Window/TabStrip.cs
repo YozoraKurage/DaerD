@@ -62,7 +62,7 @@ namespace Yozolab.DaerD
 
         /// <summary>
         /// The tab <paramref name="step"/> places from <paramref name="active"/> along the strip,
-        /// stopping at either end rather than wrapping: a trackpad's sideways swipe arrives as a
+        /// stopping at either end rather than wrapping: a trackpad's swipe arrives as a
         /// burst of wheel events, and wrapping would carry it round the strip and back. Null when
         /// there is nowhere to go — the active tab is not open, or already sits at that end.
         /// </summary>

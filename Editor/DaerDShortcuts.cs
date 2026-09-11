@@ -165,7 +165,7 @@ namespace Yozolab.DaerD
     ///
     /// Not here: keys that belong to a control rather than to a command. Escape and Return while
     /// renaming a node, or the arrows inside the search box, are part of how that widget works
-    /// and mean nothing outside it. Shift+wheel (switch layer; sideways, switch tab) is not a key
+    /// and mean nothing outside it. Shift+wheel (switch layer; with Ctrl, switch tab) is not a key
     /// press at all; it is claimed on the window root, above every panel.
     /// </summary>
     static class DaerDShortcuts
