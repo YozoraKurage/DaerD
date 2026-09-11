@@ -4,6 +4,7 @@ using System.IO;
 using System.Reflection;
 using System.Text;
 using UnityEditor;
+using UnityEditor.Compilation;
 using UnityEditor.TestTools.TestRunner.Api;
 using UnityEngine;
 
@@ -51,6 +52,14 @@ namespace Yozolab.DaerDTestDaemon
         static bool s_testSeen;
         static bool s_stallUnlocked;
 
+        // Compile-gate watchdog (see CheckGateStall).
+        const double GateStallSeconds = 90.0;
+        const double GateGiveUpSeconds = 60.0;
+        static double s_gateSince;
+        static double s_gateEscalatedAt;
+
+        static string TracePath => Path.Combine(Dir, "trace.log");
+
         static DaerDTestDaemon()
         {
             var args = Environment.GetCommandLineArgs();
@@ -63,6 +72,7 @@ namespace Yozolab.DaerDTestDaemon
             // (実測)。テスト専用プロジェクトなので常時フルスロットルで良い。
             if (EditorPrefs.GetInt("InteractionMode", 0) != 1)
                 EditorPrefs.SetInt("InteractionMode", 1);
+            Trace("domain loaded" + (File.Exists(RunningPath) ? "; resuming running.json" : ""));
             EditorApplication.update += Tick;
         }
 
@@ -97,14 +107,27 @@ namespace Yozolab.DaerDTestDaemon
                     // そちらは促されないまま永久に待っていた。
                     if (File.Exists(RunningPath))
                     {
+                        if (s_gateSince == 0)
+                        {
+                            s_gateSince = now;
+                            Trace("gate: waiting on compile/update");
+                        }
                         if (s_compilingSince == 0) s_compilingSince = now;
                         else if (now - s_compilingSince > 10)
                         {
                             s_compilingSince = 0;
+                            Trace("gate: nudge (RequestScriptReload)");
                             EditorUtility.RequestScriptReload();
                         }
+                        CheckGateStall(now);
                     }
                     return;
+                }
+                if (s_gateSince != 0)
+                {
+                    Trace("gate: cleared after " + (now - s_gateSince).ToString("0") + " s");
+                    s_gateSince = 0;
+                    s_gateEscalatedAt = 0;
                 }
                 s_compilingSince = 0;
 
@@ -137,8 +160,10 @@ namespace Yozolab.DaerDTestDaemon
                     File.Delete(DonePath);
                     File.Delete(ResultXmlPath);
                     File.Move(RequestPath, RunningPath);
+                    Trace("claim: " + File.ReadAllText(RunningPath).Trim());
                     AssetDatabase.Refresh();
                     s_refreshedAt = now;
+                    Trace("refresh done");
                 }
             }
             catch (Exception e)
@@ -146,6 +171,58 @@ namespace Yozolab.DaerDTestDaemon
                 Debug.LogError("[DaerDTestDaemon] " + e);
                 try { Finish(3, e.Message); } catch { /* 客側のタイムアウトに任せる */ }
             }
+        }
+
+        /// <summary>
+        /// The other stall: a request that never gets past the compile gate. Seen 2026-09-11 with
+        /// an exec request: after the Refresh that brought a new script in, nothing was compiled,
+        /// reloaded or run for ten minutes, and the 10-second reload nudge changed nothing. The
+        /// cause is not known — trace.log is here to catch it next time — so this escalates once
+        /// (hand back any reload lock, ask for the compile outright, import synchronously) and then
+        /// gives up with code 5 rather than hold the client to its timeout.
+        /// </summary>
+        static void CheckGateStall(double now)
+        {
+            if (s_gateEscalatedAt == 0)
+            {
+                if (now - s_gateSince < GateStallSeconds) return;
+                s_gateEscalatedAt = now;
+                Trace("gate: stuck " + GateStallSeconds + " s; escalating");
+                Debug.LogWarning("[DaerDTestDaemon] stuck in the compile gate for " + GateStallSeconds
+                                 + " s; unlocking reloads, requesting compilation, refreshing synchronously");
+                if (s_locked)
+                {
+                    s_locked = false;
+                    EditorApplication.UnlockReloadAssemblies();
+                }
+                CompilationPipeline.RequestScriptCompilation();
+                AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
+                return;
+            }
+            if (now - s_gateEscalatedAt < GateGiveUpSeconds) return;
+            Trace("gate: still stuck after escalating; giving up");
+            s_gateSince = 0;
+            s_gateEscalatedAt = 0;
+            Finish(5, "stuck in the compile gate (isCompiling/isUpdating) — see TestDaemon/trace.log");
+        }
+
+        /// <summary>
+        /// One timestamped line per state change, appended across restarts: daemon.log is
+        /// recreated each time the daemon starts, and a stalled daemon is fixed by restarting it,
+        /// so without this the evidence goes with the fix. Starts over past ~1 MB.
+        /// </summary>
+        static void Trace(string what)
+        {
+            try
+            {
+                var info = new FileInfo(TracePath);
+                if (info.Exists && info.Length > 1000000) info.Delete();
+                File.AppendAllText(TracePath, DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + " " + what
+                    + " [compiling=" + EditorApplication.isCompiling
+                    + " updating=" + EditorApplication.isUpdating
+                    + " locked=" + s_locked + "]\n");
+            }
+            catch { /* tracing must never take the daemon down */ }
         }
 
         /// <summary>
@@ -165,6 +242,7 @@ namespace Yozolab.DaerDTestDaemon
             {
                 s_stallUnlocked = true;
                 s_startedAt = now;
+                Trace("stall: no test started; releasing the reload lock");
                 Debug.LogWarning("[DaerDTestDaemon] no test started in " + StallSeconds
                                  + " s; releasing the reload lock and refreshing");
                 if (s_locked)
@@ -175,6 +253,7 @@ namespace Yozolab.DaerDTestDaemon
                 AssetDatabase.Refresh();
                 return;
             }
+            Trace("stall: still no test; giving up");
             Finish(5, "stalled: no test started, even with reloads unlocked — see daemon.log");
         }
 
@@ -183,6 +262,7 @@ namespace Yozolab.DaerDTestDaemon
             s_started = true;
             s_testSeen = false;
             s_stallUnlocked = false;
+            Trace("start: " + (requestJson ?? "").Trim());
             var request = JsonUtility.FromJson<Request>(
                 string.IsNullOrWhiteSpace(requestJson) ? "{}" : requestJson) ?? new Request();
 
@@ -256,6 +336,7 @@ namespace Yozolab.DaerDTestDaemon
             s_started = false;
             s_testSeen = false;
             s_stallUnlocked = false;
+            Trace("finish: " + code + (string.IsNullOrEmpty(note) ? "" : " " + note));
             // 施錠したまま死なない。施錠は Start だけ、返却は Finish だけの 1:1。
             // ロック保持中はドメインリロードが起きないので、この対応関係は
             // static でも壊れない。
@@ -297,6 +378,7 @@ namespace Yozolab.DaerDTestDaemon
             public void RunStarted(ITestAdaptor tests) { }
             public void TestStarted(ITestAdaptor test)
             {
+                if (!s_testSeen) Trace("first test started");
                 s_testSeen = true;
                 DaerDTestDaemon.Beat();
             }

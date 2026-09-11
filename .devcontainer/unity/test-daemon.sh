@@ -46,6 +46,9 @@ start() {
   rm -f "$DAEMON_DIR/alive" "$DAEMON_DIR/request.json" "$DAEMON_DIR/running.json" \
         "$DAEMON_DIR/done" "$DAEMON_DIR/quit"
   mkdir -p "$UNITY_LOG_DIR"
+  # 前回のログを残す。止まったデーモンは再起動で直すので、上書きすると原因の手がかりが
+  # 再起動と一緒に消える(2026-09-11 に実際に消えた)。状態遷移は TestDaemon/trace.log にも残る。
+  if [[ -f "$DAEMON_LOG" ]]; then mv -f "$DAEMON_LOG" "$UNITY_LOG_DIR/daemon.prev.log"; fi
   info "常駐 Unity を起動中… (ログ: $DAEMON_LOG)"
   nohup "$UNITY_EDITOR" -batchmode -nographics \
     -projectPath "$UNITY_PROJECT" -logFile "$DAEMON_LOG" \

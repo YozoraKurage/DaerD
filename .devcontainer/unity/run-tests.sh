@@ -70,7 +70,7 @@ if daemon_alive; then
       exit 3
     fi
     if [[ "$code" == 5 ]]; then
-      warn "デーモンがテストを開始できなかった: $(sed -n 2p "$DAEMON_DIR/done") — test-daemon.sh restart を"
+      warn "デーモンが止まっていた: $(sed -n 2p "$DAEMON_DIR/done") — $DAEMON_DIR/trace.log を見てから test-daemon.sh restart を"
       exit 5
     fi
     echo ""
