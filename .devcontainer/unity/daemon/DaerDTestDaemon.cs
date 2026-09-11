@@ -42,6 +42,15 @@ namespace Yozolab.DaerDTestDaemon
         static double s_compilingSince;
         static bool s_started;
 
+        // Stall watchdog (see CheckStall). Statics are fine: a reload that ends a stall also
+        // resets them, and running.json carries the request across it.
+        const double SettleSeconds = 1.0;
+        const double StallSeconds = 30.0;
+        static double s_refreshedAt;
+        static double s_startedAt;
+        static bool s_testSeen;
+        static bool s_stallUnlocked;
+
         static DaerDTestDaemon()
         {
             var args = Environment.GetCommandLineArgs();
@@ -108,7 +117,16 @@ namespace Yozolab.DaerDTestDaemon
                         Finish(3, "compile errors — see daemon.log");
                         return;
                     }
-                    if (!s_started) Start(File.ReadAllText(RunningPath));
+                    if (!s_started)
+                    {
+                        // Refresh only queues the compile for changed scripts; give it a moment
+                        // to show up as isCompiling before a run locks reloads behind it.
+                        if (now - s_refreshedAt < SettleSeconds) return;
+                        Start(File.ReadAllText(RunningPath));
+                        s_startedAt = now;
+                        return;
+                    }
+                    CheckStall(now);
                     return;
                 }
 
@@ -120,6 +138,7 @@ namespace Yozolab.DaerDTestDaemon
                     File.Delete(ResultXmlPath);
                     File.Move(RequestPath, RunningPath);
                     AssetDatabase.Refresh();
+                    s_refreshedAt = now;
                 }
             }
             catch (Exception e)
@@ -129,9 +148,41 @@ namespace Yozolab.DaerDTestDaemon
             }
         }
 
+        /// <summary>
+        /// A run that has not reached its first test within <see cref="StallSeconds"/> is waiting
+        /// on something that will not come. Measured 2026-09-11: a Refresh that found changed
+        /// scripts had not started the compile by the next tick, so Start locked reloads first and
+        /// the test runner then waited on the compile + reload that lock was holding back — no log
+        /// line for 20 minutes, while the heartbeat kept the client waiting. First hand the lock
+        /// back and refresh: a pending reload lands in a new domain, which finds running.json and
+        /// starts over; or the waiting run proceeds and finishes. If neither happens within one
+        /// more window, give up with code 5 rather than hold the client to its timeout.
+        /// </summary>
+        static void CheckStall(double now)
+        {
+            if (s_testSeen || now - s_startedAt < StallSeconds) return;
+            if (!s_stallUnlocked)
+            {
+                s_stallUnlocked = true;
+                s_startedAt = now;
+                Debug.LogWarning("[DaerDTestDaemon] no test started in " + StallSeconds
+                                 + " s; releasing the reload lock and refreshing");
+                if (s_locked)
+                {
+                    s_locked = false;
+                    EditorApplication.UnlockReloadAssemblies();
+                }
+                AssetDatabase.Refresh();
+                return;
+            }
+            Finish(5, "stalled: no test started, even with reloads unlocked — see daemon.log");
+        }
+
         static void Start(string requestJson)
         {
             s_started = true;
+            s_testSeen = false;
+            s_stallUnlocked = false;
             var request = JsonUtility.FromJson<Request>(
                 string.IsNullOrWhiteSpace(requestJson) ? "{}" : requestJson) ?? new Request();
 
@@ -203,6 +254,8 @@ namespace Yozolab.DaerDTestDaemon
         static void Finish(int code, string note)
         {
             s_started = false;
+            s_testSeen = false;
+            s_stallUnlocked = false;
             // 施錠したまま死なない。施錠は Start だけ、返却は Finish だけの 1:1。
             // ロック保持中はドメインリロードが起きないので、この対応関係は
             // static でも壊れない。
@@ -242,7 +295,11 @@ namespace Yozolab.DaerDTestDaemon
             readonly List<ITestResultAdaptor> _failures = new List<ITestResultAdaptor>();
 
             public void RunStarted(ITestAdaptor tests) { }
-            public void TestStarted(ITestAdaptor test) => DaerDTestDaemon.Beat();
+            public void TestStarted(ITestAdaptor test)
+            {
+                s_testSeen = true;
+                DaerDTestDaemon.Beat();
+            }
 
             public void TestFinished(ITestResultAdaptor result)
             {

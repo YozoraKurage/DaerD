@@ -103,9 +103,10 @@ Editor イメージ）。EditMode テストはコンテナ内で完結する。
   （SDK 無し構成が要る変更ならそのときに一緒に）。
 - 出力はサマリと失敗内容だけ。Unity の生ログは
   `$DAERD_UNITY_PROJECT/Logs/tests.log`、結果 XML は同ディレクトリの
-  `test-results.xml`。ログを丸ごと読み込まないこと（数万行ある）。
+  `test-results.xml`（デーモン経由では `TestDaemon/result.xml` で、総数と失敗だけ）。ログを丸ごと読み込まないこと（数万行ある）。
 - 終了コード: 0 = 全件成功 / 1 = テスト失敗 / 3 = コンパイルエラー等で結果が
-  出なかった / 4 = ライセンス未設定。
+  出なかった / 4 = ライセンス未設定 / 5 = デーモンがテストを開始できなかった
+  （施錠を自動で外しても進まない。`test-daemon.sh restart`）。
 - テストプロジェクトは `/home/node/unity-testproject`（名前付きボリューム）。
   このリポジトリを `file:/workspace` のローカルパッケージとして参照している
   ので、リポジトリ側には Library/ も Assets/ も生成されない。

@@ -49,15 +49,16 @@ if daemon_alive; then
   rm -f "$DAEMON_DIR/done" "$DAEMON_DIR/result.xml"
   printf '{"filter":"%s","category":"%s"}' "$FILTER" "$CATEGORY" \
     > "$DAEMON_DIR/request.json"
-  for _ in $(seq 1 900); do
+  for _ in $(seq 1 300); do
     sleep 1
     [[ -f "$DAEMON_DIR/done" ]] && break
     daemon_alive || break
   done
   if [[ ! -f "$DAEMON_DIR/done" ]] && daemon_alive; then
-    # 生きているのに 15 分応答が無い。勝手に殺してコールドへ落ちると常駐と
+    # 生きているのに 5 分応答が無い(止まった実行はデーモン自身が 1 分で code 5 を返すので、
+    # ここに来るのはそれすら回らない状態)。勝手に殺してコールドへ落ちると常駐と
     # ロック衝突するので、ここでは状況を言って止まるだけにする。
-    warn "デーモンは生きているが 15 分応答が無い。test-daemon.sh restart を検討 (ログ: $UNITY_LOG_DIR/daemon.log)"
+    warn "デーモンは生きているが 5 分応答が無い。test-daemon.sh restart を検討 (ログ: $UNITY_LOG_DIR/daemon.log)"
     exit 1
   fi
   if [[ -f "$DAEMON_DIR/done" ]]; then
@@ -67,6 +68,10 @@ if daemon_alive; then
       grep -o '[^ ]*\.cs([0-9]*,[0-9]*): error CS[0-9]*: .*' \
         "$UNITY_LOG_DIR/daemon.log" 2>/dev/null | sort -u | head -50
       exit 3
+    fi
+    if [[ "$code" == 5 ]]; then
+      warn "デーモンがテストを開始できなかった: $(sed -n 2p "$DAEMON_DIR/done") — test-daemon.sh restart を"
+      exit 5
     fi
     echo ""
     node "$SCRIPT_DIR/summarize-results.js" "$DAEMON_DIR/result.xml" || true
