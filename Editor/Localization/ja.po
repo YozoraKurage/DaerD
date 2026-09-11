@@ -3201,6 +3201,9 @@ msgstr "インスペクター"
 msgid "Shift + wheel switches layer, anywhere in the window."
 msgstr "Shift + ホイールでレイヤーを切り替えます（ウィンドウ内のどこでも）。"
 
+msgid "Shift + sideways scroll switches tab, anywhere in the window."
+msgstr "Shift + 左右スクロールでタブを切り替えます（ウィンドウ内のどこでも）。"
+
 msgid "Rename the selected state, frame or note"
 msgstr "選択中のステート / フレーム / ノートの名前を変更"
 

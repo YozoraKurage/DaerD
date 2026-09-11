@@ -238,7 +238,8 @@ namespace Yozolab.DaerD
             mainSplit.Add(centerRightSplit);
             rootVisualElement.Add(mainSplit);
 
-            // Shift + scroll steps through the controller's layers (scroll down = next layer).
+            // Shift + scroll steps through the controller's layers (scroll down = next layer), and
+            // Shift + sideways scroll through the open tabs (scroll right = next tab).
             // TrickleDown on the root so the graph view's zoom never sees the event while Shift
             // is held; unregister first because CreateGUI can run again after a domain reload
             // and rootVisualElement.Clear() does not remove callbacks on the root itself.
@@ -307,8 +308,15 @@ namespace Yozolab.DaerD
             // layer index is already clamped at either end of the list.
             evt.StopPropagation();
 
-            // Some platforms deliver Shift+wheel as a horizontal delta.
-            float delta = Mathf.Abs(evt.delta.y) >= Mathf.Abs(evt.delta.x) ? evt.delta.y : evt.delta.x;
+            // The axis picks the strip: sideways walks the tabs, up/down the layers. A platform
+            // that turns a Shift+wheel into a sideways scroll therefore switches tab there.
+            if (Mathf.Abs(evt.delta.x) > Mathf.Abs(evt.delta.y))
+            {
+                var tab = _tabs?.Neighbour(_controller, evt.delta.x > 0f ? 1 : -1);
+                if (tab != null) ActivateController(tab);
+                return;
+            }
+            float delta = evt.delta.y;
             if (Mathf.Approximately(delta, 0f)) return;
 
             int count = _context.Controller.layers.Length;
