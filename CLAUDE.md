@@ -98,6 +98,25 @@ Editor イメージ）。EditMode テストはコンテナ内で完結する。
   **フィルタ実行が数秒**になる（コールドは毎回 ~2.5 分の起動費を払う）。全件は
   テスト自身のアセット生成が支配的でコールドと同等（~3 分）。パッケージを出し入れ
   したら `restart`。常駐中は同じプロジェクトを別の Unity で開けない。
+- **常駐は GUI モードが既定**（2026-09-15）: xvfb の仮想画面上で `-batchmode` なしで
+  起動する。batchmode と `-nographics` が禁じていた Play モード・EditorWindow・描画が
+  使える（起動 ~20 秒、待機時 CPU 数 %）。`start --batch` で従来の batchmode。
+  コンパイルエラーがある状態で開くと GUI は「Enter Safe Mode?」のダイアログで主スレッドが
+  止まる（batch は自ら終了する）。`start` はそれを検知し、xdotool があれば Ignore を押して
+  そのまま起動する（エラー本文は `unity-do.sh compile` で読める）。無ければ殺してエラー本文を
+  出し、終了コード 3。xdotool はイメージに入れてあり、古いイメージでは setup.sh が
+  `~/.local/opt/x11tools` に展開する。
+- **常駐 Unity を直接使う** — `.devcontainer/unity/unity-do.sh`:
+  ```
+  unity-do.sh run -e 'return AssetDatabase.FindAssets("t:AnimatorController").Length;'
+  unity-do.sh run snippet.cs         # メソッド本体。先頭の using 行は使える。Debug.Log は結果に入る
+  unity-do.sh console error warning  # コンソール（--limit N / --full / --clear）
+  unity-do.sh compile [--force]      # 再コンパイルしてエラー本文（--force は全アセンブリ）
+  ```
+  `run` は Unity 同梱の Roslyn で外部コンパイルし DLL を常駐エディタへ読み込むので、
+  **ドメインリロード無しで 2〜3 秒**。コンパイルエラーはスニペットの行番号で返る。
+  DaerD の `internal` 型は見えない（必要ならリフレクションで触る）。
+  終了コード: 0 / 1=実行時エラー / 3=コンパイルエラー / 5=デーモン停止。
 - **テストの規律（2026-08-18 ユーザー決定）**: コミット前は**変更に対応する
   フィクスチャの部分選択でよい**。全件はシリーズ（wave）完了時に 1 回
   （SDK 無し構成が要る変更ならそのときに一緒に）。
