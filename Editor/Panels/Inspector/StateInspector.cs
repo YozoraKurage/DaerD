@@ -167,7 +167,7 @@ namespace Yozolab.DaerD
             using (new EditorGUI.DisabledScope(!active))
             {
                 int idx = Mathf.Max(0, Array.IndexOf(parameters, param));
-                idx = EditorGUILayout.Popup(idx, parameters);
+                idx = EditorGUILayout.Popup(idx, parameters, PanelGui.FillClickable);
                 param = parameters[idx];
             }
             if (EditorGUI.EndChangeCheck())

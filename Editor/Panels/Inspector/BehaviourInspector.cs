@@ -60,12 +60,14 @@ namespace Yozolab.DaerD
                 }
             EditorGUILayout.EndHorizontal();
             if (behaviours.Length > 0)
-                EditorGUILayout.LabelField(
+                // GUILayout.Label, not LabelField: only the former gives a wrapping style the
+                // height its text needs — LabelField reserves one line and cuts the rest off.
+                GUILayout.Label(
                     L.Tr("Click a title to select (Ctrl / Shift for multi-select).")
                         + DaerDShortcuts.Sentence(ShortcutScope.Inspector,
                             DaerDCommand.Copy, DaerDCommand.Paste,
                             L.Tr("{0} / {1} copies and pastes the selected behaviours.")),
-                    EditorStyles.miniLabel);
+                    EditorStyles.wordWrappedMiniLabel);
 
             for (int i = 0; i < behaviours.Length; i++)
             {
@@ -129,7 +131,11 @@ namespace Yozolab.DaerD
             EditorGUILayout.BeginHorizontal();
             var titleBackground = GUI.backgroundColor;
             if (selected) GUI.backgroundColor = DaerDColors.SelectedRow;
-            if (GUILayout.Button(BehaviourTitle(behaviour), BehaviourTitleStyle))
+            // Takes the slack rather than the width of the type name (PanelGui.Fill). The rest
+            // of the row is fixed-width, so a long title would set the width of the whole
+            // inspector; the untrimmed name stays reachable as the tooltip.
+            if (GUILayout.Button(new GUIContent(BehaviourTitle(behaviour), behaviour.GetType().Name),
+                    BehaviourTitleStyle, PanelGui.Fill))
                 HandleBehaviourRowClick(rows, index);
             GUI.backgroundColor = titleBackground;
         }

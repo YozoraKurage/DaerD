@@ -146,7 +146,7 @@ namespace Yozolab.DaerD
                 int idx = Mathf.Max(0, Array.IndexOf(parameters, param));
                 EditorGUI.showMixedValue = paramMixed;
                 EditorGUI.BeginChangeCheck();
-                idx = EditorGUILayout.Popup(idx, parameters);
+                idx = EditorGUILayout.Popup(idx, parameters, PanelGui.FillClickable);
                 EditorGUI.showMixedValue = false;
                 paramChanged = EditorGUI.EndChangeCheck();
                 if (idx >= 0 && idx < parameters.Length) param = parameters[idx];

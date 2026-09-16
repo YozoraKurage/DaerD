@@ -85,13 +85,13 @@ namespace Yozolab.DaerD
             }
             else
             {
-                EditorGUILayout.LabelField(
+                GUILayout.Label(
                     L.Tr("Edits apply to every selected state that has the behaviour.") + " "
                         + L.Tr("Click a title to select (Ctrl / Shift for multi-select).")
                         + DaerDShortcuts.Sentence(ShortcutScope.Inspector,
                             DaerDCommand.Copy, DaerDCommand.Paste,
                             L.Tr("{0} / {1} copies and pastes.")),
-                    EditorStyles.miniLabel);
+                    EditorStyles.wordWrappedMiniLabel);
             }
 
             for (int i = 0; i < slots.Count; i++)

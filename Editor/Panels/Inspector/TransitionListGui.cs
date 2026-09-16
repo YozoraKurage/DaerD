@@ -39,6 +39,19 @@ namespace Yozolab.DaerD
     {
         readonly ListReorder _reorder = new ListReorder();
 
+        static GUIStyle s_rowStyle;
+
+        /// <summary>
+        /// The row button, reading from the left. The stock mini button centres its text, which
+        /// only shows while the row is wide enough for all of it; once the name is cut, centring
+        /// takes the same bite out of both ends and loses the priority number and the source that
+        /// start the line. Left-aligned, what is lost is the tail, which the tooltip still holds.
+        /// </summary>
+        static GUIStyle RowStyle => s_rowStyle ??= new GUIStyle(EditorStyles.miniButton)
+        {
+            alignment = TextAnchor.MiddleLeft,
+        };
+
         internal struct Result
         {
             /// <summary>The transition the pointer is over, or null. Only ever answered on the
@@ -106,10 +119,14 @@ namespace Yozolab.DaerD
                 // taken before the button sees it: an IMGUI button claims a press of any mouse
                 // button, and a button this wide would swallow the whole gesture — no context
                 // click is ever synthesised for a press that a control already took.
-                var labelContent = new GUIContent(Label(row));
-                var labelRect = GUILayoutUtility.GetRect(labelContent, EditorStyles.miniButton);
+                // Takes the slack instead of its own text width (PanelGui.Fill), with the full
+                // line as the tooltip: a transition reads as "3.  A → B    Speed > 0.5" and would
+                // otherwise set the width of the whole inspector.
+                string labelText = Label(row);
+                var labelContent = new GUIContent(labelText, labelText);
+                var labelRect = GUILayoutUtility.GetRect(labelContent, RowStyle, PanelGui.Fill);
                 if (TakeRightClick(labelRect)) result.contextClicked = i;
-                else if (GUI.Button(labelRect, labelContent, EditorStyles.miniButton))
+                else if (GUI.Button(labelRect, labelContent, RowStyle))
                     result.clicked = i;
                 GUI.backgroundColor = previousBackground;
 

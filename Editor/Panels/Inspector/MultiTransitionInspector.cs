@@ -109,7 +109,7 @@ namespace Yozolab.DaerD
 
                 EditorGUI.BeginChangeCheck();
                 int paramIndex = Mathf.Max(0, Array.IndexOf(paramNames, working.parameter));
-                paramIndex = EditorGUILayout.Popup(paramIndex, paramNames);
+                paramIndex = EditorGUILayout.Popup(paramIndex, paramNames, PanelGui.FillClickable);
                 working.parameter = paramNames[paramIndex];
                 var type = typeByName.TryGetValue(working.parameter, out var ty) ? ty : AnimatorControllerParameterType.Float;
                 bool wheeled = ConditionGui.DrawConditionValue(working, type, delayed: true);
@@ -148,7 +148,7 @@ namespace Yozolab.DaerD
 
             EditorGUILayout.BeginHorizontal();
             int paramIndex = Mathf.Max(0, Array.IndexOf(paramNames, _newCondition.parameter));
-            paramIndex = EditorGUILayout.Popup(paramIndex, paramNames);
+            paramIndex = EditorGUILayout.Popup(paramIndex, paramNames, PanelGui.FillClickable);
             _newCondition.parameter = paramNames[paramIndex];
             var type = typeByName.TryGetValue(_newCondition.parameter, out var ty) ? ty : AnimatorControllerParameterType.Float;
             ConditionGui.DrawConditionValue(_newCondition, type);

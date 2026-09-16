@@ -532,7 +532,7 @@ namespace Yozolab.DaerD
 
             var previous = GUI.color;
             if (missing) GUI.color = DaerDColors.Warning;
-            int picked = EditorGUILayout.Popup(index, options);
+            int picked = EditorGUILayout.Popup(index, options, PanelGui.FillClickable);
             GUI.color = previous;
 
             // Picking the missing entry itself is a no-op; picking a real one is the repair.

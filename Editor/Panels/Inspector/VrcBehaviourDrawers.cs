@@ -193,7 +193,7 @@ namespace Yozolab.DaerD
             // Column headers use the same subdivision as the rows so they stay aligned when
             // the inspector is resized.
             var headerRect = GUILayoutUtility.GetRect(0, EditorGUIUtility.singleLineHeight,
-                GUILayout.ExpandWidth(true));
+                GUILayout.ExpandWidth(true), GUILayout.MinWidth(TrackingRowMinWidth));
             var headerCols = SubdivideTrackingRow(headerRect);
             for (int i = 0; i < VrcTrackingColumns.Length; i++)
                 GUI.Label(headerCols[i + 1], L.Tr(VrcTrackingColumns[i]), TrackingColumnHeaderStyle);
@@ -256,11 +256,18 @@ namespace Yozolab.DaerD
         /// with the available space. Cells shrink before the label does, and both keep a floor
         /// so the checkboxes stay clickable in a narrow inspector.
         /// </summary>
+        const float minLabel = 44f;
+        const float minCell = 28f;
+
+        /// <summary>What a tracking row cannot be drawn in less than. Asked for as the row's
+        /// minimum width so a panel too narrow for it scrolls sideways: the cells are placed by
+        /// hand inside the row rect, and without this they would simply be drawn past its edge,
+        /// where nothing can reach them.</summary>
+        const float TrackingRowMinWidth = minLabel + minCell * 3f;
+
         static Rect[] SubdivideTrackingRow(Rect row)
         {
             const float preferredLabelFraction = 0.34f;
-            const float minLabel = 44f;
-            const float minCell = 28f;
 
             float labelWidth = Mathf.Max(minLabel, row.width * preferredLabelFraction);
             float cellWidth = (row.width - labelWidth) / 3f;
@@ -285,7 +292,7 @@ namespace Yozolab.DaerD
         static int DrawVrcTrackingRow(string label, int currentValue)
         {
             var rowRect = GUILayoutUtility.GetRect(0, EditorGUIUtility.singleLineHeight,
-                GUILayout.ExpandWidth(true));
+                GUILayout.ExpandWidth(true), GUILayout.MinWidth(TrackingRowMinWidth));
             var cols = SubdivideTrackingRow(rowRect);
             GUI.Label(cols[0], label);
             int picked = -1;

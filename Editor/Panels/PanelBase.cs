@@ -38,6 +38,14 @@ namespace Yozolab.DaerD
                 return;
             }
             DrawPinnedHeader();
+            // Both scrollbars on demand, as Unity draws them. The horizontal one earns its place
+            // in a narrow panel: the rows shrink to what they can (PanelGui.Fill), and what is
+            // left is a floor — a table of three checkbox columns, a line of fixed buttons — that
+            // the bar is the only way to reach past. Measured while looking for a way to suppress
+            // it when it is not: the layout hands the rows the panel's whole width whatever the
+            // scroll view is told, so once a vertical bar appears the content is wider than what
+            // is left by exactly that bar, and a short horizontal one appears with it. Reserving
+            // the vertical bar up front does not change the width the rows are given.
             _scroll = EditorGUILayout.BeginScrollView(_scroll);
             DrawContent();
             EditorGUILayout.EndScrollView();
