@@ -49,16 +49,17 @@ if daemon_alive; then
   rm -f "$DAEMON_DIR/done" "$DAEMON_DIR/result.xml"
   printf '{"filter":"%s","category":"%s"}' "$FILTER" "$CATEGORY" \
     > "$DAEMON_DIR/request.json"
-  for _ in $(seq 1 300); do
+  for _ in $(seq 1 900); do
     sleep 1
     [[ -f "$DAEMON_DIR/done" ]] && break
     daemon_alive || break
   done
   if [[ ! -f "$DAEMON_DIR/done" ]] && daemon_alive; then
-    # 生きているのに 5 分応答が無い(止まった実行はデーモン自身が 1 分で code 5 を返すので、
-    # ここに来るのはそれすら回らない状態)。勝手に殺してコールドへ落ちると常駐と
-    # ロック衝突するので、ここでは状況を言って止まるだけにする。
-    warn "デーモンは生きているが 5 分応答が無い。test-daemon.sh restart を検討 (ログ: $UNITY_LOG_DIR/daemon.log)"
+    # 生きているのに 15 分応答が無い。止まった実行はデーモン自身が 1〜2 分で code 5 を返すので、
+    # ここに来るのはそれすら回らない状態。全件は正当に長い — GUI 常駐ではテストが起こす
+    # ドメインリロードで実行がやり直され、実測 8 分超になった(2026-09-16)。短くしない。
+    # 勝手に殺してコールドへ落ちると常駐とロック衝突するので、ここでは状況を言って止まるだけ。
+    warn "デーモンは生きているが 15 分応答が無い。test-daemon.sh restart を検討 (ログ: $UNITY_LOG_DIR/daemon.log)"
     exit 1
   fi
   if [[ -f "$DAEMON_DIR/done" ]]; then
