@@ -35,6 +35,8 @@ namespace Yozolab.DaerD
             EditorGUILayout.Space(2);
             EditorGUILayout.LabelField(" ", L.Tr("Shift + wheel switches layer, anywhere in the window."),
                 EditorStyles.miniLabel);
+            EditorGUILayout.LabelField(" ", L.Tr("Ctrl + Shift + wheel switches tab, anywhere in the window."),
+                EditorStyles.miniLabel);
 
             if (!string.IsNullOrEmpty(s_message))
                 EditorGUILayout.HelpBox(s_message, MessageType.Warning);

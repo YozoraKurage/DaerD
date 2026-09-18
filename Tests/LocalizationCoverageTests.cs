@@ -84,7 +84,7 @@ namespace Yozolab.DaerD.Tests
         /// </summary>
         static readonly HashSet<string> NotForTranslation = new HashSet<string>
         {
-            "DaerD", "VRChat/", "English", "日本語",
+            "DaerD", "VRChat/", "PhysBone/", "English", "日本語",
             "AAP", "DBT", "Req",
         };
 

@@ -17,6 +17,23 @@ namespace Yozolab.DaerD
         };
         static readonly AnimatorConditionMode[] FloatModes = { AnimatorConditionMode.Greater, AnimatorConditionMode.Less };
 
+        /// <summary>
+        /// For a control that should take the width left over rather than the width of its own
+        /// text. IMGUI sizes a popup — or a rect asked for by content — to what is inside it, with
+        /// no upper bound, and a scroll view whose content asks for more than it has scrolls
+        /// sideways: one long state or parameter name made the whole inspector wider than the
+        /// panel and clipped every other row with it. The caller puts the full text in a tooltip,
+        /// since what does not fit is cut rather than shrunk.
+        /// </summary>
+        public static readonly GUILayoutOption[] Fill = { GUILayout.MinWidth(0f), GUILayout.ExpandWidth(true) };
+
+        /// <summary>
+        /// The same for something that has to stay usable when the panel is narrow: a popup
+        /// squeezed to nothing cannot be clicked, so it keeps a floor of one short word and lets
+        /// the row's fixed parts (a value field, a ✕) have the rest.
+        /// </summary>
+        public static readonly GUILayoutOption[] FillClickable = { GUILayout.MinWidth(56f), GUILayout.ExpandWidth(true) };
+
         public static void HorizontalLine()
         {
             EditorGUILayout.Space(5);

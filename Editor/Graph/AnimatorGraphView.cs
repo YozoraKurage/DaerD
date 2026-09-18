@@ -263,13 +263,28 @@ namespace Yozolab.DaerD
             else return;
 
             if (source == null || destination == null || source == destination) return;
-            if (!TransitionConnect.CanConnect(source, destination)) return;
 
-            _sync.CreateTransition(source, destination);
-            // Defer the rebuild: this runs inside Unity's EdgeDragHelper.HandleMouseUp, which keeps
-            // using the drag candidate / ports after we return. Rebuilding synchronously would tear
-            // those down mid-event. (Mirrors the port-to-port path, which also RequestRebuilds.)
-            _sync.RequestRebuild();
+            // Same path as a drop on a port. It defers whatever it does past this handler: this
+            // runs inside Unity's EdgeDragHelper.HandleMouseUp, which keeps using the drag
+            // candidate / ports after we return, so a synchronous rebuild would tear them down.
+            _sync.ConnectByDrop(source, destination, dropWorld);
+        }
+
+        /// <summary>Where the pointer last was, in panel (world) coordinates.</summary>
+        public Vector2 LastMouseWorld => _lastMouseWorld;
+
+        /// <summary>
+        /// A panel (world) position as the GUI point <see cref="GenericMenu.DropDown"/> takes.
+        /// DropDown maps its rect to the screen through whichever IMGUI view is current, which
+        /// need not be this window; converting to the screen here and back through the same
+        /// mapping lands on the pointer whichever view that is.
+        /// </summary>
+        public Vector2 WorldToGuiPoint(Vector2 world)
+        {
+            var window = Owner?.Window;
+            if (window == null) return world;
+            var screen = window.position.position + window.rootVisualElement.WorldToLocal(world);
+            return GUIUtility.ScreenToGUIPoint(screen);
         }
 
         // ---- port compatibility ---------------------------------------------

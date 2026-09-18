@@ -656,16 +656,18 @@ namespace Yozolab.DaerD
             }
             else
             {
+                string redirect = L.Tr("Redirect Transition") + suffix;
                 foreach (var target in targets)
                 {
-                    var destination = target;
-                    evt.menu.AppendAction(
-                        MenuEscape(L.Tr("Redirect Transition") + suffix) + "/" + MenuEscape(GraphSync.NodeLabel(destination)),
+                    var destination = target.End;
+                    evt.menu.AppendAction(target.MenuPath(redirect),
                         _ => _sync.RedirectEdge(edge, destination));
                 }
             }
 
-            evt.menu.AppendAction(L.Tr("Replicate Transition") + suffix, _ => _sync.ReplicateEdge(edge));
+            evt.menu.AppendAction(L.Tr("Replicate Transition") + suffix,
+                _ => _sync.ReplicateEdge(edge),
+                _sync.CanReplicateEdge(edge) ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
 
             int copyCount = 0;
             foreach (var e in selectedEdges)

@@ -42,6 +42,11 @@ RUN apt-get -q update \
   locales \
   # distillery のログ repo を remote 同期するときの保存時暗号化に使う。
   git-crypt \
+  # 常駐 Unity を GUI モード（xvfb 上）で動かすとき、モーダルダイアログ（コンパイル
+  # エラー時の "Enter Safe Mode?" 等）をボタン押下で片付けるのに xdotool、画面の記録に
+  # xwd (x11-apps) を使う。test-daemon.sh 参照。
+  xdotool \
+  x11-apps \
   # VS Code / Claude Code が LANG=en_US.UTF-8 を送ってくるのに、ベースイメージには
   # C.UTF-8 しか無くて毎コマンド setlocale 警告が出る。生成しておく。
   && sed -i 's/^# *\(en_US.UTF-8\)/\1/' /etc/locale.gen && locale-gen \

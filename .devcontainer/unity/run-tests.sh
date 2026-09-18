@@ -55,8 +55,10 @@ if daemon_alive; then
     daemon_alive || break
   done
   if [[ ! -f "$DAEMON_DIR/done" ]] && daemon_alive; then
-    # 生きているのに 15 分応答が無い。勝手に殺してコールドへ落ちると常駐と
-    # ロック衝突するので、ここでは状況を言って止まるだけにする。
+    # 生きているのに 15 分応答が無い。止まった実行はデーモン自身が 1〜2 分で code 5 を返すので、
+    # ここに来るのはそれすら回らない状態。全件は正当に長い — GUI 常駐ではテストが起こす
+    # ドメインリロードで実行がやり直され、実測 8 分超になった(2026-09-16)。短くしない。
+    # 勝手に殺してコールドへ落ちると常駐とロック衝突するので、ここでは状況を言って止まるだけ。
     warn "デーモンは生きているが 15 分応答が無い。test-daemon.sh restart を検討 (ログ: $UNITY_LOG_DIR/daemon.log)"
     exit 1
   fi
@@ -67,6 +69,10 @@ if daemon_alive; then
       grep -o '[^ ]*\.cs([0-9]*,[0-9]*): error CS[0-9]*: .*' \
         "$UNITY_LOG_DIR/daemon.log" 2>/dev/null | sort -u | head -50
       exit 3
+    fi
+    if [[ "$code" == 5 ]]; then
+      warn "デーモンが止まっていた: $(sed -n 2p "$DAEMON_DIR/done") — $DAEMON_DIR/trace.log を見てから test-daemon.sh restart を"
+      exit 5
     fi
     echo ""
     node "$SCRIPT_DIR/summarize-results.js" "$DAEMON_DIR/result.xml" || true

@@ -44,6 +44,17 @@ namespace Yozolab.DaerD
         /// switches so parameters can be copied across open tabs.</summary>
         static AnimatorControllerParameter s_parameterClipboard;
 
+        // The name box holds its text here until something takes the rename decision, because the
+        // decision is this panel's and not the text field's. A DelayedTextField would only hand
+        // the text over when Unity's own delayed editor notices the focus change, which never
+        // happens for a click on empty space — nothing there claims focus — so a typed name was
+        // lost unless the user pressed Enter. _editingFrom is the name the box was opened on and
+        // identifies the row: it survives reordering and filtering, which a row index doesn't.
+        string _editingFrom;
+        string _editingText;
+
+        static string NameControl(string parameterName) => "daerd-parameter-name:" + parameterName;
+
         /// <summary>Show runtime values while the editor plays. Session-static like the
         /// analyzer's severity filter — a display preference, not worth an EditorPref. On by
         /// default: during play mode the defaults are the less useful of the two.</summary>
@@ -58,6 +69,8 @@ namespace Yozolab.DaerD
             context.ControllerChanged += Refresh;
             context.ParametersChanged += Refresh;
             context.ControllerChanged += InvalidateStore;
+            // A half-typed name belongs to the controller it was typed against.
+            context.ControllerChanged += CancelNameEdit;
             // The store slot is also editable from the home screen, which announces the change
             // as a parameter change — the cached wrapper here would otherwise stay stale.
             context.ParametersChanged += InvalidateStore;
@@ -133,6 +146,14 @@ namespace Yozolab.DaerD
 
         protected override void DrawContent()
         {
+            // The one place a rename is decided: the box stopped being the focused control, so
+            // whatever is in it is the user's answer. Sitting at the top of the pass rather than
+            // in the row means a row that has meanwhile been filtered out, reordered or scrolled
+            // away still commits — and the rename mutates the array the loop below reads, which
+            // is exactly what it must not do mid-loop.
+            if (_editingFrom != null && GUI.GetNameOfFocusedControl() != NameControl(_editingFrom))
+                CommitNameEdit();
+
             var controller = Context.Controller;
             var parameters = controller.parameters;
 
@@ -170,33 +191,7 @@ namespace Yozolab.DaerD
                 _reorder.DrawHandle();
                 visibleReal.Add(i);
 
-                var prevColor = GUI.color;
-                if (unused.Contains(p.name)) GUI.color = DaerDColors.Warning;
-                EditorGUI.BeginChangeCheck();
-                string newName = EditorGUILayout.DelayedTextField(p.name, GUILayout.MinWidth(90));
-                if (EditorGUI.EndChangeCheck() && newName != p.name && !string.IsNullOrEmpty(newName))
-                {
-                    if (!ParameterRenamer.Rename(controller, p.name, newName))
-                        EditorUtility.DisplayDialog(L.Tr("Rename Failed"),
-                            L.Tr("A parameter named '{0}' already exists.", newName), L.Tr("OK"));
-                    else
-                    {
-                        _store?.Rename(p.name, newName);
-                        // A menu whose controls name this parameter would be left pointing at a
-                        // name nothing answers to. Nothing assigns that association any more
-                        // (see GraphFrameData.expressionsMenu) — this reaches controllers that
-                        // were given a menu while the slot existed, and follows a rename through
-                        // for them rather than breaking their menu on the way out.
-                        var rootMenu = GraphFrameData.GetExpressionsMenu(controller);
-                        if (VrcMenuAccess.Is(rootMenu))
-                            VrcMenuAccess.RenameParameterReferences(rootMenu, p.name, newName);
-                        OfferSiblingRename(controller, p.name, newName);
-                    }
-                    Context.NotifyParametersChanged();
-                    Context.NotifyGraphStructureChanged();
-                    GUIUtility.ExitGUI();
-                }
-                GUI.color = prevColor;
+                DrawNameField(p, i, unused.Contains(p.name));
 
                 EditorGUI.BeginChangeCheck();
                 var newType = (AnimatorControllerParameterType)EditorGUILayout.EnumPopup(p.type, GUILayout.Width(66));
@@ -220,23 +215,119 @@ namespace Yozolab.DaerD
 
                 // Find-uses: lists every transition condition / blend-tree blend slot / state
                 // parameter override that mentions this parameter, plus row actions
-                // (duplicate / copy / remap / delete-and-clean).
+                // (duplicate / copy / remap / delete, PhysBone family completion).
                 if (GUILayout.Button(FindContent, EditorStyles.miniButton, GUILayout.Width(DaerDLayout.GlyphButton)))
                 {
                     ShowUsagesMenu(p.name, i);
                     GUIUtility.ExitGUI();
                 }
 
-                if (GUILayout.Button("✕", EditorStyles.miniButton, GUILayout.Width(DaerDLayout.GlyphButton)))
-                { RemoveParameter(i); GUIUtility.ExitGUI(); }
-
                 EditorGUILayout.EndHorizontal();
+
+                // Right-click anywhere on the row is the same menu as "?" — the glyph is easy
+                // to miss and a context click is what the hand tries first.
+                if (Event.current.type == EventType.ContextClick &&
+                    rowRect.Contains(Event.current.mousePosition))
+                {
+                    Event.current.Use();
+                    ShowUsagesMenu(p.name, i);
+                    GUIUtility.ExitGUI();
+                }
                 _reorder.Row(rowRect);
             }
             _reorder.End((from, to) => MoveParameter(visibleReal[from], visibleReal[to]));
 
             if (parameters.Length == 0)
                 EditorGUILayout.LabelField(L.Tr("No parameters."), EditorStyles.centeredGreyMiniLabel);
+        }
+
+        /// <summary>
+        /// The name box. Drawn into a rect this method reserves itself rather than through
+        /// EditorGUILayout, because both things it has to do need the rect before the text field
+        /// sees the event: a right-click has to become the row menu (the text editor answers
+        /// ContextClick with its own cut/copy/paste menu and consumes it), and the typed text has
+        /// to be kept where this panel can commit it — see _editingFrom.
+        /// </summary>
+        void DrawNameField(AnimatorControllerParameter parameter, int index, bool unused)
+        {
+            var rect = GUILayoutUtility.GetRect(GUIContent.none, EditorStyles.textField,
+                GUILayout.MinWidth(90), GUILayout.ExpandWidth(true));
+            if (Event.current.type == EventType.ContextClick && rect.Contains(Event.current.mousePosition))
+            {
+                Event.current.Use();
+                ShowUsagesMenu(parameter.name, index);
+                GUIUtility.ExitGUI();
+            }
+
+            var control = NameControl(parameter.name);
+            bool editing = _editingFrom == parameter.name;
+
+            var prevColor = GUI.color;
+            if (unused) GUI.color = DaerDColors.Warning;
+            GUI.SetNextControlName(control);
+            string typed = EditorGUI.TextField(rect, editing ? _editingText : parameter.name);
+            GUI.color = prevColor;
+
+            if (GUI.GetNameOfFocusedControl() != control) return;
+            _editingFrom = parameter.name;
+            _editingText = typed;
+
+            // Enter and Escape only settle where the focus goes; the commit itself happens on the
+            // next pass, in the one place that owns it.
+            var evt = Event.current;
+            if (evt.type != EventType.KeyDown) return;
+            if (evt.keyCode == KeyCode.Return || evt.keyCode == KeyCode.KeypadEnter)
+            {
+                evt.Use();
+                GUIUtility.keyboardControl = 0;
+                EditorGUIUtility.editingTextField = false;
+            }
+            else if (evt.keyCode == KeyCode.Escape)
+            {
+                evt.Use();
+                CancelNameEdit();
+                GUIUtility.keyboardControl = 0;
+                EditorGUIUtility.editingTextField = false;
+            }
+        }
+
+        /// <summary>Apply what the name box holds. Renames by the name the box was opened on, so
+        /// it stays right even if the list moved underneath it; a blank box, an unchanged name or
+        /// a parameter that has since gone is simply dropped.</summary>
+        void CommitNameEdit()
+        {
+            var from = _editingFrom;
+            var to = _editingText == null ? string.Empty : _editingText.Trim();
+            CancelNameEdit();
+            if (from == null || to.Length == 0 || to == from) return;
+
+            var controller = Context.Controller;
+            if (controller == null || DbtBuilder.FindParameter(controller, from) == null) return;
+
+            if (!ParameterRenamer.Rename(controller, from, to))
+                EditorUtility.DisplayDialog(L.Tr("Rename Failed"),
+                    L.Tr("A parameter named '{0}' already exists.", to), L.Tr("OK"));
+            else
+            {
+                _store?.Rename(from, to);
+                // A menu whose controls name this parameter would be left pointing at a name
+                // nothing answers to. Nothing assigns that association any more (see
+                // GraphFrameData.expressionsMenu) — this reaches controllers that were given a
+                // menu while the slot existed, and follows a rename through for them rather than
+                // breaking their menu on the way out.
+                var rootMenu = GraphFrameData.GetExpressionsMenu(controller);
+                if (VrcMenuAccess.Is(rootMenu))
+                    VrcMenuAccess.RenameParameterReferences(rootMenu, from, to);
+                OfferSiblingRename(controller, from, to);
+            }
+            Context.NotifyParametersChanged();
+            Context.NotifyGraphStructureChanged();
+        }
+
+        void CancelNameEdit()
+        {
+            _editingFrom = null;
+            _editingText = null;
         }
 
         /// <summary>The value column: what the Animator holds while something is running it,
@@ -564,6 +655,33 @@ namespace Yozolab.DaerD
                 }
             }
 
+            // PhysBone family completion. Any row can seed it: a member name contributes its
+            // prefix, any other name IS the prefix — so "make one parameter, right-click,
+            // complete the family" needs no prefix prompt. Present members show checked so the
+            // submenu also answers "which of the five does this controller have?"; the types
+            // are fixed by what the PhysBone system writes, hence shown, not chosen.
+            menu.AddSeparator(string.Empty);
+            var familyPrefix = PhysBoneSiblings.PrefixOf(parameterName) ?? parameterName;
+            var missingFamily = PhysBoneSiblings.MissingFamily(controller, parameterName);
+            foreach (var (suffix, type) in PhysBoneSiblings.Family)
+            {
+                var fullName = familyPrefix + suffix;
+                var shownName = fullName.Replace('/', '∕');
+                if (missingFamily.Contains((fullName, type)))
+                {
+                    var captured = (fullName, type);
+                    menu.AddItem(new GUIContent("PhysBone/" + L.Tr("Add {0}  ({1})", shownName, type)),
+                        false, () => AddPhysBoneFamily(index,
+                            new List<(string, AnimatorControllerParameterType)> { captured }));
+                }
+                else
+                    menu.AddItem(new GUIContent("PhysBone/" + shownName + "  (" + type + ")"),
+                        true, null);   // already on the controller — shown checked, non-clickable
+            }
+            if (missingFamily.Count > 1)
+                menu.AddItem(new GUIContent("PhysBone/" + L.Tr("Add All Missing ({0})", missingFamily.Count)),
+                    false, () => AddPhysBoneFamily(index, missingFamily));
+
             menu.AddSeparator(string.Empty);
             menu.AddItem(new GUIContent(L.Tr("Duplicate")), false, () => DuplicateParameter(index));
             menu.AddItem(new GUIContent(L.Tr("Copy")), false, () => CopyParameter(index));
@@ -591,6 +709,11 @@ namespace Yozolab.DaerD
             if (!anyTarget)
                 menu.AddDisabledItem(new GUIContent(L.Tr("Remap References To")));
 
+            // Plain delete moved here from the per-row "✕": a destructive control on every row
+            // was one misclick from losing a parameter, and the menu is where the rest of the
+            // row's actions already live. No confirm, same as the button it replaces — the
+            // references it may orphan are exactly what "Delete and Clean" below is for.
+            menu.AddItem(new GUIContent(L.Tr("Delete")), false, () => RemoveParameter(index));
             menu.AddItem(new GUIContent(L.Tr("Delete and Clean")), false, () =>
             {
                 if (!EditorUtility.DisplayDialog(L.Tr("Delete and Clean"),
@@ -602,6 +725,27 @@ namespace Yozolab.DaerD
                 Context.NotifyGraphStructureChanged();
             });
             menu.ShowAsContext();
+        }
+
+        /// <summary>Add PhysBone family members right after the seed row, in family order, as
+        /// one undo step. Deliberately touches neither the store nor the defaults: these are
+        /// written by each client's own PhysBone system, so declaring them in expression
+        /// parameters would only spend synced bits on values the wire never carries.</summary>
+        void AddPhysBoneFamily(int index,
+            List<(string name, AnimatorControllerParameterType type)> members)
+        {
+            var controller = Context.Controller;
+            Undo.RegisterCompleteObjectUndo(controller, "Add PhysBone Parameters");
+            int insertAt = index + 1;
+            foreach (var (name, type) in members)
+            {
+                if (DbtBuilder.FindParameter(controller, name) != null) continue;
+                controller.AddParameter(name, type);
+                MoveParameter(controller.parameters.Length - 1,
+                    Mathf.Min(insertAt++, controller.parameters.Length - 1));
+            }
+            EditorUtility.SetDirty(controller);
+            Context.NotifyParametersChanged();
         }
 
         /// <summary>Parameters written by clips (AAP); cached per controller and dropped on

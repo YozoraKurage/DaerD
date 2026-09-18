@@ -31,6 +31,8 @@ namespace Yozolab.DaerD
         readonly List<NoteNode> _noteNodes = new List<NoteNode>();
 
         SpecialNode _entryNode, _exitNode, _anyStateNode;
+        // "(Up) parent" inside a sub-state machine; null at the layer's root machine.
+        SpecialNode _upNode;
         bool _rebuildScheduled;
 
         // Full path hash -> the node that stands for that state on this screen. A state nested
@@ -123,6 +125,17 @@ namespace Yozolab.DaerD
             AddNode(_exitNode, sm.exitPosition);
             AddNode(_anyStateNode, sm.anyStatePosition);
 
+            _upNode = null;
+            var path = _context.StateMachinePath;
+            if (path.Count > 1)
+            {
+                int parentDepth = path.Count - 2;
+                var parent = path[parentDepth];
+                _upNode = new SpecialNode(SpecialNodeKind.Up, parent != null ? parent.name : string.Empty,
+                    () => _context.GoToBreadcrumb(parentDepth));
+                AddNode(_upNode, sm.parentStateMachinePosition);
+            }
+
             foreach (var child in sm.states)
             {
                 if (child.state == null) continue;
@@ -200,6 +213,9 @@ namespace Yozolab.DaerD
                 if (_ssmNodes.TryGetValue(transition.destinationStateMachine, out var mn)) return mn;
                 if (_nestedMachineOwners.TryGetValue(transition.destinationStateMachine, out var owner)) return owner;
             }
+            // Leaves this machine altogether: drawn to "(Up) parent", as Unity's editor does.
+            if (_upNode != null && EdgeCommands.LeavesMachine(_context.CurrentStateMachine, transition))
+                return _upNode;
             return null;
         }
 
@@ -257,6 +273,7 @@ namespace Yozolab.DaerD
                 {
                     case SpecialNodeKind.Entry: node = _entryNode; break;
                     case SpecialNodeKind.Exit: node = _exitNode; break;
+                    case SpecialNodeKind.Up: node = _upNode; break;
                     default: node = _anyStateNode; break;
                 }
                 if (node != null) elements.Add(node);
@@ -343,6 +360,7 @@ namespace Yozolab.DaerD
                     {
                         case SpecialNodeKind.Entry: return _entryNode;
                         case SpecialNodeKind.Exit: return _exitNode;
+                        case SpecialNodeKind.Up: return _upNode;
                         default: return _anyStateNode;
                     }
                 default:
@@ -445,7 +463,8 @@ namespace Yozolab.DaerD
             if (change.edgesToCreate != null && change.edgesToCreate.Count > 0)
             {
                 foreach (var edge in change.edgesToCreate)
-                    CreateTransition(edge.output?.node as GraphNodeBase, edge.input?.node as GraphNodeBase);
+                    ConnectByDrop(edge.output?.node as GraphNodeBase, edge.input?.node as GraphNodeBase,
+                        _graphView.LastMouseWorld);
                 change.edgesToCreate.Clear();
                 structural = true;
             }
@@ -509,9 +528,13 @@ namespace Yozolab.DaerD
                 {
                     var p = spn.GetPosition().position;
                     var v = new Vector3(p.x, p.y, 0f);
-                    if (spn.Kind == SpecialNodeKind.Entry) sm.entryPosition = v;
-                    else if (spn.Kind == SpecialNodeKind.Exit) sm.exitPosition = v;
-                    else sm.anyStatePosition = v;
+                    switch (spn.Kind)
+                    {
+                        case SpecialNodeKind.Entry: sm.entryPosition = v; break;
+                        case SpecialNodeKind.Exit: sm.exitPosition = v; break;
+                        case SpecialNodeKind.AnyState: sm.anyStatePosition = v; break;
+                        case SpecialNodeKind.Up: sm.parentStateMachinePosition = v; break;
+                    }
                 }
                 else if (element is NoteNode nn && nn.Note != null && _frames.Data != null)
                 {
@@ -572,6 +595,85 @@ namespace Yozolab.DaerD
             return _transitions.CreateTransition(EndOf(source), EndOf(destination));
         }
 
+        /// <summary>
+        /// Adds a fresh transition from <paramref name="anchor"/>'s source to the destination the
+        /// anchor itself names — not the node its edge lands on, which for a transition into a
+        /// nested state is the machine box and for one leaving this machine is "(Up)". The source
+        /// comes off the edge, since the transition does not record where it starts.
+        /// </summary>
+        public AnimatorTransitionBase CreateTransitionLike(AnimatorTransitionBase anchor)
+        {
+            var source = FindEdge(anchor)?.output?.node as GraphNodeBase;
+            if (source == null) return null;
+            var destination = TransitionEnd.DestinationOf(anchor);
+            if (destination.Kind == TransitionEndKind.None) return null;
+            return _transitions.CreateTransition(EndOf(source), destination);
+        }
+
+        /// <summary>
+        /// Completes a transition dragged from <paramref name="source"/> and dropped on
+        /// <paramref name="destination"/> — the one entry point for a drop on a port and a drop on
+        /// a node's body. A machine node and "(Up)" each stand for many possible destinations
+        /// (the machine and what it holds; everything outside this machine), so a drop there asks
+        /// which with a menu at <paramref name="dropWorld"/> (panel coordinates) — unless there is
+        /// only one, which is simply taken. Anything else connects straight to the node.
+        /// </summary>
+        public void ConnectByDrop(GraphNodeBase source, GraphNodeBase destination, Vector2 dropWorld)
+        {
+            if (source == null || destination == null) return;
+            var from = EndOf(source);
+            List<EdgeCommands.RedirectTarget> candidates;
+            if (destination is SubStateMachineNode machineNode)
+                candidates = EdgeCommands.TargetsInside(machineNode.StateMachine, from);
+            else if (destination is SpecialNode spn && spn.Kind == SpecialNodeKind.Up)
+                candidates = EdgeCommands.TargetsOutside(_context.StateMachinePath, from);
+            else
+            {
+                if (!TransitionConnect.CanConnect(source, destination)) return;
+                // Deferred: this runs inside Unity's EdgeDragHelper.HandleMouseUp, which keeps using
+                // the drag candidate / ports after we return.
+                if (CreateTransition(source, destination) != null) RequestRebuild();
+                return;
+            }
+
+            if (candidates.Count == 0) return;
+            if (candidates.Count == 1)
+            {
+                if (_transitions.CreateTransition(from, candidates[0].End) != null) RequestRebuild();
+                return;
+            }
+            // Opened from inside the drop's own mouse event: that is the context IMGUI menus are
+            // known to open from in a UIElements view, where a scheduled callback runs outside any
+            // view. Nothing is rebuilt until an item is picked, which comes after the drag is over.
+            ShowDropMenu(_context.CurrentStateMachine, from, candidates, dropWorld);
+        }
+
+        /// <summary>
+        /// The drop menu: one item per candidate, by its path. The graph is UIElements, so there is
+        /// no IMGUI event for <see cref="GenericMenu.ShowAsContext"/> to read the pointer from; the
+        /// menu is dropped down at the drop point instead.
+        /// </summary>
+        void ShowDropMenu(AnimatorStateMachine sm, TransitionEnd source,
+            List<EdgeCommands.RedirectTarget> candidates, Vector2 dropWorld)
+        {
+            var menu = new GenericMenu();
+            foreach (var candidate in candidates)
+            {
+                var destination = candidate.End;
+                menu.AddItem(new GUIContent(candidate.MenuPath()), false, () =>
+                {
+                    // The screen may have moved on while the menu was open; the ends were read
+                    // off the machine that was showing then.
+                    if (_context.CurrentStateMachine != sm) return;
+                    var created = _transitions.CreateTransition(source, destination);
+                    if (created == null) return;
+                    Rebuild();
+                    _context.Select(created);
+                });
+            }
+            menu.DropDown(new Rect(_graphView.WorldToGuiPoint(dropWorld), Vector2.zero));
+        }
+
         /// <summary>Shorthand for <see cref="GraphNodeBase.EndOf"/>, the single node-to-end conversion.</summary>
         static TransitionEnd EndOf(GraphNodeBase node) => GraphNodeBase.EndOf(node);
 
@@ -610,51 +712,58 @@ namespace Yozolab.DaerD
             if (created.Count > 0) _context.Select(created[0]);
         }
 
-        /// <summary>Candidate destinations the edge's transitions can be pointed at instead.</summary>
-        public List<GraphNodeBase> RedirectTargets(TransitionEdge edge)
+        /// <summary>
+        /// Candidate destinations the edge's transitions can be pointed at instead — including the
+        /// states inside this level's sub-state machines, which no node here stands for. The list
+        /// is built from the state machine rather than from the graph's nodes for exactly that
+        /// reason; the graph draws one node per machine, and a transition into a machine is a
+        /// different destination from a transition into a state within it.
+        /// </summary>
+        public List<EdgeCommands.RedirectTarget> RedirectTargets(TransitionEdge edge)
         {
-            var targets = new List<GraphNodeBase>();
-            if (edge == null || edge.IsDefaultEdge) return targets;
-            var source = edge.output?.node as GraphNodeBase;
-            var current = edge.input?.node as GraphNodeBase;
-
-            var states = new List<GraphNodeBase>(_stateNodes.Values);
-            var machines = new List<GraphNodeBase>(_ssmNodes.Values);
-            states.Sort((a, b) => string.CompareOrdinal(NodeLabel(a), NodeLabel(b)));
-            machines.Sort((a, b) => string.CompareOrdinal(NodeLabel(a), NodeLabel(b)));
-
-            foreach (var node in states)
-                if (node != source && node != current) targets.Add(node);
-            foreach (var node in machines)
-                if (node != source && node != current) targets.Add(node);
-            // Only states and sub-state machines may transition to Exit.
-            if (_exitNode != null && current != _exitNode && IsConnectableState(source))
-                targets.Add(_exitNode);
-            return targets;
+            if (edge == null || edge.IsDefaultEdge)
+                return new List<EdgeCommands.RedirectTarget>();
+            // The destination comes off the first transition, not off the node the edge lands on:
+            // an edge that ends on a machine node may carry transitions that name states inside it,
+            // and reading the node would drop that machine's own entry from the candidates.
+            var current = edge.Transitions.Count > 0
+                ? TransitionEnd.DestinationOf(edge.Transitions[0])
+                : EndOf(edge.input?.node as GraphNodeBase);
+            return EdgeCommands.RedirectTargets(_context.CurrentStateMachine,
+                EndOf(edge.output?.node as GraphNodeBase), current, _context.StateMachinePath);
         }
 
-        /// <summary>Points every transition on the edge at a new destination node.</summary>
-        public void RedirectEdge(TransitionEdge edge, GraphNodeBase newDestination)
+        /// <summary>Points every transition on the edge at a new destination.</summary>
+        public void RedirectEdge(TransitionEdge edge, TransitionEnd newDestination)
         {
-            if (edge == null || edge.IsDefaultEdge || newDestination == null) return;
+            if (edge == null || edge.IsDefaultEdge) return;
+            if (newDestination.Kind == TransitionEndKind.None) return;
             if (edge.Transitions.Count == 0) return;
             var anchor = edge.Transitions[0];
 
-            _transitions.Redirect(edge.Transitions, EndOf(newDestination));
+            _transitions.Redirect(edge.Transitions, newDestination);
 
             Rebuild();
             _context.Select(anchor);
         }
 
+        /// <summary>
+        /// True when the edge has transitions to duplicate. Every kind of edge qualifies, "(Up)"
+        /// included: each copy goes where its original goes, read off the transition.
+        /// </summary>
+        public bool CanReplicateEdge(TransitionEdge edge)
+        {
+            if (edge == null || edge.IsDefaultEdge || edge.Transitions.Count == 0) return false;
+            return edge.output?.node is GraphNodeBase && edge.input?.node is GraphNodeBase;
+        }
+
         /// <summary>Adds a duplicate of every transition on the edge alongside the originals.</summary>
         public void ReplicateEdge(TransitionEdge edge)
         {
-            if (edge == null || edge.IsDefaultEdge || edge.Transitions.Count == 0) return;
+            if (!CanReplicateEdge(edge)) return;
             var source = edge.output?.node as GraphNodeBase;
-            var destination = edge.input?.node as GraphNodeBase;
-            if (source == null || destination == null) return;
 
-            var created = _transitions.Replicate(EndOf(source), EndOf(destination), edge.Transitions);
+            var created = _transitions.Replicate(EndOf(source), edge.Transitions);
 
             Rebuild();
             if (created.Count > 0) _context.Select(created[0]);
@@ -709,6 +818,7 @@ namespace Yozolab.DaerD
             AddIfInside(_entryNode);
             AddIfInside(_exitNode);
             AddIfInside(_anyStateNode);
+            AddIfInside(_upNode);
             foreach (var note in _noteNodes) AddIfInside(note);
             return result;
         }
@@ -1053,9 +1163,14 @@ namespace Yozolab.DaerD
             {
                 if (edge == null || edge.IsDefaultEdge) continue;
                 var source = edge.output?.node as GraphNodeBase;
-                var destination = edge.input?.node as GraphNodeBase;
-                if (source == null || destination == null) continue;
-                pairs.Add((EndOf(source), EndOf(destination)));
+                if (source == null) continue;
+                // Toward where the transitions go rather than the node the edge lands on, which
+                // for a nested or leaving transition is a machine box or "(Up)".
+                var destination = edge.Transitions.Count > 0
+                    ? TransitionEnd.DestinationOf(edge.Transitions[0])
+                    : EndOf(edge.input?.node as GraphNodeBase);
+                if (destination.Kind == TransitionEndKind.None) continue;
+                pairs.Add((EndOf(source), destination));
             }
             if (!_clipboard.PasteTransitionsAsNewOn(pairs, out var last)) return;
             Rebuild();
@@ -1147,15 +1262,16 @@ namespace Yozolab.DaerD
             GraphNodeBase current = null, next = null;
             if (playing)
             {
-                _runtimeNodes.TryGetValue(_playback.stateHash, out current);
+                current = RuntimeNode(_playback.stateHash);
                 if (_playback.inTransition)
-                    _runtimeNodes.TryGetValue(_playback.nextStateHash, out next);
+                    next = RuntimeNode(_playback.nextStateHash);
             }
 
             foreach (var pair in _stateNodes)
                 pair.Value.SetPlayback(pair.Value == current, pair.Value == next, _playback.progress);
             foreach (var pair in _ssmNodes)
                 pair.Value.SetPlayback(pair.Value == current, pair.Value == next, 0f);
+            _upNode?.SetPlayback(_upNode == current, _upNode == next, 0f);
 
             // An Any State transition leaves the Any State node, not the state it interrupted.
             var running = playing && _playback.inTransition
@@ -1164,6 +1280,15 @@ namespace Yozolab.DaerD
             foreach (var edge in _edges)
                 edge.SetRuntimeActive(edge == running);
         }
+
+        /// <summary>
+        /// The node standing for the state Unity reports by <paramref name="hash"/>. Every state in
+        /// this machine and beneath it is mapped, so inside a sub-state machine a hash that is not
+        /// belongs to a state outside it, which this screen shows as "(Up)" — the leaving edge to
+        /// it then lights like any other.
+        /// </summary>
+        GraphNodeBase RuntimeNode(int hash) =>
+            _runtimeNodes.TryGetValue(hash, out var node) ? node : _upNode;
 
         TransitionEdge FindRuntimeEdge(GraphNodeBase from, GraphNodeBase to)
         {

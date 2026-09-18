@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using UnityEditor.Animations;
+using UnityEngine;
 
 namespace Yozolab.DaerD.Analyze
 {
@@ -7,15 +8,24 @@ namespace Yozolab.DaerD.Analyze
     /// VRC PhysBones and Contacts expose families of auto-generated parameters sharing one
     /// prefix ("Tail_IsGrabbed", "Tail_Angle", …). When the user renames one member, the
     /// others usually need the same prefix change — this finds them so the rename UI can
-    /// offer a batch rename.
+    /// offer a batch rename; when they add one, MissingFamily lists what completes the set.
     /// </summary>
     static class PhysBoneSiblings
     {
+        /// <summary>The whole family: each auto-generated suffix with the type the PhysBone
+        /// system writes through it. The types are VRChat's contract, not a user choice.</summary>
+        public static readonly (string suffix, AnimatorControllerParameterType type)[] Family =
+        {
+            ("_IsGrabbed", AnimatorControllerParameterType.Bool),
+            ("_IsPosed", AnimatorControllerParameterType.Bool),
+            ("_Angle", AnimatorControllerParameterType.Float),
+            ("_Stretch", AnimatorControllerParameterType.Float),
+            ("_Squish", AnimatorControllerParameterType.Float),
+        };
+
         /// <summary>Auto-generated suffixes of VRC PhysBone / Contact parameter families.</summary>
         public static readonly string[] KnownSuffixes =
-        {
-            "_IsGrabbed", "_IsPosed", "_Angle", "_Stretch", "_Squish",
-        };
+            System.Array.ConvertAll(Family, member => member.suffix);
 
         /// <summary>The family prefix of <paramref name="parameterName"/>, or null when the
         /// name carries no known suffix.</summary>
@@ -43,6 +53,24 @@ namespace Yozolab.DaerD.Analyze
                     siblings.Add(parameter.name);
             }
             return siblings;
+        }
+
+        /// <summary>Family members the controller doesn't have yet, seeded from any member's
+        /// name — or, for a name with no known suffix, from the name itself as the prefix.
+        /// That second reading is what lets "make one parameter, complete the family from its
+        /// row menu" work without a prefix prompt of its own.</summary>
+        public static List<(string name, AnimatorControllerParameterType type)> MissingFamily(
+            AnimatorController controller, string parameterName)
+        {
+            var missing = new List<(string, AnimatorControllerParameterType)>();
+            if (controller == null || string.IsNullOrEmpty(parameterName)) return missing;
+            var prefix = PrefixOf(parameterName) ?? parameterName;
+            var existing = new HashSet<string>();
+            foreach (var parameter in controller.parameters) existing.Add(parameter.name);
+            foreach (var (suffix, type) in Family)
+                if (!existing.Contains(prefix + suffix))
+                    missing.Add((prefix + suffix, type));
+            return missing;
         }
 
         /// <summary>The sibling's name after the family prefix changed with the rename

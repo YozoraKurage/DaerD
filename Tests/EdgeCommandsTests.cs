@@ -167,8 +167,7 @@ namespace Yozolab.DaerD.Tests
             var original = _a.AddTransition(_b);
             original.AddCondition(AnimatorConditionMode.If, 0f, "Go");
 
-            var created = _edges.Replicate(TransitionEnd.Of(_a), TransitionEnd.Of(_b),
-                new List<AnimatorTransitionBase> { original });
+            var created = _edges.Replicate(TransitionEnd.Of(_a), new List<AnimatorTransitionBase> { original });
 
             Assert.AreEqual(1, created.Count);
             Assert.AreEqual(2, _a.transitions.Length, "the original stays, the copy joins it");
@@ -191,6 +190,101 @@ namespace Yozolab.DaerD.Tests
             _edges.Redirect(new List<AnimatorTransitionBase> { first }, TransitionEnd.Exit);
             Assert.IsTrue(first.isExit);
             Assert.IsNull(first.destinationState);
+        }
+
+        static bool Offers(List<EdgeCommands.RedirectTarget> targets, TransitionEnd end, params string[] path)
+        {
+            foreach (var target in targets)
+            {
+                if (!target.End.SameAs(end)) continue;
+                Assert.AreEqual(path, target.Path, "the same destination under a different path");
+                return true;
+            }
+            return false;
+        }
+
+        [Test]
+        public void RedirectTargets_ReachTheStatesInsideASubStateMachine()
+        {
+            var loco = _sm.AddStateMachine("Loco", new Vector3(0f, 200f, 0f));
+            var walk = loco.AddState("Walk", new Vector3(0f, 260f, 0f));
+            var inner = loco.AddStateMachine("Inner", new Vector3(0f, 320f, 0f));
+            var crouch = inner.AddState("Crouch", new Vector3(0f, 380f, 0f));
+            var transition = _a.AddTransition(_b);
+
+            var targets = EdgeCommands.RedirectTargets(_sm, TransitionEnd.Of(_a),
+                TransitionEnd.DestinationOf(transition));
+
+            // The machine itself stays reachable — entering it is a destination of its own — and
+            // sits inside its own submenu, where it cannot collide with the states listed beside it.
+            Assert.IsTrue(Offers(targets, TransitionEnd.Of(loco), "Loco", "(Entry)"));
+            Assert.IsTrue(Offers(targets, TransitionEnd.Of(walk), "Loco", "Walk"));
+            // Nesting keeps going: a state two machines down is named by the whole path.
+            Assert.IsTrue(Offers(targets, TransitionEnd.Of(inner), "Loco", "Inner", "(Entry)"));
+            Assert.IsTrue(Offers(targets, TransitionEnd.Of(crouch), "Loco", "Inner", "Crouch"));
+        }
+
+        [Test]
+        public void RedirectTarget_ReadsAsOneMenuPath_WithSlashesInNamesNeutralised()
+        {
+            var loco = _sm.AddStateMachine("Loco", new Vector3(0f, 200f, 0f));
+            var walk = loco.AddState("Walk/Run", new Vector3(0f, 260f, 0f));
+
+            var targets = EdgeCommands.RedirectTargets(_sm, TransitionEnd.Of(_a), TransitionEnd.None);
+
+            foreach (var target in targets)
+            {
+                if (!target.End.SameAs(TransitionEnd.Of(walk))) continue;
+                // The machine opens a submenu; the '/' the user typed into the state name does not.
+                Assert.AreEqual("Redirect/Loco/Walk\u2215Run", target.MenuPath("Redirect"));
+                return;
+            }
+            Assert.Fail("the nested state was not offered at all");
+        }
+
+        [Test]
+        public void RedirectTargets_LeaveOutWhereTheTransitionAlreadyGoesAndComesFrom()
+        {
+            var transition = _a.AddTransition(_b);
+
+            var targets = EdgeCommands.RedirectTargets(_sm, TransitionEnd.Of(_a),
+                TransitionEnd.DestinationOf(transition));
+
+            Assert.IsFalse(Offers(targets, TransitionEnd.Of(_a)), "the source is not a destination");
+            Assert.IsFalse(Offers(targets, TransitionEnd.Of(_b)), "it already goes there");
+            Assert.IsTrue(Offers(targets, TransitionEnd.Of(_c), "C"));
+            Assert.IsTrue(Offers(targets, TransitionEnd.Exit, "Exit"));
+        }
+
+        [Test]
+        public void RedirectTargets_OfAnAnyStateTransition_StopShortOfExit()
+        {
+            var transition = _sm.AddAnyStateTransition(_b);
+
+            var targets = EdgeCommands.RedirectTargets(_sm, TransitionEnd.AnyState,
+                TransitionEnd.DestinationOf(transition));
+
+            Assert.IsTrue(Offers(targets, TransitionEnd.Of(_c), "C"));
+            // Any State and Entry cannot transition straight to Exit, so it is never offered.
+            Assert.IsFalse(Offers(targets, TransitionEnd.Exit));
+        }
+
+        [Test]
+        public void DestinationOf_ReadsTheTransitionRatherThanTheGraph()
+        {
+            var loco = _sm.AddStateMachine("Loco", new Vector3(0f, 200f, 0f));
+            var walk = loco.AddState("Walk", new Vector3(0f, 260f, 0f));
+
+            // Drawn to the machine's node, but it names the state inside it.
+            var nested = _a.AddTransition(walk);
+            Assert.IsTrue(TransitionEnd.DestinationOf(nested).SameAs(TransitionEnd.Of(walk)));
+
+            var machine = _a.AddTransition(loco);
+            Assert.IsTrue(TransitionEnd.DestinationOf(machine).SameAs(TransitionEnd.Of(loco)));
+
+            var exit = _a.AddExitTransition();
+            Assert.IsTrue(TransitionEnd.DestinationOf(exit).SameAs(TransitionEnd.Exit));
+            Assert.AreEqual(TransitionEndKind.None, TransitionEnd.DestinationOf(null).Kind);
         }
 
         [Test]
@@ -376,6 +470,151 @@ namespace Yozolab.DaerD.Tests
             Assert.AreEqual(1, rows[0].Priority);
             Assert.AreEqual(2, rows[1].Priority);
             Assert.AreEqual("A", rows[0].Source.Label);
+        }
+
+        // Root holds A–D, "Loco" (Walk, Run, and "Inner" holding Deep) and "Sibling" (Other).
+        (AnimatorStateMachine loco, AnimatorState walk, AnimatorState run, AnimatorState deep, AnimatorState other)
+            BuildNestedMachines()
+        {
+            var loco = _sm.AddStateMachine("Loco", new Vector3(0f, 200f, 0f));
+            var walk = loco.AddState("Walk", new Vector3(0f, 0f, 0f));
+            var run = loco.AddState("Run", new Vector3(100f, 0f, 0f));
+            var inner = loco.AddStateMachine("Inner", new Vector3(0f, 100f, 0f));
+            var deep = inner.AddState("Deep", new Vector3(0f, 0f, 0f));
+            var sibling = _sm.AddStateMachine("Sibling", new Vector3(200f, 200f, 0f));
+            var other = sibling.AddState("Other", new Vector3(0f, 0f, 0f));
+            return (loco, walk, run, deep, other);
+        }
+
+        [Test]
+        public void LeavesMachine_IsTrueForWhatLiesOutsideTheSubStateMachine()
+        {
+            var (loco, walk, _, _, other) = BuildNestedMachines();
+
+            Assert.IsTrue(EdgeCommands.LeavesMachine(loco, walk.AddTransition(_a)), "a parent-level state");
+            Assert.IsTrue(EdgeCommands.LeavesMachine(loco, walk.AddTransition(other)), "a state in a sibling machine");
+            Assert.IsTrue(EdgeCommands.LeavesMachine(loco, walk.AddTransition(_sm)), "the parent machine itself");
+        }
+
+        [Test]
+        public void LeavesMachine_IsFalseForWhatStaysInside()
+        {
+            var (loco, walk, run, deep, _) = BuildNestedMachines();
+
+            Assert.IsFalse(EdgeCommands.LeavesMachine(loco, walk.AddTransition(run)), "a state in the same machine");
+            Assert.IsFalse(EdgeCommands.LeavesMachine(loco, walk.AddTransition(deep)), "a state in a child machine");
+            Assert.IsFalse(EdgeCommands.LeavesMachine(loco, walk.AddExitTransition()), "an exit transition");
+            Assert.IsFalse(EdgeCommands.LeavesMachine(loco, null));
+        }
+
+        [Test]
+        public void LeavesMachine_AtTheRoot_IsFalseForAStateInAChildMachine()
+        {
+            var (_, _, _, deep, _) = BuildNestedMachines();
+
+            Assert.IsFalse(EdgeCommands.LeavesMachine(_sm, _a.AddTransition(deep)));
+        }
+
+        static string[] Paths(List<EdgeCommands.RedirectTarget> targets)
+        {
+            var paths = new string[targets.Count];
+            for (int i = 0; i < targets.Count; i++)
+                paths[i] = string.Join("/", targets[i].Path);
+            return paths;
+        }
+
+        [Test]
+        public void TargetsInside_ListTheMachineItselfFirst_ThenWhatItHolds()
+        {
+            var (loco, _, _, _, _) = BuildNestedMachines();
+
+            var targets = EdgeCommands.TargetsInside(loco, TransitionEnd.Of(_a));
+
+            Assert.AreEqual(new[] { "(Entry)", "Run", "Walk", "Inner/(Entry)", "Inner/Deep" }, Paths(targets));
+            Assert.IsTrue(targets[0].End.SameAs(TransitionEnd.Of(loco)));
+        }
+
+        [Test]
+        public void TargetsOutside_ListTheWholeLayer_ExceptTheMachineOnScreen()
+        {
+            var (loco, walk, _, _, _) = BuildNestedMachines();
+
+            var targets = EdgeCommands.TargetsOutside(new[] { _sm, loco }, TransitionEnd.Of(walk));
+
+            Assert.AreEqual(new[] { "(Entry)", "A", "B", "C", "D", "Sibling/(Entry)", "Sibling/Other" },
+                Paths(targets));
+            Assert.IsTrue(targets[0].End.SameAs(TransitionEnd.Of(_sm)), "the root machine itself");
+        }
+
+        [Test]
+        public void TargetsOutside_TwoLevelsDown_KeepTheParentsOtherContents()
+        {
+            var (loco, _, _, deep, _) = BuildNestedMachines();
+            var inner = loco.stateMachines[0].stateMachine;
+
+            var targets = EdgeCommands.TargetsOutside(new[] { _sm, loco, inner }, TransitionEnd.Of(deep));
+
+            Assert.AreEqual(new[]
+            {
+                "(Entry)", "A", "B", "C", "D",
+                "Loco/(Entry)", "Loco/Run", "Loco/Walk",
+                "Sibling/(Entry)", "Sibling/Other"
+            }, Paths(targets));
+        }
+
+        [Test]
+        public void TargetsOutside_AtTheRoot_AreNone()
+        {
+            Assert.AreEqual(0, EdgeCommands.TargetsOutside(new[] { _sm }, TransitionEnd.Of(_a)).Count);
+            Assert.AreEqual(0, EdgeCommands.TargetsOutside(null, TransitionEnd.Of(_a)).Count);
+        }
+
+        [Test]
+        public void RedirectTargets_InsideASubStateMachine_ReachOutsideUnderUp()
+        {
+            var (loco, walk, run, _, other) = BuildNestedMachines();
+            var leaving = walk.AddTransition(_a);
+
+            var targets = EdgeCommands.RedirectTargets(loco, TransitionEnd.Of(walk),
+                TransitionEnd.DestinationOf(leaving), new[] { _sm, loco });
+
+            Assert.IsTrue(Offers(targets, TransitionEnd.Of(run), "Run"));
+            Assert.IsTrue(Offers(targets, TransitionEnd.Exit, "Exit"));
+            Assert.IsTrue(Offers(targets, TransitionEnd.Of(_sm), "(Up)", "(Entry)"));
+            Assert.IsTrue(Offers(targets, TransitionEnd.Of(_b), "(Up)", "B"));
+            Assert.IsTrue(Offers(targets, TransitionEnd.Of(other), "(Up)", "Sibling", "Other"));
+            Assert.IsFalse(Offers(targets, TransitionEnd.Of(_a)), "it already goes there");
+            Assert.IsFalse(Offers(targets, TransitionEnd.Of(walk)), "the source is not a destination");
+        }
+
+        [Test]
+        public void Replicate_RecreatesTowardTheDestinationEachTransitionNames()
+        {
+            var (_, walk, _, deep, _) = BuildNestedMachines();
+            var nested = _a.AddTransition(deep);   // drawn to Loco's node at the root
+            var leaving = walk.AddTransition(_a);  // drawn to "(Up)" inside Loco
+
+            var intoDeep = _edges.Replicate(TransitionEnd.Of(_a), new List<AnimatorTransitionBase> { nested });
+            Assert.AreEqual(1, intoDeep.Count);
+            Assert.AreSame(deep, intoDeep[0].destinationState, "the state it names, not the machine it is drawn to");
+            Assert.IsNull(intoDeep[0].destinationStateMachine);
+
+            var outward = _edges.Replicate(TransitionEnd.Of(walk), new List<AnimatorTransitionBase> { leaving });
+            Assert.AreEqual(1, outward.Count);
+            Assert.AreSame(_a, outward[0].destinationState);
+            Assert.AreEqual(2, walk.transitions.Length);
+        }
+
+        [Test]
+        public void ADropOntoTheUpNode_CreatesNothing()
+        {
+            var up = new SpecialNode(SpecialNodeKind.Up, "Base");
+            var end = GraphNodeBase.EndOf(up);
+
+            Assert.AreEqual(TransitionEndKind.None, end.Kind);
+            Assert.IsFalse(TransitionEnd.CanConnect(TransitionEnd.Of(_a), end));
+            Assert.IsNull(_edges.CreateTransition(TransitionEnd.Of(_a), end));
+            Assert.AreEqual(0, _a.transitions.Length);
         }
     }
 }

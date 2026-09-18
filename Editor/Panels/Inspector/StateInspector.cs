@@ -106,6 +106,12 @@ namespace Yozolab.DaerD
             var result = _list.Draw(rows, null, () => _context.NotifyGraphVisualsChanged(DaerDContext.GraphVisuals.AllEdges), onMove);
             if (result.hoverKnown) _sync.SetHoveredTransition(result.hovered);
 
+            if (result.contextClicked >= 0)
+            {
+                TransitionRowMenu.Show(_context, rows[result.contextClicked]);
+                GUIUtility.ExitGUI();
+            }
+
             if (result.clicked >= 0)
             {
                 var picked = rows[result.clicked].Transition;
@@ -161,7 +167,7 @@ namespace Yozolab.DaerD
             using (new EditorGUI.DisabledScope(!active))
             {
                 int idx = Mathf.Max(0, Array.IndexOf(parameters, param));
-                idx = EditorGUILayout.Popup(idx, parameters);
+                idx = EditorGUILayout.Popup(idx, parameters, PanelGui.FillClickable);
                 param = parameters[idx];
             }
             if (EditorGUI.EndChangeCheck())
