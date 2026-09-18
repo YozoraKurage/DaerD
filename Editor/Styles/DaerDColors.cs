@@ -105,6 +105,42 @@ namespace Yozolab.DaerD
         public static readonly Color ExitNode = new Color(0.46f, 0.27f, 0.27f);
         public static readonly Color AnyStateNode = new Color(0.30f, 0.40f, 0.46f);
 
+        // ---- what KIND of playable a node is ---------------------------------
+        //
+        // The PlayableGraph viewer's vocabulary. A playable's type is the only thing about it
+        // that is legible at a glance, so the type is what the node's colour says; the family
+        // is kept apart from the animator graph's above because the two never share a window
+        // and a reader should not have to ask whether this green is the same green.
+
+        /// <summary>The output at the end of a graph — what the whole picture is aimed at.</summary>
+        public static readonly Color PlayableOutput = new Color(0.18f, 0.44f, 0.46f);
+
+        /// <summary>A controller playable: one AnimatorController running.</summary>
+        public static readonly Color PlayableAnimatorController = new Color(0.24f, 0.37f, 0.58f);
+
+        /// <summary>A clip playable — the only kind of node that carries a name of its own.</summary>
+        public static readonly Color PlayableClip = new Color(0.30f, 0.47f, 0.30f);
+
+        public static readonly Color PlayableMixer = new Color(0.42f, 0.33f, 0.58f);
+
+        /// <summary>A layer mixer, which is the node a VRChat-style stack hangs off and so the
+        /// one worth telling apart from an ordinary mixer at a glance.</summary>
+        public static readonly Color PlayableLayerMixer = new Color(0.56f, 0.30f, 0.50f);
+
+        public static readonly Color PlayableScript = new Color(0.58f, 0.42f, 0.20f);
+
+        /// <summary>A playable type the viewer has no name for. Not an error — a graph may hold
+        /// anything.</summary>
+        public static readonly Color PlayableOther = new Color(0.36f, 0.36f, 0.36f);
+
+        /// <summary>The two ends of a connection's weight. An input at zero contributes nothing
+        /// and is drawn as nearly absent; at one it is drawn at full strength, and everything
+        /// between is the lerp. Weight is the one number in a graph that a picture can carry
+        /// without a label.</summary>
+        public static readonly Color PlayableLinkSilent = new Color(0.30f, 0.30f, 0.30f);
+
+        public static readonly Color PlayableLinkFull = new Color(0.95f, 0.95f, 0.70f);
+
         // ---- panel chrome ----------------------------------------------------
 
         public static readonly Color Grip = new Color(0.50f, 0.50f, 0.50f);

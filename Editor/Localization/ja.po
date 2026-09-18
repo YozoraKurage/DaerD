@@ -3764,3 +3764,80 @@ msgstr "{0} で {1} 個のパラメーターが無くなりました（{2}）。
 
 msgid "{0} parameter(s) travel in the end. That is what the expression parameters this build produced call synced — the list VRChat really carries, rather than the one the store was written with."
 msgstr "最終的に同期対象となるのは {0} 個です。これはこのビルドが生成した Expression Parameters が同期対象と言っている数で、VRChat が実際に運ぶ一覧です（ストアに書かれた一覧ではありません）。"
+
+# ---- DD PlayableGraph Viewer ----
+
+msgid "DD PlayableGraph Viewer"
+msgstr "DD PlayableGraph ビューア"
+
+msgid "Inside controllers"
+msgstr "コントローラの中も描く"
+
+msgid "Draw what Mecanim runs inside each controller: the clips, and the mixers that blend them."
+msgstr "各コントローラの中で Mecanim が実際に回しているもの（クリップと、それを混ぜるミキサー）も描きます。"
+
+msgid "No PlayableGraph is alive in the editor. Enter Play mode, or open a tool that drives an avatar."
+msgstr "エディタ内に生きている PlayableGraph がありません。Play モードに入るか、アバターを動かすツールを開いてください。"
+
+msgid "{0} — {1} playables, {2} drawn"
+msgstr "{0} — Playable {1} 個のうち {2} 個を描画"
+
+msgid "Input names are inferred from the graph's shape ({0} layout) and marked '?' — a guess, not something the graph states."
+msgstr "入力の名前はグラフの形から推測したもので（{0} のレイアウトに一致）、末尾に '?' を付けてあります。グラフ自身が述べている事実ではありません。"
+
+msgid "Select a node."
+msgstr "ノードを選択してください。"
+
+msgid "Play state"
+msgstr "再生状態"
+
+msgid "Playing"
+msgstr "再生中"
+
+msgid "Paused"
+msgstr "一時停止"
+
+msgid "Delayed"
+msgstr "遅延中"
+
+msgid "Time (s)"
+msgstr "時刻 (秒)"
+
+msgid "Duration (s)"
+msgstr "長さ (秒)"
+
+msgid "Outputs"
+msgstr "出力"
+
+msgid "Incoming weight"
+msgstr "入ってくるウェイト"
+
+msgid "Slot"
+msgstr "スロット"
+
+msgid "Slot name (guess)"
+msgstr "スロット名（推測）"
+
+msgid "Writes to"
+msgstr "書き込み先"
+
+msgid "Not drawn"
+msgstr "未描画"
+
+msgid "this playable's own inputs"
+msgstr "この Playable 自身の入力"
+
+msgid "This playable has inputs the viewer does not draw."
+msgstr "この Playable にはビューアが描かない入力があります。"
+
+msgid "slot {0}"
+msgstr "スロット {0}"
+
+msgid "slot {0}: {1}?"
+msgstr "スロット {0}: {1}?"
+
+msgid "weight {0}"
+msgstr "ウェイト {0}"
+
+msgid "weight {0} · t {1}"
+msgstr "ウェイト {0} · t {1}"

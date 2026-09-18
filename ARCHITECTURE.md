@@ -57,8 +57,13 @@ Styles / Utils / Localization（どこからでも使う道具）
   ObjectGadgetWindow, AapGadgetWindow, AsyncSyncForm/Window, Analyzer*,
   Clips*, VrcParamSyncWindow ほか。
 - **Graph/** は GraphView ベースのアニメーターグラフ（ノード/エッジ/クリップボード）。
-- 文言は必ず `L.Tr(...)`（Localization/PoCatalog、.po カタログ）。色とアイコンは
-  Styles/DaerDColors・DaerDIcons。
+- **PlayableGraph/** は DD PlayableGraph Viewer（独立ウィンドウ）: PlayableGraphSnapshot
+  （純モデル — Utility.GetAllGraphs を歩いて木とウェイトをデータ化。GraphView 非依存で
+  ヘッドレステスト可）, VrcLayerSlots（VRChat 風レイヤースタックのスロット名推測）,
+  PlayableGraphView / PlayableGraphNode（自動レイアウト描画）, PlayableFacts（表示整形）,
+  PlayableGraphWindow。
+- 文言は必ず `L.Tr(...)`（`L` は `Editor/DaerDLocale.cs`、カタログは
+  Localization/PoCatalog と .po）。色とアイコンは Styles/DaerDColors・DaerDIcons。
 
 ## DynamicAnalyze
 
