@@ -49,11 +49,28 @@ if daemon_alive; then
   rm -f "$DAEMON_DIR/done" "$DAEMON_DIR/result.xml"
   printf '{"filter":"%s","category":"%s"}' "$FILTER" "$CATEGORY" \
     > "$DAEMON_DIR/request.json"
+  # 鼓動が長く止まっていたら、忙しいのではなく固まっている。死活は PID で見る(上の
+  # コメントのとおり、忙しい常駐を殺さないため)が、PID は主スレッドが止まった Unity にも
+  # 「生きている」と答える — ネイティブのダイアログが出るとそうなり、デーモン自身の
+  # 見張りも同じ主スレッドなので code 5 すら返せない(2026-09-18 実測、22 分無音)。
+  # 鼓動は 2 秒ごとなので、この閾値は「長いテストフレーム」より十分に長く取る。
+  readonly BEAT_STALE=180
+  beat_age() {
+    local f="$DAEMON_DIR/alive"
+    [[ -f "$f" ]] || { echo 99999; return; }
+    echo $(( $(date +%s) - $(stat -c %Y "$f") ))
+  }
+  stalled=0
   for _ in $(seq 1 900); do
     sleep 1
     [[ -f "$DAEMON_DIR/done" ]] && break
     daemon_alive || break
+    if [[ $(beat_age) -gt $BEAT_STALE ]]; then stalled=1; break; fi
   done
+  if [[ $stalled == 1 ]]; then
+    warn "デーモンの鼓動が $(beat_age) 秒止まっている（主スレッドごと固まっている）。test-daemon.sh restart を"
+    exit 5
+  fi
   if [[ ! -f "$DAEMON_DIR/done" ]] && daemon_alive; then
     # 生きているのに 15 分応答が無い。止まった実行はデーモン自身が 1〜2 分で code 5 を返すので、
     # ここに来るのはそれすら回らない状態。全件は正当に長い — GUI 常駐ではテストが起こす
