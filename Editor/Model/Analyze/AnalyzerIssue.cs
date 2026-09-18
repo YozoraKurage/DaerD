@@ -29,6 +29,7 @@ namespace Yozolab.DaerD.Analyze
         ClipBindings,
         AapDriver,
         AapLayers,
+        BindingOwnership,
     }
 
     class AnalyzerIssue

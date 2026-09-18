@@ -36,6 +36,7 @@ namespace Yozolab.DaerD.Analyze
                 case IssueKind.ClipBindings: return L.Tr("Clip Bindings");
                 case IssueKind.AapDriver: return L.Tr("AAP / Driver");
                 case IssueKind.AapLayers: return L.Tr("AAP / Layers");
+                case IssueKind.BindingOwnership: return L.Tr("WD Dependence");
             }
             return kind.ToString();
         }
@@ -103,6 +104,7 @@ namespace Yozolab.DaerD.Analyze
                     issues.Add(issue);
 
             AddWriteDefaultsIssues(controller, issues);
+            AddBindingOwnershipIssues(controller, issues);
             AddMissingMotionIssues(controller, issues);
             AddLayerIssues(controller, issues);
             AddMissingBehaviourIssues(controller, issues);
@@ -693,7 +695,181 @@ namespace Yozolab.DaerD.Analyze
                         context = controller,
                         layerIndex = li,
                     });
+
+                // Measured: a Write-Defaults-OFF state in an Additive layer asserts the dense
+                // pose it is holding, and an additive layer ADDS what it asserts to the layers
+                // below — so every binding the state does not write comes out at twice the
+                // value below it, or grows every frame when the state's clip is empty. There
+                // is no authoring intent this serves, which is why it is flagged whatever the
+                // rest of the controller looks like.
+                if (layer.blendingMode == AnimatorLayerBlendingMode.Additive && hasFalse)
+                {
+                    var additive = layer;
+                    issues.Add(new AnalyzerIssue
+                    {
+                        severity = IssueSeverity.Warning,
+                        kind = IssueKind.WriteDefaults,
+                        message = L.Tr("Layer '{0}' is Additive and has Write Defaults OFF states; an additive layer adds the values it holds on top of the layers below, so everything it does not write comes out doubled.", layer.name),
+                        context = controller,
+                        layerIndex = li,
+                        fixLabel = L.Tr("Turn ON"),
+                        fixTooltip = L.Tr("Set Write Defaults ON on every state in this layer"),
+                        fix = () => SetLayerWriteDefaults(additive, true),
+                    });
+                }
             }
+        }
+
+        /// <summary>Write Defaults across every state of one layer, under a single undo step.
+        /// The bulk <see cref="SetAllWriteDefaults"/> is controller-wide and keeps Direct-tree
+        /// layers ON; this one is the Additive fix and touches nothing else.</summary>
+        static void SetLayerWriteDefaults(AnimatorControllerLayer layer, bool value)
+        {
+            if (layer.stateMachine == null) return;
+            using (new UndoScope(value ? "Write Defaults ON" : "Write Defaults OFF"))
+                foreach (var sm in layer.stateMachine.SelfAndDescendants())
+                    foreach (var cs in sm.states)
+                        if (cs.state != null && cs.state.writeDefaultValues != value)
+                            SetWriteDefaults(cs.state, value);
+        }
+
+        /// <summary>
+        /// Which animated properties nobody guarantees to write every frame — the findings that
+        /// decide whether flipping this controller's Write Defaults changes what it looks like.
+        /// The model, and everything it deliberately does not know, is in
+        /// <see cref="BindingOwnership"/>.
+        ///
+        /// Grouped rather than reported per binding: a real FX controller has thousands of
+        /// bindings and a few dozen distinct stories about them, so the rows are keyed by the
+        /// LAYERS involved and each names a sample of the bindings it covers. None of them
+        /// carries a fix — what to do about an unowned binding (write it in the other states,
+        /// give the layer an idle that writes everything, or accept it) is a design choice.
+        /// </summary>
+        static void AddBindingOwnershipIssues(AnimatorController controller, List<AnalyzerIssue> issues)
+        {
+            var ownership = BindingOwnership.Collect(controller);
+            if (ownership.Union.Count == 0) return;
+
+            // Insertion-ordered so the report is stable: the union is sorted, so the first
+            // binding of a group decides where the group appears.
+            var cross = new List<(string key, List<LayerBindings> layers, List<BindingKey> keys)>();
+            var crossIndex = new Dictionary<string, int>();
+            var single = new List<(LayerBindings layer, List<BindingKey> keys)>();
+            var singleIndex = new Dictionary<int, int>();
+            var partial = new List<(LayerBindings toucher, LayerBindings owner, List<BindingKey> keys)>();
+            var partialIndex = new Dictionary<(int, int), int>();
+
+            foreach (var key in ownership.Union)
+            {
+                var touchers = ownership.Touchers(key);
+                // Nothing reachable writes it at all — the clip that declares it sits on a
+                // state the layer can never enter. There is no layer to name, and
+                // IssueKind.UnreachableState already has that finding.
+                if (touchers.Count == 0) continue;
+
+                var owners = ownership.Owners(key);
+                if (owners.Count == 0)
+                {
+                    if (touchers.Count == 1)
+                    {
+                        var only = touchers[0];
+                        if (!singleIndex.TryGetValue(only.LayerIndex, out int at))
+                        {
+                            at = single.Count;
+                            singleIndex[only.LayerIndex] = at;
+                            single.Add((only, new List<BindingKey>()));
+                        }
+                        single[at].keys.Add(key);
+                        continue;
+                    }
+
+                    var set = new List<LayerBindings>(touchers);
+                    string signature = Signature(set);
+                    if (!crossIndex.TryGetValue(signature, out int slot))
+                    {
+                        slot = cross.Count;
+                        crossIndex[signature] = slot;
+                        cross.Add((signature, set, new List<BindingKey>()));
+                    }
+                    cross[slot].keys.Add(key);
+                    continue;
+                }
+
+                // Owned, so nothing is ever unwritten; a layer that writes it in some states
+                // only still changes the ROUTE a transition out of those states takes.
+                var lowestOwner = owners[0];
+                foreach (var toucher in touchers)
+                {
+                    if (toucher.Owns(key)) continue;
+                    var pair = (toucher.LayerIndex, lowestOwner.LayerIndex);
+                    if (!partialIndex.TryGetValue(pair, out int at))
+                    {
+                        at = partial.Count;
+                        partialIndex[pair] = at;
+                        partial.Add((toucher, lowestOwner, new List<BindingKey>()));
+                    }
+                    partial[at].keys.Add(key);
+                }
+            }
+
+            foreach (var group in cross)
+            {
+                var names = new List<string>();
+                int lowest = int.MaxValue;
+                foreach (var layer in group.layers)
+                {
+                    names.Add("'" + layer.LayerName + "'");
+                    if (layer.LayerIndex < lowest) lowest = layer.LayerIndex;
+                }
+                issues.Add(new AnalyzerIssue
+                {
+                    severity = IssueSeverity.Warning,
+                    kind = IssueKind.BindingOwnership,
+                    message = L.Tr("Layers {0} write {1} binding(s) that no layer writes in every state ({2}); what those hold when nothing writes them depends on Write Defaults.",
+                        string.Join(", ", names), group.keys.Count, Sample(group.keys)),
+                    context = controller,
+                    layerIndex = lowest,
+                });
+            }
+
+            foreach (var group in single)
+                issues.Add(new AnalyzerIssue
+                {
+                    severity = IssueSeverity.Info,
+                    kind = IssueKind.BindingOwnership,
+                    message = L.Tr("Layer '{0}' writes {1} binding(s) in some states only ({2}); what they hold in the other states depends on Write Defaults.",
+                        group.layer.LayerName, group.keys.Count, Sample(group.keys)),
+                    context = controller,
+                    layerIndex = group.layer.LayerIndex,
+                });
+
+            foreach (var group in partial)
+                issues.Add(new AnalyzerIssue
+                {
+                    severity = IssueSeverity.Info,
+                    kind = IssueKind.BindingOwnership,
+                    message = L.Tr("Layer '{0}' writes {1} binding(s) in some states that layer '{2}' writes in every state ({3}); only the path of transitions leaving those states depends on Write Defaults.",
+                        group.toucher.LayerName, group.keys.Count, group.owner.LayerName, Sample(group.keys)),
+                    context = controller,
+                    layerIndex = group.toucher.LayerIndex,
+                });
+        }
+
+        static string Signature(List<LayerBindings> layers)
+        {
+            var parts = new List<string>(layers.Count);
+            foreach (var layer in layers) parts.Add(layer.LayerIndex.ToString());
+            return string.Join("/", parts);
+        }
+
+        /// <summary>Up to four bindings named in full, and an ellipsis for the rest. Enough to
+        /// recognize what the row is about without turning the report into the matrix.</summary>
+        static string Sample(List<BindingKey> keys)
+        {
+            const int Shown = 4;
+            var parts = new List<string>(Shown);
+            for (int i = 0; i < keys.Count && i < Shown; i++) parts.Add(keys[i].Display);
+            return string.Join(", ", parts) + (keys.Count > Shown ? ", …" : string.Empty);
         }
 
         static void AddMissingMotionIssues(AnimatorController controller, List<AnalyzerIssue> issues)

@@ -1254,6 +1254,144 @@ namespace Yozolab.DaerD.Tests
             Object.DestroyImmediate(controller);
         }
 
+        // ---- binding ownership ------------------------------------------------
+
+        static List<AnalyzerIssue> OwnershipIssues(AnimatorController controller)
+        {
+            var found = new List<AnalyzerIssue>();
+            foreach (var issue in ControllerAnalyzer.Analyze(controller))
+                if (issue.kind == IssueKind.BindingOwnership) found.Add(issue);
+            return found;
+        }
+
+        /// <summary>A clip holding one Transform property of each generic hierarchy path.
+        /// SetEditorCurve, not AnimationClip.SetCurve: the latter fills in the whole Vector3,
+        /// so one path would land three bindings and the counts here would stop meaning what
+        /// they say.</summary>
+        static AnimationClip Holds(string name, params string[] paths)
+        {
+            var clip = new AnimationClip { name = name };
+            foreach (var path in paths)
+                AnimationUtility.SetEditorCurve(clip,
+                    EditorCurveBinding.FloatCurve(path, typeof(Transform), "m_LocalPosition.x"),
+                    AnimationCurve.Constant(0f, 1f, 1f));
+            return clip;
+        }
+
+        [Test]
+        public void ABindingTwoLayersWriteInSomeStatesOnly_IsOneWarningNamingBoth()
+        {
+            var controller = new AnimatorController();
+            controller.AddLayer("Gesture");
+            controller.AddLayer("Expression");
+            var clips = new List<AnimationClip>();
+            foreach (var layer in controller.layers)
+            {
+                var sm = layer.stateMachine;
+                var writes = sm.AddState("Writes");
+                var quiet = sm.AddState("Quiet");
+                writes.AddTransition(quiet);
+                var shared = Holds(layer.name + " shared", "Body");
+                var own = Holds(layer.name + " own", layer.name);
+                clips.Add(shared);
+                clips.Add(own);
+                writes.motion = shared;
+                quiet.motion = own;
+            }
+
+            var warnings = new List<AnalyzerIssue>();
+            foreach (var issue in OwnershipIssues(controller))
+                if (issue.severity == IssueSeverity.Warning) warnings.Add(issue);
+
+            Assert.AreEqual(1, warnings.Count, "one row per distinct set of layers, not one per binding");
+            StringAssert.Contains("'Gesture'", warnings[0].message);
+            StringAssert.Contains("'Expression'", warnings[0].message);
+            Assert.AreEqual(0, warnings[0].layerIndex, "the lowest layer in the set");
+            Assert.IsNull(warnings[0].fix, "what to do about an unowned binding is a design choice");
+
+            foreach (var clip in clips) Object.DestroyImmediate(clip);
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void ABindingOneLayerWritesInSomeStatesOnly_IsAnInfo()
+        {
+            var controller = NewController(out var sm);
+            var wide = sm.AddState("Wide");
+            var narrow = sm.AddState("Narrow");
+            wide.AddTransition(narrow);
+            // Body is written by both states (owned); Hand only by Wide.
+            var wideClip = Holds("Wide", "Body", "Hand");
+            var narrowClip = Holds("Narrow", "Body");
+            wide.motion = wideClip;
+            narrow.motion = narrowClip;
+
+            var issues = OwnershipIssues(controller);
+
+            Assert.AreEqual(1, issues.Count);
+            Assert.AreEqual(IssueSeverity.Info, issues[0].severity);
+            StringAssert.Contains("'Base'", issues[0].message);
+            StringAssert.Contains("Hand", issues[0].message);
+
+            Object.DestroyImmediate(wideClip);
+            Object.DestroyImmediate(narrowClip);
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void EveryBindingWrittenInEveryState_ReportsNothing()
+        {
+            var controller = NewController(out var sm);
+            var first = sm.AddState("First");
+            var second = sm.AddState("Second");
+            first.AddTransition(second);
+            var a = Holds("First", "Body");
+            var b = Holds("Second", "Body");
+            first.motion = a;
+            second.motion = b;
+
+            CollectionAssert.IsEmpty(OwnershipIssues(controller));
+
+            Object.DestroyImmediate(a);
+            Object.DestroyImmediate(b);
+            Object.DestroyImmediate(controller);
+        }
+
+        [Test]
+        public void AnAdditiveLayerWithWriteDefaultsOff_IsWarned_AndTheFixTurnsThemOn()
+        {
+            var controller = new AnimatorController();
+            controller.AddLayer("Base");
+            controller.AddLayer("Additive");
+            var layers = controller.layers;
+            layers[1].blendingMode = AnimatorLayerBlendingMode.Additive;
+            controller.layers = layers;
+
+            var sm = controller.layers[1].stateMachine;
+            var first = sm.AddState("First");
+            var second = sm.AddState("Second");
+            // All OFF, so the mixed-WD warning stays out of the way.
+            first.writeDefaultValues = false;
+            second.writeDefaultValues = false;
+
+            var warnings = new List<AnalyzerIssue>();
+            foreach (var issue in ControllerAnalyzer.Analyze(controller))
+                if (issue.kind == IssueKind.WriteDefaults && issue.severity == IssueSeverity.Warning)
+                    warnings.Add(issue);
+
+            Assert.AreEqual(1, warnings.Count);
+            StringAssert.Contains("'Additive'", warnings[0].message);
+            Assert.AreEqual(1, warnings[0].layerIndex);
+            Assert.IsNotNull(warnings[0].fix);
+
+            warnings[0].fix();
+
+            Assert.IsTrue(first.writeDefaultValues);
+            Assert.IsTrue(second.writeDefaultValues);
+
+            Object.DestroyImmediate(controller);
+        }
+
         [Test]
         public void ObjectToggle_BuildsNoTransitionThatCanNeverFire()
         {

@@ -3841,3 +3841,26 @@ msgstr "ウェイト {0}"
 
 msgid "weight {0} · t {1}"
 msgstr "ウェイト {0} · t {1}"
+
+# ---- binding ownership (WD dependence) ----
+
+msgid "WD Dependence"
+msgstr "WD 依存"
+
+msgid "Layer '{0}' is Additive and has Write Defaults OFF states; an additive layer adds the values it holds on top of the layers below, so everything it does not write comes out doubled."
+msgstr "レイヤー '{0}' は Additive で、Write Defaults OFF のステートがあります。Additive レイヤーは主張した値を下のレイヤーに加算するので、そのステートが書かないものはすべて二重になります。"
+
+msgid "Turn ON"
+msgstr "ON にする"
+
+msgid "Set Write Defaults ON on every state in this layer"
+msgstr "このレイヤーの全ステートの Write Defaults を ON にします"
+
+msgid "Layers {0} write {1} binding(s) that no layer writes in every state ({2}); what those hold when nothing writes them depends on Write Defaults."
+msgstr "レイヤー {0} が書く {1} 件のバインディングは、どのレイヤーも全ステートでは書いていません（{2}）。誰も書かないフレームでの値は Write Defaults 次第です。"
+
+msgid "Layer '{0}' writes {1} binding(s) in some states only ({2}); what they hold in the other states depends on Write Defaults."
+msgstr "レイヤー '{0}' は {1} 件のバインディングを一部のステートでしか書いていません（{2}）。それ以外のステートでの値は Write Defaults 次第です。"
+
+msgid "Layer '{0}' writes {1} binding(s) in some states that layer '{2}' writes in every state ({3}); only the path of transitions leaving those states depends on Write Defaults."
+msgstr "レイヤー '{0}' が一部のステートで書く {1} 件のバインディングは、レイヤー '{2}' が全ステートで書いています（{3}）。Write Defaults で変わるのは、そのステートから出る遷移の経路だけです。"
