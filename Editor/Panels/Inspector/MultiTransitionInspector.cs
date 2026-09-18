@@ -109,7 +109,7 @@ namespace Yozolab.DaerD
 
                 EditorGUI.BeginChangeCheck();
                 int paramIndex = Mathf.Max(0, Array.IndexOf(paramNames, working.parameter));
-                paramIndex = EditorGUILayout.Popup(paramIndex, paramNames);
+                paramIndex = EditorGUILayout.Popup(paramIndex, paramNames, PanelGui.FillClickable);
                 working.parameter = paramNames[paramIndex];
                 var type = typeByName.TryGetValue(working.parameter, out var ty) ? ty : AnimatorControllerParameterType.Float;
                 bool wheeled = ConditionGui.DrawConditionValue(working, type, delayed: true);
@@ -148,7 +148,7 @@ namespace Yozolab.DaerD
 
             EditorGUILayout.BeginHorizontal();
             int paramIndex = Mathf.Max(0, Array.IndexOf(paramNames, _newCondition.parameter));
-            paramIndex = EditorGUILayout.Popup(paramIndex, paramNames);
+            paramIndex = EditorGUILayout.Popup(paramIndex, paramNames, PanelGui.FillClickable);
             _newCondition.parameter = paramNames[paramIndex];
             var type = typeByName.TryGetValue(_newCondition.parameter, out var ty) ? ty : AnimatorControllerParameterType.Float;
             ConditionGui.DrawConditionValue(_newCondition, type);
@@ -245,10 +245,7 @@ namespace Yozolab.DaerD
             {
                 foreach (var transition in _selectedTransitions)
                 {
-                    var edge = _sync.FindEdge(transition);
-                    if (edge == null) continue;
-                    var created = _sync.CreateTransition(
-                        edge.output?.node as GraphNodeBase, edge.input?.node as GraphNodeBase);
+                    var created = _sync.CreateTransitionLike(transition);
                     if (created != null) { TransitionClipboard.Apply(created, snapshot); last = created; }
                 }
             }

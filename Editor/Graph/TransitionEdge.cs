@@ -90,6 +90,18 @@ namespace Yozolab.DaerD
             ApplyColor();
         }
 
+        /// <summary>
+        /// The stock edge repaints itself in its default or selected colour whenever its styles
+        /// resolve, which first happens when it is attached to the panel — after the rebuild has
+        /// already coloured it. Without this a muted edge came up in the default colour and only
+        /// turned red once selected, the one other path that re-colours it.
+        /// </summary>
+        protected override void OnCustomStyleResolved(ICustomStyle styles)
+        {
+            base.OnCustomStyleResolved(styles);
+            ApplyColor();
+        }
+
         public override void OnSelected()
         {
             base.OnSelected();

@@ -38,9 +38,37 @@ namespace Yozolab.DaerD
                 return;
             }
             DrawPinnedHeader();
+            // Both scrollbars on demand, as Unity draws them. The horizontal one earns its place
+            // in a narrow panel: the rows shrink to what they can (PanelGui.Fill), and what is
+            // left is a floor — a table of three checkbox columns, a line of fixed buttons — that
+            // the bar is the only way to reach past. Measured while looking for a way to suppress
+            // it when it is not: the layout hands the rows the panel's whole width whatever the
+            // scroll view is told, so once a vertical bar appears the content is wider than what
+            // is left by exactly that bar, and a short horizontal one appears with it. Reserving
+            // the vertical bar up front does not change the width the rows are given.
             _scroll = EditorGUILayout.BeginScrollView(_scroll);
             DrawContent();
             EditorGUILayout.EndScrollView();
+            DropFocusOnClickAway();
+        }
+
+        /// <summary>
+        /// A mouse-down no control claimed drops keyboard focus, the way clicking empty space in
+        /// the Inspector does. IMGUI keeps a text field focused until another control takes over,
+        /// so without this a field that commits on focus loss — the parameter name box — could
+        /// only be committed with Enter, and clicking away silently kept the edit open.
+        ///
+        /// Read after everything drew and deliberately not consumed: any control that wanted this
+        /// click has already used the event, so what is left here landed on nothing.
+        /// </summary>
+        void DropFocusOnClickAway()
+        {
+            if (Event.current.type != EventType.MouseDown || GUIUtility.keyboardControl == 0) return;
+            GUIUtility.keyboardControl = 0;
+            // Leaves keyboard input claimed for a field nothing is editing any more, which eats
+            // shortcuts until the next field takes focus.
+            EditorGUIUtility.editingTextField = false;
+            Refresh();
         }
 
         /// <summary>

@@ -63,6 +63,21 @@ namespace Yozolab.DaerD
             }
         }
 
+        /// <summary>
+        /// Where a transition currently goes, read off the transition itself rather than off the
+        /// node its edge lands on. The two differ exactly where it matters: a transition into a
+        /// state nested in a sub-state machine is drawn to the machine's node, so asking the graph
+        /// would answer "the machine" for something that names a state inside it.
+        /// </summary>
+        public static TransitionEnd DestinationOf(AnimatorTransitionBase transition)
+        {
+            if (transition == null) return None;
+            if (transition.isExit) return Exit;
+            if (transition.destinationState != null) return Of(transition.destinationState);
+            if (transition.destinationStateMachine != null) return Of(transition.destinationStateMachine);
+            return None;
+        }
+
         /// <summary>An end no transition can start from or land on — what an unknown node maps to.</summary>
         public static readonly TransitionEnd None = new TransitionEnd(TransitionEndKind.None, null, null);
 

@@ -2858,6 +2858,9 @@ msgstr "ヒント: Note をダブルクリック（または F2）すると、�
 msgid "{0} node. Drag from its port to create transitions."
 msgstr "{0} ノードです。ポートからドラッグすると Transition を作成できます。"
 
+msgid "The parent state machine. Transitions that leave this sub-state machine are drawn to it; double-click to go up."
+msgstr "親の State Machine です。この Sub-State Machine の外へ出る Transition はここへ描かれます。ダブルクリックで上の階層へ戻ります。"
+
 msgid "Blend Tree"
 msgstr "Blend Tree"
 
@@ -3052,6 +3055,12 @@ msgstr "'{0}' はどこにも使われていません"
 msgid "{0} usage(s) of '{1}'"
 msgstr "'{1}' の使用箇所 {0} 件"
 
+msgid "Add {0}  ({1})"
+msgstr "{0} を追加  ({1})"
+
+msgid "Add All Missing ({0})"
+msgstr "未追加をすべて追加 ({0})"
+
 msgid "Duplicate"
 msgstr "複製"
 
@@ -3191,6 +3200,9 @@ msgstr "インスペクター"
 
 msgid "Shift + wheel switches layer, anywhere in the window."
 msgstr "Shift + ホイールでレイヤーを切り替えます（ウィンドウ内のどこでも）。"
+
+msgid "Ctrl + Shift + wheel switches tab, anywhere in the window."
+msgstr "Ctrl + Shift + ホイールでタブを切り替えます（ウィンドウ内のどこでも）。"
 
 msgid "Rename the selected state, frame or note"
 msgstr "選択中のステート / フレーム / ノートの名前を変更"

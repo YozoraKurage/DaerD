@@ -54,6 +54,28 @@ warmup() {
   fi
 }
 
+# xdotool と xwd。GUI モードの常駐で出るダイアログ（Safe Mode の問い）を押すのと、
+# 画面の記録に使う。Dockerfile で入れてあるが、再ビルド前の古いイメージでは無いので、
+# root 無しで deb を展開して $HOME/.local/opt/x11tools に置く（test-daemon.sh が拾う）。
+install_x11tools() {
+  local x="$HOME/.local/opt/x11tools"
+  if command -v xdotool >/dev/null 2>&1 || [[ -x "$x/usr/bin/xdotool" ]]; then
+    return 0
+  fi
+  info "xdotool がイメージに無いので、deb を展開して $x に置く（再ビルドすれば不要）"
+  local a="$HOME/.local/opt/apt"
+  mkdir -p "$a/lists/partial" "$a/cache/archives/partial" "$x"
+  local opts=(-o "Dir::State::Lists=$a/lists" -o "Dir::Cache=$a/cache"
+              -o "Dir::State::status=/var/lib/dpkg/status" -o "Debug::NoLocking=1")
+  if (cd "$a" && apt-get "${opts[@]}" update >/dev/null 2>&1 \
+      && apt-get "${opts[@]}" download xdotool libxdo3 x11-apps >/dev/null 2>&1 \
+      && for d in *.deb; do dpkg -x "$d" "$x"; done); then
+    info "置いた: $x/usr/bin/xdotool"
+  else
+    warn "xdotool の展開に失敗した（ネットワーク？）。GUI 常駐は動くが、Safe Mode の問いは押せない"
+  fi
+}
+
 check_editor() {
   # ベースイメージの Unity は root がインストールしたもの。node から実行・読み取り
   # できるかをここで一度だけ確かめておく（駄目なら症状がテスト実行時の不可解な
@@ -68,6 +90,7 @@ main() {
   restore_license
   scaffold_project
   check_drop_dir
+  install_x11tools
 
   if ! have_license; then
     license_hint

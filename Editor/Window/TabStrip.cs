@@ -60,6 +60,20 @@ namespace Yozolab.DaerD
                 ? _controllers[Mathf.Clamp(index, 0, _controllers.Count - 1)]
                 : null;
 
+        /// <summary>
+        /// The tab <paramref name="step"/> places from <paramref name="active"/> along the strip,
+        /// stopping at either end rather than wrapping: a trackpad's swipe arrives as a
+        /// burst of wheel events, and wrapping would carry it round the strip and back. Null when
+        /// there is nowhere to go — the active tab is not open, or already sits at that end.
+        /// </summary>
+        public AnimatorController Neighbour(AnimatorController active, int step)
+        {
+            int index = _controllers.IndexOf(active);
+            if (index < 0 || step == 0) return null;
+            int target = Mathf.Clamp(index + step, 0, _controllers.Count - 1);
+            return target != index ? _controllers[target] : null;
+        }
+
         /// <summary>Writes the active layer index back to the per-tab memory.</summary>
         public void Remember(AnimatorController controller, int layerIndex)
         {

@@ -123,8 +123,10 @@ namespace Yozolab.DaerD
             {
                 // Entry and Any State own transition lists of their own — and lists with a
                 // priority order, which is only visible if something draws them. Exit owns
-                // none: it is where transitions end.
-                if (kind == SpecialNodeKind.Exit)
+                // none: it is where transitions end. Up owns none either.
+                if (kind == SpecialNodeKind.Up)
+                    EditorGUILayout.HelpBox(L.Tr("The parent state machine. Transitions that leave this sub-state machine are drawn to it; double-click to go up."), MessageType.Info);
+                else if (kind == SpecialNodeKind.Exit)
                     EditorGUILayout.HelpBox(L.Tr("{0} node. Drag from its port to create transitions.", kind), MessageType.Info);
                 else
                     _transitions.DrawSourceContext(kind == SpecialNodeKind.Entry

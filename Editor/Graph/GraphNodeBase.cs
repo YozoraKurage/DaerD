@@ -36,7 +36,10 @@ namespace Yozolab.DaerD
                     {
                         case SpecialNodeKind.Entry: return TransitionEnd.Entry;
                         case SpecialNodeKind.Exit: return TransitionEnd.Exit;
-                        default: return TransitionEnd.AnyState;
+                        case SpecialNodeKind.AnyState: return TransitionEnd.AnyState;
+                        // Up stands for no single end: its edges bundle transitions to whatever
+                        // lies outside this machine, so a drag cannot land on it.
+                        default: return TransitionEnd.None;
                     }
                 default:
                     return TransitionEnd.None;
