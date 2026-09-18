@@ -300,6 +300,8 @@ namespace Yozolab.DaerDTestDaemon
                 case "snippet": RunSnippet(request.arg); return;
             }
 
+            DiscardDirtyScenes();
+
             var filter = new Filter { testMode = TestMode.EditMode };
             if (!string.IsNullOrEmpty(request.filter))
                 filter.groupNames = new[] { request.filter };
@@ -315,6 +317,29 @@ namespace Yozolab.DaerDTestDaemon
             var api = ScriptableObject.CreateInstance<TestRunnerApi>();
             api.RegisterCallbacks(new Callbacks());
             api.Execute(new ExecutionSettings(filter));
+        }
+
+        /// <summary>
+        /// 実行前に、未保存の変更を持つシーンを捨てる。TestRunnerApi は EditMode の実行に
+        /// 入る前に「Scene(s) Have Been Modified」の保存確認ダイアログを出し、GUI モードでは
+        /// それがネイティブのモーダルなので主スレッドごと止まる — 鼓動も番犬も一緒に止まり、
+        /// 外から見ると「生きているのに何も返さない」になる（2026-09-18 実測: レイアウトに
+        /// DaerD と Animation のウィンドウが残った起動では Untitled シーンが起動直後から
+        /// dirty で、再起動しても同じ場所で止まった）。常駐エディタに守るべきシーンは無い。
+        /// </summary>
+        static void DiscardDirtyScenes()
+        {
+            var dirty = new List<string>();
+            for (int i = 0; i < UnityEngine.SceneManagement.SceneManager.sceneCount; i++)
+            {
+                var scene = UnityEngine.SceneManagement.SceneManager.GetSceneAt(i);
+                if (scene.isDirty) dirty.Add(string.IsNullOrEmpty(scene.name) ? "Untitled" : scene.name);
+            }
+            if (dirty.Count == 0) return;
+            Trace("dirty scene(s) discarded before the run: " + string.Join(", ", dirty));
+            UnityEditor.SceneManagement.EditorSceneManager.NewScene(
+                UnityEditor.SceneManagement.NewSceneSetup.EmptyScene,
+                UnityEditor.SceneManagement.NewSceneMode.Single);
         }
 
         /// <summary>「Type の完全名.メソッド名」を全アセンブリから探し、
