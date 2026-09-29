@@ -329,6 +329,11 @@ namespace Yozolab.DaerDTestDaemon
         /// </summary>
         static void DiscardDirtyScenes()
         {
+            // A run resumed inside Play mode (a test that entered it reloads the domain, and
+            // the daemon picks running.json up again) cannot replace scenes — NewScene throws
+            // there — and needs no discarding: the save prompt is asked before a run enters
+            // Play mode, not after.
+            if (EditorApplication.isPlayingOrWillChangePlaymode) return;
             var dirty = new List<string>();
             for (int i = 0; i < UnityEngine.SceneManagement.SceneManager.sceneCount; i++)
             {
