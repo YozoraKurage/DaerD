@@ -776,8 +776,21 @@ namespace Yozolab.DaerDTestDaemon
             public void TestFinished(ITestResultAdaptor result)
             {
                 DaerDTestDaemon.Beat();
-                if (!result.Test.IsSuite && result.TestStatus == TestStatus.Failed)
-                    _failures.Add(result);
+                if (!result.Test.IsSuite && result.TestStatus == TestStatus.Inconclusive)
+                    Trace("inconclusive case " + result.FullName + ": " + (result.Message ?? "").Split('\n')[0]);
+                if (result.TestStatus != TestStatus.Failed) return;
+                // trace.log はドメインリロードを越えて残るので、Play モードに入るテストの
+                // 前に落ちた分（_failures はリロードで消える）もここから辿れる。
+                Trace("failed " + (result.Test.IsSuite ? "suite " : "case ") + result.FullName + ": "
+                    + (result.Message ?? "").Split('\n')[0]);
+                // スイート（フィクスチャ・名前空間）の失敗は、子の失敗が伝播しただけなら
+                // 子の側で記録済み。OneTimeSetUp/TearDown やログ検査のように
+                // スイート自身が落ちたときだけ、そのスイートを名指しで残す — そうしないと
+                // 件数だけ「失敗 1」で名前が 1 つも出ない（2026-09-29 実測）。
+                if (result.Test.IsSuite && (string.IsNullOrEmpty(result.Message)
+                    || result.Message.StartsWith("One or more child tests had errors", StringComparison.Ordinal)))
+                    return;
+                _failures.Add(result);
             }
 
             public void RunFinished(ITestResultAdaptor result)
