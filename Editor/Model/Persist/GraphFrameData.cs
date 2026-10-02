@@ -1044,6 +1044,42 @@ namespace Yozolab.DaerD
         static readonly Dictionary<AnimatorController, GraphFrameData> s_holders =
             new Dictionary<AnimatorController, GraphFrameData>(ControllerIdentity.Instance);
 
+        /// <summary>
+        /// Keeps one holder for a controller that is not on disk, until the returned scope is
+        /// disposed — the records half of a detached <see cref="IR.GenerationTarget"/>. The
+        /// generators record what they build (async sync setups, the parameter store they write
+        /// declarations into) and read it back within the same run, and an in-memory controller
+        /// normally keeps none of it: <see cref="GetOrCreate"/> hands out a fresh holder every
+        /// call. Disposing forgets the holder and destroys it; nothing is ever saved.
+        /// </summary>
+        internal static IDisposable HoldInMemory(AnimatorController controller) =>
+            new InMemoryHold(controller);
+
+        sealed class InMemoryHold : IDisposable
+        {
+            readonly AnimatorController _controller;
+            readonly GraphFrameData _data;
+
+            public InMemoryHold(AnimatorController controller)
+            {
+                _controller = controller;
+                if (controller == null || !string.IsNullOrEmpty(AssetDatabase.GetAssetPath(controller))) return;
+                _data = CreateInstance<GraphFrameData>();
+                _data.name = HolderName;
+                _data.hideFlags = HideFlags.HideAndDontSave;
+                _data.savedByVersion = SavedByVersion.Current;
+                s_holders[controller] = _data;
+            }
+
+            public void Dispose()
+            {
+                if (_data == null) return;
+                if (s_holders.TryGetValue(_controller, out var held) && ReferenceEquals(held, _data))
+                    s_holders.Remove(_controller);
+                DestroyImmediate(_data);
+            }
+        }
+
         /// <summary>The frame holder already stored on the controller, or null when none exists.</summary>
         public static GraphFrameData Find(AnimatorController controller)
         {

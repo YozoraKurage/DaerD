@@ -400,7 +400,7 @@ namespace Yozolab.DaerD.Engine
 
             using (new UndoScope("Object Gadget"))
             {
-                Undo.RegisterCompleteObjectUndo(controller, "Object Gadget");
+                IR.GenerationTarget.Of(controller).Changing(controller, "Object Gadget");
                 if (replaces != null) Remove(controller, replaces);
 
                 var plan = PlanFor(controller, config, root, newLayerName);
@@ -493,7 +493,7 @@ namespace Yozolab.DaerD.Engine
             {
                 output.clip = slot.clip;
                 output.userProvided = true;
-                Undo.RegisterCompleteObjectUndo(output.clip, "Object Gadget");
+                IR.GenerationTarget.Of(controller).Changing(output.clip, "Object Gadget");
                 ToggleBuilder.Write(output.clip, plan, on);
                 EditorUtility.SetDirty(output.clip);
             }

@@ -309,14 +309,11 @@ namespace Yozolab.DaerD.Engine
             }
         }
 
-        /// <summary>Registers undo for the new object and stores it inside the .controller
-        /// file (in-memory controllers just keep the loose reference).</summary>
-        public static void Attach(AnimatorController controller, Object obj)
-        {
-            Undo.RegisterCreatedObjectUndo(obj, "DBT Gadget");
-            if (!string.IsNullOrEmpty(AssetDatabase.GetAssetPath(controller)))
-                AssetDatabase.AddObjectToAsset(obj, controller);
-        }
+        /// <summary>Files a new object with the controller the way the run's
+        /// <see cref="IR.GenerationTarget"/> says: Undo and a sub-asset in the editor, neither in
+        /// a detached run (in-memory controllers just keep the loose reference).</summary>
+        public static void Attach(AnimatorController controller, Object obj) =>
+            IR.GenerationTarget.Of(controller).Created(obj, "DBT Gadget");
 
         /// <summary>Flushes freshly attached sub-assets into the imported artifact. The Project
         /// window lists sub-assets from the import, not from memory, so anything added with

@@ -31,7 +31,7 @@ namespace Yozolab.DaerD.Engine
 
             using (new UndoScope("Async Sync"))
             {
-                Undo.RegisterCompleteObjectUndo(controller, "Async Sync");
+                IR.GenerationTarget.Of(controller).Changing(controller, "Async Sync");
 
                 var generated = EnsureParameters(controller, r);
                 var stateMachine = ResolveStateMachine(controller, r);
@@ -240,7 +240,7 @@ namespace Yozolab.DaerD.Engine
             {
                 // Regenerate the designated layer in place instead of stacking new ones.
                 stateMachine = controller.layers[r.layerIndex].stateMachine;
-                Undo.RegisterCompleteObjectUndo(stateMachine, "Async Sync");
+                IR.GenerationTarget.Of(controller).Changing(stateMachine, "Async Sync");
                 ClearStateMachine(stateMachine);
             }
             else
@@ -251,7 +251,7 @@ namespace Yozolab.DaerD.Engine
                 layers[layers.Length - 1].defaultWeight = 1f;
                 controller.layers = layers;
                 stateMachine = layers[layers.Length - 1].stateMachine;
-                Undo.RegisterCompleteObjectUndo(stateMachine, "Async Sync");
+                IR.GenerationTarget.Of(controller).Changing(stateMachine, "Async Sync");
             }
             return stateMachine;
         }
@@ -536,7 +536,7 @@ namespace Yozolab.DaerD.Engine
         {
             var driver = VrcParameterDriver.AddTo(state, "Async Send");
             if (driver == null) return null;
-            Undo.RegisterCompleteObjectUndo(driver, "Async Sync");
+            IR.GenerationTarget.Of(r.controller).Changing(driver, "Async Sync");
             VrcParameterDriver.SetLocalOnly(driver, true);
             // Before the channels, so this step's own members go out of the reading it just
             // took rather than out of the previous one.
@@ -610,7 +610,7 @@ namespace Yozolab.DaerD.Engine
                         var driver = VrcParameterDriver.AddTo(state, "Async Recv");
                         if (driver != null)
                         {
-                            Undo.RegisterCompleteObjectUndo(driver, "Async Sync");
+                            IR.GenerationTarget.Of(r.controller).Changing(driver, "Async Sync");
                             VrcParameterDriver.SetLocalOnly(driver, false);
                             // First, so a lap's window is opened before anything is counted
                             // into it — including this state's own arrival, which belongs to
@@ -752,7 +752,7 @@ namespace Yozolab.DaerD.Engine
         {
             if (existing != null)
             {
-                Undo.RegisterCompleteObjectUndo(existing, "Async Sync");
+                IR.GenerationTarget.Of(controller).Changing(existing, "Async Sync");
                 ClearStateMachine(existing);
                 return existing;
             }
@@ -761,7 +761,7 @@ namespace Yozolab.DaerD.Engine
             layers[layers.Length - 1].defaultWeight = 1f;
             controller.layers = layers;
             var machine = layers[layers.Length - 1].stateMachine;
-            Undo.RegisterCompleteObjectUndo(machine, "Async Sync");
+            IR.GenerationTarget.Of(controller).Changing(machine, "Async Sync");
             return machine;
         }
 
@@ -1041,7 +1041,7 @@ namespace Yozolab.DaerD.Engine
         {
             var driver = VrcParameterDriver.AddTo(state, "Async Group");
             if (driver == null) return;
-            Undo.RegisterCompleteObjectUndo(driver, "Async Sync");
+            IR.GenerationTarget.Of(r.controller).Changing(driver, "Async Sync");
             VrcParameterDriver.SetLocalOnly(driver, false);
             foreach (var name in group.members)
                 VrcParameterDriver.AddCopyEntry(driver, HoldParameter(r.baseName, name), name);
@@ -1102,7 +1102,7 @@ namespace Yozolab.DaerD.Engine
         {
             var driver = VrcParameterDriver.AddTo(state, "Async Stale");
             if (driver == null) return;
-            Undo.RegisterCompleteObjectUndo(driver, "Async Sync");
+            IR.GenerationTarget.Of(r.controller).Changing(driver, "Async Sync");
             VrcParameterDriver.SetLocalOnly(driver, false);
             VrcParameterDriver.AddSetEntry(driver, StaleParameter(r.baseName), verdict);
             foreach (var slotName in slotNames)
@@ -1131,7 +1131,7 @@ namespace Yozolab.DaerD.Engine
         {
             var driver = VrcParameterDriver.AddTo(state, "Async Ready");
             if (driver == null) return;
-            Undo.RegisterCompleteObjectUndo(driver, "Async Sync");
+            IR.GenerationTarget.Of(r.controller).Changing(driver, "Async Sync");
             VrcParameterDriver.SetLocalOnly(driver, false);
             VrcParameterDriver.AddSetEntry(driver, ReadyParameter(r.baseName), 1f);
             if (!clearHeld) return;

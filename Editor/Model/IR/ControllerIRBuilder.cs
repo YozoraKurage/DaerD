@@ -17,6 +17,17 @@ namespace Yozolab.DaerD.IR
     ///
     /// Returns warnings for whatever couldn't be reproduced (a behaviour type missing with
     /// the SDK absent, an unresolvable transition destination) instead of failing halfway.
+    ///
+    /// <para>BUILT IN BATCHES.</para>
+    /// States, sub-machines, transitions and behaviours are made here and handed to their owner
+    /// as one array per owner, instead of through AddState / AddTransition one at a time. Each
+    /// of those copies the owner's whole array, registers an Undo step and asks the asset
+    /// database where the controller lives — so a machine built through them costs more per
+    /// object the bigger it already is. Measured (Unity 2022.3, 600 states, 2400 transitions):
+    /// about 1.6 s through Add* against 0.1 s batched in memory, 2.3 s against 0.18 s on disk.
+    /// What the Add* calls did besides appending is done here explicitly: unique names, the
+    /// first state becoming the default, HideInHierarchy, and filing and Undo through the
+    /// run's <see cref="GenerationTarget"/>.
     /// </summary>
     static class ControllerIRBuilder
     {
@@ -24,8 +35,8 @@ namespace Yozolab.DaerD.IR
 
         class Context
         {
-            public AnimatorController controller;
-            public bool persisted;
+            public GenerationTarget target;
+            public AnimatorController controller => target.Controller;
             public readonly List<string> warnings = new List<string>();
             public readonly Dictionary<string, AnimatorState> states =
                 new Dictionary<string, AnimatorState>();
@@ -39,9 +50,10 @@ namespace Yozolab.DaerD.IR
             var warnings = new List<string>();
             if (ir == null || controller == null) return warnings;
 
-            using (new UndoScope(UndoName))
+            var target = GenerationTarget.Of(controller);
+            using (target.RecordsUndo ? new UndoScope(UndoName) : (IDisposable)null)
             {
-                Undo.RegisterCompleteObjectUndo(controller, UndoName);
+                target.Changing(controller, UndoName);
                 ApplyParameters(ir, controller, exclusive, warnings);
 
                 // Records in GraphFrameData (async-sync setups, badges, frames, notes) hang
@@ -62,14 +74,13 @@ namespace Yozolab.DaerD.IR
                 // cross-layer anything need the final list), then wire the synced overrides.
                 var built = new List<int>();
                 foreach (var layer in ir.layers)
-                    built.Add(BuildLayer(layer, controller, exclusive, oldMachineIds, warnings));
+                    built.Add(BuildLayer(layer, target, exclusive, oldMachineIds, warnings));
 
-                bool persisted = !string.IsNullOrEmpty(AssetDatabase.GetAssetPath(controller));
                 for (int i = 0; i < ir.layers.Count; i++)
                     if (ir.layers[i].syncedLayerIndex >= 0)
-                        ApplySyncedOverrides(ir.layers[i], built[i], controller, warnings, persisted);
+                        ApplySyncedOverrides(ir.layers[i], built[i], target, warnings);
 
-                EditorUtility.SetDirty(controller);
+                target.Dirty(controller);
             }
             return warnings;
         }
@@ -142,9 +153,10 @@ namespace Yozolab.DaerD.IR
         // ---- layers ------------------------------------------------------------
 
         /// <summary>Builds one layer; returns its index in the controller.</summary>
-        static int BuildLayer(ControllerIR.Layer ir, AnimatorController controller,
+        static int BuildLayer(ControllerIR.Layer ir, GenerationTarget target,
             bool exclusive, Dictionary<string, int> oldMachineIds, List<string> warnings)
         {
+            var controller = target.Controller;
             int existing = exclusive ? -1 : FindLayerIndex(controller, ir.name);
             if (existing >= 0)
                 controller.RemoveLayer(existing);
@@ -160,11 +172,7 @@ namespace Yozolab.DaerD.IR
                 syncedLayerAffectsTiming = ir.syncedLayerAffectsTiming,
             };
 
-            var context = new Context
-            {
-                controller = controller,
-                persisted = !string.IsNullOrEmpty(AssetDatabase.GetAssetPath(controller)),
-            };
+            var context = new Context { target = target };
 
             if (ir.machine != null)
             {
@@ -173,9 +181,7 @@ namespace Yozolab.DaerD.IR
                     name = ir.machine.name ?? ir.name,
                     hideFlags = HideFlags.HideInHierarchy,
                 };
-                Undo.RegisterCreatedObjectUndo(root, UndoName);
-                if (context.persisted)
-                    AssetDatabase.AddObjectToAsset(root, controller);
+                target.Created(root, UndoName);
                 layer.stateMachine = root;
 
                 CreateMachine(ir.machine, root, string.Empty, context);
@@ -208,7 +214,8 @@ namespace Yozolab.DaerD.IR
 
         // ---- machines ----------------------------------------------------------
 
-        /// <summary>First pass: creates states and sub-machines, registering their paths.</summary>
+        /// <summary>First pass: creates states and sub-machines, registering their paths. Each
+        /// machine receives its states and its sub-machines as one array apiece.</summary>
         static void CreateMachine(ControllerIR.Machine ir, AnimatorStateMachine sm,
             string prefix, Context context)
         {
@@ -218,23 +225,64 @@ namespace Yozolab.DaerD.IR
             sm.anyStatePosition = ir.anyStatePosition;
             sm.parentStateMachinePosition = ir.parentPosition;
 
+            var machineBehaviours = new List<StateMachineBehaviour>();
             foreach (var behaviourIr in ir.behaviours)
                 BuildBehaviour(behaviourIr, string.IsNullOrEmpty(prefix) ? ir.name : prefix,
-                    sm.AddStateMachineBehaviour, context);
+                    type => CreateLooseBehaviour(type, context, machineBehaviours), context);
+            if (machineBehaviours.Count > 0) sm.behaviours = machineBehaviours.ToArray();
 
-            foreach (var stateIr in ir.states)
+            // AddState made names unique among the machine's states, and AddStateMachine among
+            // its sub-machines; an IR read from a controller with duplicate names (the analyzer
+            // reports them, Unity allows them) has to come out the same way.
+            var stateNames = new HashSet<string>();
+            var states = new ChildAnimatorState[ir.states.Count];
+            for (int i = 0; i < ir.states.Count; i++)
             {
-                var state = sm.AddState(stateIr.name, stateIr.position);
+                var stateIr = ir.states[i];
+                var state = new AnimatorState
+                {
+                    name = Unique(stateNames, stateIr.name),
+                    hideFlags = HideFlags.HideInHierarchy,
+                };
+                context.target.Created(state, UndoName);
                 context.states[ControllerIR.Join(prefix, stateIr.name)] = state;
                 ConfigureState(state, stateIr, context);
+                states[i] = new ChildAnimatorState { state = state, position = stateIr.position };
             }
+            sm.states = states;
+            // AddState's other side effect: the first state of a machine without a default
+            // becomes it. WireMachine sets the IR's own default over this when it names one.
+            if (sm.defaultState == null && states.Length > 0) sm.defaultState = states[0].state;
 
-            foreach (var child in ir.machines)
+            var machineNames = new HashSet<string>();
+            var children = new ChildAnimatorStateMachine[ir.machines.Count];
+            for (int i = 0; i < ir.machines.Count; i++)
             {
-                var childSm = sm.AddStateMachine(child.machine.name, child.position);
-                CreateMachine(child.machine, childSm,
-                    ControllerIR.Join(prefix, child.machine.name), context);
+                var child = ir.machines[i];
+                var childSm = new AnimatorStateMachine
+                {
+                    name = Unique(machineNames, child.machine.name),
+                    hideFlags = HideFlags.HideInHierarchy,
+                };
+                context.target.Created(childSm, UndoName);
+                children[i] = new ChildAnimatorStateMachine { stateMachine = childSm, position = child.position };
             }
+            sm.stateMachines = children;
+            for (int i = 0; i < ir.machines.Count; i++)
+                CreateMachine(ir.machines[i].machine, children[i].stateMachine,
+                    ControllerIR.Join(prefix, ir.machines[i].machine.name), context);
+        }
+
+        /// <summary>The name Unity's AddState / AddStateMachine would have given: the wanted one,
+        /// or "wanted 0", "wanted 1"… — Unity's own numbering, which is not the "wanted (1)" of
+        /// ObjectNames.GetUniqueName (measured against AddState, BatchedRebuildTests).</summary>
+        static string Unique(HashSet<string> taken, string wanted)
+        {
+            string name = wanted ?? string.Empty;
+            for (int i = 0; taken.Contains(name); i++)
+                name = (wanted ?? string.Empty) + " " + i;
+            taken.Add(name);
+            return name;
         }
 
         static void ConfigureState(AnimatorState state, ControllerIR.State ir, Context context)
@@ -259,9 +307,12 @@ namespace Yozolab.DaerD.IR
             else
                 state.motion = ir.motionAsset;
 
+            var behaviours = new List<StateMachineBehaviour>();
             foreach (var behaviour in ir.behaviours)
-                BuildBehaviour(behaviour, state.name, state.AddStateMachineBehaviour, context);
-            EditorUtility.SetDirty(state);
+                BuildBehaviour(behaviour, state.name,
+                    type => CreateLooseBehaviour(type, context, behaviours), context);
+            if (behaviours.Count > 0) state.behaviours = behaviours.ToArray();
+            context.target.Dirty(state);
         }
 
         static BlendTree BuildTree(ControllerIR.Tree ir, Context context)
@@ -278,9 +329,7 @@ namespace Yozolab.DaerD.IR
                 useAutomaticThresholds = false,
                 hideFlags = HideFlags.HideInHierarchy,
             };
-            Undo.RegisterCreatedObjectUndo(tree, UndoName);
-            if (context.persisted)
-                AssetDatabase.AddObjectToAsset(tree, context.controller);
+            context.target.Created(tree, UndoName);
 
             var children = new ChildMotion[ir.children.Count];
             for (int i = 0; i < ir.children.Count; i++)
@@ -309,7 +358,7 @@ namespace Yozolab.DaerD.IR
                 Write(serialized, "m_NormalizedBlendValues", ir.normalizedBlendValues);
                 serialized.ApplyModifiedPropertiesWithoutUndo();
             }
-            EditorUtility.SetDirty(tree);
+            context.target.Dirty(tree);
             return tree;
         }
 
@@ -356,7 +405,8 @@ namespace Yozolab.DaerD.IR
         }
 
         /// <summary>Second pass: transitions and default states, now that every destination
-        /// path resolves.</summary>
+        /// path resolves. Every owner — a state, the Any State, Entry, a sub-machine's exits —
+        /// is handed its transitions as one array.</summary>
         static void WireMachine(ControllerIR.Machine ir, AnimatorStateMachine sm,
             string prefix, Context context)
         {
@@ -368,95 +418,105 @@ namespace Yozolab.DaerD.IR
             {
                 if (!context.states.TryGetValue(ControllerIR.Join(prefix, stateIr.name), out var state))
                     continue;
+                var built = new List<AnimatorStateTransition>();
                 foreach (var t in stateIr.transitions)
                 {
-                    AnimatorStateTransition built = null;
-                    switch (Resolve(t, context, out var destState, out var destMachine))
-                    {
-                        case ControllerIR.Transition.Target.Exit:
-                            built = state.AddExitTransition();
-                            break;
-                        case ControllerIR.Transition.Target.State:
-                            if (destState != null) built = state.AddTransition(destState);
-                            break;
-                        case ControllerIR.Transition.Target.Machine:
-                            if (destMachine != null) built = state.AddTransition(destMachine);
-                            break;
-                    }
-                    if (built == null)
+                    var made = StateTransition(t, context, allowExit: true);
+                    if (made == null)
                         context.warnings.Add(L.Tr("Transition from '{0}' to '{1}' could not be resolved — skipped.",
                             stateIr.name, t.destination));
                     else
-                        ApplyTransition(built, t);
+                        built.Add(made);
                 }
+                if (built.Count > 0) state.transitions = built.ToArray();
             }
 
+            var any = new List<AnimatorStateTransition>();
             foreach (var t in ir.anyStateTransitions)
             {
-                AnimatorStateTransition built = null;
-                switch (Resolve(t, context, out var destState, out var destMachine))
-                {
-                    case ControllerIR.Transition.Target.State:
-                        if (destState != null) built = sm.AddAnyStateTransition(destState);
-                        break;
-                    case ControllerIR.Transition.Target.Machine:
-                        if (destMachine != null) built = sm.AddAnyStateTransition(destMachine);
-                        break;
-                }
-                if (built == null)
+                var made = StateTransition(t, context, allowExit: false);
+                if (made == null)
                     context.warnings.Add(L.Tr("Any-State transition to '{0}' could not be resolved — skipped.", t.destination));
                 else
-                    ApplyTransition(built, t);
+                    any.Add(made);
             }
+            if (any.Count > 0) sm.anyStateTransitions = any.ToArray();
 
+            var entry = new List<AnimatorTransition>();
             foreach (var t in ir.entryTransitions)
             {
-                AnimatorTransition built = null;
-                switch (Resolve(t, context, out var destState, out var destMachine))
-                {
-                    case ControllerIR.Transition.Target.State:
-                        if (destState != null) built = sm.AddEntryTransition(destState);
-                        break;
-                    case ControllerIR.Transition.Target.Machine:
-                        if (destMachine != null) built = sm.AddEntryTransition(destMachine);
-                        break;
-                }
-                if (built == null)
+                var made = MachineTransition(t, context, allowExit: false);
+                if (made == null)
                     context.warnings.Add(L.Tr("Entry transition to '{0}' could not be resolved — skipped.", t.destination));
                 else
-                    ApplyTransition(built, t);
+                    entry.Add(made);
             }
+            if (entry.Count > 0) sm.entryTransitions = entry.ToArray();
 
             foreach (var child in ir.machines)
             {
                 string childPrefix = ControllerIR.Join(prefix, child.machine.name);
                 if (!context.machines.TryGetValue(childPrefix, out var childSm)) continue;
 
+                var exits = new List<AnimatorTransition>();
                 foreach (var t in child.transitions)
                 {
-                    AnimatorTransition built = null;
-                    switch (Resolve(t, context, out var destState, out var destMachine))
-                    {
-                        case ControllerIR.Transition.Target.Exit:
-                            built = sm.AddStateMachineExitTransition(childSm);
-                            break;
-                        case ControllerIR.Transition.Target.State:
-                            if (destState != null) built = sm.AddStateMachineTransition(childSm, destState);
-                            break;
-                        case ControllerIR.Transition.Target.Machine:
-                            if (destMachine != null) built = sm.AddStateMachineTransition(childSm, destMachine);
-                            break;
-                    }
-                    if (built == null)
+                    var made = MachineTransition(t, context, allowExit: true);
+                    if (made == null)
                         context.warnings.Add(L.Tr("Transition from machine '{0}' to '{1}' could not be resolved — skipped.",
                             child.machine.name, t.destination));
                     else
-                        ApplyTransition(built, t);
+                        exits.Add(made);
                 }
+                if (exits.Count > 0) sm.SetStateMachineTransitions(childSm, exits.ToArray());
 
                 WireMachine(child.machine, childSm, childPrefix, context);
             }
-            EditorUtility.SetDirty(sm);
+            context.target.Dirty(sm);
+        }
+
+        /// <summary>
+        /// A state (or Any State) transition, made and filed, or null when its destination does
+        /// not resolve. Starts from what AddTransition / AddExitTransition gave — no exit time,
+        /// fixed duration — though <see cref="ApplyTransition"/> overwrites both from the IR.
+        /// </summary>
+        static AnimatorStateTransition StateTransition(ControllerIR.Transition t, Context context,
+            bool allowExit)
+        {
+            var target = Resolve(t, context, out var destState, out var destMachine);
+            if (target == ControllerIR.Transition.Target.Exit && !allowExit) return null;
+            if (target == ControllerIR.Transition.Target.State && destState == null) return null;
+            if (target == ControllerIR.Transition.Target.Machine && destMachine == null) return null;
+            var made = new AnimatorStateTransition
+            {
+                hasExitTime = false,
+                hasFixedDuration = true,
+                hideFlags = HideFlags.HideInHierarchy,
+            };
+            if (target == ControllerIR.Transition.Target.Exit) made.isExit = true;
+            else if (target == ControllerIR.Transition.Target.State) made.destinationState = destState;
+            else made.destinationStateMachine = destMachine;
+            context.target.Created(made, UndoName);
+            ApplyTransition(made, t, context);
+            return made;
+        }
+
+        /// <summary>An Entry or sub-machine transition, made and filed, or null when its
+        /// destination does not resolve.</summary>
+        static AnimatorTransition MachineTransition(ControllerIR.Transition t, Context context,
+            bool allowExit)
+        {
+            var target = Resolve(t, context, out var destState, out var destMachine);
+            if (target == ControllerIR.Transition.Target.Exit && !allowExit) return null;
+            if (target == ControllerIR.Transition.Target.State && destState == null) return null;
+            if (target == ControllerIR.Transition.Target.Machine && destMachine == null) return null;
+            var made = new AnimatorTransition { hideFlags = HideFlags.HideInHierarchy };
+            if (target == ControllerIR.Transition.Target.Exit) made.isExit = true;
+            else if (target == ControllerIR.Transition.Target.State) made.destinationState = destState;
+            else made.destinationStateMachine = destMachine;
+            context.target.Created(made, UndoName);
+            ApplyTransition(made, t, context);
+            return made;
         }
 
         static ControllerIR.Transition.Target Resolve(ControllerIR.Transition t, Context context,
@@ -471,7 +531,8 @@ namespace Yozolab.DaerD.IR
             return t.target;
         }
 
-        static void ApplyTransition(AnimatorTransitionBase built, ControllerIR.Transition ir)
+        static void ApplyTransition(AnimatorTransitionBase built, ControllerIR.Transition ir,
+            Context context)
         {
             built.solo = ir.solo;
             built.mute = ir.mute;
@@ -495,14 +556,15 @@ namespace Yozolab.DaerD.IR
                     threshold = ir.conditions[i].threshold,
                 };
             built.conditions = conditions;
-            EditorUtility.SetDirty(built);
+            context.target.Dirty(built);
         }
 
         // ---- synced layers -----------------------------------------------------
 
         static void ApplySyncedOverrides(ControllerIR.Layer ir, int layerIndex,
-            AnimatorController controller, List<string> warnings, bool persisted)
+            GenerationTarget target, List<string> warnings)
         {
+            var controller = target.Controller;
             var layers = controller.layers;
             if (layerIndex < 0 || layerIndex >= layers.Length) return;
             int sourceIndex = layers[layerIndex].syncedLayerIndex;
@@ -532,7 +594,7 @@ namespace Yozolab.DaerD.IR
             // Behaviour overrides are instances of their own — a synced layer runs these
             // instead of the source state's, so they have to be created here rather than
             // borrowed from the source.
-            var context = new Context { controller = controller, persisted = persisted };
+            var context = new Context { target = target };
             foreach (var entry in ir.syncedBehaviours)
             {
                 if (!byPath.TryGetValue(entry.statePath, out var state))
@@ -555,17 +617,16 @@ namespace Yozolab.DaerD.IR
                 controller.layers = layers;
         }
 
-        /// <summary>A behaviour with no owner to add it: created by hand and stored in the
-        /// controller itself, the way AddStateMachineBehaviour would have.</summary>
+        /// <summary>A behaviour created by hand and filed in the controller, the way
+        /// AddStateMachineBehaviour would have — for every owner now, so a state's behaviours
+        /// arrive as one array like everything else.</summary>
         static StateMachineBehaviour CreateLooseBehaviour(Type type, Context context,
             List<StateMachineBehaviour> into)
         {
             var behaviour = ScriptableObject.CreateInstance(type) as StateMachineBehaviour;
             if (behaviour == null) return null;
             behaviour.name = type.Name;
-            Undo.RegisterCreatedObjectUndo(behaviour, UndoName);
-            if (context.persisted)
-                AssetDatabase.AddObjectToAsset(behaviour, context.controller);
+            context.target.Created(behaviour, UndoName);
             into.Add(behaviour);
             return behaviour;
         }

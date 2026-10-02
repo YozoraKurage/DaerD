@@ -386,7 +386,7 @@ namespace Yozolab.DaerD.Engine
 
             using (new UndoScope("DBT Gadget"))
             {
-                Undo.RegisterCompleteObjectUndo(controller, "DBT Gadget");
+                IR.GenerationTarget.Of(controller).Changing(controller, "DBT Gadget");
 
                 // Every kind is a blend tree child; the one builder that still wants a layer of
                 // its own (FrameTime's clock) adds it on the way. The host is resolved before
@@ -1747,7 +1747,7 @@ namespace Yozolab.DaerD.Engine
             layers[layers.Length - 1].defaultWeight = 1f;
             controller.layers = layers;
             var stateMachine = layers[layers.Length - 1].stateMachine;
-            Undo.RegisterCompleteObjectUndo(stateMachine, "DBT Gadget");
+            IR.GenerationTarget.Of(controller).Changing(stateMachine, "DBT Gadget");
             return stateMachine;
         }
 

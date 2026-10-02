@@ -84,7 +84,7 @@ namespace Yozolab.DaerD.Authoring
         {
             var warnings = new List<string>();
             if (_requests.Count == 0) return warnings;
-            Undo.RegisterCompleteObjectUndo(controller, "Generate Recipe");
+            IR.GenerationTarget.Of(controller).Changing(controller, "Generate Recipe");
 
             // Whatever the previous Generate left goes first. A gadget refuses to write an
             // output that already exists, so without the sweep the second Generate would

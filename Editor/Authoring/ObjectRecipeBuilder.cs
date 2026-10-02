@@ -124,7 +124,7 @@ namespace Yozolab.DaerD.Authoring
                     string.Join(", ", missingClips)));
             if (missingTargets.Count > 0 || missingClips.Count > 0) return warnings;
 
-            Undo.RegisterCompleteObjectUndo(controller, "Generate Recipe");
+            IR.GenerationTarget.Of(controller).Changing(controller, "Generate Recipe");
             AnimatorStateMachine host = null;
             foreach (var toggle in _toggles)
             {
