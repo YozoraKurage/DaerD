@@ -136,7 +136,7 @@ RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}
 
 # vrc-get: VPM パッケージ (VRChat SDK など) をコンテナ内で入れるための CLI。
 # 静的リンクの単一バイナリなので置くだけでよい。
-ARG VRC_GET_VERSION=1.9.2
+ARG VRC_GET_VERSION=1.9.3
 RUN mkdir -p /home/node/.local/bin \
   && wget -qO /home/node/.local/bin/vrc-get \
   "https://github.com/vrc-get/vrc-get/releases/download/v${VRC_GET_VERSION}/x86_64-unknown-linux-musl-vrc-get" \

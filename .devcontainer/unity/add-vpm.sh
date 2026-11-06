@@ -13,7 +13,7 @@
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/common.sh"
 
-readonly VRC_GET_VERSION=1.9.2
+readonly VRC_GET_VERSION=1.9.3
 readonly VRC_GET="$HOME/.local/bin/vrc-get"
 
 ensure_vrc_get() {
