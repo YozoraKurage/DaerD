@@ -405,6 +405,87 @@ namespace Yozolab.DaerD.Tests
             Assert.IsFalse(EdgeCommands.MoveTo(source, _sm, d1, 2), "already last");
         }
 
+        // ---- several selected transitions --------------------------------------------
+
+        /// <summary>A, B, C, D, E with B and D selected: the rules list editors use.</summary>
+        static readonly string[] Letters = { "A", "B", "C", "D", "E" };
+
+        static string Order(IList<string> list) => string.Join("", list);
+
+        // By name: the step enum is internal, and a public test method cannot take it.
+        [TestCase("Up", "BADCE")]
+        [TestCase("Down", "ACBED")]
+        [TestCase("First", "BDACE")]
+        [TestCase("Last", "ACEBD")]
+        public void ASelectionSteps_EachPastItsNearestUnselectedNeighbour(string step, string expected)
+        {
+            var moved = TransitionOrder.Move(Letters, new HashSet<string> { "B", "D" },
+                (TransitionOrder.Step)System.Enum.Parse(typeof(TransitionOrder.Step), step));
+            Assert.AreEqual(expected, Order(moved));
+        }
+
+        [Test]
+        public void ASelectionAlreadyAtTheTop_StaysPut_InsteadOfReshuffling()
+        {
+            var moved = TransitionOrder.Move(Letters, new HashSet<string> { "A", "B", "D" }, TransitionOrder.Step.Up);
+            Assert.AreEqual("ABDCE", Order(moved));
+        }
+
+        [TestCase(1, 4, "ACEBD")]   // drag B to the bottom: B and D land together, in order
+        [TestCase(3, 0, "BDACE")]   // drag D to the top: B comes along, still before D
+        [TestCase(3, 2, "ABDCE")]   // drag D up one: the block closes up around it
+        public void DraggingASelectedRow_DragsTheWholeSelection(int from, int to, string expected)
+        {
+            var moved = TransitionOrder.Drag(Letters, new HashSet<string> { "B", "D" }, from, to);
+            Assert.AreEqual(expected, Order(moved));
+        }
+
+        [Test]
+        public void DraggingAnUnselectedRow_MovesOnlyThatRow()
+        {
+            var moved = TransitionOrder.Drag(Letters, new HashSet<string> { "B", "D" }, 4, 0);
+            Assert.AreEqual("EABCD", Order(moved));
+        }
+
+        [Test]
+        public void MoveSelection_MovesSeveralTransitionsOfOneState_AndIgnoresOtherStates()
+        {
+            var b1 = _a.AddTransition(_b);
+            var c1 = _a.AddTransition(_c);
+            var d1 = _a.AddTransition(_d);
+            var b2 = _a.AddTransition(_b);
+            var elsewhere = _b.AddTransition(_c);
+            var source = TransitionEnd.Of(_a);
+            var selected = new HashSet<AnimatorTransitionBase> { d1, b2, elsewhere };
+
+            Assert.IsTrue(EdgeCommands.MoveSelection(source, _sm, selected, TransitionOrder.Step.First));
+
+            CollectionAssert.AreEqual(new AnimatorTransitionBase[] { d1, b2, b1, c1 },
+                EdgeCommands.TransitionsFrom(source, _sm));
+            Assert.AreSame(elsewhere, _b.transitions[0]);
+            Assert.IsFalse(EdgeCommands.CanMoveSelection(source, _sm, selected, TransitionOrder.Step.First),
+                "already first: the menu greys it out");
+        }
+
+        [Test]
+        public void DragSelection_InTheArrowView_MovesTheSelectedBlockAmongTheArrowsOwnSlots()
+        {
+            var b1 = _a.AddTransition(_b);
+            var c1 = _a.AddTransition(_c);
+            var b2 = _a.AddTransition(_b);
+            var d1 = _a.AddTransition(_d);
+            var b3 = _a.AddTransition(_b);
+            var source = TransitionEnd.Of(_a);
+            var arrow = new AnimatorTransitionBase[] { b1, b2, b3 };
+
+            // b2 and b3 selected, b3 dragged to the top of the arrow's three.
+            Assert.IsTrue(EdgeCommands.DragSelection(source, _sm, arrow,
+                new HashSet<AnimatorTransitionBase> { b2, b3 }, 2, 0));
+
+            CollectionAssert.AreEqual(new AnimatorTransitionBase[] { b2, c1, b3, d1, b1 },
+                EdgeCommands.TransitionsFrom(source, _sm), "the other arrows' transitions keep their slots");
+        }
+
         [Test]
         public void Reorder_KeepsTheSameTransitionObjects()
         {

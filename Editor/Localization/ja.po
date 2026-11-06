@@ -3879,3 +3879,6 @@ msgstr "先頭へ"
 
 msgid "Move to Last"
 msgstr "末尾へ"
+
+msgid "Evaluation Order ({0} selected)"
+msgstr "評価順（{0} 件選択中）"

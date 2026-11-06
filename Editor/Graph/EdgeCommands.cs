@@ -165,42 +165,53 @@ namespace Yozolab.DaerD
         /// places they already hold: the one at <paramref name="from"/> (an index into
         /// <paramref name="shown"/> in evaluation order) takes <paramref name="to"/>'s place and the
         /// ones between shift, while every transition not shown keeps its exact position.
-        ///
-        /// That is the only reading of a drag in a partial list that does not move something the
-        /// user cannot see. Moving past a hidden transition is <see cref="MoveTo"/>'s job, which
-        /// works on the whole list. Returns false when there is nothing to do, or when a shown
-        /// transition is not in the source's list at all.
         /// </summary>
         public static bool ReorderWithin(TransitionEnd source, AnimatorStateMachine sm,
-            IList<AnimatorTransitionBase> shown, int from, int to)
+            IList<AnimatorTransitionBase> shown, int from, int to) =>
+            DragSelection(source, sm, shown, null, from, to);
+
+        /// <summary>
+        /// The drag of the inspector's transition list, written back. <paramref name="shown"/> is
+        /// the list as drawn — null for the source's whole list, or a part of it (one arrow's
+        /// transitions), in which case the result is placed back into the slots those transitions
+        /// already held and nothing hidden moves. <paramref name="from"/> and <paramref name="to"/>
+        /// index the shown list in evaluation order. When the dragged row is one of several
+        /// <paramref name="selected"/>, the selection moves as one block
+        /// (<see cref="TransitionOrder.Drag"/>). Returns false when the order does not change, or a
+        /// shown transition is not the source's at all.
+        /// </summary>
+        public static bool DragSelection(TransitionEnd source, AnimatorStateMachine sm,
+            IList<AnimatorTransitionBase> shown, ICollection<AnimatorTransitionBase> selected,
+            int from, int to)
         {
-            if (shown == null || from == to || from < 0 || to < 0
-                || from >= shown.Count || to >= shown.Count)
+            if (!InEvaluationOrder(source, sm, shown, out var slots, out var current, out var subset))
                 return false;
+            if (from < 0 || to < 0 || from >= subset.Count || to >= subset.Count) return false;
+            return Write(source, sm, current, slots, subset,
+                TransitionOrder.Drag(subset, selected, from, to));
+        }
 
+        /// <summary>
+        /// One Evaluation Order step for every transition in <paramref name="selected"/> that
+        /// leaves <paramref name="source"/>, against the source's whole list — past transitions
+        /// the inspector may not be showing. Selected transitions of other sources are ignored:
+        /// an order only exists within one source. Returns false when nothing moves.
+        /// </summary>
+        public static bool MoveSelection(TransitionEnd source, AnimatorStateMachine sm,
+            ICollection<AnimatorTransitionBase> selected, TransitionOrder.Step step)
+        {
+            if (!InEvaluationOrder(source, sm, null, out var slots, out var current, out var subset))
+                return false;
+            return Write(source, sm, current, slots, subset, TransitionOrder.Move(subset, selected, step));
+        }
+
+        /// <summary>Whether <see cref="MoveSelection"/> would change anything — for greying out a
+        /// menu item instead of offering a move that does nothing.</summary>
+        public static bool CanMoveSelection(TransitionEnd source, AnimatorStateMachine sm,
+            ICollection<AnimatorTransitionBase> selected, TransitionOrder.Step step)
+        {
             var current = TransitionsFrom(source, sm);
-            var slots = new List<int>(shown.Count);
-            foreach (var t in shown)
-            {
-                int at = Array.IndexOf(current, t);
-                if (at < 0) return false;
-                slots.Add(at);
-            }
-            slots.Sort();
-
-            // The shown transitions in evaluation order, then moved like any list.
-            var subset = new List<AnimatorTransitionBase>(shown.Count);
-            foreach (int at in slots) subset.Add(current[at]);
-            var moved = subset[from];
-            subset.RemoveAt(from);
-            subset.Insert(to, moved);
-
-            var ordered = new List<AnimatorTransitionBase>(current);
-            for (int k = 0; k < slots.Count; k++) ordered[slots[k]] = subset[k];
-
-            using (new UndoScope("Reorder Transitions"))
-                WriteOrder(source, sm, ordered);
-            return true;
+            return TransitionOrder.Differs(current, TransitionOrder.Move(current, selected, step));
         }
 
         /// <summary>
@@ -215,6 +226,43 @@ namespace Yozolab.DaerD
             int from = Array.IndexOf(current, transition);
             if (from < 0 || current.Length == 0) return false;
             return Reorder(source, sm, from, Math.Max(0, Math.Min(to, current.Length - 1)));
+        }
+
+        /// <summary>The source's list, the slots <paramref name="shown"/> holds in it (all of them
+        /// when null), and the shown transitions in evaluation order. False when a shown
+        /// transition is not in the list.</summary>
+        static bool InEvaluationOrder(TransitionEnd source, AnimatorStateMachine sm,
+            IList<AnimatorTransitionBase> shown, out List<int> slots,
+            out AnimatorTransitionBase[] current, out List<AnimatorTransitionBase> subset)
+        {
+            current = TransitionsFrom(source, sm);
+            slots = new List<int>();
+            subset = new List<AnimatorTransitionBase>();
+            if (shown == null)
+                for (int i = 0; i < current.Length; i++) slots.Add(i);
+            else
+                foreach (var t in shown)
+                {
+                    int at = Array.IndexOf(current, t);
+                    if (at < 0) return false;
+                    slots.Add(at);
+                }
+            slots.Sort();
+            foreach (int at in slots) subset.Add(current[at]);
+            return true;
+        }
+
+        /// <summary>Puts <paramref name="reordered"/> back into <paramref name="slots"/> and writes
+        /// the list, as one Undo step — or nothing, when the order is what it was.</summary>
+        static bool Write(TransitionEnd source, AnimatorStateMachine sm, AnimatorTransitionBase[] current,
+            List<int> slots, List<AnimatorTransitionBase> before, List<AnimatorTransitionBase> reordered)
+        {
+            if (!TransitionOrder.Differs(before, reordered)) return false;
+            var ordered = new List<AnimatorTransitionBase>(current);
+            for (int k = 0; k < slots.Count; k++) ordered[slots[k]] = reordered[k];
+            using (new UndoScope("Reorder Transitions"))
+                WriteOrder(source, sm, ordered);
+            return true;
         }
 
         /// <summary>

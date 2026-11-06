@@ -233,12 +233,12 @@ namespace Yozolab.DaerD
                 var source = reorderSource.Value;
                 var shown = new List<AnimatorTransitionBase>(rows.Count);
                 foreach (var row in rows) shown.Add(row.Transition);
+                // Dragging a selected row drags the whole selection with it.
                 onMove = (from, to) =>
                 {
-                    bool moved = partial
-                        ? EdgeCommands.ReorderWithin(source, _context.CurrentStateMachine, shown, from, to)
-                        : EdgeCommands.Reorder(source, _context.CurrentStateMachine, from, to);
-                    if (moved) _context.NotifyGraphStructureChanged();
+                    if (EdgeCommands.DragSelection(source, _context.CurrentStateMachine,
+                            partial ? shown : null, _selectedTransitions, from, to))
+                        _context.NotifyGraphStructureChanged();
                 };
             }
 
@@ -249,7 +249,7 @@ namespace Yozolab.DaerD
                 HandleRowClick(rows, result.clicked);
             if (result.contextClicked >= 0)
             {
-                TransitionRowMenu.Show(_context, rows[result.contextClicked]);
+                TransitionRowMenu.Show(_context, rows[result.contextClicked], _selectedTransitions);
                 GUIUtility.ExitGUI();
             }
             if (result.deleted != null)

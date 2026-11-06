@@ -231,11 +231,14 @@ namespace Yozolab.DaerD
     static class TransitionRowMenu
     {
         /// <summary>
-        /// Shows the menu for <paramref name="row"/>. It acts on that row alone even when other
-        /// rows are selected — moving one transition out of a bundle is the whole point of it, and
-        /// the graph's edge menu is still there for the "all of them" case.
+        /// Shows the menu for <paramref name="row"/>. Redirect acts on that row alone even when
+        /// other rows are selected — moving one transition out of a bundle is the whole point of
+        /// it, and the graph's edge menu is still there for the "all of them" case. Evaluation
+        /// Order acts on <paramref name="selection"/> when the row is part of it (see
+        /// <see cref="AddOrderItems"/>).
         /// </summary>
-        public static void Show(DaerDContext context, TransitionRow row)
+        public static void Show(DaerDContext context, TransitionRow row,
+            ICollection<AnimatorTransitionBase> selection = null)
         {
             var transition = row.Transition;
             if (context == null || transition == null) return;
@@ -259,47 +262,60 @@ namespace Yozolab.DaerD
                         () => Redirect(context, transition, destination));
                 }
             }
-            AddOrderItems(menu, context, row);
+            AddOrderItems(menu, context, row, selection);
             menu.ShowAsContext();
         }
 
         /// <summary>
-        /// Moves within the source's whole list, whatever the inspector is showing. The list under
-        /// a selected arrow holds only that arrow's transitions, and a drag there cannot pass one
-        /// it does not show; these can, and say where to in terms of the order the Animator
-        /// tries them in.
+        /// Moves within the source's whole list, whatever the inspector is showing — the list
+        /// under a selected arrow holds only that arrow's transitions, and a drag there cannot
+        /// pass one it does not show; these can.
+        ///
+        /// They act on the selection when the right-clicked row is part of a selection of two or
+        /// more: reordering several transitions at once is the point of selecting them. Only the
+        /// selected transitions that leave the same source as the clicked row move — an order
+        /// exists within one source — and the item names say how many that is.
         /// </summary>
-        static void AddOrderItems(GenericMenu menu, DaerDContext context, TransitionRow row)
+        static void AddOrderItems(GenericMenu menu, DaerDContext context, TransitionRow row,
+            ICollection<AnimatorTransitionBase> selection)
         {
-            string group = L.Tr("Evaluation Order");
             var sm = context.CurrentStateMachine;
             var all = row.Source.Kind == TransitionEndKind.None
                 ? Array.Empty<AnimatorTransitionBase>()
                 : EdgeCommands.TransitionsFrom(row.Source, sm);
-            int at = Array.IndexOf(all, row.Transition);
+
+            var moving = new HashSet<AnimatorTransitionBase>();
+            if (selection != null && selection.Contains(row.Transition))
+                foreach (var t in all)
+                    if (selection.Contains(t)) moving.Add(t);
+            if (moving.Count == 0) moving.Add(row.Transition);
+
+            string group = moving.Count > 1
+                ? L.Tr("Evaluation Order ({0} selected)", moving.Count)
+                : L.Tr("Evaluation Order");
             menu.AddSeparator(string.Empty);
-            if (at < 0 || all.Length < 2)
+            if (Array.IndexOf(all, row.Transition) < 0 || all.Length < 2)
             {
                 menu.AddDisabledItem(new GUIContent(group));
                 return;
             }
 
-            void Item(string label, int to)
+            void Item(string label, TransitionOrder.Step step)
             {
                 var content = new GUIContent(group + "/" + label);
-                if (to == at) menu.AddDisabledItem(content);
-                else menu.AddItem(content, false, () => Move(context, row, to));
+                if (!EdgeCommands.CanMoveSelection(row.Source, sm, moving, step))
+                    menu.AddDisabledItem(content);
+                else
+                    menu.AddItem(content, false, () =>
+                    {
+                        if (EdgeCommands.MoveSelection(row.Source, context.CurrentStateMachine, moving, step))
+                            context.NotifyGraphStructureChanged();
+                    });
             }
-            Item(L.Tr("Move Up"), Math.Max(0, at - 1));
-            Item(L.Tr("Move Down"), Math.Min(all.Length - 1, at + 1));
-            Item(L.Tr("Move to First"), 0);
-            Item(L.Tr("Move to Last"), all.Length - 1);
-        }
-
-        static void Move(DaerDContext context, TransitionRow row, int to)
-        {
-            if (EdgeCommands.MoveTo(row.Source, context.CurrentStateMachine, row.Transition, to))
-                context.NotifyGraphStructureChanged();
+            Item(L.Tr("Move Up"), TransitionOrder.Step.Up);
+            Item(L.Tr("Move Down"), TransitionOrder.Step.Down);
+            Item(L.Tr("Move to First"), TransitionOrder.Step.First);
+            Item(L.Tr("Move to Last"), TransitionOrder.Step.Last);
         }
 
         /// <summary>
