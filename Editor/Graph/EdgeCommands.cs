@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using UnityEditor;
 using UnityEditor.Animations;
@@ -156,6 +157,64 @@ namespace Yozolab.DaerD
             using (new UndoScope("Reorder Transitions"))
                 WriteOrder(source, sm, ordered);
             return true;
+        }
+
+        /// <summary>
+        /// Reorders only the transitions in <paramref name="shown"/> — a part of
+        /// <paramref name="source"/>'s list, such as the transitions one arrow carries — among the
+        /// places they already hold: the one at <paramref name="from"/> (an index into
+        /// <paramref name="shown"/> in evaluation order) takes <paramref name="to"/>'s place and the
+        /// ones between shift, while every transition not shown keeps its exact position.
+        ///
+        /// That is the only reading of a drag in a partial list that does not move something the
+        /// user cannot see. Moving past a hidden transition is <see cref="MoveTo"/>'s job, which
+        /// works on the whole list. Returns false when there is nothing to do, or when a shown
+        /// transition is not in the source's list at all.
+        /// </summary>
+        public static bool ReorderWithin(TransitionEnd source, AnimatorStateMachine sm,
+            IList<AnimatorTransitionBase> shown, int from, int to)
+        {
+            if (shown == null || from == to || from < 0 || to < 0
+                || from >= shown.Count || to >= shown.Count)
+                return false;
+
+            var current = TransitionsFrom(source, sm);
+            var slots = new List<int>(shown.Count);
+            foreach (var t in shown)
+            {
+                int at = Array.IndexOf(current, t);
+                if (at < 0) return false;
+                slots.Add(at);
+            }
+            slots.Sort();
+
+            // The shown transitions in evaluation order, then moved like any list.
+            var subset = new List<AnimatorTransitionBase>(shown.Count);
+            foreach (int at in slots) subset.Add(current[at]);
+            var moved = subset[from];
+            subset.RemoveAt(from);
+            subset.Insert(to, moved);
+
+            var ordered = new List<AnimatorTransitionBase>(current);
+            for (int k = 0; k < slots.Count; k++) ordered[slots[k]] = subset[k];
+
+            using (new UndoScope("Reorder Transitions"))
+                WriteOrder(source, sm, ordered);
+            return true;
+        }
+
+        /// <summary>
+        /// Moves one transition to index <paramref name="to"/> of its source's whole list —
+        /// past any transition, shown or not. Clamped to the list, so "to the end" is any large
+        /// number. Returns false when the transition is not the source's or already there.
+        /// </summary>
+        public static bool MoveTo(TransitionEnd source, AnimatorStateMachine sm,
+            AnimatorTransitionBase transition, int to)
+        {
+            var current = TransitionsFrom(source, sm);
+            int from = Array.IndexOf(current, transition);
+            if (from < 0 || current.Length == 0) return false;
+            return Reorder(source, sm, from, Math.Max(0, Math.Min(to, current.Length - 1)));
         }
 
         /// <summary>

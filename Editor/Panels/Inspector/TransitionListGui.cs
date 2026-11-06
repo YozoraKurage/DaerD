@@ -32,8 +32,10 @@ namespace Yozolab.DaerD
     /// <remarks>
     /// The number is the position the Animator evaluates the transition at, not the row index —
     /// a list showing only some of a source's transitions still numbers them by where they
-    /// really are. Reordering is offered only when the rows are one source's complete list,
-    /// because dragging within a partial list cannot say what happens to the rows it hides.
+    /// really are. Reordering is offered whenever the rows are all one source's: over the
+    /// complete list a drag moves a row anywhere, and over a part of it (one arrow's
+    /// transitions) the caller reorders the rows among the places they hold, so nothing hidden
+    /// moves (<see cref="EdgeCommands.ReorderWithin"/>).
     /// </remarks>
     class TransitionListGui
     {
@@ -257,7 +259,47 @@ namespace Yozolab.DaerD
                         () => Redirect(context, transition, destination));
                 }
             }
+            AddOrderItems(menu, context, row);
             menu.ShowAsContext();
+        }
+
+        /// <summary>
+        /// Moves within the source's whole list, whatever the inspector is showing. The list under
+        /// a selected arrow holds only that arrow's transitions, and a drag there cannot pass one
+        /// it does not show; these can, and say where to in terms of the order the Animator
+        /// tries them in.
+        /// </summary>
+        static void AddOrderItems(GenericMenu menu, DaerDContext context, TransitionRow row)
+        {
+            string group = L.Tr("Evaluation Order");
+            var sm = context.CurrentStateMachine;
+            var all = row.Source.Kind == TransitionEndKind.None
+                ? Array.Empty<AnimatorTransitionBase>()
+                : EdgeCommands.TransitionsFrom(row.Source, sm);
+            int at = Array.IndexOf(all, row.Transition);
+            menu.AddSeparator(string.Empty);
+            if (at < 0 || all.Length < 2)
+            {
+                menu.AddDisabledItem(new GUIContent(group));
+                return;
+            }
+
+            void Item(string label, int to)
+            {
+                var content = new GUIContent(group + "/" + label);
+                if (to == at) menu.AddDisabledItem(content);
+                else menu.AddItem(content, false, () => Move(context, row, to));
+            }
+            Item(L.Tr("Move Up"), Math.Max(0, at - 1));
+            Item(L.Tr("Move Down"), Math.Min(all.Length - 1, at + 1));
+            Item(L.Tr("Move to First"), 0);
+            Item(L.Tr("Move to Last"), all.Length - 1);
+        }
+
+        static void Move(DaerDContext context, TransitionRow row, int to)
+        {
+            if (EdgeCommands.MoveTo(row.Source, context.CurrentStateMachine, row.Transition, to))
+                context.NotifyGraphStructureChanged();
         }
 
         /// <summary>

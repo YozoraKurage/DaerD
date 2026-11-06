@@ -356,6 +356,55 @@ namespace Yozolab.DaerD.Tests
                 Destinations(EdgeCommands.TransitionsFrom(source, _sm)));
         }
 
+        /// <summary>One arrow's transitions, interleaved with another arrow's — the list a
+        /// selected arrow shows is A→B's two, and a drag there swaps them while A→C stays put.</summary>
+        [Test]
+        public void ReorderWithin_SwapsTheShownTransitions_AndLeavesTheHiddenOnesInPlace()
+        {
+            var b1 = _a.AddTransition(_b);
+            var c1 = _a.AddTransition(_c);
+            var b2 = _a.AddTransition(_b);
+            var d1 = _a.AddTransition(_d);
+            var source = TransitionEnd.Of(_a);
+
+            // Handed in out of order on purpose: the indices mean evaluation order.
+            Assert.IsTrue(EdgeCommands.ReorderWithin(source, _sm,
+                new AnimatorTransitionBase[] { b2, b1 }, 1, 0));
+
+            CollectionAssert.AreEqual(new AnimatorTransitionBase[] { b2, c1, b1, d1 },
+                EdgeCommands.TransitionsFrom(source, _sm));
+        }
+
+        [Test]
+        public void ReorderWithin_RefusesATransitionTheSourceDoesNotHave()
+        {
+            var own = _a.AddTransition(_b);
+            _a.AddTransition(_c);
+            var foreign = _b.AddTransition(_c);
+
+            Assert.IsFalse(EdgeCommands.ReorderWithin(TransitionEnd.Of(_a), _sm,
+                new AnimatorTransitionBase[] { own, foreign }, 0, 1));
+        }
+
+        [Test]
+        public void MoveTo_PassesHiddenTransitions_AndClampsToTheList()
+        {
+            var b1 = _a.AddTransition(_b);
+            var c1 = _a.AddTransition(_c);
+            var d1 = _a.AddTransition(_d);
+            var source = TransitionEnd.Of(_a);
+
+            Assert.IsTrue(EdgeCommands.MoveTo(source, _sm, d1, 0));
+            CollectionAssert.AreEqual(new AnimatorTransitionBase[] { d1, b1, c1 },
+                EdgeCommands.TransitionsFrom(source, _sm));
+
+            Assert.IsTrue(EdgeCommands.MoveTo(source, _sm, d1, 99));
+            CollectionAssert.AreEqual(new AnimatorTransitionBase[] { b1, c1, d1 },
+                EdgeCommands.TransitionsFrom(source, _sm));
+
+            Assert.IsFalse(EdgeCommands.MoveTo(source, _sm, d1, 2), "already last");
+        }
+
         [Test]
         public void Reorder_KeepsTheSameTransitionObjects()
         {

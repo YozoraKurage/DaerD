@@ -52,10 +52,10 @@ namespace Yozolab.DaerD
             }
 
             // The switch is drawn from inside BuildRows, above the list it chooses.
-            var rows = BuildRows(groups, pool, out var reorderSource);
+            var rows = BuildRows(groups, pool, out var reorderSource, out bool partial);
             PruneSelection(rows, pool);
             HandleCopyPasteShortcuts();
-            DrawTransitionList(rows, pool, reorderSource);
+            DrawTransitionList(rows, pool, reorderSource, partial);
             PanelGui.HorizontalLine();
 
             if (_selectedTransitions.Count >= 2)
@@ -82,7 +82,7 @@ namespace Yozolab.DaerD
             EditorGUILayout.LabelField(source.Label, EditorStyles.boldLabel);
             _selectedTransitions.RemoveAll(t => t == null || !Contains(rows, t));
             HandleCopyPasteShortcuts();
-            DrawTransitionList(rows, null, source);
+            DrawTransitionList(rows, null, source, partial: false);
 
             if (_selectedTransitions.Count == 0) return;
             PanelGui.HorizontalLine();
@@ -126,30 +126,47 @@ namespace Yozolab.DaerD
         /// or three rows belonging to the arrow you clicked end up scattered among the rest.
         /// So the arrow's own transitions are the default and the whole list is one click away.
         /// A selection spanning several sources has no whole list to offer and stays as it was.
+        ///
+        /// Both views of one source can be reordered. The arrow's own rows are shown in
+        /// evaluation order and a drag among them is <paramref name="partial"/>: it reorders
+        /// them among the places they hold and moves nothing hidden
+        /// (<see cref="EdgeCommands.ReorderWithin"/>). Moving one past another arrow's
+        /// transition is the whole list's drag, or the row menu's Evaluation Order items.
         /// </summary>
         List<TransitionRow> BuildRows(List<TransitionGroup> groups, List<AnimatorTransitionBase> pool,
-            out TransitionEnd? reorderSource)
+            out TransitionEnd? reorderSource, out bool partial)
         {
             var sm = _context.CurrentStateMachine;
             var source = SharedSource(groups);
             reorderSource = null;
+            partial = false;
             if (!source.HasValue)
                 return TransitionListGui.RowsFor(pool, groups, sm);
 
             var whole = TransitionListGui.RowsOf(source.Value, sm);
+            reorderSource = source;
             // Nothing is hidden by showing the arrow's own, so there is nothing to choose.
             if (whole.Count <= pool.Count)
-            {
-                reorderSource = source;
                 return whole;
-            }
 
             DrawListSwitch(source.Value.Label, pool.Count, whole.Count);
-            if (!s_showWholeSource)
-                return TransitionListGui.RowsFor(pool, groups, sm);
+            if (s_showWholeSource)
+                return whole;
 
-            reorderSource = source;
-            return whole;
+            partial = true;
+            var own = TransitionListGui.RowsFor(pool, groups, sm);
+            // Stable: rows the source does not list (priority 0) keep their order, last.
+            var ordered = new List<TransitionRow>(own.Count);
+            for (int i = 0; i < own.Count; i++) ordered.Add(own[i]);
+            ordered.Sort((a, b) =>
+            {
+                int pa = a.Priority > 0 ? a.Priority : int.MaxValue;
+                int pb = b.Priority > 0 ? b.Priority : int.MaxValue;
+                return pa != pb ? pa.CompareTo(pb) : own.IndexOf(a).CompareTo(own.IndexOf(b));
+            });
+            foreach (var row in ordered)
+                if (row.Priority <= 0) { reorderSource = null; partial = false; break; }
+            return ordered;
         }
 
         /// <summary>The two-way switch above the list. Only drawn when the two views differ.</summary>
@@ -206,7 +223,7 @@ namespace Yozolab.DaerD
 
         /// <summary>Unity-style vertical transition list with Solo / Mute columns and multi-select.</summary>
         void DrawTransitionList(List<TransitionRow> rows, List<AnimatorTransitionBase> pool,
-            TransitionEnd? reorderSource)
+            TransitionEnd? reorderSource, bool partial)
         {
             EditorGUILayout.LabelField(L.Tr("Transitions") + " (" + rows.Count + ")", EditorStyles.boldLabel);
 
@@ -214,10 +231,14 @@ namespace Yozolab.DaerD
             if (reorderSource.HasValue && rows.Count > 1)
             {
                 var source = reorderSource.Value;
+                var shown = new List<AnimatorTransitionBase>(rows.Count);
+                foreach (var row in rows) shown.Add(row.Transition);
                 onMove = (from, to) =>
                 {
-                    if (EdgeCommands.Reorder(source, _context.CurrentStateMachine, from, to))
-                        _context.NotifyGraphStructureChanged();
+                    bool moved = partial
+                        ? EdgeCommands.ReorderWithin(source, _context.CurrentStateMachine, shown, from, to)
+                        : EdgeCommands.Reorder(source, _context.CurrentStateMachine, from, to);
+                    if (moved) _context.NotifyGraphStructureChanged();
                 };
             }
 
